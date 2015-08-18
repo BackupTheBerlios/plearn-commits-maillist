@@ -1,0 +1,217 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9855 - trunk/plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9855%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200901201844.n0KIi6Xg016325%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003294.html">
+   <LINK REL="Next"  HREF="003296.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9855 - trunk/plearn_learners/regressors</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9855%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200901201844.n0KIi6Xg016325%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9855 - trunk/plearn_learners/regressors">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Jan 20 19:44:06 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003294.html">[Plearn-commits] r9854 - trunk/plearn_learners/meta
+</A></li>
+        <LI>Next message: <A HREF="003296.html">[Plearn-commits] r9856 - trunk/plearn_learners/meta
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3295">[ date ]</a>
+              <a href="thread.html#3295">[ thread ]</a>
+              <a href="subject.html#3295">[ subject ]</a>
+              <a href="author.html#3295">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-01-20 19:44:05 +0100 (Tue, 20 Jan 2009)
+New Revision: 9855
+
+Modified:
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+Log:
+added two option that we can use to lower the memory used if the learner won't be trained.
+
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2009-01-20 18:37:58 UTC (rev 9854)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2009-01-20 18:44:05 UTC (rev 9855)
+@@ -60,7 +60,9 @@
+ RegressionTreeRegisters::RegressionTreeRegisters():
+     report_progress(0),
+     verbosity(0),
+-    next_id(0)
++    next_id(0),
++    do_sort_rows(true),
++    mem_tsource(true)
+ {
+     build();
+ }
+@@ -69,10 +71,14 @@
+                                                  TMat&lt;RTR_type&gt; tsorted_row_,
+                                                  VMat tsource_,
+                                                  bool report_progress_,
+-                                                 bool verbosity_):
++                                                 bool verbosity_,
++                                                 bool do_sort_rows_,
++                                                 bool mem_tsource_):
+     report_progress(report_progress_),
+     verbosity(verbosity_),
+-    next_id(0)
++    next_id(0),
++    do_sort_rows(do_sort_rows_),
++    mem_tsource(mem_tsource_)
+ {
+     source = source_;
+     tsource = tsource_;
+@@ -82,10 +88,14 @@
+ 
+ RegressionTreeRegisters::RegressionTreeRegisters(VMat source_,
+                                                  bool report_progress_,
+-                                                 bool verbosity_):
++                                                 bool verbosity_,
++                                                 bool do_sort_rows_,
++                                                 bool mem_tsource_):
+     report_progress(report_progress_),
+     verbosity(verbosity_),
+-    next_id(0)
++    next_id(0),
++    do_sort_rows(do_sort_rows_),
++    mem_tsource(mem_tsource_)
+ {
+     source = source_;
+     build();
+@@ -114,6 +124,15 @@
+     declareOption(ol, &quot;leave_register&quot;, &amp;RegressionTreeRegisters::leave_register, OptionBase::learntoption,
+                   &quot;The vector identifying the leave to which, each row belongs\n&quot;);
+ 
++    declareOption(ol, &quot;do_sort_rows&quot;, &amp;RegressionTreeRegisters::do_sort_rows,
++                  OptionBase::buildoption,
++                  &quot;Do we generate the sorted rows? Not usefull if used only to test.\n&quot;);
++
++    declareOption(ol, &quot;mem_tsource&quot;, &amp;RegressionTreeRegisters::mem_tsource,
++                  OptionBase::buildoption,
++                  &quot;Do we put the tsource in memory? default to true as this&quot;
++                  &quot; give an great speed up for the trainning of RegressionTree.\n&quot;);
++
+     //too big to save
+     declareOption(ol, &quot;tsorted_row&quot;, &amp;RegressionTreeRegisters::tsorted_row, OptionBase::nosave,
+                   &quot;The matrix holding the sequence of samples in ascending value order for each dimension\n&quot;);
+@@ -154,11 +173,13 @@
+     PLCHECK(source-&gt;inputsize()&gt;0);
+ 
+     if(!tsource){
+-        VMat tmp = VMat(new TransposeVMatrix(new SubVMatrix(
+-                                                 source, 0,0,source-&gt;length(),
+-                                                 source-&gt;inputsize())));
+-        PP&lt;MemoryVMatrixNoSave&gt; tmp2 = new MemoryVMatrixNoSave(tmp);
+-        tsource = VMat(tmp2 );
++        tsource = VMat(new TransposeVMatrix(new SubVMatrix(
++                                                source, 0,0,source-&gt;length(),
++                                                source-&gt;inputsize())));
++        if(do_sort_rows){
++            PP&lt;MemoryVMatrixNoSave&gt; tmp = new MemoryVMatrixNoSave(tsource);
++            tsource = VMat(tmp);
++        }
+     }
+     setMetaInfoFrom(source);
+     weightsize_=1;
+@@ -194,7 +215,7 @@
+     getAllRegisteredRow(leave_id,col,reg);
+     target.resize(reg.length());
+     weight.resize(reg.length());
+-    value.resize(reg.length());
++    value.resize(reg.length());    
+     if(weightsize() &lt;= 0){
+         weight.fill(1.0 / length());
+         for(int i=0;i&lt;reg.length();i++){            
+@@ -239,6 +260,8 @@
+ void RegressionTreeRegisters::sortRows()
+ {
+     next_id = 0;
++    if(!do_sort_rows)
++        return;
+     if (tsorted_row.length() == inputsize() &amp;&amp; tsorted_row.width() == length())
+     {
+         verbose(&quot;RegressionTreeRegisters: Sorted train set indices are present, no sort required&quot;, 3);
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2009-01-20 18:37:58 UTC (rev 9854)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2009-01-20 18:44:05 UTC (rev 9855)
+@@ -71,14 +71,12 @@
+ 
+     int  report_progress;
+     int  verbosity;
+-//    VMat train_set;
+   
+ /*
+   Learnt options: they are sized and initialized if need be, at build() or reinitRegisters()
+ */
+ 
+     int       next_id;
+-    //TMat&lt;int&gt; sorted_row;
+ 
+     TMat&lt;RTR_type&gt; tsorted_row;
+     TVec&lt;RTR_type_id&gt; leave_register;
+@@ -88,14 +86,19 @@
+     TVec&lt;pair&lt;real,real&gt; &gt; target_weight;
+     VMat source;
+ 
++    bool do_sort_rows;
++    bool mem_tsource;
++
+ public:
+ 
+     RegressionTreeRegisters();
+     RegressionTreeRegisters(VMat source_, bool report_progress_ = false,
+-                            bool vebosity_ = false);
++                            bool vebosity_ = false, bool do_sort_rows = true,
++                            bool mem_tsource_ = true);
+     RegressionTreeRegisters(VMat source_, TMat&lt;RTR_type&gt; tsorted_row_,
+                             VMat tsource_, bool report_progress_ = false,
+-                            bool vebosity_ = false);
++                            bool vebosity_ = false, bool do_sort_rows = true,
++                            bool mem_tsource_ = true);
+     virtual              ~RegressionTreeRegisters();
+     
+     PLEARN_DECLARE_OBJECT(RegressionTreeRegisters);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003294.html">[Plearn-commits] r9854 - trunk/plearn_learners/meta
+</A></li>
+	<LI>Next message: <A HREF="003296.html">[Plearn-commits] r9856 - trunk/plearn_learners/meta
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3295">[ date ]</a>
+              <a href="thread.html#3295">[ thread ]</a>
+              <a href="subject.html#3295">[ subject ]</a>
+              <a href="author.html#3295">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

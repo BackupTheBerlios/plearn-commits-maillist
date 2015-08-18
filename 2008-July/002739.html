@@ -1,0 +1,2045 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9290 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9290%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200807252149.m6PLnGdn005188%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002738.html">
+   <LINK REL="Next"  HREF="002740.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9290 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9290%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200807252149.m6PLnGdn005188%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9290 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Fri Jul 25 23:49:16 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002738.html">[Plearn-commits] r9289 - trunk/plearn_learners/meta
+</A></li>
+        <LI>Next message: <A HREF="002740.html">[Plearn-commits] r9291 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2739">[ date ]</a>
+              <a href="thread.html#2739">[ thread ]</a>
+              <a href="subject.html#2739">[ subject ]</a>
+              <a href="author.html#2739">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-07-25 23:49:16 +0200 (Fri, 25 Jul 2008)
+New Revision: 9290
+
+Modified:
+   trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc
+   trunk/plearn_learners_experimental/PseudolikelihoodRBM.h
+Log:
+Progressing towards a journal paper...
+
+
+Modified: trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc
+===================================================================
+--- trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc	2008-07-25 20:52:46 UTC (rev 9289)
++++ trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc	2008-07-25 21:49:16 UTC (rev 9290)
+@@ -74,6 +74,7 @@
+     pseudolikelihood_context_size ( 0 ),
+     pseudolikelihood_context_type( &quot;uniform_random&quot; ),
+     k_most_correlated( -1 ),
++    generative_learning_weight( 0 ),
+     nll_cost_index( -1 ),
+     class_cost_index( -1 ),
+     training_cpu_time_cost_index ( -1 ),
+@@ -193,6 +194,12 @@
+                   &quot;Number of most correlated input elements over which to sample.\n&quot;
+                   );
+ 
++    declareOption(ol, &quot;generative_learning_weight&quot;, 
++                  &amp;PseudolikelihoodRBM::generative_learning_weight,
++                  OptionBase::buildoption,
++                  &quot;Weight of generative learning.\n&quot;
++                  );
++
+     declareOption(ol, &quot;input_layer&quot;, &amp;PseudolikelihoodRBM::input_layer,
+                   OptionBase::buildoption,
+                   &quot;The binomial input layer of the RBM.\n&quot;);
+@@ -217,6 +224,15 @@
+ //                  OptionBase::learntoption,
+ //                  &quot;Cumulative testing time since age=0, in seconds.\n&quot;);
+ 
++
++    declareOption(ol, &quot;target_layer&quot;, &amp;PseudolikelihoodRBM::target_layer,
++                  OptionBase::learntoption,
++                  &quot;The target layer of the RBM.\n&quot;);
++
++    declareOption(ol, &quot;target_connection&quot;, &amp;PseudolikelihoodRBM::target_connection,
++                  OptionBase::learntoption,
++                  &quot;The connection weights between the target and hidden layer.\n&quot;);
++
+     declareOption(ol, &quot;log_Z&quot;, &amp;PseudolikelihoodRBM::log_Z,
+                   OptionBase::learntoption,
+                   &quot;Normalisation constant (on log scale).\n&quot;);
+@@ -254,12 +270,7 @@
+ 
+     if( inputsize_ &gt; 0 &amp;&amp; targetsize_ &gt;= 0)
+     {
+-        if( n_classes &gt; 1 &amp;&amp; targetsize_ != 1 )
+-            PLERROR(&quot;In PseudolikelihoodRBM::build_(): can't use supervised &quot;
+-                &quot;learning (n_classes &gt; 1) if there is no target field &quot;
+-                &quot;(targetsize() != 1)&quot;);
+-        
+-        if( compute_input_space_nll &amp;&amp; n_classes &gt; 1 )
++        if( compute_input_space_nll &amp;&amp; targetsize() &gt; 0 )
+             PLERROR(&quot;In PseudolikelihoodRBM::build_(): compute_input_space_nll &quot;
+                     &quot;is not compatible with n_classes &gt; 1&quot;);
+ 
+@@ -295,14 +306,14 @@
+     cost_names.resize(0);
+     
+     int current_index = 0;
+-    if( compute_input_space_nll || n_classes &gt; 1 )
++    if( compute_input_space_nll || targetsize() &gt; 0 )
+     {
+         cost_names.append(&quot;NLL&quot;);
+         nll_cost_index = current_index;
+         current_index++;
+     }
+     
+-    if( n_classes &gt; 1 )
++    if( targetsize() &gt; 0 )
+     {
+         cost_names.append(&quot;class_error&quot;);
+         class_cost_index = current_index;
+@@ -338,6 +349,54 @@
+         PLERROR(&quot;In PseudolikelihoodRBM::build_layers_and_connections(): &quot;
+                 &quot;hidden_layer must be provided&quot;);
+ 
++    if( targetsize() == 1 )
++    {
++        if( n_classes &lt;= 1 )
++            PLERROR(&quot;In PseudolikelihoodRBM::build_layers_and_connections(): &quot;
++                    &quot;n_classes should be &gt; 1&quot;);
++        if( target_layer-&gt;size != n_classes )
++        {
++            target_layer = new RBMMultinomialLayer();
++            target_layer-&gt;size = n_classes;
++            target_layer-&gt;random_gen = random_gen;
++            target_layer-&gt;build();
++            target_layer-&gt;forget();
++        }
++        
++        if( target_connection-&gt;up_size != hidden_layer-&gt;size ||
++            target_connection-&gt;down_size != target_layer-&gt;size )
++        {
++            target_connection = new RBMMatrixConnection(); 
++            target_connection-&gt;up_size = hidden_layer-&gt;size;
++            target_connection-&gt;down_size = target_layer-&gt;size;
++            target_connection-&gt;random_gen = random_gen;
++            target_connection-&gt;build();
++            target_connection-&gt;forget();
++        }
++    }
++    else if ( targetsize() &gt; 1 )
++    {
++        if( target_layer-&gt;size != targetsize() )
++        {
++            target_layer = new RBMBinomialLayer();
++            target_layer-&gt;size = targetsize();
++            target_layer-&gt;random_gen = random_gen;
++            target_layer-&gt;build();
++            target_layer-&gt;forget();
++        }
++        
++        if( target_connection-&gt;up_size != hidden_layer-&gt;size ||
++            target_connection-&gt;down_size != target_layer-&gt;size )
++        {
++            target_connection = new RBMMatrixConnection(); 
++            target_connection-&gt;up_size = hidden_layer-&gt;size;
++            target_connection-&gt;down_size = target_layer-&gt;size;
++            target_connection-&gt;random_gen = random_gen;
++            target_connection-&gt;build();
++            target_connection-&gt;forget();
++        }
++    }
++
+     if( !connection )
+         PLERROR(&quot;PseudolikelihoodRBM::build_layers_and_connections(): \n&quot;
+                 &quot;connection must be provided&quot;);
+@@ -374,11 +433,9 @@
+ 
+     // CD option
+     pos_hidden.resize( hidden_layer-&gt;size );
+-    pers_cd_input.resize( n_gibbs_chains );
+     pers_cd_hidden.resize( n_gibbs_chains );
+     for( int i=0; i&lt;n_gibbs_chains; i++ )
+     {
+-        pers_cd_input[i].resize( input_layer-&gt;size );
+         pers_cd_hidden[i].resize( hidden_layer-&gt;size );
+     }
+     if( persistent_gibbs_chain_is_started.length() != n_gibbs_chains )
+@@ -402,12 +459,14 @@
+     if( inputsize_ &gt;= 0 )
+         PLASSERT( input_layer-&gt;size == inputsize() );
+ 
+-    if( n_classes &gt; 1 )
++    if( targetsize() &gt; 0 )
+     {
+-        class_output.resize( n_classes );
+-        before_class_output.resize( n_classes );
+-        class_gradient.resize( n_classes );
+-        target_one_hot.resize( n_classes );
++        class_output.resize( target_layer-&gt;size );
++        class_gradient.resize( target_layer-&gt;size );
++        target_one_hot.resize( target_layer-&gt;size );
++        
++        pos_target.resize( target_layer-&gt;size );
++        neg_target.resize( target_layer-&gt;size );
+     }
+ 
+     if( !input_layer-&gt;random_gen )
+@@ -450,11 +509,12 @@
+     deepCopyField(connection, copies);
+     deepCopyField(cost_names, copies);
+     deepCopyField(transpose_connection, copies);
++    deepCopyField(target_layer, copies);
++    deepCopyField(target_connection, copies);
+ 
+     deepCopyField(target_one_hot, copies);
+     deepCopyField(input_gradient, copies);
+     deepCopyField(class_output, copies);
+-    deepCopyField(before_class_output, copies);
+     deepCopyField(class_gradient, copies);
+     deepCopyField(hidden_activation_pos_i, copies);
+     deepCopyField(hidden_activation_neg_i, copies);
+@@ -474,15 +534,16 @@
+     deepCopyField(gnums_act, copies);
+     deepCopyField(conf, copies);
+     deepCopyField(pos_input, copies);
++    deepCopyField(pos_target, copies);
+     deepCopyField(pos_hidden, copies);
+     deepCopyField(neg_input, copies);
++    deepCopyField(neg_target, copies);
+     deepCopyField(neg_hidden, copies);
+     deepCopyField(reconstruction_activation_gradient, copies);
+     deepCopyField(hidden_layer_expectation_gradient, copies);
+     deepCopyField(hidden_layer_activation_gradient, copies);
+     deepCopyField(masked_autoencoder_input, copies);
+     deepCopyField(autoencoder_input_indices, copies);
+-    deepCopyField(pers_cd_input, copies);
+     deepCopyField(pers_cd_hidden, copies);
+     deepCopyField(persistent_gibbs_chain_is_started, copies);
+ }
+@@ -493,7 +554,7 @@
+ ////////////////
+ int PseudolikelihoodRBM::outputsize() const
+ {
+-    return n_classes &gt; 1 ? n_classes : hidden_layer-&gt;size;
++    return targetsize() &gt; 0 ? target_layer-&gt;size : hidden_layer-&gt;size;
+ }
+ 
+ ////////////
+@@ -523,7 +584,7 @@
+     MODULE_LOG &lt;&lt; &quot;train() called &quot; &lt;&lt; endl;
+ 
+     MODULE_LOG &lt;&lt; &quot;stage = &quot; &lt;&lt; stage
+-        &lt;&lt; &quot;, target nstages = &quot; &lt;&lt; nstages &lt;&lt; endl;
++               &lt;&lt; &quot;, target nstages = &quot; &lt;&lt; nstages &lt;&lt; endl;
+ 
+     PLASSERT( train_set );
+ 
+@@ -567,7 +628,7 @@
+         if( pb )
+             pb-&gt;update( stage - init_stage + 1 );
+ 
+-        if( n_classes &gt; 1 )
++        if( targetsize() == 1 )
+         {
+             target_one_hot.clear();
+             if( !is_missing(target[0]) )
+@@ -575,788 +636,1042 @@
+                 target_index = (int)round( target[0] );
+                 target_one_hot[ target_index ] = 1;
+             }
+-            PLERROR(&quot;In PseudolikelihoodRBM::train(): supervised learning &quot;
+-                    &quot;not implemented yet.&quot;);
++        }
++//        else
++//        {
+ 
++        // Discriminative learning is the sum of all learning rates
++        lr = 0;
++
++        if( decrease_ct != 0 ) 
++            lr += learning_rate / (1.0 + stage * decrease_ct );
++        else 
++            lr += learning_rate;
++
++        if( cd_decrease_ct != 0 ) 
++            lr += cd_learning_rate / (1.0 + stage * cd_decrease_ct );
++        else 
++            lr += cd_learning_rate;
++        
++        if( denoising_decrease_ct != 0 ) 
++            lr += denoising_learning_rate / (1.0 + stage * denoising_decrease_ct );
++        else 
++            lr += denoising_learning_rate;
++
++        setLearningRate(lr);
++
++        if( targetsize() == 1 )
++        {
++            // Multi-class classification
++
++            connection-&gt;setAsDownInput( input );
++            hidden_layer-&gt;getAllActivations( 
++                (RBMMatrixConnection*) connection );
++
++            Vec target_act = target_layer-&gt;activation;
++            Vec hidden_act = hidden_layer-&gt;activation;
++            for( int i=0 ; i&lt;target_layer-&gt;size ; i++ )
++            {
++                target_act[i] = target_layer-&gt;bias[i];
++                // LATERAL CONNECTIONS CODE HERE!!
++                real *w = &amp;(target_connection-&gt;weights(0,i));
++                // step from one row to the next in weights matrix
++                int m = target_connection-&gt;weights.mod();                
++                
++                for( int j=0 ; j&lt;hidden_layer-&gt;size ; j++, w+=m )
++                {
++                    // *w = weights(j,i)
++                    hidden_activation_pos_i[j] = hidden_act[j] + *w;
++                }
++                target_act[i] -= hidden_layer-&gt;freeEnergyContribution(
++                    hidden_activation_pos_i);
++            }
++            
++            target_layer-&gt;expectation_is_up_to_date = false;
++            target_layer-&gt;computeExpectation();
++            real nll = target_layer-&gt;fpropNLL(target_one_hot);
++            train_costs[nll_cost_index] = nll;
++            train_costs[class_cost_index] = 
++                argmax(target_layer-&gt;expectation) == target_index;
++            target_layer-&gt;bpropNLL(target_one_hot,nll,class_gradient);
++
++            hidden_activation_gradient.clear();
++            for( int i=0 ; i&lt;target_layer-&gt;size ; i++ )
++            {
++                real *w = &amp;(target_connection-&gt;weights(0,i));
++                // step from one row to the next in weights matrix
++                int m = target_connection-&gt;weights.mod();                
++                
++                for( int j=0 ; j&lt;hidden_layer-&gt;size ; j++, w+=m )
++                {
++                    // *w = weights(j,i)
++                    hidden_activation_pos_i[j] = hidden_act[j] + *w;
++                }
++                hidden_layer-&gt;freeEnergyContributionGradient(
++                    hidden_activation_pos_i,
++                    hidden_activation_pos_i_gradient,
++                    -class_gradient[i],
++                    false
++                    );
++                hidden_activation_gradient += hidden_activation_pos_i_gradient;
++
++                // Update target connections
++                for( int j=0 ; j&lt;hidden_layer-&gt;size ; j++, w+=m )
++                    *w -= learning_rate * hidden_activation_pos_i_gradient[j];
++            }
++
++            externalProduct( connection_gradient, hidden_activation_gradient,
++                             input );
++
++            // Update target bias            
++            multiplyScaledAdd(class_gradient, 1.0, -lr,
++                              target_layer-&gt;bias);
++
++            // Hidden bias update
++            multiplyScaledAdd(hidden_activation_gradient, 1.0, -lr,
++                              hidden_layer-&gt;bias);
++            // Connection weights update
++            multiplyScaledAdd( connection_gradient, 1.0, -lr,
++                               connection-&gt;weights );
++            // Input bias update
++            multiplyScaledAdd(input_gradient, 1.0, -lr,
++                              input_layer-&gt;bias);            
++        }
++        if( targetsize() &gt; 1 )
++        {
++            // Multi-task binary classification
++            PLERROR(&quot;NNNNNNNNNNOOOOOOOOOOOOOOOOOOOOOO!!!!!!!!!!!!!!&quot;);
++        }
++
++        if( !fast_is_equal(learning_rate, 0.) )
++        {
+             if( decrease_ct != 0 )
+                 lr = learning_rate / (1.0 + stage * decrease_ct );
+             else
+                 lr = learning_rate;
+ 
+             setLearningRate(lr);
+-        }
+-        else
+-        {
+-            if( !fast_is_equal(learning_rate, 0.) )
++
++            if( pseudolikelihood_context_size == 0 )
+             {
+-                if( decrease_ct != 0 )
+-                    lr = learning_rate / (1.0 + stage * decrease_ct );
+-                else
+-                    lr = learning_rate;
++                // Compute input_probs
++                //
++                //a = W x + c
++                //  for i in 1...d
++                //      num_pos = b_i
++                //      num_neg = 0
++                //      for j in 1...h
++                //          num_pos += softplus( a_j - W_ji x_i + W_ji)
++                //          num_neg += softplus( a_j - W_ji x_i)
++                //      p_i = exp(num_pos) / (exp(num_pos) + exp(num_neg))
+ 
+-                setLearningRate(lr);
+-
+-                if( pseudolikelihood_context_size == 0 )
++                if( targetsize() &lt;= 0 )
+                 {
+-                    // Compute input_probs
+-                    //
+-                    //a = W x + c
+-                    //  for i in 1...d
+-                    //      num_pos = b_i
+-                    //      num_neg = 0
+-                    //      for j in 1...h
+-                    //          num_pos += softplus( a_j - W_ji x_i + W_ji)
+-                    //          num_neg += softplus( a_j - W_ji x_i)
+-                    //      p_i = exp(num_pos) / (exp(num_pos) + exp(num_neg))
+-
++                    // This was not computed previously
+                     connection-&gt;setAsDownInput( input );
+                     hidden_layer-&gt;getAllActivations( 
+                         (RBMMatrixConnection*) connection );
++                }
++                else
++                {
++                    if( targetsize() == 1 )
++                        productAcc( hidden_layer-&gt;activation,
++                                    target_connection-&gt;weights,
++                                    target_one_hot );
++                    else if( targetsize() &gt; 1 )
++                        productAcc( hidden_layer-&gt;activation,
++                                    target_connection-&gt;weights,
++                                    target );
++                }
+ 
+-                    real num_pos_act;
+-                    real num_neg_act;
+-                    real num_pos;
+-                    real num_neg;
+-                    real* a = hidden_layer-&gt;activation.data();
+-                    real* a_pos_i = hidden_activation_pos_i.data();
+-                    real* a_neg_i = hidden_activation_neg_i.data();
+-                    real* w, *gw;
+-                    int m = connection-&gt;weights.mod();
+-                    real input_i, input_probs_i;
+-                    real pseudolikelihood = 0;
+-                    real* ga_pos_i = hidden_activation_pos_i_gradient.data();
+-                    real* ga_neg_i = hidden_activation_neg_i_gradient.data();
+-                    hidden_activation_gradient.clear();
+-                    connection_gradient.clear();
+-                    for( int i=0; i&lt;input_layer-&gt;size ; i++ )
++                real num_pos_act;
++                real num_neg_act;
++                real num_pos;
++                real num_neg;
++                real* a = hidden_layer-&gt;activation.data();
++                real* a_pos_i = hidden_activation_pos_i.data();
++                real* a_neg_i = hidden_activation_neg_i.data();
++                real* w, *gw;
++                int m = connection-&gt;weights.mod();
++                real input_i, input_probs_i;
++                real pseudolikelihood = 0;
++                real* ga_pos_i = hidden_activation_pos_i_gradient.data();
++                real* ga_neg_i = hidden_activation_neg_i_gradient.data();
++                hidden_activation_gradient.clear();
++                connection_gradient.clear();
++                for( int i=0; i&lt;input_layer-&gt;size ; i++ )
++                {
++                    num_pos_act = input_layer-&gt;bias[i];
++                    // LATERAL CONNECTIONS CODE HERE!
++                    num_neg_act = 0;
++                    w = &amp;(connection-&gt;weights(0,i));
++                    input_i = input[i];
++                    for( int j=0; j&lt;hidden_layer-&gt;size; j++,w+=m )
+                     {
+-                        num_pos_act = input_layer-&gt;bias[i];
+-                        num_neg_act = 0;
+-                        w = &amp;(connection-&gt;weights(0,i));
+-                        input_i = input[i];
+-                        for( int j=0; j&lt;hidden_layer-&gt;size; j++,w+=m )
+-                        {
+-                            a_pos_i[j] = a[j] - *w * ( input_i - 1 );
+-                            a_neg_i[j] = a[j] - *w * input_i;
+-                        }
+-                        num_pos_act -= hidden_layer-&gt;freeEnergyContribution(
+-                            hidden_activation_pos_i);
+-                        num_neg_act -= hidden_layer-&gt;freeEnergyContribution(
+-                            hidden_activation_neg_i);
+-                        //num_pos = safeexp(num_pos_act);
+-                        //num_neg = safeexp(num_neg_act);
+-                        //input_probs_i = num_pos / (num_pos + num_neg);
+-                        if( input_layer-&gt;use_fast_approximations )
+-                            input_probs_i = fastsigmoid(
+-                                num_pos_act - num_neg_act);
+-                        else
+-                        {
+-                            num_pos = safeexp(num_pos_act);
+-                            num_neg = safeexp(num_neg_act);
+-                            input_probs_i = num_pos / (num_pos + num_neg);
+-                        }
++                        a_pos_i[j] = a[j] - *w * ( input_i - 1 );
++                        a_neg_i[j] = a[j] - *w * input_i;
++                    }
++                    num_pos_act -= hidden_layer-&gt;freeEnergyContribution(
++                        hidden_activation_pos_i);
++                    num_neg_act -= hidden_layer-&gt;freeEnergyContribution(
++                        hidden_activation_neg_i);
++                    //num_pos = safeexp(num_pos_act);
++                    //num_neg = safeexp(num_neg_act);
++                    //input_probs_i = num_pos / (num_pos + num_neg);
++                    if( input_layer-&gt;use_fast_approximations )
++                        input_probs_i = fastsigmoid(
++                            num_pos_act - num_neg_act);
++                    else
++                    {
++                        num_pos = safeexp(num_pos_act);
++                        num_neg = safeexp(num_neg_act);
++                        input_probs_i = num_pos / (num_pos + num_neg);
++                    }
+ 
+-                        // Compute input_prob gradient
+-                        if( input_layer-&gt;use_fast_approximations )
+-                            pseudolikelihood += tabulated_softplus( 
+-                                num_pos_act - num_neg_act ) 
+-                                - input_i * (num_pos_act - num_neg_act);
+-                        else
+-                            pseudolikelihood += softplus( 
+-                                num_pos_act - num_neg_act ) 
+-                                - input_i * (num_pos_act - num_neg_act);
+-                        input_gradient[i] = input_probs_i - input_i;
++                    // Compute input_prob gradient
++                    if( input_layer-&gt;use_fast_approximations )
++                        pseudolikelihood += tabulated_softplus( 
++                            num_pos_act - num_neg_act ) 
++                            - input_i * (num_pos_act - num_neg_act);
++                    else
++                        pseudolikelihood += softplus( 
++                            num_pos_act - num_neg_act ) 
++                            - input_i * (num_pos_act - num_neg_act);
++                    input_gradient[i] = input_probs_i - input_i;
+ 
+-                        hidden_layer-&gt;freeEnergyContributionGradient(
+-                            hidden_activation_pos_i,
+-                            hidden_activation_pos_i_gradient,
+-                            -input_gradient[i],
+-                            false);
+-                        hidden_activation_gradient += hidden_activation_pos_i_gradient;
++                    hidden_layer-&gt;freeEnergyContributionGradient(
++                        hidden_activation_pos_i,
++                        hidden_activation_pos_i_gradient,
++                        -input_gradient[i],
++                        false);
++                    hidden_activation_gradient += hidden_activation_pos_i_gradient;
+ 
+-                        hidden_layer-&gt;freeEnergyContributionGradient(
+-                            hidden_activation_neg_i,
+-                            hidden_activation_neg_i_gradient,
+-                            input_gradient[i],
+-                            false);
+-                        hidden_activation_gradient += hidden_activation_neg_i_gradient;
++                    hidden_layer-&gt;freeEnergyContributionGradient(
++                        hidden_activation_neg_i,
++                        hidden_activation_neg_i_gradient,
++                        input_gradient[i],
++                        false);
++                    hidden_activation_gradient += hidden_activation_neg_i_gradient;
+ 
+-                        gw = &amp;(connection_gradient(0,i));
+-                        for( int j=0; j&lt;hidden_layer-&gt;size; j++,gw+=m )
+-                        {
+-                            *gw -= ga_pos_i[j] * ( input_i - 1 );
+-                            *gw -= ga_neg_i[j] * input_i;
+-                        }
++                    gw = &amp;(connection_gradient(0,i));
++                    for( int j=0; j&lt;hidden_layer-&gt;size; j++,gw+=m )
++                    {
++                        *gw -= ga_pos_i[j] * ( input_i - 1 );
++                        *gw -= ga_neg_i[j] * input_i;
+                     }
++                }
+ 
+-                    externalProductAcc( connection_gradient, hidden_activation_gradient,
+-                                        input );
++                externalProductAcc( connection_gradient, hidden_activation_gradient,
++                                    input );
+ 
+-                    // Hidden bias update
+-                    multiplyScaledAdd(hidden_activation_gradient, 1.0, -lr,
+-                                      hidden_layer-&gt;bias);
+-                    // Connection weights update
+-                    multiplyScaledAdd( connection_gradient, 1.0, -lr,
+-                                       connection-&gt;weights );
+-                    // Input bias update
+-                    multiplyScaledAdd(input_gradient, 1.0, -lr,
+-                                      input_layer-&gt;bias);
++                if( targetsize() &gt; 0 )
++                    lr *= generative_learning_weight;
+ 
+-                    // N.B.: train costs contains pseudolikelihood
+-                    //       or pseudoNLL, not NLL
++                // Hidden bias update
++                multiplyScaledAdd(hidden_activation_gradient, 1.0, -lr,
++                                  hidden_layer-&gt;bias);
++                // Connection weights update
++                multiplyScaledAdd( connection_gradient, 1.0, -lr,
++                                   connection-&gt;weights );
++                // Input bias update
++                multiplyScaledAdd(input_gradient, 1.0, -lr,
++                                  input_layer-&gt;bias);
++
++                if( targetsize() == 1 )
++                    externalProductScaleAcc( target_connection-&gt;weights, 
++                                             hidden_activation_gradient,
++                                             target_one_hot,
++                                             lr );
++                if( targetsize() &gt; 1 )
++                    externalProductScaleAcc( target_connection-&gt;weights, 
++                                             hidden_activation_gradient,
++                                             target,
++                                             lr );
++
++                // N.B.: train costs contains pseudolikelihood
++                //       or pseudoNLL, not NLL
++                if( compute_input_space_nll )
+                     train_costs[nll_cost_index] = pseudolikelihood;
+ 
+ //                    cout &lt;&lt; &quot;input_gradient: &quot; &lt;&lt; input_gradient &lt;&lt; endl;
+ //                    cout &lt;&lt; &quot;hidden_activation_gradient&quot; &lt;&lt; hidden_activation_gradient &lt;&lt; endl;
+ 
+-                }
+-                else
++            }
++            else
++            {
++                if( ( pseudolikelihood_context_type == &quot;most_correlated&quot; ||
++                      pseudolikelihood_context_type == &quot;most_correlated_uniform_random&quot; )
++                    &amp;&amp; correlations_per_i.length() == 0 )
+                 {
+-                    if( ( pseudolikelihood_context_type == &quot;most_correlated&quot; ||
+-                          pseudolikelihood_context_type == &quot;most_correlated_uniform_random&quot; )
+-                        &amp;&amp; correlations_per_i.length() == 0 )
++                    Vec corr_input(inputsize());
++                    Vec corr_target(targetsize());
++                    real corr_weight;
++                    Vec mean(inputsize());
++                    mean.clear();
++                    for(int t=0; t&lt;train_set-&gt;length(); t++)
+                     {
+-                        Vec corr_input(inputsize());
+-                        Vec corr_target(targetsize());
+-                        real corr_weight;
+-                        Vec mean(inputsize());
+-                        mean.clear();
+-                        for(int t=0; t&lt;train_set-&gt;length(); t++)
+-                        {
+-                            train_set-&gt;getExample(t,corr_input,corr_target,
+-                                                  corr_weight);
+-                            mean += corr_input;
+-                        }
+-                        mean /= train_set-&gt;length();
++                        train_set-&gt;getExample(t,corr_input,corr_target,
++                                              corr_weight);
++                        mean += corr_input;
++                    }
++                    mean /= train_set-&gt;length();
+                         
+-                        correlations_per_i.resize(inputsize(),inputsize());
+-                        correlations_per_i.clear();
+-                        Mat cov(inputsize(), inputsize());
+-                        cov.clear();
+-                        for(int t=0; t&lt;train_set-&gt;length(); t++)
++                    correlations_per_i.resize(inputsize(),inputsize());
++                    correlations_per_i.clear();
++                    Mat cov(inputsize(), inputsize());
++                    cov.clear();
++                    for(int t=0; t&lt;train_set-&gt;length(); t++)
++                    {
++                        train_set-&gt;getExample(t,corr_input,corr_target,
++                                              corr_weight);
++                        corr_input -= mean;
++                        externalProductAcc(cov,
++                                           corr_input,corr_input);
++                    }
++                    //correlations_per_i /= train_set-&gt;length();
++
++                    for( int i=0; i&lt;inputsize(); i++ )
++                        for( int j=0; j&lt;inputsize(); j++)
+                         {
+-                            train_set-&gt;getExample(t,corr_input,corr_target,
+-                                                  corr_weight);
+-                            corr_input -= mean;
+-                            externalProductAcc(cov,
+-                                               corr_input,corr_input);
++                            correlations_per_i(i,j) = 
++                                abs(cov(i,j)) 
++                                / sqrt(cov(i,i)*cov(j,j));
+                         }
+-                        //correlations_per_i /= train_set-&gt;length();
+ 
+-                        for( int i=0; i&lt;inputsize(); i++ )
+-                            for( int j=0; j&lt;inputsize(); j++)
+-                            {
+-                                correlations_per_i(i,j) = 
+-                                    abs(cov(i,j)) 
+-                                    / sqrt(cov(i,i)*cov(j,j));
+-                            }
+-
+-                        if( pseudolikelihood_context_type == &quot;most_correlated&quot;)
+-                        {
+-                            if( pseudolikelihood_context_size &lt;= 0 )
+-                                PLERROR(&quot;In PseudolikelihoodRBM::train(): &quot;
++                    if( pseudolikelihood_context_type == &quot;most_correlated&quot;)
++                    {
++                        if( pseudolikelihood_context_size &lt;= 0 )
++                            PLERROR(&quot;In PseudolikelihoodRBM::train(): &quot;
+                                     &quot;pseudolikelihood_context_size should be &gt; 0 &quot;
+                                     &quot;for \&quot;most_correlated\&quot; context type&quot;);
+-                            real current_min;
+-                            int current_min_position;
+-                            real* corr;
+-                            int* context;
+-                            Vec context_corr(pseudolikelihood_context_size);
+-                            context_indices_per_i.resize(
+-                                inputsize(),
+-                                pseudolikelihood_context_size);
++                        real current_min;
++                        int current_min_position;
++                        real* corr;
++                        int* context;
++                        Vec context_corr(pseudolikelihood_context_size);
++                        context_indices_per_i.resize(
++                            inputsize(),
++                            pseudolikelihood_context_size);
+ 
+-                            // HUGO: this is quite inefficient for big 
+-                            // pseudolikelihood_context_sizes, should use a heap
+-                            for( int i=0; i&lt;inputsize(); i++ )
++                        // HUGO: this is quite inefficient for big 
++                        // pseudolikelihood_context_sizes, should use a heap
++                        for( int i=0; i&lt;inputsize(); i++ )
++                        {
++                            current_min = REAL_MAX;
++                            current_min_position = -1;
++                            corr = correlations_per_i[i];
++                            context = context_indices_per_i[i];
++                            for( int j=0; j&lt;inputsize(); j++ )
+                             {
+-                                current_min = REAL_MAX;
+-                                current_min_position = -1;
+-                                corr = correlations_per_i[i];
+-                                context = context_indices_per_i[i];
+-                                for( int j=0; j&lt;inputsize(); j++ )
++                                if( i == j )
++                                    continue;
++
++                                // Filling first pseudolikelihood_context_size elements
++                                if( j - (j&gt;i?1:0) &lt; pseudolikelihood_context_size )
+                                 {
+-                                    if( i == j )
+-                                        continue;
+-
+-                                    // Filling first pseudolikelihood_context_size elements
+-                                    if( j - (j&gt;i?1:0) &lt; pseudolikelihood_context_size )
++                                    context[j - (j&gt;i?1:0)] = j;
++                                    context_corr[j - (j&gt;i?1:0)] = corr[j];
++                                    if( current_min &gt; corr[j] )
+                                     {
+-                                        context[j - (j&gt;i?1:0)] = j;
+-                                        context_corr[j - (j&gt;i?1:0)] = corr[j];
+-                                        if( current_min &gt; corr[j] )
+-                                        {
+-                                            current_min = corr[j];
+-                                            current_min_position = j - (j&gt;i?1:0);
+-                                        }
+-                                        continue;
++                                        current_min = corr[j];
++                                        current_min_position = j - (j&gt;i?1:0);
+                                     }
++                                    continue;
++                                }
+ 
+-                                    if( corr[j] &gt; current_min )
+-                                    {
+-                                        context[current_min_position] = j;
+-                                        context_corr[current_min_position] = corr[j];
+-                                        current_min = 
+-                                            min( context_corr, 
+-                                                 current_min_position );
+-                                    }
++                                if( corr[j] &gt; current_min )
++                                {
++                                    context[current_min_position] = j;
++                                    context_corr[current_min_position] = corr[j];
++                                    current_min = 
++                                        min( context_corr, 
++                                             current_min_position );
+                                 }
+                             }
+                         }
++                    }
+                         
+-                        if( pseudolikelihood_context_type == 
+-                            &quot;most_correlated_uniform_random&quot; )
+-                        {
+-                            if( k_most_correlated &lt; 
+-                                pseudolikelihood_context_size )
+-                                PLERROR(&quot;In PseudolikelihoodRBM::train(): &quot;
+-                                        &quot;k_most_correlated should be &quot;
+-                                        &quot;&gt;= pseudolikelihood_context_size&quot;);
++                    if( pseudolikelihood_context_type == 
++                        &quot;most_correlated_uniform_random&quot; )
++                    {
++                        if( k_most_correlated &lt; 
++                            pseudolikelihood_context_size )
++                            PLERROR(&quot;In PseudolikelihoodRBM::train(): &quot;
++                                    &quot;k_most_correlated should be &quot;
++                                    &quot;&gt;= pseudolikelihood_context_size&quot;);
+ 
+-                            if( k_most_correlated &gt; inputsize() - 1 )
+-                                PLERROR(&quot;In PseudolikelihoodRBM::train(): &quot;
+-                                        &quot;k_most_correlated should be &quot;
+-                                        &quot;&lt; inputsize()&quot;);
++                        if( k_most_correlated &gt; inputsize() - 1 )
++                            PLERROR(&quot;In PseudolikelihoodRBM::train(): &quot;
++                                    &quot;k_most_correlated should be &quot;
++                                    &quot;&lt; inputsize()&quot;);
+ 
+-                            real current_min;
+-                            int current_min_position;
+-                            real* corr;
+-                            int* context;
+-                            Vec context_corr( k_most_correlated );
+-                            context_most_correlated.resize( inputsize() );
++                        real current_min;
++                        int current_min_position;
++                        real* corr;
++                        int* context;
++                        Vec context_corr( k_most_correlated );
++                        context_most_correlated.resize( inputsize() );
+ 
+-                            // HUGO: this is quite inefficient for big 
+-                            // pseudolikelihood_context_sizes, should use a heap
+-                            for( int i=0; i&lt;inputsize(); i++ )
++                        // HUGO: this is quite inefficient for big 
++                        // pseudolikelihood_context_sizes, should use a heap
++                        for( int i=0; i&lt;inputsize(); i++ )
++                        {
++                            context_most_correlated[i].resize( 
++                                k_most_correlated );
++                            current_min = REAL_MAX;
++                            current_min_position = -1;
++                            corr = correlations_per_i[i];
++                            context = context_most_correlated[i].data();
++                            for( int j=0; j&lt;inputsize(); j++ )
+                             {
+-                                context_most_correlated[i].resize( 
+-                                    k_most_correlated );
+-                                current_min = REAL_MAX;
+-                                current_min_position = -1;
+-                                corr = correlations_per_i[i];
+-                                context = context_most_correlated[i].data();
+-                                for( int j=0; j&lt;inputsize(); j++ )
++                                if( i == j )
++                                    continue;
++
++                                // Filling first k_most_correlated elements
++                                if( j - (j&gt;i?1:0) &lt;  k_most_correlated )
+                                 {
+-                                    if( i == j )
+-                                        continue;
+-
+-                                    // Filling first k_most_correlated elements
+-                                    if( j - (j&gt;i?1:0) &lt;  k_most_correlated )
++                                    context[j - (j&gt;i?1:0)] = j;
++                                    context_corr[j - (j&gt;i?1:0)] = corr[j];
++                                    if( current_min &gt; corr[j] )
+                                     {
+-                                        context[j - (j&gt;i?1:0)] = j;
+-                                        context_corr[j - (j&gt;i?1:0)] = corr[j];
+-                                        if( current_min &gt; corr[j] )
+-                                        {
+-                                            current_min = corr[j];
+-                                            current_min_position = j - (j&gt;i?1:0);
+-                                        }
+-                                        continue;
++                                        current_min = corr[j];
++                                        current_min_position = j - (j&gt;i?1:0);
+                                     }
++                                    continue;
++                                }
+ 
+-                                    if( corr[j] &gt; current_min )
+-                                    {
+-                                        context[current_min_position] = j;
+-                                        context_corr[current_min_position] = corr[j];
+-                                        current_min = 
+-                                            min( context_corr, 
+-                                                 current_min_position );
+-                                    }
++                                if( corr[j] &gt; current_min )
++                                {
++                                    context[current_min_position] = j;
++                                    context_corr[current_min_position] = corr[j];
++                                    current_min = 
++                                        min( context_corr, 
++                                             current_min_position );
+                                 }
+                             }
+-                        }                        
+-                    }
++                        }
++                    }                        
++                }
+ 
+-                    if( pseudolikelihood_context_type == &quot;uniform_random&quot; ||
+-                        pseudolikelihood_context_type == &quot;most_correlated_uniform_random&quot; )
++                if( pseudolikelihood_context_type == &quot;uniform_random&quot; ||
++                    pseudolikelihood_context_type == &quot;most_correlated_uniform_random&quot; )
++                {
++                    // Generate contexts
++                    if( pseudolikelihood_context_type == &quot;uniform_random&quot; )
++                        for( int i=0; i&lt;context_indices.length(); i++)
++                            context_indices[i] = i;
++                    int tmp,k;
++                    int* c;
++                    int n;
++                    if( pseudolikelihood_context_type == &quot;uniform_random&quot; )
+                     {
+-                        // Generate contexts
+-                        if( pseudolikelihood_context_type == &quot;uniform_random&quot; )
+-                            for( int i=0; i&lt;context_indices.length(); i++)
+-                                context_indices[i] = i;
+-                        int tmp,k;
+-                        int* c;
+-                        int n;
+-                        if( pseudolikelihood_context_type == &quot;uniform_random&quot; )
++                        c = context_indices.data();
++                        n = input_layer-&gt;size-1;
++                    }
++                    int* ci;
++                    for( int i=0; i&lt;context_indices_per_i.length(); i++)
++                    {
++                        if( pseudolikelihood_context_type == 
++                            &quot;most_correlated_uniform_random&quot; )
+                         {
+-                            c = context_indices.data();
+-                            n = input_layer-&gt;size-1;
++                            c = context_most_correlated[i].data();
++                            n = context_most_correlated[i].length();
+                         }
+-                        int* ci;
+-                        for( int i=0; i&lt;context_indices_per_i.length(); i++)
++
++                        ci = context_indices_per_i[i];
++                        for (int j = 0; j &lt; context_indices_per_i.width(); j++) 
+                         {
+-                            if( pseudolikelihood_context_type == 
+-                                &quot;most_correlated_uniform_random&quot; )
+-                            {
+-                                c = context_most_correlated[i].data();
+-                                n = context_most_correlated[i].length();
+-                            }
++                            k = j + 
++                                random_gen-&gt;uniform_multinomial_sample(n - j);
++                                
++                            tmp = c[j];
++                            c[j] = c[k];
++                            c[k] = tmp;
+ 
+-                            ci = context_indices_per_i[i];
+-                            for (int j = 0; j &lt; context_indices_per_i.width(); j++) 
++                            if( pseudolikelihood_context_type 
++                                == &quot;uniform_random&quot; )
+                             {
+-                                k = j + 
+-                                    random_gen-&gt;uniform_multinomial_sample(n - j);
+-                                
+-                                tmp = c[j];
+-                                c[j] = c[k];
+-                                c[k] = tmp;
+-
+-                                if( pseudolikelihood_context_type 
+-                                    == &quot;uniform_random&quot; )
+-                                {
+-                                    if( c[j] &gt;= i )
+-                                        ci[j] = c[j]+1;
+-                                    else
+-                                        ci[j] = c[j];
+-                                }
+-
+-                                if( pseudolikelihood_context_type == 
+-                                    &quot;most_correlated_uniform_random&quot; )
++                                if( c[j] &gt;= i )
++                                    ci[j] = c[j]+1;
++                                else
+                                     ci[j] = c[j];
+                             }
++
++                            if( pseudolikelihood_context_type == 
++                                &quot;most_correlated_uniform_random&quot; )
++                                ci[j] = c[j];
+                         }
+                     }
++                }
+ 
++                if( targetsize() &lt;= 0 )
++                {
++                    // This was not computed previously
+                     connection-&gt;setAsDownInput( input );
+                     hidden_layer-&gt;getAllActivations( 
+-                        (RBMMatrixConnection *) connection );
++                        (RBMMatrixConnection*) connection );
++                }
++                else
++                {
++                    if( targetsize() == 1 )
++                        productAcc( hidden_layer-&gt;activation,
++                                    target_connection-&gt;weights,
++                                    target_one_hot );
++                    else if( targetsize() &gt; 1 )
++                        productAcc( hidden_layer-&gt;activation,
++                                    target_connection-&gt;weights,
++                                    target );
++                            
++                }
+ 
+-                    int n_conf = ipow(2, pseudolikelihood_context_size);
+-                    //nums_act.resize( 2 * n_conf );
+-                    //gnums_act.resize( 2 * n_conf );
+-                    //context_probs.resize( 2 * n_conf );
+-                    //hidden_activations_context.resize( 2*n_conf, hidden_layer-&gt;size );
+-                    //hidden_activations_context_k_gradient.resize( hidden_layer-&gt;size );
+-                    real* nums_data;
+-                    real* gnums_data;
+-                    real* cp_data;
+-                    real* a = hidden_layer-&gt;activation.data();
+-                    real* w, *gw, *gi, *ac, *bi, *gac;
+-                    int* context_i;
+-                    int m;
+-                    int conf_index;
+-                    real input_i, input_j,  log_Zi;
+-                    real pseudolikelihood = 0;
++                int n_conf = ipow(2, pseudolikelihood_context_size);
++                //nums_act.resize( 2 * n_conf );
++                //gnums_act.resize( 2 * n_conf );
++                //context_probs.resize( 2 * n_conf );
++                //hidden_activations_context.resize( 2*n_conf, hidden_layer-&gt;size );
++                //hidden_activations_context_k_gradient.resize( hidden_layer-&gt;size );
++                real* nums_data;
++                real* gnums_data;
++                real* cp_data;
++                real* a = hidden_layer-&gt;activation.data();
++                real* w, *gw, *gi, *ac, *bi, *gac;
++                int* context_i;
++                int m;
++                int conf_index;
++                real input_i, input_j,  log_Zi;
++                real pseudolikelihood = 0;
+ 
+-                    input_gradient.clear();
+-                    hidden_activation_gradient.clear();
+-                    connection_gradient.clear();
+-                    gi = input_gradient.data();
+-                    bi = input_layer-&gt;bias.data();
+-                    for( int i=0; i&lt;input_layer-&gt;size ; i++ )
++                input_gradient.clear();
++                hidden_activation_gradient.clear();
++                connection_gradient.clear();
++                gi = input_gradient.data();
++                bi = input_layer-&gt;bias.data();
++                for( int i=0; i&lt;input_layer-&gt;size ; i++ )
++                {
++                    nums_data = nums_act.data();
++                    cp_data = context_probs.data();
++                    input_i = input[i];
++
++                    m = connection-&gt;weights.mod();
++                    // input_i = 1
++                    for( int k=0; k&lt;n_conf; k++)
+                     {
+-                        nums_data = nums_act.data();
+-                        cp_data = context_probs.data();
+-                        input_i = input[i];
++                        *nums_data = bi[i];
++                        *cp_data = input_i;
++                        conf_index = k;
++                        ac = hidden_activations_context[k];
+ 
+-                        m = connection-&gt;weights.mod();
+-                        // input_i = 1
+-                        for( int k=0; k&lt;n_conf; k++)
++                        w = &amp;(connection-&gt;weights(0,i));
++                        for( int j=0; j&lt;hidden_layer-&gt;size; j++,w+=m )
++                            ac[j] = a[j] - *w * ( input_i - 1 );
++
++                        context_i = context_indices_per_i[i];
++                        for( int l=0; l&lt;pseudolikelihood_context_size; l++ )
+                         {
+-                            *nums_data = bi[i];
+-                            *cp_data = input_i;
+-                            conf_index = k;
+-                            ac = hidden_activations_context[k];
+-
+-                            w = &amp;(connection-&gt;weights(0,i));
+-                            for( int j=0; j&lt;hidden_layer-&gt;size; j++,w+=m )
+-                                ac[j] = a[j] - *w * ( input_i - 1 );
+-
+-                            context_i = context_indices_per_i[i];
+-                            for( int l=0; l&lt;pseudolikelihood_context_size; l++ )
++                            input_j = input[*context_i];
++                            w = &amp;(connection-&gt;weights(0,*context_i));
++                            if( conf_index &amp; 1)
+                             {
+-                                input_j = input[*context_i];
+-                                w = &amp;(connection-&gt;weights(0,*context_i));
+-                                if( conf_index &amp; 1)
+-                                {
+-                                    *cp_data *= input_j;
+-                                    *nums_data += bi[*context_i];
+-                                    for( int j=0; j&lt;hidden_layer-&gt;size; j++,w+=m )
+-                                        ac[j] -=  *w * ( input_j - 1 );
+-                                }
+-                                else
+-                                {
+-                                    *cp_data *= (1-input_j);
+-                                    for( int j=0; j&lt;hidden_layer-&gt;size; j++,w+=m )
+-                                        ac[j] -=  *w * input_j;
+-                                }
++                                *cp_data *= input_j;
++                                *nums_data += bi[*context_i];
++                                for( int j=0; j&lt;hidden_layer-&gt;size; j++,w+=m )
++                                    ac[j] -=  *w * ( input_j - 1 );
++                            }
++                            else
++                            {
++                                *cp_data *= (1-input_j);
++                                for( int j=0; j&lt;hidden_layer-&gt;size; j++,w+=m )
++                                    ac[j] -=  *w * input_j;
++                            }
+ 
+-                                conf_index &gt;&gt;= 1;
+-                                context_i++;
+-                            }
+-                            *nums_data -= hidden_layer-&gt;freeEnergyContribution(
+-                                hidden_activations_context(k));
+-                            nums_data++;
+-                            cp_data++;
++                            conf_index &gt;&gt;= 1;
++                            context_i++;
+                         }
++                        *nums_data -= hidden_layer-&gt;freeEnergyContribution(
++                            hidden_activations_context(k));
++                        nums_data++;
++                        cp_data++;
++                    }
+ 
+-                        // input_i = 0
+-                        for( int k=0; k&lt;n_conf; k++)
+-                        {
+-                            *nums_data = 0;
+-                            *cp_data = (1-input_i);
+-                            conf_index = k;
+-                            ac = hidden_activations_context[n_conf + k];
++                    // input_i = 0
++                    for( int k=0; k&lt;n_conf; k++)
++                    {
++                        *nums_data = 0;
++                        *cp_data = (1-input_i);
++                        conf_index = k;
++                        ac = hidden_activations_context[n_conf + k];
+                         
+-                            w = &amp;(connection-&gt;weights(0,i));
+-                            for( int j=0; j&lt;hidden_layer-&gt;size; j++,w+=m )
+-                                ac[j] = a[j] - *w * input_i;
++                        w = &amp;(connection-&gt;weights(0,i));
++                        for( int j=0; j&lt;hidden_layer-&gt;size; j++,w+=m )
++                            ac[j] = a[j] - *w * input_i;
+ 
+-                            context_i = context_indices_per_i[i];
+-                            for( int l=0; l&lt;pseudolikelihood_context_size; l++ )
++                        context_i = context_indices_per_i[i];
++                        for( int l=0; l&lt;pseudolikelihood_context_size; l++ )
++                        {
++                            w = &amp;(connection-&gt;weights(0,*context_i));
++                            input_j = input[*context_i];
++                            if( conf_index &amp; 1)
+                             {
+-                                w = &amp;(connection-&gt;weights(0,*context_i));
+-                                input_j = input[*context_i];
+-                                if( conf_index &amp; 1)
+-                                {
+-                                    *cp_data *= input_j;
+-                                    *nums_data += bi[*context_i];
+-                                    for( int j=0; j&lt;hidden_layer-&gt;size; j++,w+=m )
+-                                        ac[j] -=  *w * ( input_j - 1 );
+-                                }
+-                                else
+-                                {
+-                                    *cp_data *= (1-input_j);
+-                                    for( int j=0; j&lt;hidden_layer-&gt;size; j++,w+=m )
+-                                        ac[j] -=  *w * input_j;
+-                                }
++                                *cp_data *= input_j;
++                                *nums_data += bi[*context_i];
++                                for( int j=0; j&lt;hidden_layer-&gt;size; j++,w+=m )
++                                    ac[j] -=  *w * ( input_j - 1 );
++                            }
++                            else
++                            {
++                                *cp_data *= (1-input_j);
++                                for( int j=0; j&lt;hidden_layer-&gt;size; j++,w+=m )
++                                    ac[j] -=  *w * input_j;
++                            }
+ 
+-                                conf_index &gt;&gt;= 1;
+-                                context_i++;
+-                            }
+-                            *nums_data -= hidden_layer-&gt;freeEnergyContribution(
+-                                hidden_activations_context(n_conf + k));
+-                            nums_data++;
+-                            cp_data++;
++                            conf_index &gt;&gt;= 1;
++                            context_i++;
+                         }
++                        *nums_data -= hidden_layer-&gt;freeEnergyContribution(
++                            hidden_activations_context(n_conf + k));
++                        nums_data++;
++                        cp_data++;
++                    }
+                     
+ 
+-                        // Gradient computation
+-                        //exp( nums_act, nums);
+-                        //Zi = sum(nums);
+-                        //log_Zi = pl_log(Zi);
+-                        log_Zi = logadd(nums_act);
++                    // Gradient computation
++                    //exp( nums_act, nums);
++                    //Zi = sum(nums);
++                    //log_Zi = pl_log(Zi);
++                    log_Zi = logadd(nums_act);
+ 
+-                        nums_data = nums_act.data();
+-                        gnums_data = gnums_act.data();
+-                        cp_data = context_probs.data();
++                    nums_data = nums_act.data();
++                    gnums_data = gnums_act.data();
++                    cp_data = context_probs.data();
+ 
+-                        // Compute input_prob gradient
++                    // Compute input_prob gradient
+ 
+-                        m = connection_gradient.mod();
+-                        // input_i = 1                    
+-                        for( int k=0; k&lt;n_conf; k++)
+-                        {
+-                            pseudolikelihood -= *cp_data * (*nums_data - log_Zi);
+-                            *gnums_data = (safeexp(*nums_data - log_Zi) - *cp_data);
+-                            gi[i] += *gnums_data;
++                    m = connection_gradient.mod();
++                    // input_i = 1                    
++                    for( int k=0; k&lt;n_conf; k++)
++                    {
++                        pseudolikelihood -= *cp_data * (*nums_data - log_Zi);
++                        *gnums_data = (safeexp(*nums_data - log_Zi) - *cp_data);
++                        gi[i] += *gnums_data;
+                         
+-                            hidden_layer-&gt;freeEnergyContributionGradient(
+-                                hidden_activations_context(k),
+-                                hidden_activations_context_k_gradient,
+-                                -*gnums_data,
+-                                false);
+-                            hidden_activation_gradient += 
+-                                hidden_activations_context_k_gradient;
++                        hidden_layer-&gt;freeEnergyContributionGradient(
++                            hidden_activations_context(k),
++                            hidden_activations_context_k_gradient,
++                            -*gnums_data,
++                            false);
++                        hidden_activation_gradient += 
++                            hidden_activations_context_k_gradient;
+                         
+-                            gac = hidden_activations_context_k_gradient.data();
+-                            gw = &amp;(connection_gradient(0,i));
+-                            for( int j=0; j&lt;hidden_layer-&gt;size; j++,gw+=m )
+-                                *gw -= gac[j] * ( input_i - 1 );
++                        gac = hidden_activations_context_k_gradient.data();
++                        gw = &amp;(connection_gradient(0,i));
++                        for( int j=0; j&lt;hidden_layer-&gt;size; j++,gw+=m )
++                            *gw -= gac[j] * ( input_i - 1 );
+ 
+-                            context_i = context_indices_per_i[i];
+-                            for( int l=0; l&lt;pseudolikelihood_context_size; l++ )
++                        context_i = context_indices_per_i[i];
++                        for( int l=0; l&lt;pseudolikelihood_context_size; l++ )
++                        {
++                            gw = &amp;(connection_gradient(0,*context_i));
++                            input_j = input[*context_i];
++                            if( conf_index &amp; 1)
+                             {
+-                                gw = &amp;(connection_gradient(0,*context_i));
+-                                input_j = input[*context_i];
+-                                if( conf_index &amp; 1)
+-                                {
+-                                    gi[*context_i] += *gnums_data;
+-                                    for( int j=0; j&lt;hidden_layer-&gt;size; j++,gw+=m )
+-                                        *gw -= gac[j] * ( input_j - 1 );
+-                                }
+-                                else
+-                                {
+-                                    for( int j=0; j&lt;hidden_layer-&gt;size; j++,gw+=m )
+-                                        *gw -= gac[j] * input_j;
+-                                }
+-                                conf_index &gt;&gt;= 1;
+-                                context_i++;
++                                gi[*context_i] += *gnums_data;
++                                for( int j=0; j&lt;hidden_layer-&gt;size; j++,gw+=m )
++                                    *gw -= gac[j] * ( input_j - 1 );
+                             }
+-
+-                            nums_data++;
+-                            gnums_data++;
+-                            cp_data++;
++                            else
++                            {
++                                for( int j=0; j&lt;hidden_layer-&gt;size; j++,gw+=m )
++                                    *gw -= gac[j] * input_j;
++                            }
++                            conf_index &gt;&gt;= 1;
++                            context_i++;
+                         }
+ 
+-                        // input_i = 0
+-                        for( int k=0; k&lt;n_conf; k++)
+-                        {
+-                            pseudolikelihood -= *cp_data * (*nums_data - log_Zi);
+-                            *gnums_data = (safeexp(*nums_data - log_Zi) - *cp_data);
++                        nums_data++;
++                        gnums_data++;
++                        cp_data++;
++                    }
++
++                    // input_i = 0
++                    for( int k=0; k&lt;n_conf; k++)
++                    {
++                        pseudolikelihood -= *cp_data * (*nums_data - log_Zi);
++                        *gnums_data = (safeexp(*nums_data - log_Zi) - *cp_data);
+                         
+-                            hidden_layer-&gt;freeEnergyContributionGradient(
+-                                hidden_activations_context(n_conf + k),
+-                                hidden_activations_context_k_gradient,
+-                                -*gnums_data,
+-                                false);
+-                            hidden_activation_gradient += 
+-                                hidden_activations_context_k_gradient;
++                        hidden_layer-&gt;freeEnergyContributionGradient(
++                            hidden_activations_context(n_conf + k),
++                            hidden_activations_context_k_gradient,
++                            -*gnums_data,
++                            false);
++                        hidden_activation_gradient += 
++                            hidden_activations_context_k_gradient;
+                         
+-                            gac = hidden_activations_context_k_gradient.data();
+-                            gw = &amp;(connection_gradient(0,i));
+-                            for( int j=0; j&lt;hidden_layer-&gt;size; j++,gw+=m )
+-                                *gw -= gac[j] *input_i;
++                        gac = hidden_activations_context_k_gradient.data();
++                        gw = &amp;(connection_gradient(0,i));
++                        for( int j=0; j&lt;hidden_layer-&gt;size; j++,gw+=m )
++                            *gw -= gac[j] *input_i;
+ 
+-                            context_i = context_indices_per_i[i];
+-                            for( int l=0; l&lt;pseudolikelihood_context_size; l++ )
++                        context_i = context_indices_per_i[i];
++                        for( int l=0; l&lt;pseudolikelihood_context_size; l++ )
++                        {
++                            gw = &amp;(connection_gradient(0,*context_i));
++                            input_j = input[*context_i];
++                            if( conf_index &amp; 1)
+                             {
+-                                gw = &amp;(connection_gradient(0,*context_i));
+-                                input_j = input[*context_i];
+-                                if( conf_index &amp; 1)
+-                                {
+-                                    gi[*context_i] += *gnums_data;
+-                                    for( int j=0; j&lt;hidden_layer-&gt;size; j++,gw+=m )
+-                                        *gw -= gac[j] * ( input_j - 1 );
+-                                }
+-                                else
+-                                {
+-                                    for( int j=0; j&lt;hidden_layer-&gt;size; j++,gw+=m )
+-                                        *gw -= gac[j] * input_j;
+-                                }
+-
+-                                conf_index &gt;&gt;= 1;
+-                                context_i++;
++                                gi[*context_i] += *gnums_data;
++                                for( int j=0; j&lt;hidden_layer-&gt;size; j++,gw+=m )
++                                    *gw -= gac[j] * ( input_j - 1 );
+                             }
++                            else
++                            {
++                                for( int j=0; j&lt;hidden_layer-&gt;size; j++,gw+=m )
++                                    *gw -= gac[j] * input_j;
++                            }
+ 
+-                            nums_data++;
+-                            gnums_data++;
+-                            cp_data++;
++                            conf_index &gt;&gt;= 1;
++                            context_i++;
+                         }
++
++                        nums_data++;
++                        gnums_data++;
++                        cp_data++;
+                     }
++                }
+ 
+ //                    cout &lt;&lt; &quot;input_gradient: &quot; &lt;&lt; input_gradient &lt;&lt; endl;
+ //                    cout &lt;&lt; &quot;hidden_activation_gradient&quot; &lt;&lt; hidden_activation_gradient &lt;&lt; endl;
+ 
+-                    externalProductAcc( connection_gradient, hidden_activation_gradient,
+-                                        input );
++                externalProductAcc( connection_gradient, hidden_activation_gradient,
++                                    input );
++                if( targetsize() &gt; 0 )
++                    lr *= generative_learning_weight;
+ 
+-                    // Hidden bias update
+-                    multiplyScaledAdd(hidden_activation_gradient, 1.0, -lr,
+-                                      hidden_layer-&gt;bias);
+-                    // Connection weights update
+-                    multiplyScaledAdd( connection_gradient, 1.0, -lr,
+-                                       connection-&gt;weights );
+-                    // Input bias update
+-                    multiplyScaledAdd(input_gradient, 1.0, -lr,
+-                                      input_layer-&gt;bias);
++                // Hidden bias update
++                multiplyScaledAdd(hidden_activation_gradient, 1.0, -lr,
++                                  hidden_layer-&gt;bias);
++                // Connection weights update
++                multiplyScaledAdd( connection_gradient, 1.0, -lr,
++                                   connection-&gt;weights );
++                // Input bias update
++                multiplyScaledAdd(input_gradient, 1.0, -lr,
++                                  input_layer-&gt;bias);
+ 
+-                    // N.B.: train costs contains pseudolikelihood
+-                    //       or pseudoNLL, not NLL
++                if( targetsize() == 1 )
++                    externalProductScaleAcc( target_connection-&gt;weights, 
++                                             hidden_activation_gradient,
++                                             target_one_hot,
++                                             lr );
++                if( targetsize() &gt; 1 )
++                    externalProductScaleAcc( target_connection-&gt;weights, 
++                                             hidden_activation_gradient,
++                                             target,
++                                             lr );
++
++                // N.B.: train costs contains pseudolikelihood
++                //       or pseudoNLL, not NLL
++                if( compute_input_space_nll )
+                     train_costs[nll_cost_index] = pseudolikelihood;
+-                }
+             }
++        }
+             
+-            // CD learning
+-            if( !fast_is_equal(cd_learning_rate, 0.) )
++        // CD learning
++        if( !fast_is_equal(cd_learning_rate, 0.) )
++        {
++
++            if( !fast_is_equal(persistent_cd_weight, 1.) )
+             {
++                if( cd_decrease_ct != 0 )
++                    lr = cd_learning_rate / (1.0 + stage * cd_decrease_ct );
++                else
++                    lr = cd_learning_rate;
+ 
+-                if( !fast_is_equal(persistent_cd_weight, 1.) )
++                if( targetsize() &gt; 0 )
++                    lr *= generative_learning_weight;
++                    
++                lr *= (1-persistent_cd_weight);
++
++                setLearningRate(lr);
++
++                // Positive phase
++                pos_input = input;
++                if( targetsize() &gt; 0 )
++                    pos_target = target_one_hot;
++                connection-&gt;setAsDownInput( input );
++                hidden_layer-&gt;getAllActivations( 
++                    (RBMMatrixConnection*) connection );
++                if( targetsize() == 1 )
++                    productAcc( hidden_layer-&gt;activation,
++                                target_connection-&gt;weights,
++                                target_one_hot );
++                else if( targetsize() &gt; 1 )
++                    productAcc( hidden_layer-&gt;activation,
++                                target_connection-&gt;weights,
++                                target );
++                        
++                hidden_layer-&gt;computeExpectation();
++                //pos_hidden.resize( hidden_layer-&gt;size );
++                pos_hidden &lt;&lt; hidden_layer-&gt;expectation;
++                    
++                // Negative phase
++                for(int i=0; i&lt;cd_n_gibbs; i++)
+                 {
+-                    if( cd_decrease_ct != 0 )
+-                        lr = cd_learning_rate / (1.0 + stage * cd_decrease_ct );
++                    if( use_mean_field_cd )
++                    {
++                        connection-&gt;setAsUpInput( hidden_layer-&gt;expectation );
++                    }
+                     else
+-                        lr = cd_learning_rate;
+-                    
+-                    lr *= (1-persistent_cd_weight);
++                    {
++                        hidden_layer-&gt;generateSample();
++                        connection-&gt;setAsUpInput( hidden_layer-&gt;sample );
++                    }
++                    input_layer-&gt;getAllActivations( 
++                        (RBMMatrixConnection*) connection );
++                    input_layer-&gt;computeExpectation();
++                    // LATERAL CONNECTIONS CODE HERE!
+ 
+-                    setLearningRate(lr);
++                    if( use_mean_field_cd )
++                    {
++                        connection-&gt;setAsDownInput( input_layer-&gt;expectation );
++                    }
++                    else
++                    {
++                        input_layer-&gt;generateSample();
++                        connection-&gt;setAsDownInput( input_layer-&gt;sample );
++                    }
+ 
+-                    // Positive phase
+-                    pos_input = input;
+-                    connection-&gt;setAsDownInput( input );
+                     hidden_layer-&gt;getAllActivations( 
+                         (RBMMatrixConnection*) connection );
+-                    hidden_layer-&gt;computeExpectation();
+-                    //pos_hidden.resize( hidden_layer-&gt;size );
+-                    pos_hidden &lt;&lt; hidden_layer-&gt;expectation;
+-                    
+-                    // Negative phase
+-                    for(int i=0; i&lt;cd_n_gibbs; i++)
++
++                    if( targetsize() &gt; 0 )
+                     {
+                         if( use_mean_field_cd )
+-                        {
+-                            connection-&gt;setAsUpInput( hidden_layer-&gt;expectation );
+-                        }
++                            target_connection-&gt;setAsUpInput( 
++                                hidden_layer-&gt;expectation );
+                         else
+-                        {
+-                            hidden_layer-&gt;generateSample();
+-                            connection-&gt;setAsUpInput( hidden_layer-&gt;sample );
+-                        }
+-                        input_layer-&gt;getAllActivations( 
+-                            (RBMMatrixConnection*) connection );
+-                        input_layer-&gt;computeExpectation();
++                            target_connection-&gt;setAsUpInput( 
++                                hidden_layer-&gt;sample );
++                        target_layer-&gt;getAllActivations( 
++                            (RBMMatrixConnection*) target_connection );
++                        target_layer-&gt;computeExpectation();
+                         if( use_mean_field_cd )
+-                        {
+-                            connection-&gt;setAsDownInput( input_layer-&gt;expectation );
+-                        }
++                            productAcc( hidden_layer-&gt;activation,
++                                        target_connection-&gt;weights,
++                                        target_layer-&gt;expectation );
+                         else
+                         {
+-                            input_layer-&gt;generateSample();
+-                            connection-&gt;setAsDownInput( input_layer-&gt;sample );
+-                        }
+-                        hidden_layer-&gt;getAllActivations( 
+-                            (RBMMatrixConnection*) connection );
+-                        hidden_layer-&gt;computeExpectation();
++                            target_layer-&gt;generateSample();
++                            productAcc( hidden_layer-&gt;activation,
++                                        target_connection-&gt;weights,
++                                        target_layer-&gt;sample );
++                        }   
+                     }
++                        
++                    hidden_layer-&gt;computeExpectation();
++                }
+                     
++                if( use_mean_field_cd )
++                    neg_input = input_layer-&gt;expectation;
++                else
++                    neg_input = input_layer-&gt;sample;
++
++                neg_hidden = hidden_layer-&gt;expectation;
++                    
++                input_layer-&gt;update(pos_input,neg_input);
++                hidden_layer-&gt;update(pos_hidden,neg_hidden);
++                connection-&gt;update(pos_input,pos_hidden,
++                                   neg_input,neg_hidden);
++                if( targetsize() &gt; 0 )
++                {
+                     if( use_mean_field_cd )
+-                        neg_input = input_layer-&gt;expectation;
++                        neg_target = target_layer-&gt;expectation;
+                     else
+-                        neg_input = input_layer-&gt;sample;
+-                    neg_hidden = hidden_layer-&gt;expectation;
+-                    
+-                    input_layer-&gt;update(pos_input,neg_input);
+-                    hidden_layer-&gt;update(pos_hidden,neg_hidden);
+-                    connection-&gt;update(pos_input,pos_hidden,
+-                                       neg_input,neg_hidden);
++                        neg_target = target_layer-&gt;sample;
++                    target_layer-&gt;update(pos_target,neg_target);
++                    target_connection-&gt;update(pos_target,pos_hidden,
++                                              neg_target,neg_hidden);
+                 }
++            }
+ 
+-                if( !fast_is_equal(persistent_cd_weight, 0.) )
+-                {
+-                    if( use_mean_field_cd )
+-                        PLERROR(&quot;In PseudolikelihoodRBM::train(): Persistent &quot;
++            if( !fast_is_equal(persistent_cd_weight, 0.) )
++            {
++                if( use_mean_field_cd )
++                    PLERROR(&quot;In PseudolikelihoodRBM::train(): Persistent &quot;
+                             &quot;Contrastive Divergence was not implemented for &quot;
+                             &quot;MF-CD&quot;);
+ 
+-                    if( cd_decrease_ct != 0 )
+-                        lr = cd_learning_rate / (1.0 + stage * cd_decrease_ct );
+-                    else
+-                        lr = cd_learning_rate;
++                if( cd_decrease_ct != 0 )
++                    lr = cd_learning_rate / (1.0 + stage * cd_decrease_ct );
++                else
++                    lr = cd_learning_rate;
+                     
+-                    lr *= persistent_cd_weight;
++                if( targetsize() &gt; 0 )
++                    lr *= generative_learning_weight;
+ 
+-                    setLearningRate(lr);
++                lr *= persistent_cd_weight;
+ 
+-                    int chain_i = stage % n_gibbs_chains;
++                setLearningRate(lr);
+ 
+-                    if( !persistent_gibbs_chain_is_started[chain_i] )
+-                    {  
+-                        // Start gibbs chain
+-                        connection-&gt;setAsDownInput( input );
+-                        hidden_layer-&gt;getAllActivations( 
+-                            (RBMMatrixConnection*) connection );
+-                        hidden_layer-&gt;computeExpectation();
+-                        hidden_layer-&gt;generateSample();
+-                        pers_cd_hidden[chain_i] &lt;&lt; hidden_layer-&gt;sample;
+-                        persistent_gibbs_chain_is_started[chain_i] = true;
+-                    }
++                int chain_i = stage % n_gibbs_chains;
+ 
+-                    if( fast_is_equal(persistent_cd_weight, 1.) )
+-                    {
+-                        // Hidden positive sample was not computed previously
+-                        connection-&gt;setAsDownInput( input );
+-                        hidden_layer-&gt;getAllActivations( 
+-                            (RBMMatrixConnection*) connection );
+-                        hidden_layer-&gt;computeExpectation();
+-                        pos_hidden &lt;&lt; hidden_layer-&gt;expectation;
+-                    }
++                if( !persistent_gibbs_chain_is_started[chain_i] )
++                {  
++                    // Start gibbs chain
++                    connection-&gt;setAsDownInput( input );
++                    hidden_layer-&gt;getAllActivations( 
++                        (RBMMatrixConnection*) connection );
++                    if( targetsize() == 1 )
++                        productAcc( hidden_layer-&gt;activation,
++                                    target_connection-&gt;weights,
++                                    target_one_hot );
++                    else if( targetsize() &gt; 1 )
++                        productAcc( hidden_layer-&gt;activation,
++                                    target_connection-&gt;weights,
++                                    target );
++                        
++                    hidden_layer-&gt;computeExpectation();
++                    hidden_layer-&gt;generateSample();
++                    pers_cd_hidden[chain_i] &lt;&lt; hidden_layer-&gt;sample;
++                    persistent_gibbs_chain_is_started[chain_i] = true;
++                }
+ 
+-                    hidden_layer-&gt;sample &lt;&lt; pers_cd_hidden[chain_i];
+-                    // Prolonged Gibbs chain
+-                    for(int i=0; i&lt;cd_n_gibbs; i++)
++                if( fast_is_equal(persistent_cd_weight, 1.) )
++                {
++                    // Hidden positive sample was not computed previously
++                    connection-&gt;setAsDownInput( input );
++                    hidden_layer-&gt;getAllActivations( 
++                        (RBMMatrixConnection*) connection );
++                    if( targetsize() == 1 )
++                        productAcc( hidden_layer-&gt;activation,
++                                    target_connection-&gt;weights,
++                                    target_one_hot );
++                    else if( targetsize() &gt; 1 )
++                        productAcc( hidden_layer-&gt;activation,
++                                    target_connection-&gt;weights,
++                                    target );
++                            
++                    hidden_layer-&gt;computeExpectation();
++                    pos_hidden &lt;&lt; hidden_layer-&gt;expectation;
++                }
++
++                hidden_layer-&gt;sample &lt;&lt; pers_cd_hidden[chain_i];
++                // Prolonged Gibbs chain
++                for(int i=0; i&lt;cd_n_gibbs; i++)
++                {
++                    connection-&gt;setAsUpInput( hidden_layer-&gt;sample );
++                    input_layer-&gt;getAllActivations( 
++                        (RBMMatrixConnection*) connection );
++                    input_layer-&gt;computeExpectation();
++                    // LATERAL CONNECTIONS CODE HERE!
++                    input_layer-&gt;generateSample();
++                    connection-&gt;setAsDownInput( input_layer-&gt;sample );
++                    hidden_layer-&gt;getAllActivations( 
++                        (RBMMatrixConnection*) connection );
++                    if( targetsize() &gt; 0 )
+                     {
+-                        connection-&gt;setAsUpInput( hidden_layer-&gt;sample );
+-                        input_layer-&gt;getAllActivations( 
+-                            (RBMMatrixConnection*) connection );
+-                        input_layer-&gt;computeExpectation();
+-                        input_layer-&gt;generateSample();
+-                        connection-&gt;setAsDownInput( input_layer-&gt;sample );
+-                        hidden_layer-&gt;getAllActivations( 
+-                            (RBMMatrixConnection*) connection );
+-                        hidden_layer-&gt;computeExpectation();
+-                        hidden_layer-&gt;generateSample();
++                        target_connection-&gt;setAsUpInput( hidden_layer-&gt;sample );
++                        target_layer-&gt;getAllActivations( 
++                            (RBMMatrixConnection*) target_connection );
++                        target_layer-&gt;computeExpectation();
++                        target_layer-&gt;generateSample();
++                        productAcc( hidden_layer-&gt;activation,
++                                    target_connection-&gt;weights,
++                                    target_layer-&gt;sample );
+                     }
++                    hidden_layer-&gt;computeExpectation();
++                    hidden_layer-&gt;generateSample();
++                }
+ 
+-                    pers_cd_input[chain_i] &lt;&lt; input_layer-&gt;sample;
+-                    pers_cd_hidden[chain_i] &lt;&lt; hidden_layer-&gt;sample;
++                pers_cd_hidden[chain_i] &lt;&lt; hidden_layer-&gt;sample;
+ 
+-                    input_layer-&gt;update(input, pers_cd_input[chain_i]);
+-                    hidden_layer-&gt;update(pos_hidden,hidden_layer-&gt;expectation);
+-                    connection-&gt;update(input,pos_hidden,
+-                                       pers_cd_input[chain_i],
+-                                       hidden_layer-&gt;expectation);
++                input_layer-&gt;update(input, input_layer-&gt;sample);
++                hidden_layer-&gt;update(pos_hidden,hidden_layer-&gt;expectation);
++                connection-&gt;update(input,pos_hidden,
++                                   input_layer-&gt;sample,
++                                   hidden_layer-&gt;expectation);
++                if( targetsize() &gt; 0 )
++                {
++                    target_layer-&gt;update(target_one_hot, target_layer-&gt;sample);
++                    target_connection-&gt;update(target_one_hot,pos_hidden,
++                                              target_layer-&gt;sample,
++                                              hidden_layer-&gt;expectation);
+                 }
+             }
++        }
+         
+-            if( !fast_is_equal(denoising_learning_rate, 0.) )
+-            {
+-                if( denoising_decrease_ct != 0 )
+-                    lr = denoising_learning_rate / 
+-                        (1.0 + stage * denoising_decrease_ct );
+-                else
+-                    lr = denoising_learning_rate;
++        if( !fast_is_equal(denoising_learning_rate, 0.) )
++        {
++            if( denoising_decrease_ct != 0 )
++                lr = denoising_learning_rate / 
++                    (1.0 + stage * denoising_decrease_ct );
++            else
++                lr = denoising_learning_rate;
+ 
+-                setLearningRate(lr);
+-                // I'm here
+-                if( fraction_of_masked_inputs &gt; 0 )
+-                    random_gen-&gt;shuffleElements(autoencoder_input_indices);
++            if( targetsize() &gt; 0 )
++                lr *= generative_learning_weight;
++
++            setLearningRate(lr);
++            if( targetsize() &gt; 0 )
++                PLERROR(&quot;In PseudolikelihoodRBM::train(): denoising &quot;
++                        &quot;autoencoder training is not implemented for &quot;
++                        &quot;targetsize() &gt; 0&quot;); 
++            if( fraction_of_masked_inputs &gt; 0 )
++                random_gen-&gt;shuffleElements(autoencoder_input_indices);
+                 
+-                masked_autoencoder_input &lt;&lt; input;
+-                if( fraction_of_masked_inputs &gt; 0 )
+-                {
+-                    for( int j=0 ; 
+-                         j &lt; round(fraction_of_masked_inputs*input_layer-&gt;size) ; 
+-                         j++)
+-                        masked_autoencoder_input[ autoencoder_input_indices[j] ] = 0; 
+-                }
++            masked_autoencoder_input &lt;&lt; input;
++            if( fraction_of_masked_inputs &gt; 0 )
++            {
++                for( int j=0 ; 
++                     j &lt; round(fraction_of_masked_inputs*input_layer-&gt;size) ; 
++                     j++)
++                    masked_autoencoder_input[ autoencoder_input_indices[j] ] = 0; 
++            }
+ 
+-                // Somehow, doesn't compile without the fancy casts...
+-                ((RBMMatrixConnection *)connection)-&gt;RBMConnection::fprop( masked_autoencoder_input, 
+-                                   hidden_layer-&gt;activation );
++            // Somehow, doesn't compile without the fancy casts...
++            ((RBMMatrixConnection *)connection)-&gt;RBMConnection::fprop( masked_autoencoder_input, 
++                                                                       hidden_layer-&gt;activation );
+ 
+-                hidden_layer-&gt;fprop( hidden_layer-&gt;activation,
+-                                     hidden_layer-&gt;expectation );
++            hidden_layer-&gt;fprop( hidden_layer-&gt;activation,
++                                 hidden_layer-&gt;expectation );
+                 
+-                transpose_connection-&gt;fprop( hidden_layer-&gt;expectation,
+-                                             input_layer-&gt;activation );
+-                input_layer-&gt;fprop( input_layer-&gt;activation,
+-                                    input_layer-&gt;expectation );
+-                input_layer-&gt;setExpectation( input_layer-&gt;expectation );
++            transpose_connection-&gt;fprop( hidden_layer-&gt;expectation,
++                                         input_layer-&gt;activation );
++            input_layer-&gt;fprop( input_layer-&gt;activation,
++                                input_layer-&gt;expectation );
++            input_layer-&gt;setExpectation( input_layer-&gt;expectation );
+ 
+-                real cost = input_layer-&gt;fpropNLL(input);
++            real cost = input_layer-&gt;fpropNLL(input);
+                 
+-                input_layer-&gt;bpropNLL(input, cost, 
+-                                      reconstruction_activation_gradient);
+-                if( only_reconstruct_masked_inputs &amp;&amp; 
+-                    fraction_of_masked_inputs &gt; 0 )
+-                {
+-                    for( int j=(int)round(fraction_of_masked_inputs*input_layer-&gt;size) ; 
+-                         j &lt; input_layer-&gt;size ; 
+-                         j++)
+-                        reconstruction_activation_gradient[ 
+-                            autoencoder_input_indices[j] ] = 0; 
+-                }
+-                input_layer-&gt;update( reconstruction_activation_gradient );
++            input_layer-&gt;bpropNLL(input, cost, 
++                                  reconstruction_activation_gradient);
++            if( only_reconstruct_masked_inputs &amp;&amp; 
++                fraction_of_masked_inputs &gt; 0 )
++            {
++                for( int j=(int)round(fraction_of_masked_inputs*input_layer-&gt;size) ; 
++                     j &lt; input_layer-&gt;size ; 
++                     j++)
++                    reconstruction_activation_gradient[ 
++                        autoencoder_input_indices[j] ] = 0; 
++            }
++            input_layer-&gt;update( reconstruction_activation_gradient );
+ 
+-                transpose_connection-&gt;bpropUpdate( 
+-                    hidden_layer-&gt;expectation,
+-                    input_layer-&gt;activation,
+-                    hidden_layer_expectation_gradient,
+-                    reconstruction_activation_gradient );
++            transpose_connection-&gt;bpropUpdate( 
++                hidden_layer-&gt;expectation,
++                input_layer-&gt;activation,
++                hidden_layer_expectation_gradient,
++                reconstruction_activation_gradient );
+ 
+-                hidden_layer-&gt;bpropUpdate( hidden_layer-&gt;activation,
+-                                           hidden_layer-&gt;expectation,
+-                                           hidden_layer_activation_gradient,
+-                                           hidden_layer_expectation_gradient );
++            hidden_layer-&gt;bpropUpdate( hidden_layer-&gt;activation,
++                                       hidden_layer-&gt;expectation,
++                                       hidden_layer_activation_gradient,
++                                       hidden_layer_expectation_gradient );
+                 
+-                connection-&gt;bpropUpdate( masked_autoencoder_input, 
+-                                         hidden_layer-&gt;activation,
+-                                         reconstruction_activation_gradient, // is not used afterwards...
+-                                         hidden_layer_activation_gradient );
+-            }
++            connection-&gt;bpropUpdate( masked_autoencoder_input, 
++                                     hidden_layer-&gt;activation,
++                                     reconstruction_activation_gradient, // is not used afterwards...
++                                     hidden_layer_activation_gradient );
++        }
+ 
+-        }
++//        }
+         train_stats-&gt;update( train_costs );
+         
+     }
+@@ -1472,8 +1787,10 @@
+     input_layer-&gt;setLearningRate( the_learning_rate );
+     hidden_layer-&gt;setLearningRate( the_learning_rate );
+     connection-&gt;setLearningRate( the_learning_rate );
+-    //target_layer-&gt;setLearningRate( the_learning_rate );
+-    //last_to_target-&gt;setLearningRate( the_learning_rate );
++    if( target_layer )
++        target_layer-&gt;setLearningRate( the_learning_rate );
++    if( target_connection )
++        target_connection-&gt;setLearningRate( the_learning_rate );
+ }
+ 
+ void PseudolikelihoodRBM::compute_Z() const
+
+Modified: trunk/plearn_learners_experimental/PseudolikelihoodRBM.h
+===================================================================
+--- trunk/plearn_learners_experimental/PseudolikelihoodRBM.h	2008-07-25 20:52:46 UTC (rev 9289)
++++ trunk/plearn_learners_experimental/PseudolikelihoodRBM.h	2008-07-25 21:49:16 UTC (rev 9290)
+@@ -131,6 +131,9 @@
+     //! Number of most correlated input elements over which to sample
+     int k_most_correlated;
+ 
++    //! Weight of generative learning
++    real generative_learning_weight;
++
+     //! The binomial input layer of the RBM
+     PP&lt;RBMBinomialLayer&gt; input_layer;
+ 
+@@ -152,6 +155,12 @@
+ 
+     PP&lt;RBMMatrixTransposeConnection&gt; transpose_connection;
+ 
++    //! The target layer of the RBM
++    PP&lt;RBMLayer&gt; target_layer;
++
++    //! The connection weights between the target and hidden layer
++    PP&lt;RBMMatrixConnection&gt; target_connection;
++
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+@@ -230,29 +239,12 @@
+ 
+     //#####  Not Options  #####################################################
+ 
+-    ////! Matrix connection weights between the hidden layer and the target layer
+-    ////! (pointer to classification_module-&gt;last_to_target)
+-    //PP&lt;RBMMatrixConnection&gt; last_to_target;
+-    //
+-    ////! Connection weights between the hidden layer and the target layer
+-    ////! (pointer to classification_module-&gt;last_to_target)
+-    //PP&lt;RBMConnection&gt; last_to_target_connection;
+-    //
+-    ////! Connection weights between the hidden layer and the visible layer
+-    ////! (pointer to classification_module-&gt;joint_connection)
+-    //PP&lt;RBMConnection&gt; joint_connection;
+-    //
+-    ////! Part of the RBM visible layer corresponding to the target
+-    ////! (pointer to classification_module-&gt;target_layer)
+-    //PP&lt;RBMLayer&gt; target_layer;
+-
+     //! Temporary variables for Contrastive Divergence
+     mutable Vec target_one_hot;
+ 
+     //! Temporary variables for RBM computations
+     mutable Vec input_gradient;
+     mutable Vec class_output;
+-    mutable Vec before_class_output;
+     mutable Vec class_gradient;
+     mutable Vec hidden_activation_pos_i;
+     mutable Vec hidden_activation_neg_i;
+@@ -272,15 +264,16 @@
+     mutable Vec gnums_act;
+     mutable Vec conf;
+     mutable Vec pos_input;
++    mutable Vec pos_target;
+     mutable Vec pos_hidden;
+     mutable Vec neg_input;
++    mutable Vec neg_target;
+     mutable Vec neg_hidden;
+     mutable Vec reconstruction_activation_gradient;
+     mutable Vec hidden_layer_expectation_gradient;
+     mutable Vec hidden_layer_activation_gradient;
+     mutable Vec masked_autoencoder_input;
+     mutable TVec&lt;int&gt; autoencoder_input_indices;
+-    mutable TVec&lt;Vec&gt; pers_cd_input;
+     mutable TVec&lt;Vec&gt; pers_cd_hidden;
+ 
+     //! Keeps the index of the NLL cost in train_costs
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002738.html">[Plearn-commits] r9289 - trunk/plearn_learners/meta
+</A></li>
+	<LI>Next message: <A HREF="002740.html">[Plearn-commits] r9291 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2739">[ date ]</a>
+              <a href="thread.html#2739">[ thread ]</a>
+              <a href="subject.html#2739">[ subject ]</a>
+              <a href="author.html#2739">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

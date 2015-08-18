@@ -1,0 +1,203 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9884 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9884%20-%20trunk/plearn/vmat&In-Reply-To=%3C200902021543.n12FhHb4029975%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="003325.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9884 - trunk/plearn/vmat</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9884%20-%20trunk/plearn/vmat&In-Reply-To=%3C200902021543.n12FhHb4029975%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9884 - trunk/plearn/vmat">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Mon Feb  2 16:43:17 CET 2009</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="003325.html">[Plearn-commits] r9885 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3324">[ date ]</a>
+              <a href="thread.html#3324">[ thread ]</a>
+              <a href="subject.html#3324">[ subject ]</a>
+              <a href="author.html#3324">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2009-02-02 16:43:16 +0100 (Mon, 02 Feb 2009)
+New Revision: 9884
+
+Modified:
+   trunk/plearn/vmat/InfiniteMNISTVMatrix.cc
+   trunk/plearn/vmat/InfiniteMNISTVMatrix.h
+Log:
+Corrected a bug when switching to the training set, which was such that test samples were sometimes given instead of training samples!
+
+
+
+Modified: trunk/plearn/vmat/InfiniteMNISTVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/InfiniteMNISTVMatrix.cc	2009-01-30 03:30:15 UTC (rev 9883)
++++ trunk/plearn/vmat/InfiniteMNISTVMatrix.cc	2009-02-02 15:43:16 UTC (rev 9884)
+@@ -60,6 +60,9 @@
+ InfiniteMNISTVMatrix::InfiniteMNISTVMatrix():
+     include_test_examples(false),
+     include_validation_examples(false),
++    random_switch_to_original_training_set(false),
++    proportion_of_switches(0.0),
++    seed(1834),
+     input_divisor(1.),
+     test_images(TEST_IMAGES_PATH),
+     test_labels(TEST_LABELS_PATH),
+@@ -70,6 +73,8 @@
+ /* ### Initialize all fields to their default value */
+ {
+     InfiniteMNISTVMatrix::n_pointers_to_dataset++;
++    random_gen = new PRandom();
++    image = (unsigned char*)malloc(EXSIZE);
+ }
+ 
+ InfiniteMNISTVMatrix::~InfiniteMNISTVMatrix()
+@@ -80,6 +85,7 @@
+             destroy_mnistproblem(dataset);
+             InfiniteMNISTVMatrix::dataset = 0;
+     }
++    free( image );
+ }
+ 
+ void InfiniteMNISTVMatrix::getNewRow(int i, const Vec&amp; v) const
+@@ -99,8 +105,12 @@
+         else
+             i_dataset = i + (i/50000)*10000 + 10000;
+ 
+-    unsigned char *image = cache_transformed_vector(InfiniteMNISTVMatrix::dataset, i_dataset);
++    if( random_switch_to_original_training_set &amp;&amp; 
++        random_gen-&gt;uniform_sample() &lt; proportion_of_switches )
++        i_dataset = (i_dataset % 50000)+10000;
+ 
++    image = compute_transformed_vector_in_place(InfiniteMNISTVMatrix::dataset, i_dataset, image);
++
+     unsigned char* xj=image;
+     real* vj=v.data();
+     for( int j=0; j&lt;inputsize_; j++, xj++, vj++ )
+@@ -123,6 +133,21 @@
+                    &quot;Indication that the validation set examples (the last 10000 examples from the\n&quot;
+                    &quot;training set) should be included in this VMatrix.\n&quot;);     
+ 
++     declareOption(ol, &quot;random_switch_to_original_training_set&quot;, 
++                   &amp;InfiniteMNISTVMatrix::random_switch_to_original_training_set,
++                   OptionBase::buildoption,
++                   &quot;Indication that the VMatrix should randomly (from time to time) provide\n&quot;
++                   &quot;an example from the original training set instead of an example\n&quot;
++                   &quot;from the global dataset.\n&quot;);     
++
++     declareOption(ol, &quot;proportion_of_switches&quot;, &amp;InfiniteMNISTVMatrix::proportion_of_switches,
++                   OptionBase::buildoption,
++                   &quot;Proportion of switches to the original training set.\n&quot;);     
++
++     declareOption(ol, &quot;seed&quot;, &amp;InfiniteMNISTVMatrix::seed,
++                   OptionBase::buildoption,
++                   &quot;Seed of random number generator.\n&quot;);
++
+      declareOption(ol, &quot;input_divisor&quot;, &amp;InfiniteMNISTVMatrix::input_divisor,
+                    OptionBase::buildoption,
+                    &quot;Value that the inputs should be divided by.\n&quot;);     
+@@ -157,6 +182,7 @@
+ 
+ void InfiniteMNISTVMatrix::build_()
+ {
++    random_gen-&gt;manual_seed(seed);
+ 
+     if( !InfiniteMNISTVMatrix::dataset )
+     {
+@@ -233,6 +259,7 @@
+     PLWARNING(&quot;InfiniteMNISTVMatrix::makeDeepCopyFromShallowCopy is not totally implemented. Need &quot;
+               &quot;to figure out how to deep copy the \&quot;dataset\&quot; variable (mnistproblem_t*).\n&quot;);
+     InfiniteMNISTVMatrix::n_pointers_to_dataset++;
++    image = (unsigned char*)malloc(EXSIZE);
+ }
+ 
+ } // end of namespace PLearn
+
+Modified: trunk/plearn/vmat/InfiniteMNISTVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/InfiniteMNISTVMatrix.h	2009-01-30 03:30:15 UTC (rev 9883)
++++ trunk/plearn/vmat/InfiniteMNISTVMatrix.h	2009-02-02 15:43:16 UTC (rev 9884)
+@@ -48,7 +48,9 @@
+ #define TANGVEC_PATH &quot;/home/fringant2/lisa/data/mnist/tangVec_float_60000x28x28.bin&quot;
+ 
+ #include &lt;plearn/vmat/RowBufferedVMatrix.h&gt;
++#include &lt;plearn/math/PRandom.h&gt;
+ #include &lt;kernel-invariant.h&gt;
++//#include &quot;kernel-invariant2.h&quot;
+ 
+ namespace PLearn {
+ 
+@@ -74,10 +76,24 @@
+     //! Indication that the validation set examples (the last 10000 examples from the
+     //! training set) should be included in this VMatrix.
+     bool include_validation_examples;
++
++    //! Indication that the VMatrix should randomly (from time to time) provide
++    //! an example from the original training set instead of an example
++    //! from the global dataset
++    bool random_switch_to_original_training_set;
+     
++    //! Proportion of switches to the original training set
++    real proportion_of_switches;
++    
++    //! Seed of random number generator
++    int seed;
++
+     //! Value that the inputs should be divided by.
+     real input_divisor;
+ 
++    //! Random number generator
++    PP&lt; PRandom &gt; random_gen;
++
+     // Files required for loading infinite MNIST dataset
+     //! File path of MNIST test images.
+     string test_images;
+@@ -121,6 +137,7 @@
+ 
+     static mnistproblem_t *dataset;
+     static int n_pointers_to_dataset;
++    mutable unsigned char* image;
+ 
+ protected:
+     //#####  Protected Member Functions  ######################################
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="003325.html">[Plearn-commits] r9885 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3324">[ date ]</a>
+              <a href="thread.html#3324">[ thread ]</a>
+              <a href="subject.html#3324">[ subject ]</a>
+              <a href="author.html#3324">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

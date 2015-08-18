@@ -1,0 +1,438 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6956 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6956%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704302159.l3ULxbFn020005%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000404.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6956 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6956%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704302159.l3ULxbFn020005%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6956 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Mon Apr 30 23:59:37 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000404.html">[Plearn-commits] r6955 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#405">[ date ]</a>
+              <a href="thread.html#405">[ thread ]</a>
+              <a href="subject.html#405">[ subject ]</a>
+              <a href="author.html#405">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-04-30 23:59:37 +0200 (Mon, 30 Apr 2007)
+New Revision: 6956
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+   trunk/plearn_learners/online/RBMConnection.cc
+   trunk/plearn_learners/online/RBMConnection.h
+   trunk/plearn_learners/online/RBMLayer.cc
+   trunk/plearn_learners/online/RBMLayer.h
+Log:
+Added code in DeepBeliefNet and headers in RBM{Connection,Layer} to handle
+the background Gibbs chain, but the updates in RBM{Connection,Layer} are still to do.
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-04-30 21:10:10 UTC (rev 6955)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-04-30 21:59:37 UTC (rev 6956)
+@@ -239,6 +239,10 @@
+                   OptionBase::learntoption,
+                   &quot;Size of a mini-batch.&quot;);
+ 
++    declareOption(ol, &quot;gibbs_down_state&quot;, &amp;DeepBeliefNet::gibbs_down_state,
++                  OptionBase::learntoption,
++                  &quot;State of visible units of RBMs at each layer in background Gibbs chain.&quot;);
++
+     /*
+     declareOption(ol, &quot;n_final_costs&quot;, &amp;DeepBeliefNet::n_final_costs,
+                   OptionBase::learntoption,
+@@ -313,7 +317,6 @@
+     activations_gradients.resize( n_layers );
+     expectation_gradients.resize( n_layers );
+     expectations_gradients.resize( n_layers );
+-    gibbs_up_state.resize( n_layers-1 );
+     gibbs_down_state.resize( n_layers-1 );
+ 
+     for( int i=0 ; i&lt;n_layers-1 ; i++ )
+@@ -500,10 +503,9 @@
+     deepCopyField(save_layer_expectation,   copies);
+     deepCopyField(pos_down_val,             copies);
+     deepCopyField(pos_up_val,               copies);
+-    deepCopyField(pos_down_vals,            copies);
+-    deepCopyField(pos_up_vals,              copies);
+-    deepCopyField(gibbs_up_state,           copies);
+-    deepCopyField(gibbs_down_state,           copies);
++    deepCopyField(cd_neg_up_vals,           copies);
++    deepCopyField(cd_neg_down_vals,         copies);
++    deepCopyField(gibbs_down_state,         copies);
+     deepCopyField(optimized_costs,          copies);
+     deepCopyField(final_cost_indices,       copies);
+     deepCopyField(partial_cost_indices,     copies);
+@@ -573,10 +575,7 @@
+             expectation_gradients[i].resize(minibatch_size, layers[i]-&gt;size);
+ 
+             if (background_gibbs_update_ratio&gt;0)
+-            {
+-                gibbs_up_state[i].resize(minibatch_size, layers[i]-&gt;size);
+                 gibbs_down_state[i].resize(minibatch_size, layers[i]-&gt;size);
+-            }
+         }
+         if (final_cost)
+             final_cost_gradients.resize(minibatch_size, final_cost-&gt;input_size);
+@@ -1021,7 +1020,7 @@
+             contrastiveDivergenceStep(
+                 get_pointer(joint_layer),
+                 get_pointer(classification_module-&gt;joint_connection),
+-                layers[ n_layers-1 ] );
++                layers[ n_layers-1 ], n_layers-2);
+ 
+             layers[ n_layers-2 ]-&gt;activation &lt;&lt; save_layer_activation;
+             layers[ n_layers-2 ]-&gt;expectation &lt;&lt; save_layer_expectation;
+@@ -1063,7 +1062,7 @@
+         contrastiveDivergenceStep( layers[ i ],
+                                    connections[ i ],
+                                    layers[ i+1 ] ,
+-                                   true);
++                                   i, true);
+         if( i &gt; 0 )
+         {
+             layers[i]-&gt;activation &lt;&lt; save_layer_activation;
+@@ -1123,7 +1122,7 @@
+     contrastiveDivergenceStep( layers[ index ],
+                                connections[ index ],
+                                layers[ index+1 ],
+-                               true );
++                               index, true);
+ }
+ 
+ /////////////////
+@@ -1179,7 +1178,7 @@
+     contrastiveDivergenceStep( layers[ index ],
+                                connections[ index ],
+                                layers[ index+1 ],
+-                               true );
++                               index, true);
+ }
+ 
+ /////////////////////
+@@ -1242,7 +1241,7 @@
+     contrastiveDivergenceStep(
+         get_pointer( joint_layer ),
+         get_pointer( classification_module-&gt;joint_connection ),
+-        layers[ n_layers-1 ] );
++        layers[ n_layers-1 ], n_layers-2);
+ }
+ 
+ ////////////////////
+@@ -1480,7 +1479,7 @@
+     const PP&lt;RBMLayer&gt;&amp; down_layer,
+     const PP&lt;RBMConnection&gt;&amp; connection,
+     const PP&lt;RBMLayer&gt;&amp; up_layer,
+-    bool nofprop)
++    int layer_index, bool nofprop)
+ {
+     bool mbatch = minibatch_size &gt; 1 || minibatch_hack;
+ 
+@@ -1509,8 +1508,8 @@
+ 
+         // down propagation, starting from a sample of up_layer
+         if (background_gibbs_update_ratio&lt;1) 
++            // then do some contrastive divergence, o/w only background Gibbs
+         {
+-            // then do some contrastive divergence, o/w only background Gibbs
+             up_layer-&gt;generateSamples();
+             connection-&gt;setAsUpInputs( up_layer-&gt;samples );
+             down_layer-&gt;getAllActivations( connection, 0, true );
+@@ -1525,18 +1524,68 @@
+             Mat neg_down_vals = down_layer-&gt;samples;
+             Mat neg_up_vals = up_layer-&gt;getExpectations();
+ 
+-            // update
+             if (background_gibbs_update_ratio==0)
++            // update here only if there is ONLY contrastive divergence
+             {
+                 down_layer-&gt;update( pos_down_vals, neg_down_vals );
+                 connection-&gt;update( pos_down_vals, pos_up_vals,
+                                     neg_down_vals, neg_up_vals );
+                 up_layer-&gt;update( pos_up_vals, neg_up_vals );
+             }
++            else
++            {
++                connection-&gt;accumulatePosStats(pos_down_vals,pos_up_vals);
++                cd_neg_down_vals.resize(minibatch_size, down_layer-&gt;size);
++                cd_neg_up_vals.resize(minibatch_size, up_layer-&gt;size);
++                cd_neg_down_vals &lt;&lt; neg_down_vals;
++                cd_neg_up_vals &lt;&lt; neg_up_vals;
++            }
+         }
+         // 
+         if (background_gibbs_update_ratio&gt;0) 
+         {
++            Mat down_state = gibbs_down_state[layer_index];
++
++            // sample up state given down state
++            connection-&gt;setAsDownInputs(down_state);
++            up_layer-&gt;getAllActivations(connection, 0, true);
++            up_layer-&gt;computeExpectations();
++            up_layer-&gt;generateSamples();
++
++            // update using the down_state and up_layer-&gt;expectations for moving average in negative phase
++            // (and optionally 
++            if (background_gibbs_update_ratio&lt;1)
++            {
++                down_layer-&gt;updateCDandGibbs(pos_down_vals,cd_neg_down_vals,
++                                             down_state,
++                                             background_gibbs_update_ratio,
++                                             gibbs_chain_statistics_forgetting_factor);
++                connection-&gt;updateCDandGibbs(pos_down_vals,pos_up_vals,
++                                             cd_neg_down_vals, cd_neg_up_vals,
++                                             down_state,
++                                             up_layer-&gt;getExpectations(),
++                                             background_gibbs_update_ratio,
++                                             gibbs_chain_statistics_forgetting_factor);
++                up_layer-&gt;updateCDandGibbs(pos_up_vals,cd_neg_up_vals,
++                                           up_layer-&gt;getExpectations(),
++                                           background_gibbs_update_ratio,
++                                           gibbs_chain_statistics_forgetting_factor);
++            }
++            else
++            {
++                down_layer-&gt;updateGibbs(pos_down_vals,down_state,
++                                        gibbs_chain_statistics_forgetting_factor);
++                connection-&gt;updateGibbs(pos_down_vals,pos_up_vals,down_state,
++                                        up_layer-&gt;getExpectations(),
++                                        gibbs_chain_statistics_forgetting_factor);
++                up_layer-&gt;updateGibbs(pos_up_vals,up_layer-&gt;getExpectations(),
++                                        gibbs_chain_statistics_forgetting_factor);
++            }
++            // sample down state given up state, to prepare for next time
++            connection-&gt;setAsUpInputs(up_layer-&gt;samples);
++            down_layer-&gt;getAllActivations(connection, 0, true);
++            down_layer-&gt;generateSamples();
++            down_state &lt;&lt; down_layer-&gt;samples;
+         }
+     } else {
+         up_layer-&gt;generateSample();
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2007-04-30 21:10:10 UTC (rev 6955)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2007-04-30 21:59:37 UTC (rev 6956)
+@@ -235,6 +235,7 @@
+     void contrastiveDivergenceStep( const PP&lt;RBMLayer&gt;&amp; down_layer,
+                                     const PP&lt;RBMConnection&gt;&amp; connection,
+                                     const PP&lt;RBMLayer&gt;&amp; up_layer,
++                                    int layer_index,
+                                     bool nofprop=false);
+ 
+ 
+@@ -319,9 +320,10 @@
+     mutable Vec pos_up_val;
+     mutable Mat pos_down_vals;
+     mutable Mat pos_up_vals;
++    mutable Mat cd_neg_down_vals;
++    mutable Mat cd_neg_up_vals;
+     
+     //! Store the state of the Gibbs chain for each RBM
+-    mutable TVec&lt;Mat&gt; gibbs_up_state;
+     mutable TVec&lt;Mat&gt; gibbs_down_state;
+ 
+     //! Used to store the costs optimized by the final cost module.
+
+Modified: trunk/plearn_learners/online/RBMConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMConnection.cc	2007-04-30 21:10:10 UTC (rev 6955)
++++ trunk/plearn_learners/online/RBMConnection.cc	2007-04-30 21:59:37 UTC (rev 6956)
+@@ -240,6 +240,38 @@
+     update();
+ }
+ 
++// neg_stats &lt;-- gibbs_chain_statistics_forgetting_factor * neg_stats
++//              +(1-gibbs_chain_statistics_forgetting_factor)
++//               * gibbs_neg_up_values'*gibbs_neg_down_values
++// delta w = lrate * ( pos_up_values'*pos_down_values
++//                  - ( background_gibbs_update_ratio*neg_stats
++//                     +(1-background_gibbs_update_ratio)
++//                      * cd_neg_up_values'*cd_neg_down_values))
++void RBMConnection::updateCDandGibbs( const Mat&amp; pos_down_values,
++                                      const Mat&amp; pos_up_values,
++                                      const Mat&amp; cd_neg_down_values,
++                                      const Mat&amp; cd_neg_up_values,
++                                      const Mat&amp; gibbs_neg_down_values,
++                                      const Mat&amp; gibbs_neg_up_values,
++                                      real background_gibbs_update_ratio,
++                                      real gibbs_chain_statistics_forgetting_factor)
++{
++    PLASSERT_MSG(false, &quot;Not implemented by subclass!&quot;);
++}
++
++// neg_stats &lt;-- gibbs_chain_statistics_forgetting_factor * neg_stats
++//              +(1-gibbs_chain_statistics_forgetting_factor)
++//               * gibbs_neg_up_values'*gibbs_neg_down_values
++// delta w = lrate * ( pos_up_values'*pos_down_values - neg_stats )
++void RBMConnection::updateGibbs( const Mat&amp; pos_down_values,
++                                 const Mat&amp; pos_up_values,
++                                 const Mat&amp; gibbs_neg_down_values,
++                                 const Mat&amp; gibbs_neg_up_values,
++                                 real gibbs_chain_statistics_forgetting_factor)
++{
++    PLASSERT_MSG(false, &quot;Not implemented by subclass!&quot;);
++}
++
+ ///////////
+ // fprop //
+ ///////////
+
+Modified: trunk/plearn_learners/online/RBMConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMConnection.h	2007-04-30 21:10:10 UTC (rev 6955)
++++ trunk/plearn_learners/online/RBMConnection.h	2007-04-30 21:59:37 UTC (rev 6956)
+@@ -146,6 +146,32 @@
+                          const Mat&amp; neg_down_values,
+                          const Mat&amp; neg_up_values);
+ 
++    // neg_stats &lt;-- gibbs_chain_statistics_forgetting_factor * neg_stats
++    //              +(1-gibbs_chain_statistics_forgetting_factor)
++    //               * gibbs_neg_up_values'*gibbs_neg_down_values
++    // delta w = lrate * ( pos_up_values'*pos_down_values
++    //                  - ( background_gibbs_update_ratio*neg_stats
++    //                     +(1-background_gibbs_update_ratio)
++    //                      * cd_neg_up_values'*cd_neg_down_values))
++    virtual void updateCDandGibbs( const Mat&amp; pos_down_values,
++                                   const Mat&amp; pos_up_values,
++                                   const Mat&amp; cd_neg_down_values,
++                                   const Mat&amp; cd_neg_up_values,
++                                   const Mat&amp; gibbs_neg_down_values,
++                                   const Mat&amp; gibbs_neg_up_values,
++                                   real background_gibbs_update_ratio,
++                                   real gibbs_chain_statistics_forgetting_factor);
++
++    // neg_stats &lt;-- gibbs_chain_statistics_forgetting_factor * neg_stats
++    //              +(1-gibbs_chain_statistics_forgetting_factor)
++    //               * gibbs_neg_up_values'*gibbs_neg_down_values
++    // delta w = lrate * ( pos_up_values'*pos_down_values - neg_stats )
++    virtual void updateGibbs( const Mat&amp; pos_down_values,
++                              const Mat&amp; pos_up_values,
++                              const Mat&amp; gibbs_neg_down_values,
++                              const Mat&amp; gibbs_neg_up_values,
++                              real gibbs_chain_statistics_forgetting_factor);
++
+     //! Clear all information accumulated during stats
+     virtual void clearStats() = 0;
+ 
+
+Modified: trunk/plearn_learners/online/RBMLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.cc	2007-04-30 21:10:10 UTC (rev 6955)
++++ trunk/plearn_learners/online/RBMLayer.cc	2007-04-30 21:59:37 UTC (rev 6956)
+@@ -407,6 +407,33 @@
+     }
+ }
+ 
++// neg_stats &lt;-- gibbs_chain_statistics_forgetting_factor * neg_stats
++//              +(1-gibbs_chain_statistics_forgetting_factor)
++//               * gibbs_neg_values
++// delta w = lrate * ( pos_values
++//                  - ( background_gibbs_update_ratio*neg_stats
++//                     +(1-background_gibbs_update_ratio)
++//                      * cd_neg_values ) )
++void RBMLayer::updateCDandGibbs( const Mat&amp; pos_values,
++                                 const Mat&amp; cd_neg_values,
++                                 const Mat&amp; gibbs_neg_values,
++                                 real background_gibbs_update_ratio,
++                                 real gibbs_chain_statistics_forgetting_factor)
++{
++    PLASSERT_MSG(false, &quot;Not implemented by subclass!&quot;);
++}
++
++// neg_stats &lt;-- gibbs_chain_statistics_forgetting_factor * neg_stats
++//              +(1-gibbs_chain_statistics_forgetting_factor)
++//               * gibbs_neg_values
++// delta w = lrate * ( pos_values - neg_stats )
++void RBMLayer::updateGibbs( const Mat&amp; pos_values,
++                            const Mat&amp; gibbs_neg_values,
++                            real gibbs_chain_statistics_forgetting_factor)
++{
++    PLASSERT_MSG(false, &quot;Not implemented by subclass!&quot;);
++}
++
+ ////////////////
+ // setAllBias //
+ ////////////////
+
+Modified: trunk/plearn_learners/online/RBMLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.h	2007-04-30 21:10:10 UTC (rev 6955)
++++ trunk/plearn_learners/online/RBMLayer.h	2007-04-30 21:59:37 UTC (rev 6956)
+@@ -195,6 +195,28 @@
+     //! Update parameters according to one pair of matrices.
+     virtual void update( const Mat&amp; pos_values, const Mat&amp; neg_values );
+ 
++    // neg_stats &lt;-- gibbs_chain_statistics_forgetting_factor * neg_stats
++    //              +(1-gibbs_chain_statistics_forgetting_factor)
++    //               * gibbs_neg_values
++    // delta w = lrate * ( pos_values
++    //                  - ( background_gibbs_update_ratio*neg_stats
++    //                     +(1-background_gibbs_update_ratio)
++    //                      * cd_neg_values ) )
++    virtual void updateCDandGibbs( const Mat&amp; pos_values,
++                                   const Mat&amp; cd_neg_values,
++                                   const Mat&amp; gibbs_neg_values,
++                                   real background_gibbs_update_ratio,
++                                   real gibbs_chain_statistics_forgetting_factor);
++
++    // neg_stats &lt;-- gibbs_chain_statistics_forgetting_factor * neg_stats
++    //              +(1-gibbs_chain_statistics_forgetting_factor)
++    //               * gibbs_neg_values
++    // delta w = lrate * ( pos_values - neg_stats )
++    virtual void updateGibbs( const Mat&amp; pos_values,
++                              const Mat&amp; gibbs_neg_values,
++                              real gibbs_chain_statistics_forgetting_factor);
++
++
+     //! resets activations, sample and expectation fields
+     virtual void reset();
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000404.html">[Plearn-commits] r6955 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#405">[ date ]</a>
+              <a href="thread.html#405">[ thread ]</a>
+              <a href="subject.html#405">[ subject ]</a>
+              <a href="author.html#405">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

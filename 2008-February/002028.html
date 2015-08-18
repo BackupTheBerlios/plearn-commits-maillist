@@ -1,0 +1,252 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8580 - trunk/plearn/var
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8580%20-%20trunk/plearn/var&In-Reply-To=%3C200802261648.m1QGmf65027312%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002027.html">
+   <LINK REL="Next"  HREF="002029.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8580 - trunk/plearn/var</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8580%20-%20trunk/plearn/var&In-Reply-To=%3C200802261648.m1QGmf65027312%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8580 - trunk/plearn/var">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue Feb 26 17:48:41 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002027.html">[Plearn-commits] r8579 - trunk/plearn/var
+</A></li>
+        <LI>Next message: <A HREF="002029.html">[Plearn-commits] r8581 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2028">[ date ]</a>
+              <a href="thread.html#2028">[ thread ]</a>
+              <a href="subject.html#2028">[ subject ]</a>
+              <a href="author.html#2028">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-02-26 17:48:40 +0100 (Tue, 26 Feb 2008)
+New Revision: 8580
+
+Modified:
+   trunk/plearn/var/UnfoldedFuncVariable.cc
+   trunk/plearn/var/UnfoldedFuncVariable.h
+Log:
+Added a new parent Variable, 'bag_size', that can control the range over which the function is applied
+
+Modified: trunk/plearn/var/UnfoldedFuncVariable.cc
+===================================================================
+--- trunk/plearn/var/UnfoldedFuncVariable.cc	2008-02-26 16:47:20 UTC (rev 8579)
++++ trunk/plearn/var/UnfoldedFuncVariable.cc	2008-02-26 16:48:40 UTC (rev 8580)
+@@ -69,7 +69,8 @@
+ {}
+ 
+ UnfoldedFuncVariable::UnfoldedFuncVariable(
+-        Var inputmatrix, Func the_f, bool the_transpose, bool call_build_):
++        Var inputmatrix, Func the_f, bool the_transpose,
++        Var bagsize, bool call_build_):
+     inherited(VarArray(),
+             the_transpose ? the_f-&gt;outputs[0]-&gt;length()
+                                                 * the_f-&gt;outputs[0]-&gt;width()
+@@ -79,6 +80,7 @@
+                                                 * the_f-&gt;outputs[0]-&gt;width(),
+             call_build_),
+       input_matrix(inputmatrix), 
++      bag_size(bagsize),
+       f(the_f),
+       transpose(the_transpose)
+ {
+@@ -102,8 +104,8 @@
+ {
+     if (f) {
+         VarArray f_parents = nonInputParentsOfPath(f-&gt;inputs, f-&gt;outputs);
+-        varray.resize(f_parents.length() + 1);
+-        varray &lt;&lt; (f_parents &amp; input_matrix);
++        varray.resize(f_parents.length() + 2);
++        varray &lt;&lt; (f_parents &amp; input_matrix &amp; bag_size);
+ 
+         if(f-&gt;outputs.size()!=1)
+             PLERROR(&quot;In UnfoldedFuncVariable: function must have a single variable output (maybe you can vconcat the vars into a single one prior to calling sumOf, if this is really what you want)&quot;);
+@@ -121,7 +123,11 @@
+             outputs[i] = f(inputs[i])[0];
+             f_paths[i] = propagationPath(inputs[i],outputs[i]);
+         }
++        inherited::build(); // Re-build since varray has changed.
+     }
++
++    if (bag_size)
++        PLASSERT( bag_size-&gt;isScalar() );
+ }
+ 
+ ////////////////////
+@@ -135,14 +141,12 @@
+     declareOption(ol, &quot;input_matrix&quot;, &amp;UnfoldedFuncVariable::input_matrix, OptionBase::buildoption, 
+         &quot;Var containing the data: multiple consecutive rows form one bag.&quot;);
+ 
+-    /*
+     declareOption(ol, &quot;bag_size&quot;, &amp;UnfoldedFuncVariable::bag_size,
+                   OptionBase::buildoption, 
+         &quot;Optional Var that contains the size of the bag being presented.\n&quot;
+         &quot;If provided, then only the corresponding number of function values\n&quot;
+         &quot;will be computed, while the rest of the output data matrix will be\n&quot;
+         &quot;left untouched.&quot;);
+-    */
+ 
+     declareOption(ol, &quot;transpose&quot;, &amp;UnfoldedFuncVariable::transpose, OptionBase::buildoption, 
+                   &quot;    If set to 1, then instead puts in the columns of the output matrix the values\n&quot;
+@@ -152,7 +156,7 @@
+ 
+     redeclareOption(ol, &quot;varray&quot;, &amp;UnfoldedFuncVariable::varray,
+                     OptionBase::nosave,
+-            &quot;This option is set at build time.&quot;);
++            &quot;This option is set at build time from other options.&quot;);
+ }
+ 
+ ///////////////////
+@@ -160,7 +164,7 @@
+ ///////////////////
+ void UnfoldedFuncVariable::recomputeSize(int&amp; l, int&amp; w) const
+ {
+-    if (f &amp;&amp; f-&gt;outputs.size()) {
++    if (f &amp;&amp; f-&gt;outputs.size() &gt; 0) {
+         w = f-&gt;outputs[0]-&gt;length()*f-&gt;outputs[0]-&gt;width();
+         if (transpose) {
+             l = w;
+@@ -179,10 +183,11 @@
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+     deepCopyField(input_matrix, copies);
+-    deepCopyField(f, copies);
+-    deepCopyField(inputs, copies);
+-    deepCopyField(outputs, copies);
+-    deepCopyField(f_paths, copies);
++    deepCopyField(bag_size,     copies);
++    deepCopyField(f,            copies);
++    deepCopyField(inputs,       copies);
++    deepCopyField(outputs,      copies);
++    deepCopyField(f_paths,      copies);
+ }
+ 
+ ///////////
+@@ -190,7 +195,11 @@
+ ///////////
+ void UnfoldedFuncVariable::fprop()
+ {
+-    int n_unfold = transpose ? input_matrix-&gt;width() : input_matrix-&gt;length();
++    int n_unfold = bag_size ? int(round(bag_size-&gt;value[0]))
++                            : transpose ? input_matrix-&gt;width()
++                                        : input_matrix-&gt;length();
++    PLASSERT( !bag_size || is_equal(bag_size-&gt;value[0],
++                                    round(bag_size-&gt;value[0])) );
+     for (int i=0;i&lt;n_unfold;i++) {
+         if (transpose) {
+             Vec tmp = input_matrix-&gt;matValue.column(i).toVecCopy(); // TODO something more efficient
+@@ -207,10 +216,14 @@
+     }
+ }
+ 
+-
++///////////
++// bprop //
++///////////
+ void UnfoldedFuncVariable::bprop()
+ { 
+-    int n_unfold = transpose ? input_matrix-&gt;width() : input_matrix-&gt;length();
++    int n_unfold = bag_size ? int(round(bag_size-&gt;value[0]))
++                            : transpose ? input_matrix-&gt;width()
++                                        : input_matrix-&gt;length();
+     for (int i=0;i&lt;n_unfold;i++)
+     {
+         f_paths[i].clearGradient();
+@@ -224,21 +237,26 @@
+     }
+ }
+ 
+-
++///////////////
++// printInfo //
++///////////////
+ void UnfoldedFuncVariable::printInfo(bool print_gradient)
+ {
+-    int n_unfold = transpose ? input_matrix-&gt;width() : input_matrix-&gt;length();
++    int n_unfold = bag_size ? int(round(bag_size-&gt;value[0]))
++                            : transpose ? input_matrix-&gt;width()
++                                        : input_matrix-&gt;length();
+     for (int i=0;i&lt;n_unfold;i++)
+         f_paths[i].printInfo(print_gradient);
+-    cout &lt;&lt; info() &lt;&lt; &quot; : &quot; &lt;&lt; getName() &lt;&lt; &quot;[&quot; &lt;&lt; (void*)this &lt;&lt; &quot;]&quot; 
++    pout &lt;&lt; info() &lt;&lt; &quot; : &quot; &lt;&lt; getName() &lt;&lt; &quot;[&quot; &lt;&lt; (void*)this &lt;&lt; &quot;]&quot; 
+          &lt;&lt; &quot;(input_matrix=&quot; &lt;&lt; (void*)input_matrix &lt;&lt; &quot; &quot;;
+-    for(int i=0; i&lt;n_unfold; i++) cout &lt;&lt; (void*)outputs[i] &lt;&lt; &quot; &quot;;
+-    cout &lt;&lt; &quot;) = &quot; &lt;&lt; value;
+-    if (print_gradient) cout &lt;&lt; &quot; gradient=&quot; &lt;&lt; gradient;
+-    cout &lt;&lt; endl; 
++    for(int i=0; i&lt;n_unfold; i++)
++        pout &lt;&lt; (void*)outputs[i] &lt;&lt; &quot; &quot;;
++    pout &lt;&lt; &quot;) = &quot; &lt;&lt; value;
++    if (print_gradient)
++        pout &lt;&lt; &quot; gradient=&quot; &lt;&lt; gradient;
++    pout &lt;&lt; endl; 
+ }
+ 
+-
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn/var/UnfoldedFuncVariable.h
+===================================================================
+--- trunk/plearn/var/UnfoldedFuncVariable.h	2008-02-26 16:47:20 UTC (rev 8579)
++++ trunk/plearn/var/UnfoldedFuncVariable.h	2008-02-26 16:48:40 UTC (rev 8580)
+@@ -56,6 +56,7 @@
+ public:
+ //protected:
+     Var input_matrix;
++    Var bag_size;
+     Func f;
+     bool transpose;
+ 
+@@ -70,6 +71,7 @@
+ 
+     //! Concatenate_{i=0 to n_unfold} f(i-th row of input_matrix).
+     UnfoldedFuncVariable(Var inputmatrix, Func the_f, bool transpose,
++                         Var bagsize = (Variable*) NULL,
+                          bool call_build_ = true);
+     
+     PLEARN_DECLARE_OBJECT(UnfoldedFuncVariable);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002027.html">[Plearn-commits] r8579 - trunk/plearn/var
+</A></li>
+	<LI>Next message: <A HREF="002029.html">[Plearn-commits] r8581 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2028">[ date ]</a>
+              <a href="thread.html#2028">[ thread ]</a>
+              <a href="subject.html#2028">[ subject ]</a>
+              <a href="author.html#2028">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

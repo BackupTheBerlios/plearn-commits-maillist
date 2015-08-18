@@ -1,0 +1,220 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8167 - trunk/python_modules/plearn/parallel
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8167%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200710101909.l9AJ9SmX015705%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001614.html">
+   <LINK REL="Next"  HREF="001616.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8167 - trunk/python_modules/plearn/parallel</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8167%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200710101909.l9AJ9SmX015705%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8167 - trunk/python_modules/plearn/parallel">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed Oct 10 21:09:28 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001614.html">[Plearn-commits] r8166 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+        <LI>Next message: <A HREF="001616.html">[Plearn-commits] r8168 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1615">[ date ]</a>
+              <a href="thread.html#1615">[ thread ]</a>
+              <a href="subject.html#1615">[ subject ]</a>
+              <a href="author.html#1615">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-10-10 21:09:28 +0200 (Wed, 10 Oct 2007)
+New Revision: 8167
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+print jobs status after the wait() function
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2007-10-10 18:38:21 UTC (rev 8166)
++++ trunk/python_modules/plearn/parallel/dbi.py	2007-10-10 19:09:28 UTC (rev 8167)
+@@ -33,7 +33,7 @@
+ STATUS_FINISHED = 0
+ STATUS_RUNNING = 1
+ STATUS_WAITING = 2
+-STATUS_ERROR = 3
++STATUS_INIT = 3
+ 
+ #original version from: <A HREF="http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/196618">http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/196618</A>
+ class LockedIterator:
+@@ -247,25 +247,24 @@
+         finished=0
+         running=0
+         waiting=0
+-        error=0
+         init=0
+         unfinished=[]        
+         for t in self.tasks:
+             if t.status==STATUS_INIT:
+                 init+=1
+-                unfinished+=t.id
++                unfinished.append(t.id)
+             elif t.status==STATUS_RUNNING:
+                 running+=1
+-                unfinished+=t.id
++                unfinished.append(t.id)
+             elif t.status==STATUS_FINISHED:
+                 finished+=1
+             elif t.status==STATUS_WAITING:
+                 waiting+=i
+-                unfinished+=t.id
++                unfinished.append(t.id)
+             else:
+                 print &quot;[DBI] jobs %i have a bad status: %d&quot;,t.id
+-            print &quot;[DBI] %d jobs. finished: %d, running: %d, waiting: %d, error: %d, init: %d&quot;%(len(self.tasks),finished, running, waiting, error, init)
+-            print &quot;[DBI] jobs unfinished: &quot;,[i.id for i in unfinished]
++            print &quot;[DBI] %d jobs. finished: %d, running: %d, waiting: %d, init: %d&quot;%(len(self.tasks),finished, running, waiting, init)
++            print &quot;[DBI] jobs unfinished (starting at 1): &quot;,unfinished
+                                 
+ class Task:
+ 
+@@ -323,7 +322,7 @@
+                 string.join([self.log_file,'FINISHED_TIME',time_format],' '))
+ 
+         #print &quot;self.commands =&quot;, self.commands
+-
++        self.status=STATUS_INIT
+     def get_status(self):
+         #TODO: catch exception if value not available
+         status = get_config_value(self.log_file,'STATUS')
+@@ -420,6 +419,7 @@
+ 
+     def run_one_job(self, task):
+         DBIBase.run(self)
++        task.status=STATUS_RUNNING
+         
+         remote_command=string.join(task.commands,';')
+         filename=os.path.join(self.tmp_dir,task.unique_id)
+@@ -447,6 +447,7 @@
+         started=self.started# not thread safe!!!
+         print &quot;[DBI,%d/%d,%s] %s&quot;%(started,len(self.tasks),time.ctime(),command)
+         if self.test:
++            task.status=STATUS_FINISHED
+             return
+ 
+         task.launch_time = time.time()
+@@ -469,7 +470,8 @@
+             self.backend_failed+=1
+         elif task.dbi_return_status!=0:
+             self.jobs_failed+=1
+-            
++        task.status=STATUS_FINISHED
++  
+     def run(self):
+         print &quot;[DBI] The Log file are under %s&quot;%self.log_dir
+         if self.test:
+@@ -502,7 +504,7 @@
+             
+         else:
+             print &quot;[DBI] WARNING jobs not started!&quot;
+-
++        self.print_jobs_status()
+         print &quot;[DBI] Their was %d jobs where the back-end failled&quot;%(self.backend_failed)
+         print &quot;[DBI] Their was %d jobs that returned a failure status.&quot;%(self.jobs_failed)
+         
+@@ -622,7 +624,8 @@
+         print &quot;[DBI] All the log will be in the directory: &quot;,self.log_dir
+         # Launch bqsubmit
+         if not self.test:
+-            task.set_scheduled_time()
++            for t in self.tasks:
++                t.set_scheduled_time()
+             self.p = Popen( 'bqsubmit', shell=True)
+             self.p.wait()
+         else:
+@@ -833,7 +836,8 @@
+         if self.test == False:
+             (output,error)=self.get_redirection(self.log_file + '.out',self.log_file + '.err')
+             print &quot;[DBI] Executing: condor_submit &quot; + condor_file
+-            task.set_scheduled_time()
++            for task in self.tasks:
++                task.set_scheduled_time()
+             self.p = Popen( 'condor_submit '+ condor_file, shell=True , stdout=output, stderr=error)
+         else:
+             print &quot;[DBI] Created condor file: &quot; + condor_file
+@@ -932,6 +936,7 @@
+         print &quot;[DBI,%d/%d,%s] %s&quot;%(self.started,len(self.tasks),time.ctime(),c)
+         p = Popen(c, shell=True,stdout=output,stderr=error)
+         p.wait()
++        task.status=STATUS_FINISHED
+             
+     def clean(self):
+         if len(self.temp_files)&gt;0:
+@@ -977,6 +982,7 @@
+                 raise
+         else:
+             print &quot;[DBI] WARNING jobs not started!&quot;
++        self.print_jobs_status()
+         print &quot;[DBI] The Log file are under %s&quot;%self.log_dir
+                 
+ class SshHost:
+@@ -1120,6 +1126,7 @@
+         
+         task.p = Popen(command, shell=True,stdout=output,stderr=error)
+         task.p.wait()
++        task.status=STATUS_FINISHED
+ 
+ 
+     def run_one_job2(self, host):
+@@ -1165,6 +1172,7 @@
+                 del err[-1]
+                 print &quot;return status&quot;, task.return_status
+             sleep(1)
++            task.status=STATUS_FINISHED
+       
+     def run(self):
+         print &quot;[DBI] The Log file are under %s&quot;%self.log_dir
+@@ -1193,6 +1201,7 @@
+     def wait(self):
+         #TODO
+         self.mt.join()
++        self.print_jobs_status()
+ 
+ 
+ # creates an object of type ('DBI' + launch_system) if it exists
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001614.html">[Plearn-commits] r8166 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+	<LI>Next message: <A HREF="001616.html">[Plearn-commits] r8168 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1615">[ date ]</a>
+              <a href="thread.html#1615">[ thread ]</a>
+              <a href="subject.html#1615">[ subject ]</a>
+              <a href="author.html#1615">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,180 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7768 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7768%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200707131939.l6DJdSjq016662%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001215.html">
+   <LINK REL="Next"  HREF="001217.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7768 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7768%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200707131939.l6DJdSjq016662%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7768 - trunk/plearn_learners/generic/EXPERIMENTAL">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Jul 13 21:39:28 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001215.html">[Plearn-commits] r7767 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="001217.html">[Plearn-commits] r7769 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1216">[ date ]</a>
+              <a href="thread.html#1216">[ thread ]</a>
+              <a href="subject.html#1216">[ subject ]</a>
+              <a href="author.html#1216">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-07-13 21:39:28 +0200 (Fri, 13 Jul 2007)
+New Revision: 7768
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+Log:
+made NatGradNNet work with minibatch for calculating the cost and output
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-07-13 19:35:52 UTC (rev 7767)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-07-13 19:39:28 UTC (rev 7768)
+@@ -164,7 +164,8 @@
+ 
+     declareOption(ol, &quot;minibatch_size&quot;, &amp;NatGradNNet::minibatch_size,
+                   OptionBase::buildoption,
+-                  &quot;Update the parameters only so often (number of examples).\n&quot;);
++                  &quot;Update the parameters only so often (number of examples).\n&quot;
++                  &quot;Must be greater or equal to test_minibatch_size\n&quot;);
+ 
+     declareOption(ol, &quot;neurons_natgrad_template&quot;, &amp;NatGradNNet::neurons_natgrad_template,
+                   OptionBase::buildoption,
+@@ -625,9 +626,9 @@
+         int b = stage % minibatch_size;
+         Vec input = neuron_outputs_per_layer[0](b);
+         Vec target = targets(b);
+-        Profiler::pl_profile_start(&quot;getting_data&quot;);
++        Profiler::pl_profile_start(&quot;NatGradNNet::getting_data&quot;);
+         train_set-&gt;getExample(sample, input, target, example_weights[b]);
+-        Profiler::pl_profile_end(&quot;getting_data&quot;);
++        Profiler::pl_profile_end(&quot;NatGradNNet::getting_data&quot;);
+         if (b+1==minibatch_size) // do also special end-case || stage+1==nstages)
+         {
+             onlineStep(stage, targets, train_costs, example_weights );
+@@ -876,11 +877,11 @@
+ 
+ void NatGradNNet::computeOutput(const Vec&amp; input, Vec&amp; output) const
+ {
+-    Profiler::pl_profile_start(&quot;computeOutput&quot;);
++    Profiler::pl_profile_start(&quot;NatGradNNet::computeOutput&quot;);
+     neuron_outputs_per_layer[0](0) &lt;&lt; input;
+     fpropNet(1,false);
+     output &lt;&lt; neuron_outputs_per_layer[n_layers-1](0);
+-    Profiler::pl_profile_end(&quot;computeOutput&quot;);
++    Profiler::pl_profile_end(&quot;NatGradNNet::computeOutput&quot;);
+ }
+ 
+ //! compute (pre-final-non-linearity) network top-layer output given input
+@@ -1072,7 +1073,48 @@
+     Mat costsM = costs.toMat(1,costs.length());
+     fbpropLoss(outputM,targetM,w,costsM);
+ }
++/*
++void NatGradNNet::computeOutput(const Vec&amp; input, Vec&amp; output)
++{
++    Profiler::pl_profile_start(&quot;computeOutput&quot;);
++    neuron_outputs_per_layer[0](0) &lt;&lt; input;
++    fpropNet(1,false);
++    output &lt;&lt; neuron_outputs_per_layer[n_layers-1](0);
++    Profiler::pl_profile_end(&quot;computeOutput&quot;);
++    }
++void PLearner::computeOutputAndCosts(const Vec&amp; input, const Vec&amp; target, 
++                                     Vec&amp; output, Vec&amp; costs) const
++{
++    computeOutput(input, output);
++    computeCostsFromOutputs(input, output, target, costs);
++}
++*/
+ 
++void NatGradNNet::computeOutputs(const Mat&amp; input, Mat&amp; output) const
++{
++    Profiler::pl_profile_start(&quot;NatGradNNet::computeOutputs&quot;);
++    PLASSERT(test_minibatch_size&lt;=minibatch_size);
++    neuron_outputs_per_layer[0].subMat(0,0,input.length(),input.width()) &lt;&lt; input;
++    fpropNet(input.length(),false);
++    output &lt;&lt; neuron_outputs_per_layer[n_layers-1].subMat(0,0,output.length(),output.width());
++    Profiler::pl_profile_end(&quot;NatGradNNet::computeOutputs&quot;);
++}
++void NatGradNNet::computeOutputsAndCosts(const Mat&amp; input, const Mat&amp; target, 
++                                      Mat&amp; output, Mat&amp; costs) const
++{//TODO
++    Profiler::pl_profile_start(&quot;NatGradNNet::computeOutputsAndCosts&quot;);
++
++    int n=input.length();
++    PLASSERT(target.length()==n);
++    output.resize(n,outputsize());
++    costs.resize(n,nTestCosts());
++    computeOutputs(input,output);
++
++    Vec w(n);
++    w.fill(1);
++    fbpropLoss(output,target,w,costs);
++    Profiler::pl_profile_end(&quot;NatGradNNet::computeOutputsAndCosts&quot;);
++    }
+ TVec&lt;string&gt; NatGradNNet::getTestCostNames() const
+ {
+     TVec&lt;string&gt; costs;
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-07-13 19:35:52 UTC (rev 7767)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-07-13 19:39:28 UTC (rev 7768)
+@@ -206,7 +206,12 @@
+     //! Computes the output from the input.
+     // (PLEASE IMPLEMENT IN .cc)
+     virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
++    virtual void computeOutputs(const Mat&amp; input, Mat&amp; output) const;
+ 
++    virtual void computeOutputsAndCosts(const Mat&amp; input, const Mat&amp; target, 
++                                        Mat&amp; output, Mat&amp; costs) const;
++
++
+     //! Computes the costs from already computed output.
+     // (PLEASE IMPLEMENT IN .cc)
+     virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001215.html">[Plearn-commits] r7767 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="001217.html">[Plearn-commits] r7769 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1216">[ date ]</a>
+              <a href="thread.html#1216">[ thread ]</a>
+              <a href="subject.html#1216">[ subject ]</a>
+              <a href="author.html#1216">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

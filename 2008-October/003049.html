@@ -1,0 +1,235 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9609 - trunk/plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9609%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200810231947.m9NJln1o003802%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003048.html">
+   <LINK REL="Next"  HREF="003050.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9609 - trunk/plearn_learners/regressors</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9609%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200810231947.m9NJln1o003802%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9609 - trunk/plearn_learners/regressors">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Thu Oct 23 21:47:49 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003048.html">[Plearn-commits] r9608 - trunk/plearn_learners/regressors
+</A></li>
+        <LI>Next message: <A HREF="003050.html">[Plearn-commits] r9610 - trunk/python_modules/plearn/gui_tools
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3049">[ date ]</a>
+              <a href="thread.html#3049">[ thread ]</a>
+              <a href="subject.html#3049">[ subject ]</a>
+              <a href="author.html#3049">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-10-23 21:47:48 +0200 (Thu, 23 Oct 2008)
+New Revision: 9609
+
+Modified:
+   trunk/plearn_learners/regressors/RegressionTree.cc
+   trunk/plearn_learners/regressors/RegressionTreeNode.cc
+   trunk/plearn_learners/regressors/RegressionTreeNode.h
+Log:
+moved some computation from RegressionTree::computeOutput to the creation of the RegressionTreeNode. That way we do the computation only once.
+
+
+Modified: trunk/plearn_learners/regressors/RegressionTree.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTree.cc	2008-10-23 18:56:18 UTC (rev 9608)
++++ trunk/plearn_learners/regressors/RegressionTree.cc	2008-10-23 19:47:48 UTC (rev 9609)
+@@ -311,7 +311,7 @@
+         first_leave-&gt;registerRow(train_sample_index);
+     }
+     root = new RegressionTreeNode(missing_is_valid,loss_function_weight,
+-                                  verbosity);
++                                  verbosity, multiclass_outputs);
+     root-&gt;initNode(sorted_train_set, first_leave, leave_template);
+     root-&gt;lookForBestSplit();
+ 
+@@ -403,20 +403,7 @@
+     }
+     else
+         root-&gt;computeOutputAndNodes(inputv, outputv, nodes);
+-
+-    if (multiclass_outputs.length() &lt;= 0) return;
+-    real closest_value=multiclass_outputs[0];
+-    real margin_to_closest_value=abs(outputv[0] - multiclass_outputs[0]);
+-    for (int value_ind = 1; value_ind &lt; multiclass_outputs.length(); value_ind++)
+-    {
+-        real v=abs(outputv[0] - multiclass_outputs[value_ind]);
+-        if (v &lt; margin_to_closest_value)
+-        {
+-            closest_value = multiclass_outputs[value_ind];
+-            margin_to_closest_value = v;
+-        }
+-    }
+-    outputv[0] = closest_value;
++    return;
+ }
+ 
+ void RegressionTree::computeOutputAndCosts(const Vec&amp; input,
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.cc	2008-10-23 18:56:18 UTC (rev 9608)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.cc	2008-10-23 19:47:48 UTC (rev 9609)
+@@ -69,10 +69,12 @@
+ }
+ RegressionTreeNode::RegressionTreeNode(int missing_is_valid_,
+                                        real loss_function_weight_,
+-                                       int verbosity_):
++                                       int verbosity_,
++                                       Vec multiclass_outputs_):
+     missing_is_valid(missing_is_valid_),
+     loss_function_weight(loss_function_weight_),
+     verbosity(verbosity_),
++    multiclass_outputs(multiclass_outputs_),
+     split_col(-1),
+     split_balance(INT_MAX),
+     split_feature_value(REAL_MAX),
+@@ -100,7 +102,10 @@
+                   &quot;The matrix with the sorted train set\n&quot;);
+     declareOption(ol, &quot;leave&quot;, &amp;RegressionTreeNode::leave, OptionBase::buildoption,
+                   &quot;The leave of all the  belonging rows when this node is a leave\n&quot;);
+-      
++    declareOption(ol, &quot;multiclass_outputs&quot;, &amp;RegressionTreeNode::multiclass_outputs, OptionBase::buildoption,
++                  &quot;A vector of possible output values when solving a multiclass problem.\n&quot;
++                  &quot;When making a prediction, the tree will adjust the output value of each leave to the closest value provided in this vector.&quot;);
++
+     declareOption(ol, &quot;leave_output&quot;, &amp;RegressionTreeNode::leave_output, OptionBase::learntoption,
+                   &quot;The leave output vector\n&quot;);
+     declareOption(ol, &quot;leave_error&quot;, &amp;RegressionTreeNode::leave_error, OptionBase::learntoption,
+@@ -200,7 +205,9 @@
+ {
+ }
+ 
+-void RegressionTreeNode::initNode(PP&lt;RegressionTreeRegisters&gt; the_train_set, PP&lt;RegressionTreeLeave&gt; the_leave, PP&lt;RegressionTreeLeave&gt; the_leave_template)
++void RegressionTreeNode::initNode(PP&lt;RegressionTreeRegisters&gt; the_train_set,
++                                  PP&lt;RegressionTreeLeave&gt; the_leave,
++                                  PP&lt;RegressionTreeLeave&gt; the_leave_template)
+ {
+     train_set = the_train_set;
+     leave = the_leave;
+@@ -226,6 +233,20 @@
+     leave_error.resize(3);
+ 
+     leave-&gt;getOutputAndError(leave_output,leave_error);
++
++    if (multiclass_outputs.length() &lt;= 0) return;
++    real closest_value=multiclass_outputs[0];
++    real margin_to_closest_value=abs(leave_output[0] - multiclass_outputs[0]);
++    for (int value_ind = 1; value_ind &lt; multiclass_outputs.length(); value_ind++)
++    {
++        real v=abs(leave_output[0] - multiclass_outputs[value_ind]);
++        if (v &lt; margin_to_closest_value)
++        {
++            closest_value = multiclass_outputs[value_ind];
++            margin_to_closest_value = v;
++        }
++    }
++    leave_output[0] = closest_value;
+ }
+ 
+ #define BY_ROW
+@@ -434,23 +455,20 @@
+ //  right_leave-&gt;printStats();
+     if (missing_is_valid &gt; 0)
+     {
+-        missing_node = new RegressionTreeNode();
+-        missing_node-&gt;missing_is_valid=missing_is_valid;
+-        missing_node-&gt;loss_function_weight=loss_function_weight;
+-        missing_node-&gt;verbosity=verbosity;
++        missing_node = new RegressionTreeNode(missing_is_valid,
++                                              loss_function_weight,
++                                              verbosity, multiclass_outputs);
+         missing_node-&gt;initNode(train_set, missing_leave, leave_template);
+         missing_node-&gt;lookForBestSplit();
+     }
+-    left_node = new RegressionTreeNode();
+-    left_node-&gt;missing_is_valid=missing_is_valid;
+-    left_node-&gt;loss_function_weight=loss_function_weight;
+-    left_node-&gt;verbosity=verbosity;
++    left_node = new RegressionTreeNode(missing_is_valid,
++                                       loss_function_weight,
++                                       verbosity, multiclass_outputs );
+     left_node-&gt;initNode(train_set, left_leave, leave_template);
+     left_node-&gt;lookForBestSplit();
+-    right_node = new RegressionTreeNode();
+-    right_node-&gt;missing_is_valid=missing_is_valid;
+-    right_node-&gt;loss_function_weight=loss_function_weight;
+-    right_node-&gt;verbosity=verbosity;
++    right_node = new RegressionTreeNode(missing_is_valid,
++                                        loss_function_weight,
++                                        verbosity, multiclass_outputs);
+     right_node-&gt;initNode(train_set, right_leave, leave_template);
+     right_node-&gt;lookForBestSplit();
+     return split_col;
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.h	2008-10-23 18:56:18 UTC (rev 9608)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.h	2008-10-23 19:47:48 UTC (rev 9609)
+@@ -67,12 +67,13 @@
+ 
+     int  missing_is_valid;
+     real loss_function_weight;
+-    int verbosity; 
++    int verbosity;
+ 
+     PP&lt;RegressionTreeLeave&gt; leave_template; 
+     PP&lt;RegressionTreeRegisters&gt; train_set;
+     PP&lt;RegressionTreeLeave&gt; leave;
+- 
++    Vec multiclass_outputs;
++    
+ /*
+   Learnt options: they are sized and initialized if need be, in initNode(...)
+ */
+@@ -95,7 +96,7 @@
+ public:  
+     RegressionTreeNode();
+     RegressionTreeNode(int missing_is_valid, real loss_function_weight,
+-                       int verbosity);
++                       int verbosity, Vec multiclass_outputs);
+     virtual              ~RegressionTreeNode();
+     
+     PLEARN_DECLARE_OBJECT(RegressionTreeNode);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003048.html">[Plearn-commits] r9608 - trunk/plearn_learners/regressors
+</A></li>
+	<LI>Next message: <A HREF="003050.html">[Plearn-commits] r9610 - trunk/python_modules/plearn/gui_tools
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3049">[ date ]</a>
+              <a href="thread.html#3049">[ thread ]</a>
+              <a href="subject.html#3049">[ subject ]</a>
+              <a href="author.html#3049">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

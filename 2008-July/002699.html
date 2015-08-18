@@ -1,0 +1,505 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9250 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9250%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200807151922.m6FJMHe4018758%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002698.html">
+   <LINK REL="Next"  HREF="002700.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9250 - trunk/plearn_learners_experimental</H1>
+    <B>laulysta at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9250%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200807151922.m6FJMHe4018758%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9250 - trunk/plearn_learners_experimental">laulysta at mail.berlios.de
+       </A><BR>
+    <I>Tue Jul 15 21:22:17 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002698.html">[Plearn-commits] r9249 - trunk/plearn/io
+</A></li>
+        <LI>Next message: <A HREF="002700.html">[Plearn-commits] r9251 - trunk/python_modules/plearn/pybridge
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2699">[ date ]</a>
+              <a href="thread.html#2699">[ thread ]</a>
+              <a href="subject.html#2699">[ subject ]</a>
+              <a href="author.html#2699">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: laulysta
+Date: 2008-07-15 21:22:17 +0200 (Tue, 15 Jul 2008)
+New Revision: 9250
+
+Modified:
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.h
+Log:
+dynamic learning rate debuger 
+
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2008-07-15 19:17:59 UTC (rev 9249)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2008-07-15 19:22:17 UTC (rev 9250)
+@@ -73,7 +73,7 @@
+ DenoisingRecurrentNet::DenoisingRecurrentNet() :
+     use_target_layers_masks( false ),
+     end_of_sequence_symbol( -1000 ),
+-    encoding(&quot;note_duration&quot;),
++    encoding(&quot;note_octav_duration&quot;),
+     input_window_size(1),
+     tied_input_reconstruction_weights( true ),
+     input_noise_prob( 0.15 ),
+@@ -111,6 +111,7 @@
+                   &quot;Value of the first input component for end-of-sequence &quot;
+                   &quot;delimiter.\n&quot;);
+ 
++    // TO DO: input_layer is to be removed eventually because only its size is really used
+     declareOption(ol, &quot;input_layer&quot;, &amp;DenoisingRecurrentNet::input_layer,
+                   OptionBase::buildoption,
+                   &quot;The input layer of the model.\n&quot;);
+@@ -180,8 +181,10 @@
+                   &amp;DenoisingRecurrentNet::input_window_size,
+                   OptionBase::buildoption,
+                   &quot;How many time steps to present as input\n&quot;
++                  &quot;If it's 0, then all layers are essentially ignored, and instead an unconditional predictor is trained\n&quot;
+                   &quot;This option is ignored when mode is raw_masked_supervised,&quot;
+-                  &quot;since in this mode the full expanded and preprocessed input and target are given explicitly.&quot;);
++                  &quot;since in this mode the full expanded and preprocessed input and target are given explicitly.&quot;
++        );
+ 
+     declareOption(ol, &quot;tied_input_reconstruction_weights&quot;, 
+                   &amp;DenoisingRecurrentNet::tied_input_reconstruction_weights,
+@@ -230,6 +233,9 @@
+                   OptionBase::buildoption,
+                   &quot;The learning rate used in the fine tuning phase\n&quot;);
+ 
++    declareOption(ol, &quot;mean_encoded_vec&quot;, &amp;DenoisingRecurrentNet::mean_encoded_vec,
++                  OptionBase::learntoption,
++                  &quot;When training with trainUnconditionalPredictor (if input_window_size==0), this is simply used to store the the avg encoded frame&quot;);
+ 
+  /*
+     declareOption(ol, &quot;&quot;, &amp;DenoisingRecurrentNet::,
+@@ -299,7 +305,6 @@
+         // Parsing symbols in target
+         int tar_layer = 0;
+         int tar_layer_size = 0;
+-        int lala = target_layers.length();
+         target_symbol_sizes.resize(target_layers.length());
+         for( tar_layer=0; tar_layer&lt;target_layers.length(); tar_layer++ )
+             target_symbol_sizes[tar_layer].resize(0);
+@@ -510,8 +515,73 @@
+     stage = 0;
+ }
+ 
++void DenoisingRecurrentNet::trainUnconditionalPredictor()
++{
++    MODULE_LOG &lt;&lt; &quot;trainUnconditionalPredictor() called &quot; &lt;&lt; endl;
++
++    // reserve memory for sequences
++    seq.resize(5000,2); // contains the current sequence
++
++    // real weight = 0; // Unused
++    Vec train_costs( getTrainCostNames().length() );
++    train_costs.fill(-1);
++
++    if( !initTrain() )
++    {
++        MODULE_LOG &lt;&lt; &quot;train() aborted&quot; &lt;&lt; endl;
++        return;
++    }
++
++
++    if( stage==0 &amp;&amp; nstages==1 )
++    {        
++        // clear stats of previous epoch
++        train_stats-&gt;forget();
++
++
++        int nvecs = 0;
++        int nseq = nSequences();        
++
++        ProgressBar* pb = 0;
++        if( report_progress)
++            pb = new ProgressBar( &quot;Sequences &quot;,nseq);
++        for(int i=0; i&lt;nseq; i++)
++        {
++            getSequence(i, seq);
++            encodeSequenceAndPopulateLists(seq);
++            if(i==0)
++            {
++                mean_encoded_vec.resize(encoded_seq.width());
++                mean_encoded_vec.clear();
++            }
++            for(int t=0; t&lt;encoded_seq.length(); t++)
++            {
++                mean_encoded_vec += encoded_seq(t);                
++                nvecs++;
++            }
++        }
++        mean_encoded_vec *= 1./nvecs;            
++        train_stats-&gt;update(train_costs);
++        train_stats-&gt;finalize();            
++
++        if( pb )
++        {
++            delete pb;
++            pb = 0;
++        }
++        ++stage;
++    }
++}
++
++
+ void DenoisingRecurrentNet::train()
+ {
++    if(input_window_size==0)
++    {
++        trainUnconditionalPredictor();
++        return;
++    }
++
+     MODULE_LOG &lt;&lt; &quot;train() called &quot; &lt;&lt; endl;
+ 
+     // reserve memory for sequences
+@@ -671,6 +741,10 @@
+     {
+ 
+         input_list[t-input_window_size] = encoded_seq.subMatRows(t-input_window_size,input_window_size).toVec();
++        //perr &lt;&lt; &quot;t-input_window_size = &quot; &lt;&lt; endl;
++        //perr &lt;&lt; &quot;subMat:&quot; &lt;&lt; endl &lt;&lt; encoded_seq.subMatRows(t-input_window_size,input_window_size) &lt;&lt; endl;
++        //perr &lt;&lt; &quot;toVec:&quot; &lt;&lt; endl &lt;&lt; encoded_seq.subMatRows(t-input_window_size,input_window_size).toVec() &lt;&lt; endl;
++        //perr &lt;&lt; &quot;input_list:&quot; &lt;&lt; endl &lt;&lt; input_list[t-input_window_size] &lt;&lt; endl;
+         // target is copied so that when adding noise to input, it doesn't modify target 
+         //targets(t-input_window_size) &lt;&lt; encoded_seq(t);
+         targets_list[0](t-input_window_size) &lt;&lt; encoded_seq(t);
+@@ -733,8 +807,50 @@
+     nll_list.resize(l,ntargets);
+ }
+ 
+-// TODO: think properly about prepended stuff
+ 
++// must fill train_costs, train_n_items and     target_prediction_list[0](t)
++void DenoisingRecurrentNet::unconditionalFprop(Vec train_costs, Vec train_n_items) const
++{
++    int pred_size = mean_encoded_vec.length();
++    if(pred_size&lt;=0)
++        PLERROR(&quot;mean_encoded_vec not properly initialized. Did you call trainUnconditionalPredictor prior to unconditionalFprop ?&quot;);
++
++    int l = input_list.length();
++    int tar = 0;
++    train_n_items[tar] += l;
++    target_prediction_list[tar].resize(l,pred_size);
++    for(int i=0; i&lt;l; i++)
++    {        
++        Vec target_prediction_i = target_prediction_list[tar](i);
++        target_prediction_i &lt;&lt; mean_encoded_vec;
++        Vec target_vec = targets_list[tar](i);
++
++        /*
++        target_layers[tar]-&gt;setExpectation(target_prediction_i);
++        nll_list(i,tar) = target_layers[tar]-&gt;fpropNLL(target_vec); 
++        */
++        double nllcost = 0;
++        for(int k=0; k&lt;target_vec.length(); k++)
++            if(target_vec[k]!=0)
++                nllcost -= target_vec[k]*safelog(target_prediction_i[k]);
++        nll_list(i,tar) = nllcost;
++
++        if (isinf(nll_list(i,tar)))
++        {
++            PLWARNING(&quot;Row %d of sequence of length %d lead to inf cost&quot;,i,l);
++            perr &lt;&lt; &quot;Problem at positions (vec of length &quot; &lt;&lt; target_vec.length() &lt;&lt; &quot;): &quot;;
++            for(int k=0; k&lt;target_vec.length(); k++)
++                if(target_vec[k]!=0 &amp;&amp; target_prediction_i[k]==0)
++                    perr &lt;&lt; k &lt;&lt; &quot; &quot;;
++            perr &lt;&lt; endl;
++            // perr &lt;&lt; &quot;target_vec = &quot; &lt;&lt; target_vec &lt;&lt; endl;
++            // perr &lt;&lt; &quot;target_prediction_i = &quot; &lt;&lt; target_prediction_i &lt;&lt; endl;
++        }
++        else
++            train_costs[tar] += nll_list(i,tar);
++    }
++}
++
+ // fprop accumulates costs in costs and counts in n_items
+ void DenoisingRecurrentNet::recurrentFprop(Vec train_costs, Vec train_n_items) const
+ {
+@@ -823,51 +939,26 @@
+         else
+             hidden_gradient.resize(hidden_layer-&gt;size);
+         hidden_gradient.clear();
+-        if(use_target_layers_masks)
++        for( int tar=0; tar&lt;target_layers.length(); tar++)
+         {
+-            for( int tar=0; tar&lt;target_layers.length(); tar++)
++            if( !fast_exact_is_equal(target_layers_weights[tar],0) )
+             {
+-                if( !fast_exact_is_equal(target_layers_weights[tar],0) )
+-                {
+-                    target_layers[tar]-&gt;activation &lt;&lt; target_prediction_act_no_bias_list[tar](i);
+-                    target_layers[tar]-&gt;activation += target_layers[tar]-&gt;bias;
+-                    target_layers[tar]-&gt;setExpectation(target_prediction_list[tar](i));
+-                    target_layers[tar]-&gt;bpropNLL(targets_list[tar](i),nll_list(i,tar),bias_gradient);
+-                    bias_gradient *= target_layers_weights[tar];
++                target_layers[tar]-&gt;activation &lt;&lt; target_prediction_act_no_bias_list[tar](i);
++                target_layers[tar]-&gt;activation += target_layers[tar]-&gt;bias;
++                target_layers[tar]-&gt;setExpectation(target_prediction_list[tar](i));
++                target_layers[tar]-&gt;bpropNLL(targets_list[tar](i),nll_list(i,tar),bias_gradient);
++                bias_gradient *= target_layers_weights[tar];
++                if(use_target_layers_masks)
+                     bias_gradient *= masks_list[tar](i);
+-                    target_layers[tar]-&gt;update(bias_gradient);
+-                    if( hidden_layer2 )
+-                        target_connections[tar]-&gt;bpropUpdate(hidden2_list(i),target_prediction_act_no_bias_list[tar](i),
+-                                                             hidden_gradient, bias_gradient,true);
+-                    else
+-                        target_connections[tar]-&gt;bpropUpdate(hidden_list(i),target_prediction_act_no_bias_list[tar](i),
+-                                                             hidden_gradient, bias_gradient,true);
+-                }
++                target_layers[tar]-&gt;update(bias_gradient);
++                if( hidden_layer2 )
++                    target_connections[tar]-&gt;bpropUpdate(hidden2_list(i),target_prediction_act_no_bias_list[tar](i),
++                                                         hidden_gradient, bias_gradient,true);
++                else
++                    target_connections[tar]-&gt;bpropUpdate(hidden_list(i),target_prediction_act_no_bias_list[tar](i),
++                                                         hidden_gradient, bias_gradient,true);
+             }
+         }
+-        else
+-        {
+-            for( int tar=0; tar&lt;target_layers.length(); tar++)
+-            {
+-                if( !fast_exact_is_equal(target_layers_weights[tar],0) )
+-                {
+-                    target_layers[tar]-&gt;activation &lt;&lt; target_prediction_act_no_bias_list[tar](i);
+-                    target_layers[tar]-&gt;activation += target_layers[tar]-&gt;bias;
+-                    target_layers[tar]-&gt;setExpectation(target_prediction_list[tar](i));
+-                    target_layers[tar]-&gt;bpropNLL(targets_list[tar](i),nll_list(i,tar),bias_gradient);
+-                    bias_gradient *= target_layers_weights[tar];
+-                    target_layers[tar]-&gt;update(bias_gradient);
+-                    if( hidden_layer2 )
+-                        target_connections[tar]-&gt;bpropUpdate(hidden2_list(i),target_prediction_act_no_bias_list[tar](i),
+-                                                             hidden_gradient, bias_gradient,true); 
+-                    else
+-                        target_connections[tar]-&gt;bpropUpdate(hidden_list(i),target_prediction_act_no_bias_list[tar](i),
+-                                                             hidden_gradient, bias_gradient,true); 
+-                        
+-                }
+-            }
+-        }
+-
+         if (hidden_layer2)
+         {
+             hidden_layer2-&gt;bpropUpdate(
+@@ -890,16 +981,15 @@
+                 
+             dynamic_connections-&gt;bpropUpdate(
+                 hidden_list(i-1),
+-                hidden_act_no_bias_list(i), // Here, it should be cond_bias, but doesn't matter
++                hidden_act_no_bias_list(i), // Here, it should be dynamic_act_no_bias_contribution, but doesn't matter because a RBMMatrixConnection::bpropUpdate doesn't use its second argument
+                 hidden_gradient, hidden_temporal_gradient);
+                 
+-            hidden_temporal_gradient &lt;&lt; hidden_gradient;
+-                
+             input_connections-&gt;bpropUpdate(
+                 input_list[i],
+                 hidden_act_no_bias_list(i), 
+                 visi_bias_gradient, hidden_temporal_gradient);// Here, it should be activations - cond_bias, but doesn't matter
+                 
++            hidden_temporal_gradient &lt;&lt; hidden_gradient;                
+         }
+         else
+         {
+@@ -925,6 +1015,55 @@
+ 
+ 
+ /*
++  
++Frequences dans le trainset:
++
++**NOTES**
++0  DO            0.0872678308077029924            
++1  DO#           0.00716010857716887095                   
++2  RE            0.178895847137025221                   
++3  RE#           0.0037189817684399511                   
++4  MI            0.114241135358112283                   
++5  FA            0.00517237694231303512                   
++6  FA#           0.0806848056083954851                   
++7  SOL           0.194776326757432616                   
++8  SOL#          0.00301365763994271892                   
++9  LA            0.13988928548528437                   
++10 LA#           0.00369760831000064084                   
++11 SI            0.181482035608181741                   
++
++**OCTAVES**
++0  OCT1          0.362130506337230429                   
++1  OCT2          0.574048346762989659                   
++2  OCT3          0.0635219184816295107                   
++3  OCT4          0.000299228418150340866                
++
++**DUREES**
++0  1/8           0.00333425951653236984                   
++1  1/6           0.000170987667514480506                   
++2  1/4           0.0386432128582725951                   
++3  1/3           0.00716010857716887095                   
++4  2/4           0.569880522367324227                   
++5  2/3           0                               
++6  3/4           0.00220146621924893673                   
++7  4/4           0.305896937183405604                   
++8  5/4           4.27469168786201266e-05                   
++9  6/4           0.0222283967768824656                   
++10 8/4           0.0365058670143415878                   
++11 10/4          0.000876311796011712552                   
++12 12/4          0.0078440592472267933                   
++13 14/4          6.41203753179301933e-05                   
++14 16/4          0.00331288605809306001                   
++15 18/4          8.54938337572402532e-05                   
++16 20/4          0.000726697586936542119                   
++17 24/4          0.000619830294739991887                   
++18 28/4          0.000149614209075170433                   
++19 32/4          0.000256481501271720773         
++
++ */
++
++
++/*
+ Format de donnees:
+ 
+ matrice de 2 colonnes:
+@@ -935,11 +1074,9 @@
+       ou -1 (missing)
+       ou -999 (fin de sequence)
+ 
+-duree: 0 double-croche
+-       1 
+-..16   exprimee en 1/16 de mesure (resultat du quantize de Stan)
++duree: voir indices (colonne de gauche) et DUREES dans table de frequences ci-dessus
++       1 unite correspond a une noire.
+ 
+-
+  */
+ 
+ void DenoisingRecurrentNet::encodeSequence(Mat sequence, Mat&amp; encoded_seq) const
+@@ -955,7 +1092,7 @@
+     else if(encoding==&quot;note_duration&quot;)
+         encode_onehot_note_octav_duration(sequence, encoded_seq, prepend_zero_rows, false, 0);
+     else if(encoding==&quot;note_octav_duration&quot;)
+-        encode_onehot_note_octav_duration(sequence, encoded_seq, prepend_zero_rows, false, 5);    
++        encode_onehot_note_octav_duration(sequence, encoded_seq, prepend_zero_rows, false, 4);    
+     else if(encoding==&quot;raw_masked_supervised&quot;)
+         PLERROR(&quot;raw_masked_supervised means already encoded! You shouldnt have landed here!!!&quot;);
+     else if(encoding==&quot;generic&quot;)
+@@ -997,6 +1134,12 @@
+ }
+ 
+ 
++int DenoisingRecurrentNet::getDurationBit(int duration)
++{
++    if(duration==5)  // map infrequent 5 to 4
++        duration=4;
++    return duration;
++}
+ 
+ 
+ // encodings
+@@ -1060,10 +1203,10 @@
+             encoded_sequence(prepend_zero_rows+i,note_nbits+octavpos) = 1;
+         }
+ 
+-        int duration = int(sequence(i,1));
+-        if(duration&lt;0 || duration&gt;=duration_nbits)
+-            PLERROR(&quot;duration out of valid range&quot;);
+-        encoded_sequence(prepend_zero_rows+i,note_nbits+octav_nbits+duration) = 1;
++        int duration_bit = getDurationBit(int(sequence(i,1)));
++        if(duration_bit&lt;0 || duration_bit&gt;=duration_nbits)
++            PLERROR(&quot;duration_bit out of valid range&quot;);
++        encoded_sequence(prepend_zero_rows+i,note_nbits+octav_nbits+duration_bit) = 1;
+     }
+ }
+ 
+@@ -1270,8 +1413,12 @@
+         seq.resize(seqlen, w);
+         testset-&gt;getMat(start,0,seq);
+         encodeSequenceAndPopulateLists(seq);
+-        recurrentFprop(costs, n_items);
+ 
++        if(input_window_size==0)
++            unconditionalFprop(costs, n_items);
++        else
++            recurrentFprop(costs, n_items);
++
+         if (testoutputs)
+         {
+             for(int t=0; t&lt;seqlen; t++)
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.h
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.h	2008-07-15 19:17:59 UTC (rev 9249)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.h	2008-07-15 19:22:17 UTC (rev 9250)
+@@ -141,6 +141,9 @@
+     // Phase recurrent no noise (supervised fine tuning)
+     double recurrent_lr;
+ 
++
++    // When training with trainUnconditionalPredictor, this is simply used to store the avg encoded frame
++    Vec mean_encoded_vec;
+     
+     //#####  Not Options  #####################################################
+ 
+@@ -164,9 +167,9 @@
+                                         int prepend_zero_rows, bool use_silence=false);    
+ 
+     static int duration_to_number_of_timeframes(int duration);
++    static int getDurationBit(int duration);
+ 
+ 
+-
+     // input noise injection
+     void inject_zero_forcing_noise(Mat sequence, double noise_prob);
+ 
+@@ -379,6 +382,10 @@
+ 
+     void resize_lists(int l) const;
+ 
++    void trainUnconditionalPredictor();
++    void unconditionalFprop(Vec train_costs, Vec train_n_items) const;
++
++
+ private:
+     //#####  Private Data Members  ############################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002698.html">[Plearn-commits] r9249 - trunk/plearn/io
+</A></li>
+	<LI>Next message: <A HREF="002700.html">[Plearn-commits] r9251 - trunk/python_modules/plearn/pybridge
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2699">[ date ]</a>
+              <a href="thread.html#2699">[ thread ]</a>
+              <a href="subject.html#2699">[ subject ]</a>
+              <a href="author.html#2699">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

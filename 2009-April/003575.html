@@ -1,0 +1,370 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10135 - in trunk: python_modules/plearn/parallel	scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10135%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200904211423.n3LENc8f031444%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003574.html">
+   <LINK REL="Next"  HREF="003576.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10135 - in trunk: python_modules/plearn/parallel	scripts</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10135%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200904211423.n3LENc8f031444%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10135 - in trunk: python_modules/plearn/parallel	scripts">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Apr 21 16:23:38 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003574.html">[Plearn-commits] r10134 - trunk/plearn_learners/generic
+</A></li>
+        <LI>Next message: <A HREF="003576.html">[Plearn-commits] r10136 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3575">[ date ]</a>
+              <a href="thread.html#3575">[ thread ]</a>
+              <a href="subject.html#3575">[ subject ]</a>
+              <a href="author.html#3575">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-04-21 16:23:38 +0200 (Tue, 21 Apr 2009)
+New Revision: 10135
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+generalysed the handling of the log file name to be the same on all backend.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2009-04-20 21:32:40 UTC (rev 10134)
++++ trunk/python_modules/plearn/parallel/dbi.py	2009-04-21 14:23:38 UTC (rev 10135)
+@@ -180,6 +180,8 @@
+         self.temp_files = []
+         self.arch = 0 # TODO, we should put the local arch: 32,64 or 3264 bits
+         self.base_tasks_log_file = []
++        self.stdouts = ''
++        self.stderrs = ''
+         self.raw = ''
+         self.cpu = 0
+         self.mem = 0
+@@ -210,6 +212,22 @@
+ 
+     def add_commands(self,commands): raise NotImplementedError, &quot;DBIBase.add_commands()&quot;
+ 
++    def get_file_redirection(self, task_id):
++        &quot;&quot;&quot; Calculate the file to use for stdout/stderr
++        &quot;&quot;&quot;
++        n=task_id-1
++        base=self.tasks[n].log_file
++        if self.base_tasks_log_file:
++            base = self.base_tasks_log_file[n]
++            base=os.path.join(self.log_dir,base)
++            self.check_path(base)
++        elif self.stdouts and self.stderrs:
++            assert len(self.stdouts)==len(self.stderrs)==len(self.tasks)
++            return (self.stdouts[n], self.stderrs[n])
++
++        return (base + '.out',base + '.err')
++            
++
+     def get_redirection(self,stdout_file,stderr_file):
+         &quot;&quot;&quot;Compute the needed redirection based of the objects attribute.
+         Return a tuple (stdout,stderr) that can be used with popen.
+@@ -509,7 +527,7 @@
+         task.launch_time = time.time()
+         task.set_scheduled_time()
+ 
+-        (output,error)=self.get_redirection(task.log_file + '.out',task.log_file + '.err')
++        (output,error)=self.get_redirection(*self.get_file_redirection(task.id))
+         task.p = Popen(command, shell=True,stdout=output,stderr=error)
+         task.p_wait_ret=task.p.wait()
+         task.dbi_return_status=None
+@@ -669,17 +687,15 @@
+         # and another one containing the log_file name associated
+         tasks_file = open( 'tasks', 'w' )
+         logfiles_file = open( 'logfiles', 'w' )
+-        if self.base_tasks_log_file:
+-            for task,base in zip(self.tasks,self.base_tasks_log_file):
+-                #-4 as we will happend .err or .out
+-                p=os.path.join(self.log_dir,base)
+-                self.check_path(p)
+-                tasks_file.write( ';'.join(task.commands) + '\n' )
+-                logfiles_file.write( p + '\n' )
+-        else:
+-            for task in self.tasks:
+-                tasks_file.write( ';'.join(task.commands) + '\n' )
+-                logfiles_file.write( task.log_file + '\n' )
++        assert len(self.stdouts)==len(self.stderrs)==0
++        for task in self.tasks:
++            #-4 as we will happend .err or .out
++            base=self.get_file_redirection(task.id)[0][:-4]
++            p=os.path.join(self.log_dir,base)
++            self.check_path(p)
++            tasks_file.write( ';'.join(task.commands) + '\n' )
++            logfiles_file.write( p + '\n' )
++
+         tasks_file.close()
+         logfiles_file.close()
+ 
+@@ -789,8 +805,6 @@
+         self.redirect_stderr_to_stdout = False
+         self.env = ''
+         self.os = ''
+-        self.stdouts = ''
+-        self.stderrs = ''
+         self.abs_path = True
+         self.set_special_env = True
+         self.nb_proc = -1 # &lt; 0   mean unlimited
+@@ -1220,19 +1234,11 @@
+             condor_dag_fd.write('VARS %d stdout=&quot;%s&quot;\n'%(id,stdout_file))
+             condor_dag_fd.write('VARS %d stderr=&quot;%s&quot;\n\n'%(id,stderr_file))
+ 
+-        if self.base_tasks_log_file:
+-            for i in range(len(self.tasks)):
+-                task=self.tasks[i]
+-                s=os.path.join(self.log_dir,self.base_tasks_log_file[i])
+-                print_task(i,task,s+&quot;.out&quot;,s+&quot;.err&quot;)
+-        elif self.stdouts and self.stderrs:
+-            assert len(self.stdouts)==len(self.stderrs)==len(self.tasks)
+-            for (i,task,stdout_file,stderr_file) in zip(range(len(self.tasks)),self.tasks,self.stdouts,self.stderrs):
+-                print_task(i,task,stdout_file,stderr_file)
+-        else:
+-            #should not happen
+-            raise NotImplementedError()
+-                
++            
++        for i in range(len(self.tasks)):
++            task=self.tasks[i]
++            print_task(i,task,*self.get_file_redirection(task.id))
++
+         condor_dag_fd.close()
+ 
+         self.make_launch_script('$@')
+@@ -1292,19 +1298,13 @@
+                     condor_submit_fd.write(&quot;error        = %s \nqueue\n&quot; %stderr_file)
+                 if req:
+                     condor_submit_fd.write(&quot;requirements   = %s\n&quot;%(req))
+-            if self.base_tasks_log_file:
+-                for (task,task_log,req) in zip(self.tasks,self.base_tasks_log_file,
+-                                               self.tasks_req):
+-                    s=os.path.join(self.log_dir,task_log)
+-                    print_task(task,s+&quot;.out&quot;,s+&quot;.err&quot;,req)
+-            elif self.stdouts and self.stderrs:
+-                assert len(self.stdouts)==len(self.stderrs)==len(self.tasks)
+-                for (task,stdout_file,stderr_file,req) in zip(self.tasks,self.stdouts,
+-                                                              self.stderrs,self.tasks_req):
+-                    print_task(task,stdout_file,stderr_file)
+-            else:
+-                for (task,req) in zip(self.tasks,self.tasks_req):
+-                    print_task(task, &quot;&quot;, &quot;&quot;, req)
++
++            for i in range(len(self.tasks)):
++                task=self.tasks[i]
++                req=self.tasks_req[i]
++                (o,e)=self.get_file_redirection(task.id)
++                print_task(task,o,e,req)
++
+         condor_submit_fd.close()
+ 
+         self.make_launch_script('sh -c &quot;$@&quot;')
+@@ -1425,7 +1425,6 @@
+             
+         #launch the jobs
+         if self.test == False:
+-            (output,error)=self.get_redirection(self.log_file + '.out',self.log_file + '.err')
+             print &quot;[DBI] Executing: &quot; + cmd
+             for task in self.tasks:
+                 task.set_scheduled_time()
+@@ -1513,7 +1512,7 @@
+             print &quot;[DBI] &quot;+c
+             return
+ 
+-        (output,error)=self.get_redirection(task.log_file + '.out',task.log_file + '.err')
++        (output,error)=self.get_redirection(*self.get_file_redirection(task.id))
+ 
+         self.started+=1
+         print &quot;[DBI,%d/%d,%s] %s&quot;%(self.started,len(self.tasks),time.ctime(),c)
+@@ -1729,9 +1728,8 @@
+ 
+         task.launch_time = time.time()
+         task.set_scheduled_time()
++        (output,error)=self.get_redirection(*self.get_file_redirection(task.id))
+ 
+-        (output,error)=self.get_redirection(task.log_file + '.out',task.log_file + '.err')
+-
+         task.p = Popen(command, shell=True,stdout=output,stderr=error)
+         task.p.wait()
+         task.status=STATUS_FINISHED
+@@ -1753,7 +1751,6 @@
+             task.launch_time = time.time()
+             task.set_scheduled_time()
+ 
+-###            (output,error)=self.get_redirection(task.log_file + '.out',task.log_file + '.err')
+ 
+             task.p = Popen(command, shell=True,stdout=PIPE,stderr=PIPE)
+             wait = task.p.wait()
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2009-04-20 21:32:40 UTC (rev 10134)
++++ trunk/scripts/dbidispatch	2009-04-21 14:23:38 UTC (rev 10135)
+@@ -8,14 +8,14 @@
+ ShortHelp='''Usage: dbidispatch [--help|-h] [--[*no_]dbilog] [--condor[=N]|--bqtools[=N]|--cluster[=N]|--local[=N]|--ssh[=N]] [--[*no_]test] [--[*no_]testdbi] [--[*no_]nb_proc=N] [--exp_dir=dir] [--only_n_first=N] &lt;back-end parameter&gt; {--file=FILEPATH | &lt;command-template&gt;|--[*no_]restart condor_jobs_number... }
+ 
+ &lt;back-end parameter&gt;:
++    all                      :[--tasks_filename={compact,explicit,nb0,nb1,
++                                                 sh(condor only),
++                                                 clusterid(condor only),
++                                                 processid(condor only))}+]
+     bqtools, cluster, condor option  : [--mem=N]
+                               [--cpu=nb_cpu_per_node]
+     bqtools, cluster option  :[--duree=X]
+-    bqtools, condor options  :[--tasks_filename={compact,explicit,nb0,nb1,
+-                                                 sh(condor only),
+-                                                 clusterid(condor only),
+-                                                 processid(condor only))}+]
+-                              [--raw=STRING[\nSTRING]]
++    bqtools, condor options  :[--raw=STRING[\nSTRING]]
+                               [*--[no_]set_special_env]
+                               [--env=VAR=VALUE[;VAR2=VALUE2]]
+     cluster, condor options  :[--32|--64|--3264] [--os=X]
+@@ -83,19 +83,6 @@
+     line that was executed, all other options are are those passed to 
+     dbidispatch this time. Work only with jobs launched with dbidispatch.
+   The '--only_n_first=N' option tell to launch only the first N jobs from the list.
+-
+-bqtools, cluster and condor option:
+-  The '--mem=X' speficify the number of ram in meg the program need to execute.
+-  The '--cpu=nb_cpu_per_node' option determine the number of cpu(cores) that 
+-    will be reserved for each job.
+-
+-bqtools and cluster option:
+-  The '--duree' option specifies the maximum duration of the jobs. The syntax 
+-    depends on the back-end. For the cluster syntax, see 'cluster --help'. 
+-    For bqtools, the syntax is '--duree=12:13:15', giving 12 hours, 
+-    13 minutes and 15 seconds.
+-
+-bqtools and condor options:
+   The '--tasks_filename={compact,explicit,nb0,nb1,sh}+' option will change the
+     filename where the stdout, stderr are redirected. We can put many option 
+     separated by comma. They will apper in the filename in order separated by a 
+@@ -105,12 +92,25 @@
+       - explicit: a unic string that represent the full command to execute
+       - nb0     : a number from 0 to nb job -1.
+       - nb1     : a number from 1 to nb job.
+-      - sh      : (condor only)parse the command for &gt; and 2&gt; redirection command.
++      - sh      : parse the command for &gt; and 2&gt; redirection command.
+                   If one or both of them are missing, they are redirected
+                   to /dev/null
+       - clusterid: (condor only)put the cluster id of the jobs.
+       - processid: (condor only)put the process id of the jobs. Idem as nb0
+       - none    : remove all preceding pattern
++
++bqtools, cluster and condor option:
++  The '--mem=X' speficify the number of ram in meg the program need to execute.
++  The '--cpu=nb_cpu_per_node' option determine the number of cpu(cores) that 
++    will be reserved for each job.
++
++bqtools and cluster option:
++  The '--duree' option specifies the maximum duration of the jobs. The syntax 
++    depends on the back-end. For the cluster syntax, see 'cluster --help'. 
++    For bqtools, the syntax is '--duree=12:13:15', giving 12 hours, 
++    13 minutes and 15 seconds.
++
++bqtools and condor options:
+   The '--raw=STRING1[\nSTRING2...]' option append all STRINGX in the submit file.
+       if this option appread many time, they will be concatanated with a new line.
+   The '--[no_]set_special_env' option will set the varialbe OMP_NUM_THREADS, 
+@@ -364,8 +364,7 @@
+         break
+     command_argv.remove(argv)
+ 
+-if launch_cmd in [&quot;Bqtools&quot;,&quot;Condor&quot;]:
+-    dbi_param.setdefault(&quot;tasks_filename&quot;, [&quot;nb0&quot;,&quot;compact&quot;])
++dbi_param.setdefault(&quot;tasks_filename&quot;, [&quot;nb0&quot;,&quot;compact&quot;])
+ 
+ if len(command_argv) == 0 and not dbi_param.has_key(&quot;file&quot;):
+     print &quot;No command or file with command to execute!&quot;
+@@ -381,7 +380,8 @@
+ if not os.path.exists(LOGDIR):
+     os.mkdir(LOGDIR)
+ 
+-valid_dbi_param=[&quot;clean_up&quot;, &quot;test&quot;, &quot;dolog&quot;, &quot;nb_proc&quot;, &quot;exp_dir&quot;, &quot;file&quot;]
++valid_dbi_param=[&quot;clean_up&quot;, &quot;test&quot;, &quot;dolog&quot;, &quot;nb_proc&quot;, &quot;exp_dir&quot;, &quot;file&quot;,
++                 &quot;tasks_filename&quot;]
+ if launch_cmd==&quot;Cluster&quot;:
+     valid_dbi_param +=[&quot;cwait&quot;,&quot;force&quot;,&quot;arch&quot;,&quot;interruptible&quot;,
+                        &quot;duree&quot;,&quot;cpu&quot;,&quot;mem&quot;,&quot;os&quot;]
+@@ -389,13 +389,13 @@
+     valid_dbi_param +=[&quot;req&quot;, &quot;arch&quot;, &quot;getenv&quot;, &quot;nice&quot;, &quot;files&quot;, &quot;rank&quot;, &quot;env&quot;,
+                        &quot;raw&quot;, &quot;os&quot;, &quot;set_special_env&quot;, &quot;mem&quot;, &quot;cpu&quot;, &quot;pkdilly&quot;,
+                        &quot;universe&quot;, &quot;machine&quot;, &quot;machines&quot;, &quot;no_machine&quot;,&quot;to_all&quot;,
+-                       &quot;keep_failed_jobs_in_queue&quot;, &quot;tasks_filename&quot;, &quot;restart&quot;,
++                       &quot;keep_failed_jobs_in_queue&quot;, &quot;restart&quot;,
+                        &quot;max_file_size&quot;, &quot;debug&quot;, &quot;local_log_file&quot;
+                        ]
+ elif launch_cmd==&quot;Bqtools&quot;:
+     valid_dbi_param +=[&quot;cpu&quot;, &quot;duree&quot;, &quot;long&quot;, &quot;mem&quot;, &quot;micro&quot;,
+                        &quot;nano&quot;, &quot;queue&quot;, &quot;raw&quot;, &quot;submit_options&quot;, &quot;jobs_name&quot;,
+-                       &quot;tasks_filename&quot;, &quot;set_special_env&quot;, &quot;env&quot; ]
++                       &quot;set_special_env&quot;, &quot;env&quot; ]
+ 
+ if  launch_cmd == 'Condor' and gethostname().endswith(&quot;.iro.umontreal.ca&quot;):
+     #default value for pkdilly is true.
+@@ -571,10 +571,16 @@
+         pass
+     elif pattern == &quot;none&quot;:
+         dbi_param[n]=[&quot;&quot;]*len(commands)
+-    elif pattern == &quot;clusterid&quot;:#$(Cluster)
+-        dbi_param[n]=merge_pattern([&quot;$(Cluster)&quot;]*len(dbi_param[n]))
++    elif pattern == &quot;clusterid&quot;:#$(Cluster)        
++        if launch_cmd==&quot;Condor&quot;:
++            dbi_param[n]=merge_pattern([&quot;$(Cluster)&quot;]*len(dbi_param[n]))
++        else:
++            print &quot;Warning the option tasks_filename=clusterid is only valid for condor&quot;
+     elif pattern == &quot;processid&quot;:#$(Process)
+-        dbi_param[n]=merge_pattern([&quot;$(Process)&quot;]*len(dbi_param[n]))
++        if launch_cmd==&quot;Condor&quot;:
++            dbi_param[n]=merge_pattern([&quot;$(Process)&quot;]*len(dbi_param[n]))
++        else:
++            print &quot;Warning the option tasks_filename=processid is only valid for condor&quot;
+     elif pattern == &quot;sh&quot;:
+         stdouts=[]
+         stderrs=[]
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003574.html">[Plearn-commits] r10134 - trunk/plearn_learners/generic
+</A></li>
+	<LI>Next message: <A HREF="003576.html">[Plearn-commits] r10136 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3575">[ date ]</a>
+              <a href="thread.html#3575">[ thread ]</a>
+              <a href="subject.html#3575">[ subject ]</a>
+              <a href="author.html#3575">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

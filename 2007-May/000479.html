@@ -1,0 +1,290 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7030 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7030%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705081350.l48DoEko017493%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000478.html">
+   <LINK REL="Next"  HREF="000480.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7030 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7030%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705081350.l48DoEko017493%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7030 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Tue May  8 15:50:14 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000478.html">[Plearn-commits] r7029 - trunk/python_modules/plearn/report
+</A></li>
+        <LI>Next message: <A HREF="000480.html">[Plearn-commits] r7031 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#479">[ date ]</a>
+              <a href="thread.html#479">[ thread ]</a>
+              <a href="subject.html#479">[ subject ]</a>
+              <a href="author.html#479">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-05-08 15:50:13 +0200 (Tue, 08 May 2007)
+New Revision: 7030
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/RBMLayer.cc
+   trunk/plearn_learners/online/RBMMatrixConnection.cc
+Log:
+Debugging gibbs chain stuff.
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-08 01:03:22 UTC (rev 7029)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-08 13:50:13 UTC (rev 7030)
+@@ -1828,16 +1828,14 @@
+                     connection-&gt;setAsUpInputs(up_layer-&gt;samples);
+                     down_layer-&gt;getAllActivations(connection, 0, true);
+                     down_layer-&gt;generateSamples();
++                    down_state &lt;&lt; down_layer-&gt;samples;
+                 }
+                 initialize_gibbs_chain=false;
+             }
+-            else
+-            {
+-                // sample up state given down state
+-                connection-&gt;setAsDownInputs(down_state);
+-                up_layer-&gt;getAllActivations(connection, 0, true);
+-                up_layer-&gt;computeExpectations();
+-            }
++            // sample up state given down state
++            connection-&gt;setAsDownInputs(down_state);
++            up_layer-&gt;getAllActivations(connection, 0, true);
++            up_layer-&gt;computeExpectations();
+             up_layer-&gt;generateSamples();
+ 
+             // update using the down_state and up_layer-&gt;expectations for moving average in negative phase
+@@ -1845,12 +1843,12 @@
+             if (background_gibbs_update_ratio&lt;1)
+             {
+                 down_layer-&gt;updateCDandGibbs(pos_down_vals,cd_neg_down_vals,
+-                                             down_layer-&gt;samples,
++                                             down_state,
+                                              background_gibbs_update_ratio,
+                                              gibbs_chain_statistics_forgetting_factor);
+                 connection-&gt;updateCDandGibbs(pos_down_vals,pos_up_vals,
+                                              cd_neg_down_vals, cd_neg_up_vals,
+-                                             down_layer-&gt;samples,
++                                             down_state,
+                                              up_layer-&gt;getExpectations(),
+                                              background_gibbs_update_ratio,
+                                              gibbs_chain_statistics_forgetting_factor);
+@@ -1861,9 +1859,9 @@
+             }
+             else
+             {
+-                down_layer-&gt;updateGibbs(pos_down_vals,down_layer-&gt;samples,
++                down_layer-&gt;updateGibbs(pos_down_vals,down_state,
+                                         gibbs_chain_statistics_forgetting_factor);
+-                connection-&gt;updateGibbs(pos_down_vals,pos_up_vals,down_layer-&gt;samples,
++                connection-&gt;updateGibbs(pos_down_vals,pos_up_vals,down_state,
+                                         up_layer-&gt;getExpectations(),
+                                         gibbs_chain_statistics_forgetting_factor);
+                 up_layer-&gt;updateGibbs(pos_up_vals,up_layer-&gt;getExpectations(),
+
+Modified: trunk/plearn_learners/online/RBMLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.cc	2007-05-08 01:03:22 UTC (rev 7029)
++++ trunk/plearn_learners/online/RBMLayer.cc	2007-05-08 13:50:13 UTC (rev 7030)
+@@ -432,23 +432,30 @@
+     int minibatch_size=gibbs_neg_values.length();
+     PLASSERT(pos_values.length()==minibatch_size);
+     PLASSERT(cd_neg_values.length()==minibatch_size);
++    real normalize_factor=1.0/minibatch_size;
+ 
+     // neg_stats &lt;-- gibbs_chain_statistics_forgetting_factor * neg_stats
+     //              +(1-gibbs_chain_statistics_forgetting_factor)
+     //               * sumoverrows(gibbs_neg_values)
+     tmp.resize(size);
+     columnSum(gibbs_neg_values,tmp);
+-    multiplyScaledAdd(tmp,gibbs_chain_statistics_forgetting_factor,
+-                      (1-gibbs_chain_statistics_forgetting_factor),bias_neg_stats);
++    if (neg_count==0)
++        multiply(tmp,normalize_factor,bias_neg_stats);
++    else
++        multiplyScaledAdd(tmp,gibbs_chain_statistics_forgetting_factor,
++                          normalize_factor*(1-gibbs_chain_statistics_forgetting_factor),
++                          bias_neg_stats);
++    neg_count++;
++
+     // delta w = -lrate * ( sumoverrows(pos_values)
+     //                   - ( background_gibbs_update_ratio*neg_stats
+     //                      +(1-background_gibbs_update_ratio)
+     //                       * sumoverrows(cd_neg_values) ) )
+     columnSum(pos_values,tmp);
+-    multiplyAcc(bias, tmp, -learning_rate);
++    multiplyAcc(bias, tmp, -learning_rate*normalize_factor);
+     multiplyAcc(bias,bias_neg_stats,learning_rate*background_gibbs_update_ratio);
+     columnSum(cd_neg_values, tmp);
+-    multiplyAcc(bias, tmp, -learning_rate*(1-background_gibbs_update_ratio));
++    multiplyAcc(bias, tmp, learning_rate*(1-background_gibbs_update_ratio)*normalize_factor);
+ }
+ 
+ /////////////////
+@@ -458,19 +465,27 @@
+                             const Mat&amp; gibbs_neg_values,
+                             real gibbs_chain_statistics_forgetting_factor)
+ {
++    int minibatch_size = pos_values.length();
+     PLASSERT(pos_values.width()==size);
+     PLASSERT(gibbs_neg_values.width()==size);
+-    PLASSERT(pos_values.length()==gibbs_neg_values.length());
++    PLASSERT(minibatch_size==gibbs_neg_values.length());
+     // neg_stats &lt;-- gibbs_chain_statistics_forgetting_factor * neg_stats
+     //              +(1-gibbs_chain_statistics_forgetting_factor)
+-    //               * sumoverrows(gibbs_neg_values)
++    //               * meanoverrows(gibbs_neg_values)
+     tmp.resize(size);
++    real normalize_factor=1.0/minibatch_size;
+     columnSum(gibbs_neg_values,tmp);
+-    multiplyScaledAdd(tmp,gibbs_chain_statistics_forgetting_factor,
+-                      (1-gibbs_chain_statistics_forgetting_factor),bias_neg_stats);
+-    // delta w = -lrate * ( sumoverrows(pos_values - neg_stats ) )
++    if (neg_count==0)
++        multiply(tmp,normalize_factor,bias_neg_stats);
++    else // bias_neg_stats &lt;-- tmp*(1-gibbs_chain_statistics_forgetting_factor)/minibatch_size 
++        //                    +gibbs_chain_statistics_forgetting_factor*bias_neg_stats
++        multiplyScaledAdd(tmp,gibbs_chain_statistics_forgetting_factor,
++                          normalize_factor*(1-gibbs_chain_statistics_forgetting_factor),
++                          bias_neg_stats);
++    neg_count++;
++    // delta w = -lrate * ( meanoverrows(pos_values) - neg_stats ) 
+     columnSum(pos_values,tmp);
+-    multiplyAcc(bias, tmp, -learning_rate);
++    multiplyAcc(bias, tmp, -learning_rate*normalize_factor);
+     multiplyAcc(bias,bias_neg_stats,learning_rate);
+ }
+ 
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-05-08 01:03:22 UTC (rev 7029)
++++ trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-05-08 13:50:13 UTC (rev 7030)
+@@ -297,49 +297,63 @@
+                                             real background_gibbs_update_ratio,
+                                             real gibbs_chain_statistics_forgetting_factor)
+ {
++    real normalize_factor = 1.0/pos_down_values.length();
+     // neg_stats &lt;-- gibbs_chain_statistics_forgetting_factor * neg_stats
+     //              +(1-gibbs_chain_statistics_forgetting_factor)
+-    //               * gibbs_neg_up_values'*gibbs_neg_down_values
+-    productScaleAcc(weights_neg_stats,
+-                    gibbs_neg_up_values,true,
+-                    gibbs_neg_down_values,false,
+-                    (1-gibbs_chain_statistics_forgetting_factor),
+-                    gibbs_chain_statistics_forgetting_factor);
++    //               * gibbs_neg_up_values'*gibbs_neg_down_values/minibatch_size
++    if (neg_count==0)
++        productScaleAcc(weights_neg_stats,
++                        gibbs_neg_up_values,true,
++                        gibbs_neg_down_values,false,normalize_factor,0);
++    else
++        productScaleAcc(weights_neg_stats,
++                        gibbs_neg_up_values,true,
++                        gibbs_neg_down_values,false,
++                        normalize_factor*(1-gibbs_chain_statistics_forgetting_factor),
++                        gibbs_chain_statistics_forgetting_factor);
++    neg_count++;
+ 
+     // delta w = -lrate * ( pos_up_values'*pos_down_values
+     //                   - ( background_gibbs_update_ratio*neg_stats
+     //                      +(1-background_gibbs_update_ratio)
+-    //                       * cd_neg_up_values'*cd_neg_down_values))
++    //                       * cd_neg_up_values'*cd_neg_down_values/minibatch_size))
+     productScaleAcc(weights,
+                     pos_up_values, true,
+-                    pos_down_values, false,-learning_rate,1.);
++                    pos_down_values, false,-learning_rate*normalize_factor,1.);
+     multiplyAcc(weights, weights_neg_stats,
+                 learning_rate*background_gibbs_update_ratio);
+     productScaleAcc(weights,
+                     cd_neg_up_values, true,
+                     cd_neg_down_values, false,
+-                    -learning_rate*(1-background_gibbs_update_ratio),1.);
++                    learning_rate*(1-background_gibbs_update_ratio)*normalize_factor,1.);
+ }
+ 
+ void RBMMatrixConnection::updateGibbs( const Mat&amp; pos_down_values,
+-                                 const Mat&amp; pos_up_values,
+-                                 const Mat&amp; gibbs_neg_down_values,
+-                                 const Mat&amp; gibbs_neg_up_values,
+-                                 real gibbs_chain_statistics_forgetting_factor)
++                                       const Mat&amp; pos_up_values,
++                                       const Mat&amp; gibbs_neg_down_values,
++                                       const Mat&amp; gibbs_neg_up_values,
++                                       real gibbs_chain_statistics_forgetting_factor)
+ {
++    real normalize_factor = 1.0/pos_down_values.length();
+     // neg_stats &lt;-- gibbs_chain_statistics_forgetting_factor * neg_stats
+     //              +(1-gibbs_chain_statistics_forgetting_factor)
+     //               * gibbs_neg_up_values'*gibbs_neg_down_values
+-    productScaleAcc(weights_neg_stats,
+-                    gibbs_neg_up_values,true,
+-                    gibbs_neg_down_values,false,
+-                    (1-gibbs_chain_statistics_forgetting_factor),
+-                    gibbs_chain_statistics_forgetting_factor);
++    if (neg_count==0)
++        productScaleAcc(weights_neg_stats,
++                        gibbs_neg_up_values,true,
++                        gibbs_neg_down_values,false,normalize_factor,0);
++    else
++        productScaleAcc(weights_neg_stats,
++                        gibbs_neg_up_values,true,
++                        gibbs_neg_down_values,false,
++                        normalize_factor*(1-gibbs_chain_statistics_forgetting_factor),
++                        gibbs_chain_statistics_forgetting_factor);
++    neg_count++;
+ 
+-    // delta w = -lrate * ( pos_up_values'*pos_down_values - neg_stats )
++    // delta w = -lrate * ( pos_up_values'*pos_down_values/minibatch_size - neg_stats )
+     productScaleAcc(weights,
+                     pos_up_values, true,
+-                    pos_down_values, false,-learning_rate,1.);
++                    pos_down_values, false,-learning_rate*normalize_factor,1.);
+     multiplyAcc(weights, weights_neg_stats,learning_rate);
+ }
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000478.html">[Plearn-commits] r7029 - trunk/python_modules/plearn/report
+</A></li>
+	<LI>Next message: <A HREF="000480.html">[Plearn-commits] r7031 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#479">[ date ]</a>
+              <a href="thread.html#479">[ thread ]</a>
+              <a href="subject.html#479">[ subject ]</a>
+              <a href="author.html#479">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,170 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8166 - in trunk: python_modules/plearn/parallel	scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8166%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200710101838.l9AIcMLZ013688%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001613.html">
+   <LINK REL="Next"  HREF="001615.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8166 - in trunk: python_modules/plearn/parallel	scripts</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8166%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200710101838.l9AIcMLZ013688%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8166 - in trunk: python_modules/plearn/parallel	scripts">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed Oct 10 20:38:22 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001613.html">[Plearn-commits] r8165 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="001615.html">[Plearn-commits] r8167 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1614">[ date ]</a>
+              <a href="thread.html#1614">[ thread ]</a>
+              <a href="subject.html#1614">[ subject ]</a>
+              <a href="author.html#1614">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-10-10 20:38:21 +0200 (Wed, 10 Oct 2007)
+New Revision: 8166
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+put the executed command for the cluster backend in a file to solve the trouble with bash quote
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2007-10-10 15:34:30 UTC (rev 8165)
++++ trunk/python_modules/plearn/parallel/dbi.py	2007-10-10 18:38:21 UTC (rev 8166)
+@@ -235,7 +235,7 @@
+                 print &quot;[DBI] post_batch_command:&quot;,post_batch_command
+             
+     def clean(self):
+-        pass
++        print &quot;[DBI] WARNING the clean function was not overrided by the sub class!&quot;
+ 
+     def run(self):
+         pass
+@@ -400,6 +400,9 @@
+         self.nb_proc=int(self.nb_proc)
+         self.backend_failed=0
+         self.jobs_failed=0
++        
++        if not os.path.exists(self.tmp_dir):
++            os.mkdir(self.tmp_dir)
+ 
+     def add_commands(self,commands):
+         if not isinstance(commands, list):
+@@ -418,6 +421,15 @@
+     def run_one_job(self, task):
+         DBIBase.run(self)
+         
++        remote_command=string.join(task.commands,';')
++        filename=os.path.join(self.tmp_dir,task.unique_id)
++        filename=os.path.abspath(filename)
++        f=open(filename,'w')
++        f.write(remote_command+'\n')
++        f.close()
++        os.chmod(filename, 0750)
++        self.temp_files.append(filename)
++        
+         command = &quot;cluster&quot; 
+         if self.arch == &quot;32&quot;:
+             command += &quot; --typecpu 32bits&quot;
+@@ -429,7 +441,8 @@
+             command += &quot; --duree &quot;+self.duree
+         if self.cluster_wait:
+             command += &quot; --wait&quot;
+-        command += &quot; --execute '&quot;+string.join(task.commands,';') + &quot;'&quot;
++        command += &quot; --execute '&quot;+ filename + &quot;'&quot;
++
+         self.started+=1
+         started=self.started# not thread safe!!!
+         print &quot;[DBI,%d/%d,%s] %s&quot;%(started,len(self.tasks),time.ctime(),command)
+@@ -475,7 +488,8 @@
+ 
+     def clean(self):
+         #TODO: delete all log files for the current batch
+-        pass
++        for f in self.temp_files:
++            os.remove(f)
+ 
+     def wait(self):
+         if self.mt:
+@@ -488,6 +502,7 @@
+             
+         else:
+             print &quot;[DBI] WARNING jobs not started!&quot;
++
+         print &quot;[DBI] Their was %d jobs where the back-end failled&quot;%(self.backend_failed)
+         print &quot;[DBI] Their was %d jobs that returned a failure status.&quot;%(self.jobs_failed)
+         
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2007-10-10 15:34:30 UTC (rev 8165)
++++ trunk/scripts/dbidispatch	2007-10-10 18:38:21 UTC (rev 8166)
+@@ -272,7 +272,10 @@
+ jobs.run()
+ jobs.wait()
+ # There is %d command in the script&quot;&quot;&quot;%(len(commands)))
+-        
++    if &quot;test&quot; in dbi_param:
++        print &quot;[DBI dispatch] In test mode, we do not make dbi errase temp file&quot;
++    else:
++        SCRIPT.write(&quot;jobs.clean()&quot;) 
+     SCRIPT.close()
+     os.system(&quot;chmod +x %s&quot;%(ScriptName));
+ 
+@@ -285,7 +288,11 @@
+     t2=time.time()
+     print &quot;it took %f s to create the DBI objects&quot;%(t2-t1)
+     jobs.run()
++    t3=time.time()
+     jobs.wait()
+-    t3=time.time()
++    if &quot;test&quot; in dbi_param:
++        print &quot;[DBI dispatch] In test mode, we do not make dbi errase temp file&quot;
++    else:
++        jobs.clean()
+     print &quot;it took %f s to launch all the commands&quot;%(t3-t2)
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001613.html">[Plearn-commits] r8165 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="001615.html">[Plearn-commits] r8167 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1614">[ date ]</a>
+              <a href="thread.html#1614">[ thread ]</a>
+              <a href="subject.html#1614">[ subject ]</a>
+              <a href="author.html#1614">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

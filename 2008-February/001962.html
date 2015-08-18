@@ -1,0 +1,177 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8514 - trunk/plearn/math
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8514%20-%20trunk/plearn/math&In-Reply-To=%3C200802151538.m1FFcNGX023046%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001961.html">
+   <LINK REL="Next"  HREF="001963.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8514 - trunk/plearn/math</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8514%20-%20trunk/plearn/math&In-Reply-To=%3C200802151538.m1FFcNGX023046%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8514 - trunk/plearn/math">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Feb 15 16:38:23 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001961.html">[Plearn-commits] r8513 - in trunk: commands plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="001963.html">[Plearn-commits] r8515 - in trunk/plearn: misc vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1962">[ date ]</a>
+              <a href="thread.html#1962">[ thread ]</a>
+              <a href="subject.html#1962">[ subject ]</a>
+              <a href="author.html#1962">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-02-15 16:38:21 +0100 (Fri, 15 Feb 2008)
+New Revision: 8514
+
+Modified:
+   trunk/plearn/math/TMat_maths_impl.h
+   trunk/plearn/math/stats_utils.cc
+Log:
+-bugfix in max_cdf_diff, now work if one or both vector are empty
+-bugfix in max_cdf_diff, now work correctly if both vector are the same.
+-made the Kologorov Smirnov test with matrix work with missing value.
+
+
+Modified: trunk/plearn/math/TMat_maths_impl.h
+===================================================================
+--- trunk/plearn/math/TMat_maths_impl.h	2008-02-14 21:15:53 UTC (rev 8513)
++++ trunk/plearn/math/TMat_maths_impl.h	2008-02-15 15:38:21 UTC (rev 8514)
+@@ -1825,6 +1825,8 @@
+     return result;
+ }
+ 
++//! @ return a new array that contain only the non-missing value
++//! @ see remove_missing_inplace for inplace version
+ template&lt;class T&gt;
+ TVec&lt;T&gt; remove_missing(const TVec&lt;T&gt;&amp; vec)
+ {
+@@ -1843,6 +1845,35 @@
+     return result;
+ }
+ 
++//! remove all missing value inplace while keeping the order
++template&lt;class T&gt;
++void remove_missing_inplace(TVec&lt;T&gt;&amp; v)
++{   
++    int n_non_missing=0;
++    int next_non_missing=1;
++    T* d = v.data();
++    for(;;)
++    {
++        while(n_non_missing&lt;v.length()&amp;&amp;!is_missing(d[n_non_missing]))
++        {
++            n_non_missing++;next_non_missing++;
++        }
++        if(n_non_missing&gt;=v.length())
++            return;
++        while(next_non_missing&lt;v.length()&amp;&amp;is_missing(d[next_non_missing]))
++            next_non_missing++;
++        if(next_non_missing&gt;=v.length())
++        {
++            v.resize(n_non_missing);
++            return;
++        }
++        else
++        {
++            pl_swap(d[n_non_missing],d[next_non_missing]);
++        }
++    }
++}
++
+ //! Transform a vector of T into a vector of U through a unary function.
+ //! Note: output type need not be specified in this case
+ template&lt;class T, class U, class V&gt;
+
+Modified: trunk/plearn/math/stats_utils.cc
+===================================================================
+--- trunk/plearn/math/stats_utils.cc	2008-02-14 21:15:53 UTC (rev 8513)
++++ trunk/plearn/math/stats_utils.cc	2008-02-15 15:38:21 UTC (rev 8514)
+@@ -183,6 +183,14 @@
+     int i2=0;
+     real maxdiff = 0;
+ 
++    if(n1==0 &amp;&amp; n2==0)
++    {
++        PLWARNING(&quot;In max_cdf_diff(Vec, Vec) - both vector are empty!&quot;);
++        return 0;
++    }
++    else if (n1==0 || n2==0)
++        return 1;
++
+     for(;;)
+     {
+ 
+@@ -192,6 +200,15 @@
+             if(i1+1==n1)
+                 break;
+         }
++        else if(fast_exact_is_equal(v1[i1],v2[i2]))
++        {
++            i1++;i2++;
++            if(i2==n2)
++                break;
++            else if(i1+1==n1)
++                break;
++            continue;
++        }
+         else
+         {
+             i2++;
+@@ -278,6 +295,7 @@
+     p_value = KS_test(D,N,conv);
+ }
+ 
++//! This version work with nan value
+ void KS_test(VMat&amp; m1, VMat&amp; m2, int conv, Vec&amp; Ds, Vec&amp; p_values)
+ {
+     m1-&gt;compatibleSizeError(m2);
+@@ -289,6 +307,8 @@
+         Vec row2(m2-&gt;length());
+         m1-&gt;getColumn(col,row1);
+         m2-&gt;getColumn(col,row2);
++        remove_missing_inplace(row1);
++        remove_missing_inplace(row2);
+         real D;
+         real p_value;
+         KS_test(row1,row2,conv,D,p_value);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001961.html">[Plearn-commits] r8513 - in trunk: commands plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="001963.html">[Plearn-commits] r8515 - in trunk/plearn: misc vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1962">[ date ]</a>
+              <a href="thread.html#1962">[ thread ]</a>
+              <a href="subject.html#1962">[ subject ]</a>
+              <a href="author.html#1962">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,149 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8523 - in trunk/plearn: math misc
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8523%20-%20in%20trunk/plearn%3A%20math%20misc&In-Reply-To=%3C200802181637.m1IGb783023827%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001970.html">
+   <LINK REL="Next"  HREF="001972.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8523 - in trunk/plearn: math misc</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8523%20-%20in%20trunk/plearn%3A%20math%20misc&In-Reply-To=%3C200802181637.m1IGb783023827%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8523 - in trunk/plearn: math misc">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Feb 18 17:37:07 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001970.html">[Plearn-commits] r8522 - trunk/scripts/Skeletons
+</A></li>
+        <LI>Next message: <A HREF="001972.html">[Plearn-commits] r8524 - trunk/commands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1971">[ date ]</a>
+              <a href="thread.html#1971">[ thread ]</a>
+              <a href="subject.html#1971">[ subject ]</a>
+              <a href="author.html#1971">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-02-18 17:37:07 +0100 (Mon, 18 Feb 2008)
+New Revision: 8523
+
+Modified:
+   trunk/plearn/math/stats_utils.cc
+   trunk/plearn/math/stats_utils.h
+   trunk/plearn/misc/vmatmain.cc
+Log:
+-Added progress bar to kologorov smirnov test on matrix
+-parallelized this function with openmp
+
+
+Modified: trunk/plearn/math/stats_utils.cc
+===================================================================
+--- trunk/plearn/math/stats_utils.cc	2008-02-18 15:28:55 UTC (rev 8522)
++++ trunk/plearn/math/stats_utils.cc	2008-02-18 16:37:07 UTC (rev 8523)
+@@ -296,15 +296,26 @@
+ }
+ 
+ //! This version work with nan value
+-void KS_test(VMat&amp; m1, VMat&amp; m2, int conv, Vec&amp; Ds, Vec&amp; p_values)
++void KS_test(const VMat&amp; m1, const VMat&amp; m2, const int conv, Vec&amp; Ds, Vec&amp; p_values,
++             const bool report_progress)
+ {
+     m1-&gt;compatibleSizeError(m2);
+     Ds.resize(m1-&gt;width());
+     p_values.resize(m1-&gt;width());
+-    for(int col = 0;col&lt;m1-&gt;width();col++)
++    PP&lt;ProgressBar&gt; pbar;
++    if (report_progress)
++        pbar = new ProgressBar(&quot;Computing Kologorov Smirnow two sample test&quot;,
++                               m1-&gt;width());
++
++#pragma omp parallel default(none) shared(pbar)
+     {
+         Vec row1(m1-&gt;length());
+         Vec row2(m2-&gt;length());
++#pragma omp for
++    for(int col = 0;col&lt;m1-&gt;width();col++)
++    {
++        row1-&gt;resize(m1-&gt;length());
++        row2-&gt;resize(m2-&gt;length());
+         m1-&gt;getColumn(col,row1);
+         m2-&gt;getColumn(col,row2);
+         remove_missing_inplace(row1);
+@@ -314,7 +325,12 @@
+         KS_test(row1,row2,conv,D,p_value);
+         Ds[col]=D;
+         p_values[col]=p_value;
++        if (report_progress)
++#pragma omp critical
++            pbar-&gt;updateone();
++
+     }
++    }
+ }
+ real KS_test(Vec&amp; v1, Vec&amp; v2, int conv)
+ {
+
+Modified: trunk/plearn/math/stats_utils.h
+===================================================================
+--- trunk/plearn/math/stats_utils.h	2008-02-18 15:28:55 UTC (rev 8522)
++++ trunk/plearn/math/stats_utils.h	2008-02-18 16:37:07 UTC (rev 8523)
+@@ -147,7 +147,7 @@
+  * Returns result of Kolmogorov-Smirnov test for each pair of variable
+  * between the two VMat
+  */
+-void KS_test(VMat&amp; m1, VMat&amp; m2, int conv, Vec&amp; Ds, Vec&amp; p_values);
++void KS_test(const VMat&amp; m1, const VMat&amp; m2, const int conv, Vec&amp; Ds, Vec&amp; p_values, const bool report_progress = false);
+ 
+ /**
+  * Given two paired sets u and v of n measured values, the paired t-test 
+
+Modified: trunk/plearn/misc/vmatmain.cc
+===================================================================
+--- trunk/plearn/misc/vmatmain.cc	2008-02-18 15:28:55 UTC (rev 8522)
++++ trunk/plearn/misc/vmatmain.cc	2008-02-18 16:37:07 UTC (rev 8523)
+@@ -1077,7 +1077,7 @@
+ 
+         Vec Ds(m1-&gt;width());
+         Vec p_values(m1-&gt;width());
+-        KS_test(m1,m2,10,Ds,p_values);
++        KS_test(m1,m2,10,Ds,p_values,true);
+         Mat score(m1-&gt;width(),3);
+             
+         for(int col = 0;col&lt;m1-&gt;width();col++)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001970.html">[Plearn-commits] r8522 - trunk/scripts/Skeletons
+</A></li>
+	<LI>Next message: <A HREF="001972.html">[Plearn-commits] r8524 - trunk/commands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1971">[ date ]</a>
+              <a href="thread.html#1971">[ thread ]</a>
+              <a href="subject.html#1971">[ subject ]</a>
+              <a href="author.html#1971">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

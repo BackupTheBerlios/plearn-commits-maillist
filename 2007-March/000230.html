@@ -1,0 +1,272 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6781 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6781%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200703260108.l2Q18bGR017741%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000229.html">
+   <LINK REL="Next"  HREF="000231.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6781 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6781%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200703260108.l2Q18bGR017741%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6781 - trunk/plearn_learners/generic/EXPERIMENTAL">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Mon Mar 26 03:08:37 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000229.html">[Plearn-commits] r6780 - trunk/plearn/math
+</A></li>
+        <LI>Next message: <A HREF="000231.html">[Plearn-commits] r6782 - trunk/python_modules/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#230">[ date ]</a>
+              <a href="thread.html#230">[ thread ]</a>
+              <a href="subject.html#230">[ subject ]</a>
+              <a href="author.html#230">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-03-26 03:08:37 +0200 (Mon, 26 Mar 2007)
+New Revision: 6781
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+Log:
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-03-23 19:44:50 UTC (rev 6780)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-03-26 01:08:37 UTC (rev 6781)
+@@ -108,12 +108,18 @@
+                   OptionBase::buildoption,
+                   &quot;Update the parameters only so often (number of examples).\n&quot;);
+ 
+-    declareOption(ol, &quot;neurons_natgrad&quot;, &amp;NatGradNNet::neurons_natgrad,
++    declareOption(ol, &quot;neurons_natgrad_template&quot;, &amp;NatGradNNet::neurons_natgrad_template,
+                   OptionBase::buildoption,
+-                  &quot;Optional NatGradEstimator for the neurons gradient.\n&quot;
++                  &quot;Optional template NatGradEstimator for the neurons gradient.\n&quot;
+                   &quot;If not provided, then the natural gradient correction\n&quot;
+                   &quot;on the neurons gradient is not performed.\n&quot;);
+ 
++    declareOption(ol, &quot;neurons_natgrad_per_layer&quot;, 
++                  &amp;NatGradNNet::neurons_natgrad_per_layer,
++                  OptionBase::learntoption,
++                  &quot;Vector of NatGradEstimator objects for the gradient on the neurons of each layer.\n&quot;
++                  &quot;They are copies of the neuron_natgrad_template provided by the user.\n&quot;);
++
+     declareOption(ol, &quot;params_natgrad_template&quot;, 
+                   &amp;NatGradNNet::params_natgrad_template,
+                   OptionBase::buildoption,
+@@ -187,7 +193,10 @@
+     all_params.resize(n_params);
+     all_params_gradient.resize(n_params);
+     all_params_delta.resize(n_params);
+-    for (int i=0,p=0;i&lt;n_layers-1;i++)
++    neuron_params.resize(n_neurons);
++    neuron_params_delta.resize(n_neurons);
++    neuron_params_gradient.resize(n_neurons);
++    for (int i=0,k=0,p=0;i&lt;n_layers-1;i++)
+     {
+         int np=layer_sizes[i+1]*(1+layer_sizes[i]);
+         layer_params[i]=all_params.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
+@@ -195,6 +204,12 @@
+         weights[i]=layer_params[i].subMatColumns(1,layer_sizes[i]); // weights[0] from layer 0 to layer 1
+         layer_params_gradient[i]=all_params_gradient.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
+         layer_params_delta[i]=all_params_delta.subVec(p,np);
++        for (int j=0;j&lt;layer_sizes[i+1];j++,k++)
++        {
++            neuron_params[k]=all_params.subVec(p,1+layer_sizes[i]);
++            neuron_params_delta[k]=all_params_delta.subVec(p,1+layer_sizes[i]);
++            neuron_params_gradient[k]=all_params_gradient.subVec(p,1+layer_sizes[i]);
++        }
+         p+=np;
+     }
+     if (params_natgrad_template)
+@@ -202,8 +217,13 @@
+         params_natgrad_per_neuron.resize(n_neurons);
+         for (int i=0;i&lt;n_neurons;i++)
+             params_natgrad_per_neuron[i] = PLearn::deepCopy(params_natgrad_template);
+-        
+     }
++    if (neurons_natgrad_template &amp;&amp; neurons_natgrad_per_layer.length()==0)
++    {
++        neurons_natgrad_per_layer.resize(n_layers); // 0 not used
++        for (int i=1;i&lt;n_layers;i++) // no need for correcting input layer
++            neurons_natgrad_per_layer[i] = PLearn::deepCopy(neurons_natgrad_template);
++    }
+     neuron_gradients.resize(minibatch_size,n_neurons);
+     neuron_outputs_per_layer.resize(n_layers); // layer 0 = input, layer n_layers-1 = output
+     neuron_extended_outputs_per_layer.resize(n_layers); // layer 0 = input, layer n_layers-1 = output
+@@ -240,7 +260,8 @@
+ 
+     deepCopyField(hidden_layer_sizes, copies);
+     deepCopyField(layer_params, copies);
+-    deepCopyField(neurons_natgrad, copies);
++    deepCopyField(neurons_natgrad_template, copies);
++    deepCopyField(neurons_natgrad_per_layer, copies);
+     deepCopyField(params_natgrad_template, copies);
+     deepCopyField(params_natgrad_per_neuron, copies);
+     deepCopyField(full_natgrad, copies);
+@@ -256,6 +277,9 @@
+     deepCopyField(neuron_gradients, copies);
+     deepCopyField(neuron_gradients_per_layer, copies);
+     deepCopyField(all_params_delta, copies);
++    deepCopyField(neuron_params, copies);
++    deepCopyField(neuron_params_gradient, copies);
++    deepCopyField(neuron_params_delta, copies);
+     deepCopyField(layer_params_delta, copies);
+ /*
+     deepCopyField(, copies);
+@@ -316,7 +340,7 @@
+     for( ; stage&lt;nstages; stage++)
+     {
+         int sample = stage % nsamples;
+-        int b = sample % minibatch_size;
++        int b = stage % minibatch_size;
+         Vec input = neuron_outputs_per_layer[0](b);
+         Vec target = targets(b);
+         train_set-&gt;getExample(sample, input, target, example_weights[b]);
+@@ -354,14 +378,27 @@
+     {
+         // here neuron_gradients_per_layer[i] contains the gradient on activations (weighted sums)
+         //      (minibatch_size x layer_size[i])
+-        // try to use BLAS
++
++        Mat previous_neurons_gradient = neuron_gradients_per_layer[i-1];
++        Mat previous_neurons_output = neuron_outputs_per_layer[i-1];
++        // optionally correct the gradient on neurons using their covariance
++        if (neurons_natgrad_per_layer[i])
++        {
++            static Vec tmp;
++            tmp.resize(layer_sizes[i]);
++            for (int k=0;k&lt;minibatch_size;k++)
++            {
++                Vec g_k = neuron_gradients_per_layer[i](k);
++                (*neurons_natgrad_per_layer[i])(t-minibatch_size+1+k,g_k,tmp);
++                g_k &lt;&lt; tmp;
++            }
++        }
+         if (i&gt;1) // compute gradient on previous layer
+         {
+-            Mat previous_neurons_gradient = neuron_gradients_per_layer[i-1];
+-            Mat previous_neurons_output = neuron_outputs_per_layer[i-1];
++            // propagate gradients
+             productScaleAcc(previous_neurons_gradient,neuron_gradients_per_layer[i],false,
+                             weights[i-1],false,1,0);
+-            
++            // propagate through tanh non-linearity
+             for (int j=0;j&lt;previous_neurons_gradient.length();j++)
+             {
+                 real* grad = previous_neurons_gradient[j];
+@@ -371,35 +408,29 @@
+             }
+         }
+         // compute gradient on parameters, possibly update them
+-        if (full_natgrad) 
++        if (full_natgrad || params_natgrad_template) 
+         {
+             productScaleAcc(layer_params_gradient[i-1],neuron_gradients_per_layer[i],true,
+                             neuron_extended_outputs_per_layer[i-1],false,1,0);
+             layer_params_gradient[i-1] *= 1.0/minibatch_size; // use the MEAN gradient
+-        }
+-        else if (params_natgrad_template)
+-        {
+-            // To Be DONE
+-
+         } else // just regular stochastic gradient
+-            // compute gradient on weights and update them
+-        {
+-            if (verbosity&gt;0)
+-            {
+-                if (verbosity&gt;1)
+-                    layer_params_gradient[i-1].clear();
+-                productScaleAcc(layer_params_gradient[i-1],neuron_gradients_per_layer[i],true,
+-                                neuron_extended_outputs_per_layer[i-1],false,1./minibatch_size,0); // mean gradient
+-            }
+-            else
+-                productScaleAcc(layer_params[i-1],neuron_gradients_per_layer[i],true,
+-                                neuron_extended_outputs_per_layer[i-1],false,-lrate/minibatch_size,1); // mean gradient
+-        }
++            // compute gradient on weights and update them in one go (more efficient)
++            productScaleAcc(layer_params[i-1],neuron_gradients_per_layer[i],true,
++                            neuron_extended_outputs_per_layer[i-1],false,
++                            -lrate/minibatch_size,1); // mean gradient
+     }
+     if (full_natgrad) 
+     {
+         (*full_natgrad)(t/minibatch_size,all_params_gradient,all_params_delta); // compute update direction by natural gradient
+         multiplyAcc(all_params,all_params_delta,-lrate); // update
++    } else if (params_natgrad_template)
++    {
++        for (int i=0;i&lt;params_natgrad_per_neuron.length();i++)
++        {
++            NatGradEstimator&amp; neuron_natgrad = *(params_natgrad_per_neuron[i]);
++            neuron_natgrad(t/minibatch_size,neuron_params_gradient[i],neuron_params_delta[i]); // compute update direction by natural gradient
++            multiplyAcc(neuron_params[i],neuron_params_delta[i],-lrate); // update
++        }
+     }
+     else if (verbosity&gt;0)
+     {
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-03-23 19:44:50 UTC (rev 6780)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-03-26 01:08:37 UTC (rev 6781)
+@@ -76,7 +76,8 @@
+ 
+     //! natural gradient estimator for neurons
+     //! (if 0 then do not correct the gradient on neurons)
+-    PP&lt;NatGradEstimator&gt; neurons_natgrad;
++    PP&lt;NatGradEstimator&gt; neurons_natgrad_template;
++    TVec&lt;PP&lt;NatGradEstimator&gt; &gt; neurons_natgrad_per_layer;
+ 
+     //! natural gradient estimator for the parameters within each neuron
+     //! (if 0 then do not correct the gradient on each neuron weight)
+@@ -219,6 +220,9 @@
+     Vec all_params_gradient; // all the parameter gradients in one vector
+     TVec&lt;Mat&gt; layer_params_gradient;
+     TVec&lt;Vec&gt; layer_params_delta;
++    TVec&lt;Vec&gt; neuron_params; // params of each neuron (pointing in all_params)
++    TVec&lt;Vec&gt; neuron_params_delta; // params_delta of each neuron (pointing in all_params_delta)
++    TVec&lt;Vec&gt; neuron_params_gradient; // params_delta of each neuron (pointing in all_params_gradient)
+     Mat neuron_gradients; // one row per example of a minibatch, has concatenation of layer 0, layer 1, ... gradients.
+     TVec&lt;Mat&gt; neuron_gradients_per_layer; // pointing into neuron_gradients (one row per example of a minibatch)
+     mutable TVec&lt;Mat&gt; neuron_outputs_per_layer;  // same structure
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000229.html">[Plearn-commits] r6780 - trunk/plearn/math
+</A></li>
+	<LI>Next message: <A HREF="000231.html">[Plearn-commits] r6782 - trunk/python_modules/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#230">[ date ]</a>
+              <a href="thread.html#230">[ thread ]</a>
+              <a href="subject.html#230">[ subject ]</a>
+              <a href="author.html#230">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

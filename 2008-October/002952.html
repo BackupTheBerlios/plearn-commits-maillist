@@ -1,0 +1,205 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9512 - trunk/plearn/sys
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9512%20-%20trunk/plearn/sys&In-Reply-To=%3C200810031519.m93FJgPd024942%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002951.html">
+   <LINK REL="Next"  HREF="002953.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9512 - trunk/plearn/sys</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9512%20-%20trunk/plearn/sys&In-Reply-To=%3C200810031519.m93FJgPd024942%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9512 - trunk/plearn/sys">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Oct  3 17:19:42 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002951.html">[Plearn-commits] r9511 - trunk/doc
+</A></li>
+        <LI>Next message: <A HREF="002953.html">[Plearn-commits] r9513 - trunk/plearn_learners/meta
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2952">[ date ]</a>
+              <a href="thread.html#2952">[ thread ]</a>
+              <a href="subject.html#2952">[ subject ]</a>
+              <a href="author.html#2952">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-10-03 17:19:41 +0200 (Fri, 03 Oct 2008)
+New Revision: 9512
+
+Modified:
+   trunk/plearn/sys/Profiler.cc
+   trunk/plearn/sys/Profiler.h
+Log:
+made the Profiler thread save for openmp
+
+
+Modified: trunk/plearn/sys/Profiler.cc
+===================================================================
+--- trunk/plearn/sys/Profiler.cc	2008-10-03 14:07:10 UTC (rev 9511)
++++ trunk/plearn/sys/Profiler.cc	2008-10-03 15:19:41 UTC (rev 9512)
+@@ -39,6 +39,11 @@
+ 
+ #include &quot;Profiler.h&quot;
+ #include &lt;time.h&gt;
++#ifdef _OPENMP
++#include&lt;omp.h&gt;
++#include&lt;plearn/base/tostring.h&gt;
++#endif
++
+ namespace PLearn {
+ using namespace std;
+ 
+@@ -49,10 +54,21 @@
+ #endif
+ bool Profiler::active  = false;
+ 
++
++string Profiler::get_omp_save_name(const string name_of_piece_of_code){
++#ifdef _OPENMP
++    return name_of_piece_of_code+tostring(omp_get_thread_num());
++#else
++    return name_of_piece_of_code;
++#endif
++}
++
+ #ifdef PROFILE
+ // start recording time for named piece of code
+-void Profiler::start(const string&amp; name_of_piece_of_code, const int max_nb_going)
++void Profiler::start(const string&amp; name_of_piece_of_code_, const int max_nb_going)
+ {
++    string name_of_piece_of_code=get_omp_save_name(name_of_piece_of_code_);
++#pragma omp critical (codes_statistics)
+     if (active)
+     {
+         map&lt;string,Profiler::Stats&gt;::iterator it = 
+@@ -85,8 +101,11 @@
+   
+ // end recording time for named piece of code, and increment
+ // frequency of occurence and total duration of this piece of code.
+-void Profiler::end(const string&amp; name_of_piece_of_code)
++void Profiler::end(const string&amp; name_of_piece_of_code_)
+ {
++    string name_of_piece_of_code=get_omp_save_name(name_of_piece_of_code_);
++
++#pragma omp critical (codes_statistics)
+     if (active)
+     {
+         clock_t end_time = times(&amp;t);
+@@ -142,21 +161,30 @@
+ 
+ //! Return the statistics related to a piece of code.  This is useful
+ //! for aggregators that collect and report a number of statistics
+-const Profiler::Stats&amp; Profiler::getStats(const string&amp; name_of_piece_of_code)
++const Profiler::Stats&amp; Profiler::getStats(const string&amp; name_of_piece_of_code_)
+ {
++    string name_of_piece_of_code=get_omp_save_name(name_of_piece_of_code_);
++    Stats* s;
++#pragma omp critical (codes_statistics)
++{
+     map&lt;string,Stats&gt;::iterator it = codes_statistics.find(name_of_piece_of_code);
+     if (it == codes_statistics.end())
+         PLERROR(&quot;Profiler::getStats: cannot find statistics for '%s'. the active variable is at: %d&quot;,
+                 name_of_piece_of_code.c_str(),active);
+-    return it-&gt;second;
++    s = &amp;(it-&gt;second);
+ }
++return *s;
++}
+ 
+ 
+ //! Reset the statistics associated with a piece of code.  The piece of
+ //! code may not yet exist, this is fine.
+-void Profiler::reset(const string&amp; name_of_piece_of_code)
++void Profiler::reset(const string&amp; name_of_piece_of_code_)
+ {
++    string name_of_piece_of_code=get_omp_save_name(name_of_piece_of_code_);
++
+     Stats empty;
++#pragma omp critical (codes_statistics)
+     codes_statistics[name_of_piece_of_code] = empty;
+ }
+ 
+@@ -165,6 +193,8 @@
+ // the statistics recorded for each of the named pieces of codes.
+ void Profiler::report(ostream&amp; out)
+ {
++#pragma omp critical (codes_statistics)
++{
+     map&lt;string,Profiler::Stats&gt;::iterator it =  
+         codes_statistics.begin(), end =  codes_statistics.end();
+ 
+@@ -187,11 +217,14 @@
+             &lt;&lt; &quot;Average system duration  = &quot; &lt;&lt; avg_sys  &lt;&lt; endl;
+     }
+ }
++}
+ 
+ // output a report on the output stream, giving
+ // the wall time statistics recorded for each of the named pieces of code
+ void Profiler::reportwall(ostream&amp; out)
+ {
++#pragma omp critical (codes_statistics)
++{
+     map&lt;string,Profiler::Stats&gt;::iterator it =  
+         codes_statistics.begin(), end =  codes_statistics.end();
+ 
+@@ -208,6 +241,7 @@
+         out &lt;&lt; &quot;Average wall   duration  = &quot; &lt;&lt; avg_wall &lt;&lt; endl;
+     }
+ }
++}
+ 
+ } // end of namespace PLearn
+ 
+
+Modified: trunk/plearn/sys/Profiler.h
+===================================================================
+--- trunk/plearn/sys/Profiler.h	2008-10-03 14:07:10 UTC (rev 9511)
++++ trunk/plearn/sys/Profiler.h	2008-10-03 15:19:41 UTC (rev 9512)
+@@ -224,6 +224,8 @@
+     static map&lt;string,Stats&gt; codes_statistics;
+     static struct tms t;
+     static bool active;
++    //return a thread save name. usefull for openmp code.
++    static string get_omp_save_name(const string name_of_piece_of_code);
+ };
+ 
+ } // end of namespace PLearn
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002951.html">[Plearn-commits] r9511 - trunk/doc
+</A></li>
+	<LI>Next message: <A HREF="002953.html">[Plearn-commits] r9513 - trunk/plearn_learners/meta
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2952">[ date ]</a>
+              <a href="thread.html#2952">[ thread ]</a>
+              <a href="subject.html#2952">[ subject ]</a>
+              <a href="author.html#2952">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

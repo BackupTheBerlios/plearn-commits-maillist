@@ -1,0 +1,705 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7136 - in trunk: commands plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7136%20-%20in%20trunk%3A%20commands%20plearn_learners/online&In-Reply-To=%3C200705170445.l4H4j5LF003052%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000584.html">
+   <LINK REL="Next"  HREF="000586.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7136 - in trunk: commands plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7136%20-%20in%20trunk%3A%20commands%20plearn_learners/online&In-Reply-To=%3C200705170445.l4H4j5LF003052%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7136 - in trunk: commands plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Thu May 17 06:45:05 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000584.html">[Plearn-commits] r7135 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000586.html">[Plearn-commits] r7137 - in trunk/plearn_learners/online: .	EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#585">[ date ]</a>
+              <a href="thread.html#585">[ thread ]</a>
+              <a href="subject.html#585">[ subject ]</a>
+              <a href="author.html#585">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-05-17 06:45:03 +0200 (Thu, 17 May 2007)
+New Revision: 7136
+
+Added:
+   trunk/plearn_learners/online/MaxSubsampling2DModule.cc
+   trunk/plearn_learners/online/MaxSubsampling2DModule.h
+Modified:
+   trunk/commands/plearn_noblas_inc.h
+Log:
+New subsampling module, taking the max instead of a scaled mean
+
+
+Modified: trunk/commands/plearn_noblas_inc.h
+===================================================================
+--- trunk/commands/plearn_noblas_inc.h	2007-05-17 04:41:08 UTC (rev 7135)
++++ trunk/commands/plearn_noblas_inc.h	2007-05-17 04:45:03 UTC (rev 7136)
+@@ -200,6 +200,7 @@
+ #include &lt;plearn_learners/online/CostModule.h&gt;
+ #include &lt;plearn_learners/online/DeepBeliefNet.h&gt;
+ #include &lt;plearn_learners/online/GradNNetLayerModule.h&gt;
++#include &lt;plearn_learners/online/MaxSubsampling2DModule.h&gt;
+ #include &lt;plearn_learners/online/ModulesLearner.h&gt;
+ #include &lt;plearn_learners/online/ModuleStackModule.h&gt;
+ #include &lt;plearn_learners/online/NLLCostModule.h&gt;
+
+Added: trunk/plearn_learners/online/MaxSubsampling2DModule.cc
+===================================================================
+--- trunk/plearn_learners/online/MaxSubsampling2DModule.cc	2007-05-17 04:41:08 UTC (rev 7135)
++++ trunk/plearn_learners/online/MaxSubsampling2DModule.cc	2007-05-17 04:45:03 UTC (rev 7136)
+@@ -0,0 +1,382 @@
++// -*- C++ -*-
++
++// MaxSubsampling2DModule.cc
++//
++// Copyright (C) 2006 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file MaxSubsampling2DModule.cc */
++
++
++#define PL_LOG_MODULE_NAME &quot;MaxSubsampling2DModule&quot;
++#include &lt;plearn/io/pl_log.h&gt;
++
++#include &quot;MaxSubsampling2DModule.h&quot;
++#include &lt;plearn/math/convolutions.h&gt;
++#include &lt;plearn/math/TMat_maths.h&gt;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    MaxSubsampling2DModule,
++    &quot;Apply convolution filters on (possibly multiple) 2D inputs (images)&quot;,
++    &quot;&quot;);
++
++MaxSubsampling2DModule::MaxSubsampling2DModule() :
++    n_input_images(1),
++    input_images_length(-1),
++    input_images_width(-1),
++    kernel_length(-1),
++    kernel_width(-1),
++    output_images_length(-1),
++    output_images_width(-1),
++    input_images_size(-1),
++    output_images_size(-1)
++{
++}
++
++void MaxSubsampling2DModule::declareOptions(OptionList&amp; ol)
++{
++    // declareOption(ol, &quot;myoption&quot;, &amp;MaxSubsampling2DModule::myoption,
++    //               OptionBase::buildoption,
++    //               &quot;Help text describing this option&quot;);
++
++    declareOption(ol, &quot;n_input_images&quot;,
++                  &amp;MaxSubsampling2DModule::n_input_images,
++                  OptionBase::buildoption,
++                  &quot;Number of input images present at the same time in the&quot;
++                  &quot; input vector&quot;);
++
++    declareOption(ol, &quot;input_images_length&quot;,
++                  &amp;MaxSubsampling2DModule::input_images_length,
++                  OptionBase::buildoption,
++                  &quot;Length of each of the input images&quot;);
++
++    declareOption(ol, &quot;input_images_width&quot;,
++                  &amp;MaxSubsampling2DModule::input_images_width,
++                  OptionBase::buildoption,
++                  &quot;Width of each of the input images&quot;);
++
++    declareOption(ol, &quot;kernel_length&quot;, &amp;MaxSubsampling2DModule::kernel_length,
++                  OptionBase::buildoption,
++                  &quot;Length of the areas to maximize over&quot;
++                  );
++
++    declareOption(ol, &quot;kernel_width&quot;, &amp;MaxSubsampling2DModule::kernel_width,
++                  OptionBase::buildoption,
++                  &quot;Width of the areas to maximize over&quot;
++                  );
++
++    declareOption(ol, &quot;output_images_length&quot;,
++                  &amp;MaxSubsampling2DModule::output_images_length,
++                  OptionBase::learntoption,
++                  &quot;Length of the output images&quot;);
++
++    declareOption(ol, &quot;output_images_width&quot;,
++                  &amp;MaxSubsampling2DModule::output_images_width,
++                  OptionBase::learntoption,
++                  &quot;Width of the output images&quot;);
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++
++    // Redeclare some of the parent's options as learntoptions
++    redeclareOption(ol, &quot;input_size&quot;, &amp;MaxSubsampling2DModule::input_size,
++                    OptionBase::learntoption,
++                    &quot;Size of the input, computed from n_input_images,\n&quot;
++                    &quot;input_images_length and input_images_width.\n&quot;);
++
++    redeclareOption(ol, &quot;output_size&quot;, &amp;MaxSubsampling2DModule::output_size,
++                    OptionBase::learntoption,
++                    &quot;Size of the output, computed from n_input_images,\n&quot;
++                    &quot;output_images_length and output_images_width.\n&quot;);
++}
++
++void MaxSubsampling2DModule::build_()
++{
++    MODULE_LOG &lt;&lt; &quot;build_() called&quot; &lt;&lt; endl;
++
++    // Verify the parameters
++    if( n_input_images &lt; 1 )
++        PLERROR(&quot;MaxSubsampling2DModule::build_: 'n_input_images' &lt; 1 (%i).\n&quot;,
++                n_input_images);
++
++    if( input_images_length &lt; 0 )
++        PLERROR(&quot;MaxSubsampling2DModule::build_: 'input_images_length'&lt;0 (%i).\n&quot;,
++                input_images_length);
++
++    if( input_images_width &lt; 0 )
++        PLERROR(&quot;MaxSubsampling2DModule::build_: 'input_images_width'&lt;0 (%i).\n&quot;,
++                input_images_width);
++
++    if( kernel_length &lt; 0 )
++        PLERROR(&quot;MaxSubsampling2DModule::build_: 'kernel_length'&lt;0 (%i).\n&quot;,
++                kernel_length);
++
++    if( kernel_width &lt; 0 )
++        PLERROR(&quot;MaxSubsampling2DModule::build_: 'kernel_width'&lt;0 (%i).\n&quot;,
++                kernel_width);
++
++    if( input_images_length % kernel_length != 0 )
++        PLERROR(&quot;MaxSubsampling2DModule::build_: input_images_length (%i)\n&quot;
++                &quot;should be a multiple of kernel_length (%i).\n&quot;,
++                input_images_length, kernel_length);
++
++    if( input_images_width % kernel_width != 0 )
++        PLERROR(&quot;MaxSubsampling2DModule::build_: input_images_width (%i)\n&quot;
++                &quot;should be a multiple of kernel_width (%i).\n&quot;,
++                input_images_width, kernel_width);
++
++    // Build the learntoptions from the buildoptions
++    input_images_size = input_images_length * input_images_width;
++    input_size = n_input_images * input_images_size;
++
++    output_images_length = input_images_length / kernel_length;
++    output_images_width = input_images_width / kernel_width;
++    output_images_size = output_images_length * output_images_width;
++    output_size = n_input_images * output_images_size;
++
++    input_images.resize(n_input_images);
++    output_images.resize(n_input_images);
++    input_gradients.resize(n_input_images);
++    output_gradients.resize(n_input_images);
++
++    all_max_indices.resize(output_size);
++    max_indices.resize(n_input_images);
++    for( int i = 0; i &lt; n_input_images; i++ )
++        max_indices[i] =
++            all_max_indices.subVec(i*output_images_size, output_images_size)
++                .toMat(output_images_length, output_images_width);
++}
++
++void MaxSubsampling2DModule::build()
++{
++    inherited::build();
++    build_();
++}
++
++
++void MaxSubsampling2DModule::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    deepCopyField(input_images, copies);
++    deepCopyField(output_images, copies);
++    deepCopyField(input_gradients, copies);
++    deepCopyField(output_gradients, copies);
++    deepCopyField(all_max_indices, copies);
++    deepCopyField(max_indices, copies);
++}
++
++//! given the input, compute the output (possibly resize it  appropriately)
++void MaxSubsampling2DModule::fprop(const Vec&amp; input, Vec&amp; output) const
++{
++    // Check size
++    if( input.size() != input_size )
++        PLERROR(&quot;MaxSubsampling2DModule::fprop: input.size() should be equal to\n&quot;
++                &quot;input_size (%i != %i).\n&quot;, input.size(), input_size);
++    output.resize(output_size);
++
++    // Make input_images and output_images point to the right places
++    for( int l=0 ; l&lt;n_input_images ; l++ )
++    {
++        input_images[l] =
++            input.subVec(l*input_images_size, input_images_size)
++                .toMat( input_images_length, input_images_width );
++
++        output_images[l] =
++            output.subVec(l*output_images_size, output_images_size)
++                .toMat( output_images_length, output_images_width );
++    }
++
++    // Compute the values of the output_images
++    for( int l=0 ; l&lt;n_input_images ; l++ )
++        for( int i=0; i&lt;output_images_length; i++ )
++            for( int j=0; j&lt;output_images_width; j++ )
++            {
++                int min_i, min_j;
++                output_images[l](i,j) = max(
++                    input_images[l].subMat(i*kernel_length, j*kernel_width,
++                                           kernel_length, kernel_width),
++                    min_i, min_j );
++                max_indices[l](i,j) = min_i*input_images_width + min_j;
++            }
++}
++
++/* THIS METHOD IS OPTIONAL
++//! Adapt based on the output gradient: this method should only
++//! be called just after a corresponding fprop; it should be
++//! called with the same arguments as fprop for the first two arguments
++//! (and output should not have been modified since then).
++//! Since sub-classes are supposed to learn ONLINE, the object
++//! is 'ready-to-be-used' just after any bpropUpdate.
++//! N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS, WHICH
++//! JUST CALLS
++//!     bpropUpdate(input, output, input_gradient, output_gradient)
++//! AND IGNORES INPUT GRADIENT.
++void MaxSubsampling2DModule::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                               const Vec&amp; output_gradient)
++{
++}
++*/
++
++//! this version allows to obtain the input gradient as well
++void MaxSubsampling2DModule::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                                         Vec&amp; input_gradient,
++                                         const Vec&amp; output_gradient,
++                                         bool accumulate)
++{
++    // Check size
++    if( input.size() != input_size )
++        PLERROR(&quot;MaxSubsampling2DModule::bpropUpdate: input.size() should be\n&quot;
++                &quot;equal to input_size (%i != %i).\n&quot;, input.size(), input_size);
++    if( output.size() != output_size )
++        PLERROR(&quot;MaxSubsampling2DModule::bpropUpdate: output.size() should be\n&quot;
++                &quot;equal to output_size (%i != %i).\n&quot;,
++                output.size(), output_size);
++    if( output_gradient.size() != output_size )
++        PLERROR(&quot;MaxSubsampling2DModule::bpropUpdate: output_gradient.size()&quot;
++                &quot; should be\n&quot;
++                &quot;equal to output_size (%i != %i).\n&quot;,
++                output_gradient.size(), output_size);
++
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradient.size() == input_size,
++                      &quot;Cannot resize input_gradient AND accumulate into it&quot; );
++    }
++    else
++    {
++        input_gradient.resize(input_size);
++        input_gradient.clear();
++    }
++
++    // Since fprop() has just been called, we assume that input_images,
++    // output_images and gradient are up-to-date
++    // Make input_gradients and output_gradients point to the right places
++    for( int l=0 ; l&lt;n_input_images ; l++ )
++    {
++        input_gradients[l] =
++            input_gradient.subVec(l*input_images_size, input_images_size)
++                .toMat( input_images_length, input_images_width );
++
++        output_gradients[l] =
++            output_gradient.subVec(l*output_images_size, output_images_size)
++                .toMat( output_images_length, output_images_width );
++    }
++
++    // Do the actual bprop and update
++    for( int l=0 ; l&lt;n_input_images ; l++ )
++        for( int i=0; i&lt;output_images_length; i++ )
++            for( int j=0; j&lt;output_images_width; j++ )
++            {
++                Mat input_grad_zone =
++                    input_gradients[l].subMat(i*kernel_length, j*kernel_width,
++                                              kernel_length, kernel_width);
++                input_grad_zone.data()[ max_indices[l](i,j) ] =
++                    output_gradients[l](i,j);
++            }
++}
++
++//! reset the parameters to the state they would be BEFORE starting training.
++//! Note that this method is necessarily called from build().
++void MaxSubsampling2DModule::forget()
++{
++    all_max_indices.clear();
++}
++
++/* THIS METHOD IS OPTIONAL
++//! reset the parameters to the state they would be BEFORE starting training.
++//! Note that this method is necessarily called from build().
++//! THE DEFAULT IMPLEMENTATION PROVIDED IN THE SUPER-CLASS DOES NOT DO
++//! ANYTHING.
++void MaxSubsampling2DModule::finalize()
++{
++}
++*/
++
++/* THIS METHOD IS OPTIONAL
++//! in case bpropUpdate does not do anything, make it known
++//! THE DEFAULT IMPLEMENTATION PROVIDED IN THE SUPER-CLASS RETURNS false;
++bool MaxSubsampling2DModule::bpropDoesNothing()
++{
++}
++*/
++
++/* THIS METHOD IS OPTIONAL
++//! Similar to bpropUpdate, but adapt based also on the estimation
++//! of the diagonal of the Hessian matrix, and propagates this
++//! back. If these methods are defined, you can use them INSTEAD of
++//! bpropUpdate(...)
++//! N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS, WHICH
++//! JUST CALLS
++//!     bbpropUpdate(input, output, input_gradient, output_gradient,
++//!                  in_hess, out_hess)
++//! AND IGNORES INPUT HESSIAN AND INPUT GRADIENT.
++void MaxSubsampling2DModule::bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                                const Vec&amp; output_gradient,
++                                const Vec&amp; output_diag_hessian)
++{
++}
++*/
++
++/* NOT IMPLEMENTED
++//! Similar to bpropUpdate, but adapt based also on the estimation
++//! of the diagonal of the Hessian matrix, and propagates this
++//! back. If these methods are defined, you can use them INSTEAD of
++//! bpropUpdate(...)
++void MaxSubsampling2DModule::bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                                       Vec&amp; input_gradient,
++                                       const Vec&amp; output_gradient,
++                                       Vec&amp; input_diag_hessian,
++                                       const Vec&amp; output_diag_hessian,
++                                       bool accumulate)
++{
++}
++*/
++
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/online/MaxSubsampling2DModule.h
+===================================================================
+--- trunk/plearn_learners/online/MaxSubsampling2DModule.h	2007-05-17 04:41:08 UTC (rev 7135)
++++ trunk/plearn_learners/online/MaxSubsampling2DModule.h	2007-05-17 04:45:03 UTC (rev 7136)
+@@ -0,0 +1,224 @@
++// -*- C++ -*-
++
++// MaxSubsampling2DModule.h
++//
++// Copyright (C) 2006 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file MaxSubsampling2DModule.h */
++
++
++#ifndef MaxSubsampling2DModule_INC
++#define MaxSubsampling2DModule_INC
++
++#include &lt;plearn_learners/online/OnlineLearningModule.h&gt;
++
++namespace PLearn {
++
++/**
++ * Reduce the size of the 2D images by taking the max value of nearby pixels
++ *
++ */
++class MaxSubsampling2DModule : public OnlineLearningModule
++{
++    typedef OnlineLearningModule inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! ### declare public option fields (such as build options) here
++    //! Start your comments with Doxygen-compatible comments such as //!
++
++    //! Number of input images present at the same time in the input vector
++    int n_input_images;
++
++    //! Length of each of the input images
++    int input_images_length;
++
++    //! Width of each of the input images
++    int input_images_width;
++
++    //! Length of the areas over which we pick the max
++    int kernel_length;
++
++    //! Width of the areas over which we pick the max
++    int kernel_width;
++
++    //#####  Not options  #####################################################
++    //! Length of the output images
++    int output_images_length;
++
++    //! Width of the output images
++    int output_images_width;
++
++    //! Size of the input images (length * width)
++    int input_images_size;
++
++    //! Size of the input images (length * width)
++    int output_images_size;
++
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    // ### Make sure the implementation in the .cc
++    // ### initializes all fields to reasonable default values.
++    MaxSubsampling2DModule();
++
++    // Your other public member functions go here
++
++    //! given the input, compute the output (possibly resize it  appropriately)
++    virtual void fprop(const Vec&amp; input, Vec&amp; output) const;
++
++    //! Adapt based on the output gradient: this method should only
++    //! be called just after a corresponding fprop; it should be
++    //! called with the same arguments as fprop for the first two arguments
++    //! (and output should not have been modified since then).
++    //! Since sub-classes are supposed to learn ONLINE, the object
++    //! is 'ready-to-be-used' just after any bpropUpdate.
++    //! N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS, WHICH
++    //! JUST CALLS
++    //!     bpropUpdate(input, output, input_gradient, output_gradient)
++    //! AND IGNORES INPUT GRADIENT.
++    // virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++    //                          const Vec&amp; output_gradient);
++
++    //! this version allows to obtain the input gradient as well
++    //! N.B. THE DEFAULT IMPLEMENTATION IN SUPER-CLASS JUST RAISES A PLERROR.
++    virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                             Vec&amp; input_gradient,
++                             const Vec&amp; output_gradient,
++                             bool accumulate=false);
++
++    //! Similar to bpropUpdate, but adapt based also on the estimation
++    //! of the diagonal of the Hessian matrix, and propagates this
++    //! back. If these methods are defined, you can use them INSTEAD of
++    //! bpropUpdate(...)
++    //! N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS,
++    //! WHICH JUST CALLS
++    //!     bbpropUpdate(input, output, input_gradient, output_gradient,
++    //!                  out_hess, in_hess)
++    //! AND IGNORES INPUT HESSIAN AND INPUT GRADIENT.
++    // virtual void bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++    //                           const Vec&amp; output_gradient,
++    //                           const Vec&amp; output_diag_hessian);
++
++    /*
++    //! this version allows to obtain the input gradient and diag_hessian
++    virtual void bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                              Vec&amp; input_gradient,
++                              const Vec&amp; output_gradient,
++                              Vec&amp; input_diag_hessian,
++                              const Vec&amp; output_diag_hessian,
++                              bool accumulate=false);
++    */
++
++    //! reset the parameters to the state they would be BEFORE starting
++    //! training.  Note that this method is necessarily called from
++    //! build().
++    virtual void forget();
++
++
++    //! optionally perform some processing after training, or after a
++    //! series of fprop/bpropUpdate calls to prepare the model for truly
++    //! out-of-sample operation.  THE DEFAULT IMPLEMENTATION PROVIDED IN
++    //! THE SUPER-CLASS DOES NOT DO ANYTHING.
++    // virtual void finalize();
++
++    //! in case bpropUpdate does not do anything, make it known
++    //! THE DEFAULT IMPLEMENTATION PROVIDED IN THE SUPER-CLASS RETURNS false;
++    // virtual bool bpropDoesNothing();
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    // ### If your class is not instantiatable (it has pure virtual methods)
++    // ### you should replace this by PLEARN_DECLARE_ABSTRACT_OBJECT
++    PLEARN_DECLARE_OBJECT(MaxSubsampling2DModule);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The Mat they contain will point to sub-parts of input and output vectors
++    // and gradients, for more convenience
++    TVec&lt;Mat&gt; input_images;
++    TVec&lt;Mat&gt; output_images;
++    TVec&lt;Mat&gt; input_gradients;
++    TVec&lt;Mat&gt; output_gradients;
++    TVec&lt;Mat&gt; input_diag_hessians;
++    TVec&lt;Mat&gt; output_diag_hessians;
++
++    // Stores the index of the max within the pooling zone (i*mod + j)
++    TVec&lt;int&gt; all_max_indices;
++    TVec&lt; TMat&lt;int&gt; &gt; max_indices;
++
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(MaxSubsampling2DModule);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000584.html">[Plearn-commits] r7135 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000586.html">[Plearn-commits] r7137 - in trunk/plearn_learners/online: .	EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#585">[ date ]</a>
+              <a href="thread.html#585">[ thread ]</a>
+              <a href="subject.html#585">[ subject ]</a>
+              <a href="author.html#585">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

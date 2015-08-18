@@ -1,0 +1,305 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8027 - in trunk: python_modules/plearn/parallel	scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8027%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200708272101.l7RL1vJ4028994%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001474.html">
+   <LINK REL="Next"  HREF="001476.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8027 - in trunk: python_modules/plearn/parallel	scripts</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8027%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200708272101.l7RL1vJ4028994%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8027 - in trunk: python_modules/plearn/parallel	scripts">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Aug 27 23:01:57 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001474.html">[Plearn-commits] r8026 - trunk/plearn/sys
+</A></li>
+        <LI>Next message: <A HREF="001476.html">[Plearn-commits] r8028 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1475">[ date ]</a>
+              <a href="thread.html#1475">[ thread ]</a>
+              <a href="subject.html#1475">[ subject ]</a>
+              <a href="author.html#1475">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-08-27 23:01:56 +0200 (Mon, 27 Aug 2007)
+New Revision: 8027
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/cdispatch
+Log:
+-Better help message
+-Added parameter for --cluster=nb_proc and --nb_proc=X
+-Added MultiTheard that created a fixed number of thread to execute a function with a list of different arguments
+-Added/corrected option of cluster --duree=X --typecpu --wait
+-Added detection of launch failure for cluster
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2007-08-26 00:20:42 UTC (rev 8026)
++++ trunk/python_modules/plearn/parallel/dbi.py	2007-08-27 21:01:56 UTC (rev 8027)
+@@ -12,7 +12,7 @@
+ from configobj import ConfigObj
+ from textwrap import dedent
+ import pdb
+-from threading import Thread,BoundedSemaphore
++from threading import Thread,Lock
+ from time import sleep
+ import datetime
+ 
+@@ -21,7 +21,50 @@
+ STATUS_WAITING = 2
+ STATUS_ERROR = 3
+ 
+-
++#original version from: <A HREF="http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/196618">http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/196618</A>
++class LockedIterator:
++    def __init__( self, iterator ):
++        self._lock     = Lock()
++        self._iterator = iterator
++        
++    def __iter__( self ):
++        return self
++    
++    def next( self ):
++        try:
++            self._lock.acquire()
++            return self._iterator.next()
++        finally:
++            self._lock.release()
++            
++#original version from: <A HREF="http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/196618">http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/196618</A>
++class MultiThread:
++    def __init__( self, function, argsVector, maxThreads=5, print_when_finished=None):
++        self._function     = function
++        self._argsIterator = LockedIterator( iter( argsVector ) )
++        self._threadPool   = []
++        self.print_when_finish = print_when_finished
++        self.running = 0
++        for i in range( maxThreads ):
++            self._threadPool.append( Thread( target=self._tailRecurse ) )
++            
++    def _tailRecurse( self ):
++        for args in self._argsIterator:
++            self._function( args )
++        self.running-=1
++        if self.print_when_finish:
++            print self.print_when_finish,&quot;left running:&quot;,self.running
++            
++    def start( self  ):
++        for thread in self._threadPool:
++            time.sleep( 0 ) # necessary to give other threads a chance to run
++            self.running+=1
++            thread.start()
++            
++    def join( self, timeout=None ):
++        for thread in self._threadPool:
++            thread.join( timeout )
++                    
+ class DBIBase:
+ 
+     def __init__(self, commands, **args ):
+@@ -249,8 +292,15 @@
+ class DBICluster(DBIBase):
+ 
+     def __init__(self, commands, **args ):
++        self.duree=None
++        self.arch=None
++        self.wait=None
++        self.threads=[]
++        self.started=0
++        self.nb_proc=50
+         DBIBase.__init__(self, commands, **args)
+         self.add_commands(commands)
++        self.nb_proc=int(self.nb_proc)
+ 
+     def add_commands(self,commands):
+         if not isinstance(commands, list):
+@@ -275,10 +325,12 @@
+             command += &quot; --typecpu all&quot;
+         if self.duree:
+             command += &quot; --duree &quot;+self.duree
++        if self.wait:
++            command += &quot; --wait&quot;
+         command += &quot; --execute '&quot;+string.join(task.commands,';') + &quot;'&quot;
+-        
+-        print &quot;[DBI] &quot;+command
+-
++        self.started+=1
++        started=self.started# not thread safe!!!
++        print &quot;[DBI,%d/%d,%s] %s&quot;%(started,len(self.tasks),time.ctime(),command)
+         if self.test:
+             return
+ 
+@@ -286,9 +338,11 @@
+         task.set_scheduled_time()
+ 
+         (output,error)=self.get_redirection(task.log_file + '.out',task.log_file + '.err')
+-
+         task.p = Popen(command, shell=True,stdout=output,stderr=error)
+-
++        ret=task.p.wait()
++        if task.p.returncode!=0:
++            print &quot;[DBI,%d/%d,%s] Failed to launch: '%s' returned %d,%d&quot;%(started,len(self.tasks),time.ctime(),command,task.p.returncode,ret)
++            
+     def run(self):
+         print &quot;[DBI] The Log file are under %s&quot;%self.log_dir
+         if self.test:
+@@ -298,8 +352,9 @@
+             exec_pre_batch()
+ 
+         # Execute all Tasks (including pre_tasks and post_tasks if any)
+-        for task in self.tasks:
+-            self.run_one_job(task)
++        mt= MultiThread(self.run_one_job,self.tasks,self.nb_proc,&quot;[DBI,%s]&quot;%time.ctime())
++        mt.start()
++        mt.join()
+ 
+         # Execute post-batchs
+         if len(self.post_batch)&gt;0:
+@@ -651,6 +706,8 @@
+             self.nb_proc=int(self.nb_proc)
+         self.args=args
+         self.threads=[]
++        self.started=0
++        self.nb_proc=int(self.nb_proc)
+         self.add_commands(commands)
+             
+     def add_commands(self,commands):
+@@ -701,16 +758,10 @@
+ 
+         (output,error)=self.get_redirection(task.log_file + '.out',task.log_file + '.err')
+ 
+-        if self.nb_proc&gt;1:
+-            self.sema.acquire()
+-            print &quot;[DBI] &quot;,time.ctime()+&quot;::&quot;+c
+-            p = Popen(c, shell=True,stdout=output,stderr=error)
+-            p.wait()
+-            self.sema.release()
+-        else:
+-            print &quot;[DBI] &quot;,time.ctime()+&quot;::&quot;+c
+-            p = Popen(c, shell=True,stdout=output,stderr=error)
+-            p.wait()
++        self.started+=1
++        print &quot;[DBI,%d/%d,%s] %s&quot;%(self.started,len(self.tasks),time.ctime(),c)
++        p = Popen(c, shell=True,stdout=output,stderr=error)
++        p.wait()
+             
+     def clean(self):
+         if len(self.temp_files)&gt;0:
+@@ -736,18 +787,10 @@
+             exec_pre_batch()
+ 
+         # Execute all Tasks (including pre_tasks and post_tasks if any)
+-        if not self.test and self.nb_proc&gt;1:
+-            self.sema=BoundedSemaphore(int(self.nb_proc))
+-            for task in self.tasks:
+-                t=Thread(target=self.run_one_job,args=(task,))
+-                t.start()
+-                self.threads.append(t)
+-            for t in self.threads:
+-                t.join()
+-        else:
+-            for task in self.tasks:
+-                self.run_one_job(task)
+-
++        mt=MultiThread(self.run_one_job,self.tasks,self.nb_proc,&quot;[DBI,%s]&quot;%time.ctime())
++        mt.start()
++        mt.join()
++        
+         # Execute post-batchs
+         if len(self.post_batch)&gt;0:
+             exec_post_batch()
+
+Modified: trunk/scripts/cdispatch
+===================================================================
+--- trunk/scripts/cdispatch	2007-08-26 00:20:42 UTC (rev 8026)
++++ trunk/scripts/cdispatch	2007-08-27 21:01:56 UTC (rev 8027)
+@@ -2,15 +2,18 @@
+ import sys,os,re,time,datetime
+ 
+ ScriptName=&quot;launchdbi.py&quot;
+-ShortHelp='Usage: cdispatch [--help|-h] [--log|*--nolog] [--cluster|--local[=nb_process]|*--condor] [--test] [--duree=X] [--wait] [--req=&quot;CONDOR_REQUIREMENT&quot;] [--32|--64|--3264] {--file=FILEPATH | &lt;command-template&gt;} \n An * before -- mean that it is the default'
++ShortHelp='Usage: cdispatch [--help|-h] [--log|*--nolog] [--cluster[=nb_process]|--local[=nb_process]|*--condor] [--nb_proc=nb_process] [--test] [--duree=X] [--wait] [--req=&quot;CONDOR_REQUIREMENT&quot;] [--32|--64|--3264] {--file=FILEPATH | &lt;command-template&gt;} \n An * before -- mean that it is the default'
+ LongHelp=&quot;&quot;&quot;
+ Dispatches jobs with dbi.py. dbi allow to dispatch jobs on condor, cluster, local, ssh and bqtools.
+ 
+ %s
+-
+-parameter only for cluster:--duree,--wait,--3264,--32,--64
++parameter for local and cluster:--nb_proc=INT, give the maximum number of concurent jobs running
++parameter only for cluster:--duree,--wait,--3264,--32,--64,
+ parameter only for condor:--req=X
+ 
++parameter --local=X is the same as --local --nb_proc=X
++parameter --cluster=X is the same as --cluster --nb_proc=X
++
+ where &lt;command-template&gt; is interpreted as follows: the first argument
+ is the &lt;command&gt; above, and the rest are interpreted as &lt;arguments&gt;.
+ The arguments may contain segments of the form {{a,b,c,d}}, which trigger
+@@ -72,8 +75,11 @@
+         dbi_param[&quot;dolog&quot;]=False
+     elif argv == &quot;--log&quot;:
+         dbi_param[&quot;dolog&quot;]=True
+-    elif argv == &quot;--cluster&quot;:
+-        optionargs.append(argv[2:])
++    elif argv.startswith(&quot;--cluster&quot;):
++        optionargs.append(argv[2:9])
++        if len(argv)&gt;9:
++            assert(argv[9]==&quot;=&quot;)
++            dbi_param[&quot;nb_proc&quot;]=argv[10:]
+     elif argv == &quot;--condor&quot;:
+         #it is the default
+         optionargs.append(argv[2:])
+@@ -83,8 +89,9 @@
+         optionargs.append(argv[2:7])
+         if len(argv)&gt;7:
+             assert(argv[7]==&quot;=&quot;)
+-            NB_PROC=argv[8:]
+             dbi_param[&quot;nb_proc&quot;]=argv[8:]
++    elif argv.startswith(&quot;--nb_proc=&quot;):
++        dbi_param[&quot;nb_proc&quot;]=argv[10:]
+     elif argv == &quot;--test&quot;:
+         dbi_param[&quot;test&quot;]=True
+     elif argv.startswith(&quot;--file=&quot;):
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001474.html">[Plearn-commits] r8026 - trunk/plearn/sys
+</A></li>
+	<LI>Next message: <A HREF="001476.html">[Plearn-commits] r8028 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1475">[ date ]</a>
+              <a href="thread.html#1475">[ thread ]</a>
+              <a href="subject.html#1475">[ subject ]</a>
+              <a href="author.html#1475">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

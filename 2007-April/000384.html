@@ -1,0 +1,395 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6935 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6935%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200704241738.l3OHcAiC004731%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000383.html">
+   <LINK REL="Next"  HREF="000385.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6935 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6935%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200704241738.l3OHcAiC004731%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6935 - trunk/plearn_learners/generic/EXPERIMENTAL">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Tue Apr 24 19:38:10 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000383.html">[Plearn-commits] r6934 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000385.html">[Plearn-commits] r6936 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#384">[ date ]</a>
+              <a href="thread.html#384">[ thread ]</a>
+              <a href="subject.html#384">[ subject ]</a>
+              <a href="author.html#384">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-04-24 19:38:09 +0200 (Tue, 24 Apr 2007)
+New Revision: 6935
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+Log:
+Ajout de features (pas encore toutes implantees) dans NatGradNNet
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-04-24 15:13:14 UTC (rev 6934)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-04-24 17:38:09 UTC (rev 6935)
+@@ -63,6 +63,13 @@
+       output_layer_lrate_scale(1),
+       minibatch_size(1),
+       output_type(&quot;NLL&quot;),
++      input_size_lrate_normalization_power(0),
++      lrate_scale_factor(3),
++      lrate_scale_factor_max_power(0),
++      lrate_scale_factor_min_power(0),
++      self_adjusted_scaling_and_bias(false),
++      target_mean_activation(-4), // 
++      target_stdev_activation(3), // 2.5% of the time we are above 1
+       verbosity(0),
+       n_layers(-1),
+       cumulative_training_time(0)
+@@ -100,10 +107,15 @@
+ 
+     declareOption(ol, &quot;layer_params&quot;, &amp;NatGradNNet::layer_params,
+                   OptionBase::learntoption,
+-                  &quot;Training parameters for each layer, organized as follows: layer_params[i] \n&quot;
++                  &quot;Parameters used while training, for each layer, organized as follows: layer_params[i] \n&quot;
+                   &quot;is a matrix of dimension layer_sizes[i+1] x (layer_sizes[i]+1)\n&quot;
+                   &quot;containing the neuron biases in its first column.\n&quot;);
+ 
++    declareOption(ol, &quot;activations_scaling&quot;, &amp;NatGradNNet::activations_scaling,
++                  OptionBase::learntoption,
++                  &quot;Scaling coefficients for each neuron of each layer, if self_adjusted_scaling_and_bias:\n&quot;
++                  &quot; output = tanh(activations_scaling[layer][neuron] * (biases[layer][neuron] + weights[layer]*input[layer-1])\n&quot;);
++
+     declareOption(ol, &quot;layer_mparams&quot;, &amp;NatGradNNet::layer_mparams,
+                   OptionBase::learntoption,
+                   &quot;Test parameters for each layer, organized like layer_params.\n&quot;
+@@ -180,6 +192,60 @@
+                   &quot;type of output cost: 'NLL' for classification problems,\n&quot;
+                   &quot;or 'MSE' for regression.\n&quot;);
+ 
++    declareOption(ol, &quot;input_size_lrate_normalization_power&quot;, 
++                  &amp;NatGradNNet::input_size_lrate_normalization_power, 
++                  OptionBase::buildoption,
++                  &quot;Scale the learning rate neuron-wise (or layer-wise actually, here):\n&quot;
++                  &quot;-1 scales by 1 / ||x||^2, where x is the 1-extended input vector of the neuron\n&quot;
++                  &quot;0 does not scale the learning rate\n&quot;
++                  &quot;1 scales it by 1 / the nb of inputs of the neuron\n&quot;
++                  &quot;2 scales it by 1 / sqrt(the nb of inputs of the neuron), etc.\n&quot;);
++
++    declareOption(ol, &quot;lrate_scale_factor&quot;,
++                  &amp;NatGradNNet::lrate_scale_factor,
++                  OptionBase::buildoption,
++                  &quot;scale the learning rate in different neurons by a factor\n&quot;
++                  &quot;taken randomly as follows: choose integer n uniformly between\n&quot;
++                  &quot;lrate_scale_factor_min_power and lrate_scale_factor_max_power\n&quot;
++                  &quot;inclusively, and then scale learning rate by lrate_scale_factor^n.\n&quot;);
++
++    declareOption(ol, &quot;lrate_scale_factor_max_power&quot;,
++                  &amp;NatGradNNet::lrate_scale_factor_max_power,
++                  OptionBase::buildoption,
++                  &quot;See help on lrate_scale_factor\n&quot;);
++
++    declareOption(ol, &quot;lrate_scale_factor_min_power&quot;,
++                  &amp;NatGradNNet::lrate_scale_factor_min_power,
++                  OptionBase::buildoption,
++                  &quot;See help on lrate_scale_factor\n&quot;);
++
++    declareOption(ol, &quot;self_adjusted_scaling_and_bias&quot;,
++                  &amp;NatGradNNet::self_adjusted_scaling_and_bias,
++                  OptionBase::buildoption,
++                  &quot;If true, let each neuron self-adjust its bias and scaling factor\n&quot;
++                  &quot;of its activations so that the mean and standard deviation of the\n&quot;
++                  &quot;activations reach the target_mean_activation and target_stdev_activation.\n&quot;
++                  &quot;The activations mean and variance are estimated by a moving average with\n&quot;
++                  &quot;coefficient given by activations_statistics_moving_average_coefficient\n&quot;);
++
++    declareOption(ol, &quot;target_mean_activation&quot;,
++                  &amp;NatGradNNet::target_mean_activation,
++                  OptionBase::buildoption,
++                  &quot;See help on self_adjusted_scaling_and_bias\n&quot;);
++
++    declareOption(ol, &quot;target_stdev_activation&quot;,
++                  &amp;NatGradNNet::target_stdev_activation,
++                  OptionBase::buildoption,
++                  &quot;See help on self_adjusted_scaling_and_bias\n&quot;);
++
++    declareOption(ol, &quot;activation_statistics_moving_average_coefficient&quot;,
++                  &amp;NatGradNNet::activation_statistics_moving_average_coefficient,
++                  OptionBase::buildoption,
++                  &quot;The activations mean and variance used for self_adjusted_scaling_and_bias\n&quot;
++                  &quot;are estimated by a moving average with this coefficient:\n&quot;
++                  &quot;   xbar &lt;-- coefficient * xbar + (1-coefficient) x\n&quot;
++                  &quot;where x could be the activation or its square\n&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -216,7 +282,11 @@
+     layer_params_delta.resize(n_layers-1);
+     layer_params_gradient.resize(n_layers-1);
+     biases.resize(n_layers-1);
++    activations_scaling.resize(n_layers-1);
+     weights.resize(n_layers-1);
++    mweights.resize(n_layers-1);
++    mean_activations.resize(n_layers-1);
++    var_activations.resize(n_layers-1);
+     int n_neurons=0;
+     int n_params=0;
+     for (int i=0;i&lt;n_layers-1;i++)
+@@ -238,8 +308,12 @@
+         layer_mparams[i]=all_mparams.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
+         biases[i]=layer_params[i].subMatColumns(0,1);
+         weights[i]=layer_params[i].subMatColumns(1,layer_sizes[i]); // weights[0] from layer 0 to layer 1
++        mweights[i]=layer_mparams[i].subMatColumns(1,layer_sizes[i]); // weights[0] from layer 0 to layer 1
++        activations_scaling[i].resize(layer_sizes[i+1]);
+         layer_params_gradient[i]=all_params_gradient.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
+         layer_params_delta[i]=all_params_delta.subVec(p,np);
++        mean_activations[i].resize(layer_sizes[i+1]);
++        var_activations[i].resize(layer_sizes[i+1]);
+         for (int j=0;j&lt;layer_sizes[i+1];j++,k++)
+         {
+             neuron_params[k]=all_params.subVec(p,1+layer_sizes[i]);
+@@ -297,6 +371,10 @@
+     deepCopyField(hidden_layer_sizes, copies);
+     deepCopyField(layer_params, copies);
+     deepCopyField(layer_mparams, copies);
++    deepCopyField(biases, copies);
++    deepCopyField(weights, copies);
++    deepCopyField(mweights, copies);
++    deepCopyField(activations_scaling, copies);
+     deepCopyField(neurons_natgrad_template, copies);
+     deepCopyField(neurons_natgrad_per_layer, copies);
+     deepCopyField(params_natgrad_template, copies);
+@@ -341,6 +419,9 @@
+         real delta = 1/sqrt(real(layer_sizes[i]));
+         random_gen-&gt;fill_random_uniform(weights[i],-delta,delta);
+         biases[i].clear();
++        activations_scaling[i].fill(1.0);
++        mean_activations[i].clear();
++        var_activations[i].fill(1.0);
+     }
+     stage = 0;
+     cumulative_training_time=0;
+@@ -433,8 +514,28 @@
+         //      (minibatch_size x layer_size[i])
+ 
+         Mat previous_neurons_gradient = neuron_gradients_per_layer[i-1];
++        Mat next_neurons_gradient = neuron_gradients_per_layer[i];
+         Mat previous_neurons_output = neuron_outputs_per_layer[i-1];
+         real layer_lrate_factor = (i==n_layers-1)?output_layer_lrate_scale:1;
++        if (self_adjusted_scaling_and_bias &amp;&amp; i+1&lt;n_layers-1)
++            for (int k=0;k&lt;minibatch_size;k++)
++            {
++                Vec g=next_neurons_gradient(k);
++                g*=activations_scaling[i]; // pass gradient through scaling
++            }
++        if (input_size_lrate_normalization_power==-1)
++            layer_lrate_factor /= (sumsquare(neuron_extended_outputs_per_layer[i-1])/minibatch_size);
++        else if (input_size_lrate_normalization_power==-2)
++            layer_lrate_factor /= sqrt(sumsquare(neuron_extended_outputs_per_layer[i-1])/minibatch_size);
++        else if (input_size_lrate_normalization_power!=0)
++        {
++            int fan_in = neuron_extended_outputs_per_layer[i-1].length();
++            if (input_size_lrate_normalization_power==1)
++                layer_lrate_factor/=fan_in;
++            else if (input_size_lrate_normalization_power==2)
++                layer_lrate_factor/=sqrt(real(fan_in));
++            else layer_lrate_factor/=pow(fan_in,1.0/input_size_lrate_normalization_power);
++        }
+         // optionally correct the gradient on neurons using their covariance
+         if (neurons_natgrad_template &amp;&amp; neurons_natgrad_per_layer[i])
+         {
+@@ -442,7 +543,7 @@
+             tmp.resize(layer_sizes[i]);
+             for (int k=0;k&lt;minibatch_size;k++)
+             {
+-                Vec g_k = neuron_gradients_per_layer[i](k);
++                Vec g_k = next_neurons_gradient(k);
+                 (*neurons_natgrad_per_layer[i])(t-minibatch_size+1+k,g_k,tmp);
+                 g_k &lt;&lt; tmp;
+             }
+@@ -450,7 +551,7 @@
+         if (i&gt;1) // compute gradient on previous layer
+         {
+             // propagate gradients
+-            productScaleAcc(previous_neurons_gradient,neuron_gradients_per_layer[i],false,
++            productScaleAcc(previous_neurons_gradient,next_neurons_gradient,false,
+                             weights[i-1],false,1,0);
+             // propagate through tanh non-linearity
+             for (int j=0;j&lt;previous_neurons_gradient.length();j++)
+@@ -464,14 +565,15 @@
+         // compute gradient on parameters, possibly update them
+         if (full_natgrad || params_natgrad_template) 
+         {
+-            productScaleAcc(layer_params_gradient[i-1],neuron_gradients_per_layer[i],true,
++            productScaleAcc(layer_params_gradient[i-1],next_neurons_gradient,true,
+                             neuron_extended_outputs_per_layer[i-1],false,1,0);
+             layer_params_gradient[i-1] *= 1.0/minibatch_size; // use the MEAN gradient
+         } else // just regular stochastic gradient
+             // compute gradient on weights and update them in one go (more efficient)
+-            productScaleAcc(layer_params[i-1],neuron_gradients_per_layer[i],true,
++            // mean gradient has less variance, can afford larger learning rate
++            productScaleAcc(layer_params[i-1],next_neurons_gradient,true,
+                             neuron_extended_outputs_per_layer[i-1],false,
+-                            -layer_lrate_factor*lrate/minibatch_size,1); // mean gradient, has less variance, can afford larger learning rate
++                            -layer_lrate_factor*lrate/minibatch_size,1);
+     }
+     if (full_natgrad)
+     {
+@@ -505,7 +607,8 @@
+     PLASSERT_MSG(n_examples&lt;=minibatch_size,&quot;NatGradNNet::fpropNet: nb input vectors treated should be &lt;= minibatch_size\n&quot;);
+     for (int i=0;i&lt;n_layers-1;i++)
+     {
+-        Mat prev_layer = neuron_extended_outputs_per_layer[i];
++        Mat prev_layer = self_adjusted_scaling_and_bias?
++            neuron_outputs_per_layer[i]:neuron_extended_outputs_per_layer[i];
+         Mat next_layer = neuron_outputs_per_layer[i+1];
+         if (n_examples!=minibatch_size)
+         {
+@@ -513,16 +616,49 @@
+             next_layer = next_layer.subMatRows(0,n_examples);
+         }
+         // try to use BLAS for the expensive operation
+-        productScaleAcc(next_layer, prev_layer, false, 
+-                        (during_training || params_averaging_coeff==1.0)?
+-                        layer_params[i]:layer_mparams[i], 
+-                        true, 1, 0);
++        if (self_adjusted_scaling_and_bias &amp;&amp; i+1&lt;n_layers-1)
++            productScaleAcc(next_layer, prev_layer, false, 
++                            (during_training || params_averaging_coeff==1.0)?
++                            weights[i]:mweights[i], 
++                            true, 1, 0);
++        else
++            productScaleAcc(next_layer, prev_layer, false, 
++                            (during_training || params_averaging_coeff==1.0)?
++                            layer_params[i]:layer_mparams[i], 
++                            true, 1, 0);
+         // compute layer's output non-linearity
+         if (i+1&lt;n_layers-1)
+             for (int k=0;k&lt;n_examples;k++)
+             {
+                 Vec L=next_layer(k);
+-                compute_tanh(L,L);
++                if (self_adjusted_scaling_and_bias)
++                {
++                    real* m=mean_activations[i].data();
++                    real* v=var_activations[i].data();
++                    real* a=L.data();
++                    real* s=activations_scaling[i].data();
++                    real* b=biases[i].data(); // biases[i] is a 1-column matrix
++                    int bmod = biases[i].mod();
++                    for (int j=0;j&lt;layer_sizes[i+1];j++,b+=bmod,m++,v++,a++,s++)
++                    {
++                        if (during_training)
++                        {
++                            real diff = *a - *m;
++                            *v = (1-activation_statistics_moving_average_coefficient) * *v
++                                + activation_statistics_moving_average_coefficient * diff*diff;
++                            *m = (1-activation_statistics_moving_average_coefficient) * *m
++                                + activation_statistics_moving_average_coefficient * *a;
++                            *b = target_mean_activation - *m;
++                            if (*v&lt;1e6)
++                                *s = target_stdev_activation/sqrt(*v);
++                            else
++                                PLWARNING(&quot;NatGradNNet::fpropNet: activation variance &gt;= 1e6!\n&quot;);
++                        }
++                        *a = tanh((*a + *b) * *s);
++                    }
++                }
++                else
++                    compute_tanh(L,L);
+             }
+         else if (output_type==&quot;NLL&quot;)
+             for (int k=0;k&lt;n_examples;k++)
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-04-24 15:13:14 UTC (rev 6934)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-04-24 17:38:09 UTC (rev 6935)
+@@ -103,6 +103,30 @@
+     //! type of output cost: &quot;NLL&quot; for classification problems, &quot;MSE&quot; for regression
+     string output_type;
+ 
++    //! 0 does not scale the learning rate
++    //! 1 scales it by 1 / the nb of inputs of the neuron
++    //! 2 scales it by 1 / sqrt(the nb of inputs of the neuron)
++    //! etc.
++    real input_size_lrate_normalization_power;
++
++    //! scale the learning rate in different neurons by a factor
++    //! taken randomly as follows: choose integer n uniformly between 
++    //! lrate_scale_factor_min_power and lrate_scale_factor_max_power
++    //! inclusively, and then scale learning rate by lrate_scale_factor^n.
++    real lrate_scale_factor;
++    int lrate_scale_factor_max_power;
++    int lrate_scale_factor_min_power;
++
++    //! Let each neuron self-adjust its bias and scaling factor of its activations
++    //! so that the mean and standard deviation of the activations reach 
++    //! the target_mean_activation and target_stdev_activation.
++    bool self_adjusted_scaling_and_bias;
++    real target_mean_activation;
++    real target_stdev_activation;
++    // the mean and variance of the activations is estimated by a moving
++    // average with this coefficient (near 0 for very slow averaging)
++    real activation_statistics_moving_average_coefficient;
++
+     int verbosity;
+ 
+ public:
+@@ -193,8 +217,10 @@
+ 
+     //! pointers into the layer_params
+     TVec&lt;Mat&gt; biases;
+-    TVec&lt;Mat&gt; weights;
+-
++    TVec&lt;Mat&gt; weights,mweights;
++    TVec&lt;Vec&gt; activations_scaling; // output = tanh(activations_scaling[layer][neuron] * (biases[layer][neuron] + weights[layer]*input[layer-1])
++    TVec&lt;Vec&gt; mean_activations;
++    TVec&lt;Vec&gt; var_activations;
+     real cumulative_training_time;
+ 
+ protected:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000383.html">[Plearn-commits] r6934 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000385.html">[Plearn-commits] r6936 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#384">[ date ]</a>
+              <a href="thread.html#384">[ thread ]</a>
+              <a href="subject.html#384">[ subject ]</a>
+              <a href="author.html#384">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

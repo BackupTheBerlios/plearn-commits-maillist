@@ -1,0 +1,299 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6672 - in trunk: plearn/var	plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6672%20-%20in%20trunk%3A%20plearn/var%0A%09plearn_learners/regressors&In-Reply-To=%3C200702202318.l1KNIdQh009305%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000120.html">
+   <LINK REL="Next"  HREF="000122.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6672 - in trunk: plearn/var	plearn_learners/regressors</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6672%20-%20in%20trunk%3A%20plearn/var%0A%09plearn_learners/regressors&In-Reply-To=%3C200702202318.l1KNIdQh009305%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6672 - in trunk: plearn/var	plearn_learners/regressors">chapados at mail.berlios.de
+       </A><BR>
+    <I>Wed Feb 21 00:18:39 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000120.html">[Plearn-commits] r6671 - trunk/plearn/io
+</A></li>
+        <LI>Next message: <A HREF="000122.html">[Plearn-commits] r6673 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#121">[ date ]</a>
+              <a href="thread.html#121">[ thread ]</a>
+              <a href="subject.html#121">[ subject ]</a>
+              <a href="author.html#121">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2007-02-21 00:18:38 +0100 (Wed, 21 Feb 2007)
+New Revision: 6672
+
+Modified:
+   trunk/plearn/var/GaussianProcessNLLVariable.cc
+   trunk/plearn/var/GaussianProcessNLLVariable.h
+   trunk/plearn_learners/regressors/GaussianProcessRegressor.cc
+   trunk/plearn_learners/regressors/GaussianProcessRegressor.h
+Log:
+Option to save the gram matrix for debugging
+
+Modified: trunk/plearn/var/GaussianProcessNLLVariable.cc
+===================================================================
+--- trunk/plearn/var/GaussianProcessNLLVariable.cc	2007-02-20 19:23:40 UTC (rev 6671)
++++ trunk/plearn/var/GaussianProcessNLLVariable.cc	2007-02-20 23:18:38 UTC (rev 6672)
+@@ -37,6 +37,7 @@
+ /*! \file GaussianProcessNLLVariable.cc */
+ 
+ #include &lt;plearn/math/TMat_maths.h&gt;
++#include &lt;plearn/io/MatIO.h&gt;
+ #include &quot;GaussianProcessNLLVariable.h&quot;
+ 
+ #ifdef USE_BLAS_SPECIALISATIONS
+@@ -67,7 +68,8 @@
+     );
+ 
+ GaussianProcessNLLVariable::GaussianProcessNLLVariable()
+-    : m_kernel(0),
++    : m_save_gram_matrix(0),
++      m_kernel(0),
+       m_noise(0),
+       m_allow_bprop(true)
+ { }
+@@ -76,8 +78,10 @@
+ GaussianProcessNLLVariable::GaussianProcessNLLVariable(
+     Kernel* kernel, real noise, Mat inputs, Mat targets,
+     const TVec&lt;string&gt;&amp; hyperparam_names, const VarArray&amp; hyperparam_vars,
+-    bool allow_bprop)
++    bool allow_bprop, bool save_gram_matrix, PPath expdir)
+     : inherited(hyperparam_vars, 1, 1),
++      m_save_gram_matrix(save_gram_matrix),
++      m_expdir(expdir),
+       m_kernel(kernel),
+       m_noise(noise),
+       m_inputs(inputs),
+@@ -125,7 +129,11 @@
+ 
+ void GaussianProcessNLLVariable::declareOptions(OptionList&amp; ol)
+ {
+-    // (no additional options)
++    declareOption(
++        ol, &quot;save_gram_matrix&quot;, &amp;GaussianProcessNLLVariable::m_save_gram_matrix,
++        OptionBase::buildoption,
++        &quot;If true, the Gram matrix is saved before undergoing Cholesky\n&quot;
++        &quot;decomposition; useful for debugging if the matrix is quasi-singular.&quot;);
+     
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+@@ -153,6 +161,7 @@
+ void GaussianProcessNLLVariable::fprop()
+ {
+     fbpropFragments(m_kernel, m_noise, m_inputs, m_targets, m_allow_bprop,
++                    m_save_gram_matrix, m_expdir,
+                     m_gram, m_cholesky_gram, m_alpha_t, m_inverse_gram,
+                     m_cholesky_tmp, m_rhs_tmp);
+ 
+@@ -249,7 +258,8 @@
+ #ifndef USE_BLAS_SPECIALISATIONS
+ void GaussianProcessNLLVariable::fbpropFragments(
+     Kernel* kernel, real noise, const Mat&amp; inputs, const Mat&amp; targets,
+-    bool compute_inverse, Mat&amp; gram, Mat&amp; L, Mat&amp; alpha_t, Mat&amp; inv,
++    bool compute_inverse, bool save_gram_matrix, const PPath&amp; expdir,
++    Mat&amp; gram, Mat&amp; L, Mat&amp; alpha_t, Mat&amp; inv,
+     Vec&amp; tmp_chol, Mat&amp; tmp_rhs)
+ {
+     PLASSERT( kernel );
+@@ -275,6 +285,14 @@
+     kernel-&gt;computeGramMatrix(gram);
+     addToDiagonal(gram, noise);
+ 
++    // Save the Gram matrix if requested
++    if (save_gram_matrix) {
++        static int counter = 1;
++        string filename = expdir / (&quot;gram_matrix_&quot; +
++                                    tostring(counter++) + &quot;.pmat&quot;);
++        savePMat(filename, gram);
++    }
++
+     // Compute Cholesky decomposition and solve the linear system
+     alpha_t.resize(trainlength, rhs_width);
+     L.resize(trainlength, trainlength);
+@@ -298,7 +316,8 @@
+ #ifdef USE_BLAS_SPECIALISATIONS
+ void GaussianProcessNLLVariable::fbpropFragments(
+     Kernel* kernel, real noise, const Mat&amp; inputs, const Mat&amp; targets,
+-    bool compute_inverse, Mat&amp; gram, Mat&amp; L, Mat&amp; alpha_t, Mat&amp; inv,
++    bool compute_inverse, bool save_gram_matrix, const PPath&amp; expdir,
++    Mat&amp; gram, Mat&amp; L, Mat&amp; alpha_t, Mat&amp; inv,
+     Vec&amp; tmp_chol, Mat&amp; tmp_rhs)
+ {
+     PLASSERT( kernel );
+@@ -326,6 +345,14 @@
+     kernel-&gt;computeGramMatrix(gram);
+     addToDiagonal(gram, noise);
+ 
++    // Save the Gram matrix if requested
++    if (save_gram_matrix) {
++        static int counter = 1;
++        string filename = expdir / (&quot;gram_matrix_&quot; +
++                                    tostring(counter++) + &quot;.pmat&quot;);
++        savePMat(filename, gram);
++    }
++
+     // Compute Cholesky decomposition and solve the linear system.  LAPACK
+     // solves in-place, but luckily we don't need either the Gram and RHS
+     // matrices after solving.  Note that for now we don't bother to create an
+
+Modified: trunk/plearn/var/GaussianProcessNLLVariable.h
+===================================================================
+--- trunk/plearn/var/GaussianProcessNLLVariable.h	2007-02-20 19:23:40 UTC (rev 6671)
++++ trunk/plearn/var/GaussianProcessNLLVariable.h	2007-02-20 23:18:38 UTC (rev 6672)
+@@ -72,7 +72,12 @@
+ public:
+     //#####  Public Build Options  ############################################
+ 
+-    // (no options)
++    //! If true, the Gram matrix is saved before undergoing Cholesky
++    //! decomposition; useful for debugging if the matrix is quasi-singular.
++    bool m_save_gram_matrix;
++
++    //! Expdir where to save the Gram Matrix, if 'save_gram_matrix' requested.
++    PPath m_expdir;
+     
+ public:
+     //#####  Public Member Functions  #########################################
+@@ -98,7 +103,9 @@
+                                Mat inputs, Mat targets,
+                                const TVec&lt;string&gt;&amp; hyperparam_names,
+                                const VarArray&amp; hyperparam_vars,
+-                               bool allow_bprop = true);
++                               bool allow_bprop = true,
++                               bool save_gram_matrix = false,
++                               PPath expdir = &quot;&quot;);
+ 
+     
+     //#####  PLearn::Variable methods #########################################
+@@ -115,7 +122,9 @@
+      *  @param[in]  noise:    observation noise to add to the diagonal Gram matrix
+      *  @param[in]  inputs:   matrix of training inputs
+      *  @param[in]  targets:  matrix of training targets (may be multivariate)
+-     *  @param[in]  compute_inverse: whether to compute inverse of Gram matrix
++     *  @param[in]  compute_inverse:  whether to compute inverse of Gram matrix
++     *  @param[in]  save_gram_matrix: whether to save the computed Gram matrix
++     *  @param[in]  expdir:           if saving Gram matrix, where to save it
+      *  @param[out] gram:     The kernel (Gram) matrix
+      *  @param[out] L:        Cholesky decomposition of the Gram matrix
+      *  @param[out] alpha:    Solution to the linear system gram*alpha = targets
+@@ -125,6 +134,7 @@
+      */
+     static void fbpropFragments(Kernel* kernel, real noise, const Mat&amp; inputs,
+                                 const Mat&amp; targets, bool compute_inverse,
++                                bool save_gram_matrix, const PPath&amp; expdir,
+                                 Mat&amp; gram, Mat&amp; L, Mat&amp; alpha, Mat&amp; inv,
+                                 Vec&amp; tmpch, Mat&amp; tmprhs);
+ 
+
+Modified: trunk/plearn_learners/regressors/GaussianProcessRegressor.cc
+===================================================================
+--- trunk/plearn_learners/regressors/GaussianProcessRegressor.cc	2007-02-20 19:23:40 UTC (rev 6671)
++++ trunk/plearn_learners/regressors/GaussianProcessRegressor.cc	2007-02-20 23:18:38 UTC (rev 6672)
+@@ -107,7 +107,8 @@
+     : m_weight_decay(0.0),
+       m_include_bias(true),
+       m_compute_confidence(false),
+-      m_confidence_epsilon(1e-8)
++      m_confidence_epsilon(1e-8),
++      m_save_gram_matrix(false)
+ { }
+ 
+ 
+@@ -181,7 +182,15 @@
+         &quot;Specification of the optimizer to use for train-time hyperparameter\n&quot;
+         &quot;optimization.  A ConjGradientOptimizer should be an adequate choice.\n&quot;);
+ 
++    declareOption(
++        ol, &quot;save_gram_matrix&quot;, &amp;GaussianProcessRegressor::m_save_gram_matrix,
++        OptionBase::buildoption,
++        &quot;If true, the Gram matrix is saved before undergoing Cholesky each\n&quot;
++        &quot;decomposition; useful for debugging if the matrix is quasi-singular.\n&quot;
++        &quot;It is saved in the current expdir under the names 'gram_matrix_N.pmat'\n&quot;
++        &quot;where N is an increasing counter.\n&quot;);
+ 
++
+     //#####  Learnt Options  ##################################################
+ 
+     declareOption(
+@@ -564,7 +573,8 @@
+     {
+         return new GaussianProcessNLLVariable(
+             m_kernel, m_weight_decay, inputs, targets,
+-            TVec&lt;string&gt;(), VarArray(), m_compute_confidence);
++            TVec&lt;string&gt;(), VarArray(), m_compute_confidence,
++            m_save_gram_matrix, getExperimentDirectory());
+     }
+ 
+     // Otherwise create Vars that wrap each hyperparameter
+@@ -600,7 +610,7 @@
+     // Create the cost-function variable
+     PP&lt;GaussianProcessNLLVariable&gt; nll = new GaussianProcessNLLVariable(
+         m_kernel, m_weight_decay, inputs, targets, hyperparam_names,
+-        hyperparam_vars, true);
++        hyperparam_vars, true, m_save_gram_matrix, getExperimentDirectory());
+     nll-&gt;setName(&quot;GaussianProcessNLLVariable&quot;);
+ 
+     // Some logging about the initial values
+
+Modified: trunk/plearn_learners/regressors/GaussianProcessRegressor.h
+===================================================================
+--- trunk/plearn_learners/regressors/GaussianProcessRegressor.h	2007-02-20 19:23:40 UTC (rev 6671)
++++ trunk/plearn_learners/regressors/GaussianProcessRegressor.h	2007-02-20 23:18:38 UTC (rev 6672)
+@@ -171,7 +171,15 @@
+      */
+     PP&lt;Optimizer&gt; m_optimizer;
+ 
++    /**
++     *  If true, the Gram matrix is saved before undergoing Cholesky each
++     *  decomposition; useful for debugging if the matrix is quasi-singular.
++     *  It is saved in the current expdir under the names 'gram_matrix_N.pmat'
++     *  where N is an increasing counter.
++     */
++    bool m_save_gram_matrix;
+ 
++
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000120.html">[Plearn-commits] r6671 - trunk/plearn/io
+</A></li>
+	<LI>Next message: <A HREF="000122.html">[Plearn-commits] r6673 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#121">[ date ]</a>
+              <a href="thread.html#121">[ thread ]</a>
+              <a href="subject.html#121">[ subject ]</a>
+              <a href="author.html#121">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

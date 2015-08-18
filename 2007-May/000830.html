@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7381 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7381%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705281728.l4SHSZRA004244%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000829.html">
+   <LINK REL="Next"  HREF="000831.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7381 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7381%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705281728.l4SHSZRA004244%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7381 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Mon May 28 19:28:35 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000829.html">[Plearn-commits] r7380 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000831.html">[Plearn-commits] r7382 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#830">[ date ]</a>
+              <a href="thread.html#830">[ thread ]</a>
+              <a href="subject.html#830">[ subject ]</a>
+              <a href="author.html#830">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-05-28 19:28:32 +0200 (Mon, 28 May 2007)
+New Revision: 7381
+
+Modified:
+   trunk/plearn_learners/online/LinearCombinationModule.cc
+Log:
+- Added safety check for a non-negative learning rate
+- Added missing deep copy statement
+- Simplified fprop code slightly
+
+
+Modified: trunk/plearn_learners/online/LinearCombinationModule.cc
+===================================================================
+--- trunk/plearn_learners/online/LinearCombinationModule.cc	2007-05-28 17:24:11 UTC (rev 7380)
++++ trunk/plearn_learners/online/LinearCombinationModule.cc	2007-05-28 17:28:32 UTC (rev 7381)
+@@ -77,6 +77,9 @@
+     inherited::declareOptions(ol);
+ }
+ 
++////////////
++// build_ //
++////////////
+ void LinearCombinationModule::build_()
+ {
+     PLASSERT(weights.length()==0 || port_names.length()==0 ||
+@@ -100,9 +103,13 @@
+         if (!adaptive)
+             PLWARNING(&quot;LinearCombinationModule::build: non-adaptive weights set to 0! the module will always output 0.&quot;);
+     }
++
++    PLCHECK( learning_rate &gt;= 0 );
+ }
+ 
+-// ### Nothing to add here, simply calls build_
++///////////
++// build //
++///////////
+ void LinearCombinationModule::build()
+ {
+     inherited::build();
+@@ -110,11 +117,15 @@
+ }
+ 
+ 
++/////////////////////////////////
++// makeDeepCopyFromShallowCopy //
++/////////////////////////////////
+ void LinearCombinationModule::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+-    deepCopyField(weights, copies);
++    deepCopyField(weights,    copies);
++    deepCopyField(port_names, copies);
+ }
+ 
+ ///////////
+@@ -130,23 +141,21 @@
+     
+     const TVec&lt;Mat*&gt;&amp; inputs = ports_value;
+     Mat* output = ports_value[n_ports-1];
+-    bool all_inputs_provided = true;
+-    for (int i=0;i&lt;n_ports-1;i++)
+-        if (!inputs[i] || inputs[i]-&gt;isEmpty())
+-        {
+-            all_inputs_provided=false;
+-            break;
+-        }
+-    if (all_inputs_provided &amp;&amp; output &amp;&amp; output-&gt;isEmpty())
+-    {
++    if (output) {
++        PLASSERT_MSG( output-&gt;isEmpty() );
++        PLASSERT( inputs[0] );
+         int mbs = inputs[0]-&gt;length();
+         int width = inputs[0]-&gt;width();
+-        output-&gt;resize(mbs,width);
++        output-&gt;resize(mbs, width);
+         output-&gt;clear();
+-        for (int i=0;i&lt;n_ports-1;i++)
+-            multiplyAcc(*output,*inputs[i],weights[i]);
++        for (int i=0;i&lt;n_ports-1;i++) {
++            Mat* input_i = inputs[i];
++            if (!input_i || input_i-&gt;isEmpty())
++                PLERROR(&quot;In LinearCombinationModule::fprop - The %d-th input &quot;
++                        &quot;port is missing or empty&quot;, i);
++            multiplyAcc(*output, *input_i, weights[i]);
++        }
+     }
+-    else PLERROR(&quot;In LinearCombinationModule::fprop - input ports should be provided and output port empty&quot;);
+ 
+     // Ensure all required ports have been computed.
+     checkProp(ports_value);
+@@ -156,7 +165,7 @@
+ // bpropAccUpdate //
+ ////////////////////
+ void LinearCombinationModule::bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
+-                                          const TVec&lt;Mat*&gt;&amp; ports_gradient)
++                                             const TVec&lt;Mat*&gt;&amp; ports_gradient)
+ {
+     int n_ports = weights.length() + 1;
+     PLASSERT( ports_value.length() == n_ports &amp;&amp; ports_gradient.length() == n_ports);
+@@ -176,7 +185,7 @@
+                 input_grad[i]-&gt;resize(mbs,width);
+                 multiplyAcc(*input_grad[i],*output_grad,weights[i]);
+             }
+-            if (adaptive &amp;&amp; learning_rate!=0)
++            if (adaptive &amp;&amp; learning_rate &gt; 0)
+             {
+                 Mat* input_i = ports_value[i];
+                 PLASSERT(input_i);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000829.html">[Plearn-commits] r7380 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000831.html">[Plearn-commits] r7382 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#830">[ date ]</a>
+              <a href="thread.html#830">[ thread ]</a>
+              <a href="subject.html#830">[ subject ]</a>
+              <a href="author.html#830">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

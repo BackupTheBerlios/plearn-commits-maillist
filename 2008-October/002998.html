@@ -1,0 +1,223 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9558 - trunk/plearn_learners/generic
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9558%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200810141546.m9EFkobv031037%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002997.html">
+   <LINK REL="Next"  HREF="002999.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9558 - trunk/plearn_learners/generic</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9558%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200810141546.m9EFkobv031037%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9558 - trunk/plearn_learners/generic">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Oct 14 17:46:50 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002997.html">[Plearn-commits] r9557 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="002999.html">[Plearn-commits] r9559 - trunk/python_modules/plearn/pymake
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2998">[ date ]</a>
+              <a href="thread.html#2998">[ thread ]</a>
+              <a href="subject.html#2998">[ subject ]</a>
+              <a href="author.html#2998">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-10-14 17:46:49 +0200 (Tue, 14 Oct 2008)
+New Revision: 9558
+
+Modified:
+   trunk/plearn_learners/generic/AddCostToLearner.cc
+   trunk/plearn_learners/generic/AddCostToLearner.h
+Log:
+-added cost test_time that have a special meaning. It have a weard meaning: the total time spend in the test() fct between two call to train(). This is due to the fact that I want the time spent in all dataset, not just one.
+added cost total_test_time that is the sum of all past test_time
+added the cost train_time
+
+
+Modified: trunk/plearn_learners/generic/AddCostToLearner.cc
+===================================================================
+--- trunk/plearn_learners/generic/AddCostToLearner.cc	2008-10-14 15:11:22 UTC (rev 9557)
++++ trunk/plearn_learners/generic/AddCostToLearner.cc	2008-10-14 15:46:49 UTC (rev 9558)
+@@ -85,6 +85,9 @@
+ AddCostToLearner::AddCostToLearner()
+     : bag_size(0),
+       train_time(0),
++      total_train_time(0),
++      test_time(0),
++      total_test_time(0),
+       check_output_consistency(1),
+       combine_bag_outputs_method(1),
+       compute_costs_on_bags(0),
+@@ -145,7 +148,10 @@
+         &quot; - 'NLL': -log(o[t])\n&quot;
+         &quot; - 'mse': the mean squared error (o - t)^2\n&quot;
+         &quot; - 'squared_norm_reconstruction_error': | ||i||^2 - ||o||^2 |\n&quot;
+-        &quot; - 'train_time': the time spend in the train() function\n&quot;
++        &quot; - 'train_time': the time spend in the last call to the train() function\n&quot;
++        &quot; - 'total_train_time': the total time spend in the train() function\n&quot;
++        &quot; - 'test_time': the time spend in test() fct the between the last two call to train()\n&quot;
++        &quot; - 'total_test_time': the sum of test_time\n&quot;
+         &quot; - 'type1_err': SUM[type1_err] will return the number of type 1 error(false positive).\n&quot;
+         &quot;                E[type1_err], will return the false positive rate: # false positive/# of positive\n&quot; 
+         &quot; - 'type2_err': idem as type1_err but for the type 2 error(false negative)\n&quot; 
+@@ -194,8 +200,20 @@
+ 
+     declareOption(ol, &quot;train_time&quot;,
+                   &amp;AddCostToLearner::train_time, OptionBase::learntoption,
+-                  &quot;The time it took to train in second.&quot;);
++                  &quot;The time spent in the last call to train() in second.&quot;);
+ 
++    declareOption(ol, &quot;total_train_time&quot;,
++                  &amp;AddCostToLearner::train_time, OptionBase::learntoption,
++                  &quot;The total time spent in the train() function in second.&quot;);
++
++    declareOption(ol, &quot;test_time&quot;,
++                  &amp;AddCostToLearner::test_time, OptionBase::learntoption,
++                  &quot;The time spent in the last call to test() in second.&quot;);
++
++    declareOption(ol, &quot;total_test_time&quot;,
++                  &amp;AddCostToLearner::test_time, OptionBase::learntoption,
++                  &quot;The total time spent in the test() function in second.&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -267,6 +285,13 @@
+         } else if (c == &quot;binary_class_error&quot;) {
+         } else if (c == &quot;train_time&quot;) {
+             activ_profiler=true;
++        } else if (c == &quot;total_train_time&quot;) {
++            activ_profiler=true;
++        } else if (c == &quot;test_time&quot;) {
++            activ_profiler=true;
++            Profiler::reset(&quot;AddCostToLearner::test&quot;);
++        } else if (c == &quot;total_test_time&quot;) {
++            activ_profiler=true;
+         } else if (c == &quot;linear_class_error&quot;) {
+         } else if (c == &quot;square_class_error&quot;) {
+         } else if (c == &quot;confusion_matrix&quot;) {
+@@ -620,6 +645,12 @@
+             costs[ind_cost] = abs(pownorm(input, 2) - pownorm(sub_learner_output, 2));
+         } else if (c == &quot;train_time&quot;) {
+             costs[ind_cost] = train_time;
++        } else if (c == &quot;total_train_time&quot;) {
++            costs[ind_cost] = total_train_time;
++        } else if (c == &quot;test_time&quot;) {
++            costs[ind_cost] = test_time;
++        } else if (c == &quot;total_test_time&quot;) {
++            costs[ind_cost] = total_test_time;
+         } else if (c == &quot;type1_err&quot;) {
+             //false positive error
+             //faux negatif/(faux negatif+vrai positif)
+@@ -767,9 +798,29 @@
+     if(Profiler::isActive()){
+         const Profiler::Stats&amp; stats = Profiler::getStats(&quot;AddCostToLearner::train&quot;);
+         train_time=stats.wall_duration/Profiler::ticksPerSecond();
++        total_train_time+=train_time;
++        Profiler::reset(&quot;AddCostToLearner::train&quot;);
++
++        //we get the test_time here as we want the test time for all dataset.
++        //if we put it in the test function, we would have it for one dataset.
++        const Profiler::Stats&amp; stats_test = Profiler::getStats(&quot;AddCostToLearner::test&quot;);
++        test_time=stats_test.wall_duration/Profiler::ticksPerSecond();
++        total_test_time+=test_time;
++        Profiler::reset(&quot;AddCostToLearner::test&quot;);
+     }
+ }
+ 
++//////////
++// test //
++//////////
++void AddCostToLearner::test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
++                            VMat testoutputs, VMat testcosts) const
++{
++    Profiler::start(&quot;AddCostToLearner::test&quot;);
++    inherited::test(testset, test_stats, testoutputs, testcosts);
++    Profiler::end(&quot;AddCostToLearner::test&quot;);
++}
++
+ ///////////////////////////
+ // computeOutputAndCosts //
+ ///////////////////////////
+@@ -788,7 +839,8 @@
+ // computeOutputsAndCosts //
+ ///////////////////////////
+ void AddCostToLearner::computeOutputsAndCosts(const Mat&amp; input, const Mat&amp; target,
+-                                             Mat&amp; output, Mat&amp; costs) const {
++                                             Mat&amp; output, Mat&amp; costs) const
++{
+     PLASSERT( learner_ );
+     //done this way to use a possibly optimizer version 
+     //of computeOutputsAndCosts from the sub learner as with NatGradNNet
+
+Modified: trunk/plearn_learners/generic/AddCostToLearner.h
+===================================================================
+--- trunk/plearn_learners/generic/AddCostToLearner.h	2008-10-14 15:11:22 UTC (rev 9557)
++++ trunk/plearn_learners/generic/AddCostToLearner.h	2008-10-14 15:46:49 UTC (rev 9558)
+@@ -107,8 +107,16 @@
+     //! The threshold between class
+     Vec class_threshold;
+ 
++    //! The time it took for the last execution of the train() function
++    real train_time;
+     //! The total time passed in training
+-    real train_time;
++    real total_train_time;
++
++    //! The time it took for the last execution of the test() function
++    real test_time;
++    //! The total time passed in test()
++    real total_test_time;
++
+ public:
+ 
+     // ************************
+@@ -171,6 +179,9 @@
+ 
+     virtual void train();
+ 
++    virtual void test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
++                      VMat testoutputs=0, VMat testcosts=0) const;
++
+     //! (Re-)initializes the PLearner in its fresh state (that state may depend on the 'seed' option)
+     //! And sets 'stage' back to 0   (this is the stage of a fresh learner!).
+     virtual void forget();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002997.html">[Plearn-commits] r9557 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="002999.html">[Plearn-commits] r9559 - trunk/python_modules/plearn/pymake
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2998">[ date ]</a>
+              <a href="thread.html#2998">[ thread ]</a>
+              <a href="subject.html#2998">[ subject ]</a>
+              <a href="author.html#2998">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

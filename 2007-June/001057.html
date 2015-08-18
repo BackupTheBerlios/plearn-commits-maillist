@@ -1,0 +1,350 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7609 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7609%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200706192031.l5JKVTRU000959%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001056.html">
+   <LINK REL="Next"  HREF="001058.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7609 - trunk/plearn_learners/online</H1>
+    <B>louradou at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7609%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200706192031.l5JKVTRU000959%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7609 - trunk/plearn_learners/online">louradou at mail.berlios.de
+       </A><BR>
+    <I>Tue Jun 19 22:31:29 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001056.html">[Plearn-commits] r7608 - in trunk:	plearn_learners/generic/EXPERIMENTAL	python_modules/plearn/plotting python_modules/plearn/var	scripts scripts/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="001058.html">[Plearn-commits] r7610 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1057">[ date ]</a>
+              <a href="thread.html#1057">[ thread ]</a>
+              <a href="subject.html#1057">[ subject ]</a>
+              <a href="author.html#1057">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: louradou
+Date: 2007-06-19 22:31:29 +0200 (Tue, 19 Jun 2007)
+New Revision: 7609
+
+Modified:
+   trunk/plearn_learners/online/RBMGaussianLayer.cc
+   trunk/plearn_learners/online/RBMGaussianLayer.h
+   trunk/plearn_learners/online/RBMModule.cc
+Log:
+RBMGaussianLayer: added functions energy, fpropNLL and bpropNLL
+RBMModule: slight modifications for sampling (it's being tested!)
+
+
+
+Modified: trunk/plearn_learners/online/RBMGaussianLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMGaussianLayer.cc	2007-06-19 20:20:02 UTC (rev 7608)
++++ trunk/plearn_learners/online/RBMGaussianLayer.cc	2007-06-19 20:31:29 UTC (rev 7609)
+@@ -302,6 +302,8 @@
+     deepCopyField(sigma, copies);
+ }
+ 
++
++
+ void RBMGaussianLayer::accumulatePosStats( const Vec&amp; pos_values )
+ {
+     for( int i=0 ; i&lt;size ; i++ )
+@@ -402,6 +404,100 @@
+     inherited::update( pos_values, neg_values );
+ }
+ 
++real RBMGaussianLayer::energy(const Vec&amp; unit_values) const
++{
++    if(unit_values.length()!=quad_coeff.length())
++        PLERROR(&quot;InRBMGaussianLayer::unit_values and quadratic_coeff Vecs must have the same length.&quot;);
++    real quad_dot=0.;
++    if (unit_values.size() &gt; 0 &amp;&amp; quad_coeff.size() &gt; 0) {
++        real* v1 = unit_values.data();
++        real* v2 = quad_coeff.data();
++        for(register int i=0; i&lt;unit_values.length(); i++)
++            quad_dot += v1[i]*v2[i];
++    }
++    return dot(unit_values,bias) + quad_dot;
++}
++
++real RBMGaussianLayer::fpropNLL(const Vec&amp; target)
++{
++    PLASSERT( target.size() == input_size );
++
++    real ret = 0;
++    real target_i, activation_i, a_i;
++    for( int i=0 ; i&lt;size ; i++ )
++    {
++        target_i = target[i];
++        activation_i = activation[i];
++	a_i = quad_coeff[i];
++        if(!fast_exact_is_equal(target_i,0.0))
++            // ret -= target[i] * pl_log(expectations[i]); 
++            ret -= target_i * pl_log( - activation_i / (2 * a_i * a_i) );
++        if(!fast_exact_is_equal(target_i,1.0))
++            // ret -= (1-target_i) * pl_log(1-expectation_i);
++            ret -= (1-target_i) * pl_log( 1 + activation_i / (2 * a_i * a_i) );
++    }
++    return ret;
++}
++
++
++void RBMGaussianLayer::fpropNLL(const Mat&amp; targets, const Mat&amp; costs_column)
++{
++
++    PLASSERT( targets.width() == input_size );
++    PLASSERT( targets.length() == batch_size );
++    PLASSERT( costs_column.width() == 1 );
++    PLASSERT( costs_column.length() == batch_size );
++
++    real nll, a_i;
++    real *activation, *target;
++    
++    for (int k=0;k&lt;batch_size;k++) // loop over minibatch
++    {
++        nll = 0;
++        activation = activations[k];
++        target = targets[k];
++        for( register int i=0 ; i&lt;size ; i++ ) // loop over outputs
++        {
++            a_i = quad_coeff[i];
++	    if(!fast_exact_is_equal(target[i],0.0))
++                // nll -= target[i] * pl_log(expectations[i]); 
++                nll -= target[i] * pl_log( - activation[i] / (2 * a_i * a_i) );
++            if(!fast_exact_is_equal(target[i],1.0))
++                // nll -= (1-target[i]) * pl_log(1-expectations[i]); 
++                nll -= (1 - target[i]) * pl_log( 1 + activation[i] / (2 * a_i * a_i) );
++        }
++        costs_column(k,0) = nll;
++    }
++}
++
++void RBMGaussianLayer::bpropNLL(const Vec&amp; target, real nll, Vec&amp; bias_gradient)
++{
++    computeExpectation();
++
++    PLASSERT( target.size() == input_size );
++    bias_gradient.resize( size );
++
++    for( int i=0 ; i&lt;size ; i++ )
++    {
++        bias_gradient[i] = target[i]-expectation[i];
++    }
++}
++
++void RBMGaussianLayer::bpropNLL(const Mat&amp; targets, const Mat&amp; costs_column,
++                                Mat&amp; bias_gradients)
++{
++    computeExpectations();
++
++    PLASSERT( targets.width() == input_size );
++    PLASSERT( targets.length() == batch_size );
++    PLASSERT( costs_column.width() == 1 );
++    PLASSERT( costs_column.length() == batch_size );
++    bias_gradients.resize( batch_size, size );
++
++    substract(targets,expectations,bias_gradients);
++}
++
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/online/RBMGaussianLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMGaussianLayer.h	2007-06-19 20:20:02 UTC (rev 7608)
++++ trunk/plearn_learners/online/RBMGaussianLayer.h	2007-06-19 20:31:29 UTC (rev 7609)
+@@ -128,6 +128,20 @@
+     //! forgets everything
+     virtual void forget();
+ 
++    //! compute bias' unit_values + min_quad_coeff.^2' unit_values.^2
++    virtual real energy(const Vec&amp; unit_values) const;
++
++    //! Computes the negative log-likelihood of target given the
++    //! internal activations of the layer
++    virtual real fpropNLL(const Vec&amp; target);
++    virtual void fpropNLL(const Mat&amp; targets, const Mat&amp; costs_column);
++    
++    //! Computes the gradient of the negative log-likelihood of target
++    //! with respect to the layer's bias, given the internal activations
++    virtual void bpropNLL(const Vec&amp; target, real nll, Vec&amp; bias_gradient);
++    virtual void bpropNLL(const Mat&amp; targets, const Mat&amp; costs_column,
++                          Mat&amp; bias_gradients);
++
+     //#####  PLearn::Object Protocol  #########################################
+ 
+     // Declares other standard object methods.
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-06-19 20:20:02 UTC (rev 7608)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-06-19 20:31:29 UTC (rev 7609)
+@@ -772,21 +772,21 @@
+         found_a_valid_configuration = true;
+     } 
+     
+-    // SAMPLING
++    // SAMPLING inputs
+     if ((visible_sample &amp;&amp; visible_sample-&gt;isEmpty()) // it is asked to sample the visible units
+-        || (hidden_sample &amp;&amp; hidden_sample-&gt;isEmpty())) // or to sample the hidden units
++        &amp;&amp; (!visible || !visible-&gt;isEmpty() ))
++//        || (hidden_sample &amp;&amp; hidden_sample-&gt;isEmpty())) // or to sample the hidden units
+     {
+-        if (hidden &amp;&amp; !hidden-&gt;isEmpty()) // sample visible conditionally on hidden
++        if (hidden_sample &amp;&amp; !hidden_sample-&gt;isEmpty()) // sample visible conditionally on hidden
+         {
+-            sampleVisibleGivenHidden(*hidden);
+-            visible_sample-&gt;resize(visible_layer-&gt;samples.length(),visible_layer-&gt;samples.width());
+-            *visible_sample &lt;&lt; visible_layer-&gt;samples;
+-            Gibbs_step = 0; // that would restart the chain for unconditional sampling
++            sampleVisibleGivenHidden(*hidden_sample);
++	    cout &lt;&lt; &quot;(discrete visible) sampling init (from hidden)&quot; &lt;&lt; endl;
+         }
+         else if (visible &amp;&amp; !visible-&gt;isEmpty()) // if an input is provided, sample hidden conditionally
+         {
+-            sampleHiddenGivenVisible(visible_layer-&gt;samples);
+-            Gibbs_step = 0; // that would restart the chain for unconditional sampling
++            sampleHiddenGivenVisible(*visible);
++            sampleVisibleGivenHidden(hidden_layer-&gt;samples);
++	    cout &lt;&lt; &quot;(discrete visible) sampling init (from visible)&quot; &lt;&lt; endl;
+         }
+         else // sample unconditionally: Gibbs sample after k steps
+         {
+@@ -794,63 +794,45 @@
+             // start or continue the chain
+             int min_n = max(Gibbs_step+n_Gibbs_steps_per_generated_sample,
+                             min_n_Gibbs_steps);
++            cout &lt;&lt; &quot;(discrete visible) gibbs &quot; &lt;&lt; Gibbs_step;
+             for (;Gibbs_step&lt;min_n;Gibbs_step++)
+             {
+                 sampleHiddenGivenVisible(visible_layer-&gt;samples);
+                 sampleVisibleGivenHidden(hidden_layer-&gt;samples);
+             }
+-  	    cout &lt;&lt; &quot;gibbs &quot; &lt;&lt; Gibbs_step &lt;&lt; endl;
++  	    cout &lt;&lt; &quot; -&gt; &quot; &lt;&lt; Gibbs_step-1 &lt;&lt; endl;
+         }
+-        if (visible_sample &amp;&amp; visible_sample-&gt;isEmpty()) // provide sample of the visible units
+-        {
+-            visible_sample-&gt;resize(visible_layer-&gt;samples.length(),
+-                                   visible_layer-&gt;samples.width());
+-            *visible_sample &lt;&lt; visible_layer-&gt;samples;
+-        }
+-        if (hidden_sample &amp;&amp; hidden_sample-&gt;isEmpty()) // provide sample of the hidden units
+-        {
+-            hidden_sample-&gt;resize(hidden_layer-&gt;samples.length(),
+-                                  hidden_layer-&gt;samples.width());
+-            *hidden_sample &lt;&lt; hidden_layer-&gt;samples;
+-        }
+         found_a_valid_configuration = true;
+     }
+     // SAMPLING continuous inputs (computing visible expectation)
+-    if (visible &amp;&amp; visible-&gt;isEmpty()) {
++    if (visible &amp;&amp; visible-&gt;isEmpty()) { // it is asked the expectations of visible units
+     
+         if (visible_sample &amp;&amp; !visible_sample-&gt;isEmpty())
+         {
+             sampleHiddenGivenVisible(*visible_sample);
+             sampleVisibleGivenHidden(hidden_layer-&gt;samples);
+-	    cout &lt;&lt; &quot;init (1)&quot; &lt;&lt; endl;
++	    cout &lt;&lt; &quot;(continuous visible) sampling init (from visible)&quot; &lt;&lt; endl;
+ 	}
+-	else if ( hidden &amp;&amp; !hidden-&gt;isEmpty() )
++	else if ( hidden_sample &amp;&amp; !hidden_sample-&gt;isEmpty() )
+ 	{
+-	   sampleVisibleGivenHidden(*hidden);
+-           Gibbs_step = 0; // that would restart the chain for unconditional sampling
+-	   cout &lt;&lt; &quot;init&quot; &lt;&lt; endl;
++	   sampleVisibleGivenHidden(*hidden_sample);
++	   cout &lt;&lt; &quot;(continuous visible) sampling init (from hidden)&quot; &lt;&lt; endl;	   
+ 	}
+ 	else
+ 	{
+            int min_n = max(Gibbs_step+n_Gibbs_steps_per_generated_sample,
+                             min_n_Gibbs_steps);
+ 	   PLASSERT( min_n &gt; 0 );
+-           cout &lt;&lt; &quot;gibbs &quot; &lt;&lt; Gibbs_step;
++           cout &lt;&lt; &quot;(continuous visible) gibbs &quot; &lt;&lt; Gibbs_step;
+ 	   for (;Gibbs_step&lt;min_n;Gibbs_step++)
+            {
+                 sampleHiddenGivenVisible(visible_layer-&gt;samples);
+                 sampleVisibleGivenHidden(hidden_layer-&gt;samples);
+            }
+   	   cout &lt;&lt; &quot; -&gt; &quot; &lt;&lt; Gibbs_step-1 &lt;&lt; endl;
+-           if ( hidden )   // fill hidden.state with expectations
+-	   {
+-	      const Mat&amp; hidden_expect = hidden_layer-&gt;getExpectations();
+-              hidden-&gt;resize(hidden_expect.length(), hidden_expect.width());
+-              *hidden &lt;&lt; hidden_expect;
+-	   }
+ 	}
+         
+-	if ( hidden )   // fill hidden.state with expectations
++	if ( hidden &amp;&amp; hidden-&gt;isEmpty())   // fill hidden.state with expectations
+         {
+    	      const Mat&amp; hidden_expect = hidden_layer-&gt;getExpectations();
+               hidden-&gt;resize(hidden_expect.length(), hidden_expect.width());
+@@ -858,12 +840,23 @@
+         }
+ 	 
+         const Mat&amp; to_store = visible_layer-&gt;getExpectations();
+-	cout &lt;&lt; to_store.length() &lt;&lt; &quot; x &quot; &lt;&lt; to_store.width() &lt;&lt; endl;
+         visible-&gt;resize(to_store.length(), to_store.width());
+         *visible &lt;&lt; to_store;
+ 
+ 	found_a_valid_configuration = true;
+     }
++    if (visible_sample &amp;&amp; visible_sample-&gt;isEmpty()) // provide sample of the visible units
++    {
++        visible_sample-&gt;resize(visible_layer-&gt;samples.length(),
++                               visible_layer-&gt;samples.width());
++        *visible_sample &lt;&lt; visible_layer-&gt;samples;
++    }
++    if (hidden_sample &amp;&amp; hidden_sample-&gt;isEmpty()) // provide sample of the hidden units
++    {
++        hidden_sample-&gt;resize(hidden_layer-&gt;samples.length(),
++                              hidden_layer-&gt;samples.width());
++        *hidden_sample &lt;&lt; hidden_layer-&gt;samples;
++    }
+ 
+     // COMPUTE CONTRASTIVE DIVERGENCE CRITERION
+     if (contrastive_divergence)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001056.html">[Plearn-commits] r7608 - in trunk:	plearn_learners/generic/EXPERIMENTAL	python_modules/plearn/plotting python_modules/plearn/var	scripts scripts/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="001058.html">[Plearn-commits] r7610 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1057">[ date ]</a>
+              <a href="thread.html#1057">[ thread ]</a>
+              <a href="subject.html#1057">[ subject ]</a>
+              <a href="author.html#1057">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

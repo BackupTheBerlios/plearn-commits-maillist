@@ -1,0 +1,828 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8292 - in trunk: commands plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-November/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8292%20-%20in%20trunk%3A%20commands%20plearn_learners/online&In-Reply-To=%3C200711232035.lANKZaeI027602%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001739.html">
+   <LINK REL="Next"  HREF="001741.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8292 - in trunk: commands plearn_learners/online</H1>
+    <B>louradou at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8292%20-%20in%20trunk%3A%20commands%20plearn_learners/online&In-Reply-To=%3C200711232035.lANKZaeI027602%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8292 - in trunk: commands plearn_learners/online">louradou at mail.berlios.de
+       </A><BR>
+    <I>Fri Nov 23 21:35:36 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001739.html">[Plearn-commits] r8291 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="001741.html">[Plearn-commits] r8293 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1740">[ date ]</a>
+              <a href="thread.html#1740">[ thread ]</a>
+              <a href="subject.html#1740">[ subject ]</a>
+              <a href="author.html#1740">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: louradou
+Date: 2007-11-23 21:35:35 +0100 (Fri, 23 Nov 2007)
+New Revision: 8292
+
+Added:
+   trunk/plearn_learners/online/LinearFilterModule.cc
+   trunk/plearn_learners/online/LinearFilterModule.h
+Modified:
+   trunk/commands/plearn_noblas_inc.h
+Log:
+A Module to learn filter(s) applied to the input.
+&quot;Filter&quot;: instead of a matrix of weights as in GradNNetLayerModule,
+we have here a vectors of weights.
+
+
+
+Modified: trunk/commands/plearn_noblas_inc.h
+===================================================================
+--- trunk/commands/plearn_noblas_inc.h	2007-11-23 20:16:36 UTC (rev 8291)
++++ trunk/commands/plearn_noblas_inc.h	2007-11-23 20:35:35 UTC (rev 8292)
+@@ -208,6 +208,7 @@
+ #include &lt;plearn_learners/online/IdentityModule.h&gt;
+ #include &lt;plearn_learners/online/LayerCostModule.h&gt;
+ #include &lt;plearn_learners/online/LinearCombinationModule.h&gt;
++#include &lt;plearn_learners/online/LinearFilterModule.h&gt;
+ #include &lt;plearn_learners/online/MatrixModule.h&gt;
+ #include &lt;plearn_learners/online/MaxSubsampling2DModule.h&gt;
+ #include &lt;plearn_learners/online/ModuleLearner.h&gt;
+
+Added: trunk/plearn_learners/online/LinearFilterModule.cc
+===================================================================
+--- trunk/plearn_learners/online/LinearFilterModule.cc	2007-11-23 20:16:36 UTC (rev 8291)
++++ trunk/plearn_learners/online/LinearFilterModule.cc	2007-11-23 20:35:35 UTC (rev 8292)
+@@ -0,0 +1,521 @@
++// -*- C++ -*-
++
++// LinearFilterModule.cc
++//
++// Copyright (C) 2005 Jerome Louradour
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++/* *******************************************************
++   * $Id: LinearFilterModule.cc,v 1.3 2006/01/18 04:04:06 lamblinp Exp $
++   ******************************************************* */
++
++// Authors: Jerome Louradour
++
++/*! \file LinearFilterModule.cc */
++
++
++#include &quot;LinearFilterModule.h&quot;
++#include &lt;plearn/math/TMat_maths.h&gt;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    LinearFilterModule,
++    &quot;Affine transformation module, with stochastic gradient descent updates&quot;,
++    &quot;Neural Network layer, using stochastic gradient to update neuron weights\n&quot;
++    &quot;       Output = weights * Input + bias\n&quot;
++    &quot;Weights and bias are updated by online gradient descent, with learning\n&quot;
++    &quot;rate possibly decreasing in 1/(1 + n_updates_done * decrease_constant).\n&quot;
++    &quot;An L1 and L2 regularization penalty can be added to push weights to 0.\n&quot;
++    &quot;Weights can be initialized to 0, to a given initial matrix, or randomly\n&quot;
++    &quot;from a uniform distribution.\n&quot;
++    );
++
++/////////////////////////
++// LinearFilterModule //
++/////////////////////////
++LinearFilterModule::LinearFilterModule():
++    start_learning_rate( .001 ),
++    decrease_constant( 0. ),
++    init_weights_random_scale( 1. ),
++    L1_penalty_factor( 0. ),
++    L2_penalty_factor( 0. ),
++    no_bias(false),
++    between_0_and_1(false),
++    step_number( 0 )
++{}
++
++///////////
++// fprop //
++///////////
++void LinearFilterModule::fprop(const Vec&amp; input, Vec&amp; output) const
++{
++    PLASSERT_MSG( input.size() == input_size,
++                  &quot;input.size() should be equal to this-&gt;input_size&quot; );
++
++    output.resize( output_size );
++
++    // Applies linear transformation
++    for( int i=0 ; i&lt;output_size ; i++ )
++        output[i] = weights[i] * input[i % input_size] + bias[i];
++}
++
++void LinearFilterModule::fprop(const Mat&amp; inputs, Mat&amp; outputs)
++{
++    PLASSERT( inputs.width() == input_size );
++    int n = inputs.length();
++    outputs.resize(n, output_size);
++    for(int is=0;is&lt;n;is++)
++        for(int i=0;i&lt;output_size;i++)
++            outputs(is,i) = weights[i] * inputs(is, i % input_size);
++
++    // Add bias.
++    resizeOnes(n);
++    externalProductAcc(outputs, ones, bias); // could be more efficient, but not critical 
++}
++
++/////////////////
++// bpropUpdate //
++/////////////////
++// We are not using blas routines anymore, because we would iterate several
++// times over the weight matrix.
++void LinearFilterModule::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                                      const Vec&amp; output_gradient)
++{
++    PLASSERT_MSG( input.size() == input_size,
++                  &quot;input.size() should be equal to this-&gt;input_size&quot; );
++    PLASSERT_MSG( output.size() == output_size,
++                  &quot;output.size() should be equal to this-&gt;output_size&quot; );
++    PLASSERT_MSG( output_gradient.size() == output_size,
++                  &quot;output_gradient.size() should be equal to this-&gt;output_size&quot;
++                );
++
++    learning_rate = start_learning_rate / (1+decrease_constant*step_number);
++
++    for( int i=0; i&lt;output_size; i++ )
++    {
++        real og_i = output_gradient[i];
++
++        real delta_L1 = learning_rate * L1_penalty_factor;
++        real delta_L2 = learning_rate * L2_penalty_factor;
++        if( delta_L2 &gt; 1 )
++            PLWARNING(&quot;LinearFilterModule::bpropUpdate:\n&quot;
++                      &quot;learning rate = %f is too large!\n&quot;, learning_rate);
++
++        real lr_og_i = learning_rate * og_i;
++        if( !no_bias )
++            bias[i] -= lr_og_i;
++
++            if( delta_L2 &gt; 0. )
++                weights[i] *= (1 - delta_L2);
++
++            weights[i] -= input[i % input_size] * lr_og_i;
++
++            if( delta_L1 &gt; 0. )
++            {
++                if( weights[i] &gt; delta_L1 )
++                    weights[i] -= delta_L1;
++                else if( weights[i] &lt; -delta_L1 )
++                    weights[i] += delta_L1;
++                else
++                    weights[i] = 0.;
++            }
++            
++            if( between_0_and_1 )
++            {
++                if( weights[i] &gt; 1. )
++                    weights[i] = 1.;
++                if( weights[i] &lt; 0. )
++                    weights[i] = 0.;
++            }
++
++    }
++    step_number++;
++}
++
++
++// Simply updates and propagates back gradient
++void LinearFilterModule::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                                      Vec&amp; input_gradient,
++                                      const Vec&amp; output_gradient,
++                                      bool accumulate)
++{
++    PLASSERT_MSG( input.size() == input_size,
++                  &quot;input.size() should be equal to this-&gt;input_size&quot; );
++    PLASSERT_MSG( output.size() == output_size,
++                  &quot;output.size() should be equal to this-&gt;output_size&quot; );
++    PLASSERT_MSG( output_gradient.size() == output_size,
++                  &quot;output_gradient.size() should be equal to this-&gt;output_size&quot;
++                );
++
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradient.size() == input_size,
++                      &quot;Cannot resize input_gradient AND accumulate into it&quot; );
++    }
++    else
++    {
++        input_gradient.resize( input_size );
++        input_gradient.clear();
++    }
++
++    learning_rate = start_learning_rate / (1+decrease_constant*step_number);
++
++    for( int i=0; i&lt;output_size; i++ )
++    {
++        real og_i = output_gradient[i];
++
++        real delta_L1 = learning_rate * L1_penalty_factor;
++        real delta_L2 = learning_rate * L2_penalty_factor;
++        if( delta_L2 &gt; 1 )
++            PLWARNING(&quot;LinearFilterModule::bpropUpdate:\n&quot;
++                      &quot;learning rate = %f is too large!\n&quot;, learning_rate);
++
++        real lr_og_i = learning_rate * og_i;
++        if( !no_bias )
++            bias[i] -= lr_og_i;
++
++        input_gradient[i % input_size] += weights[i] * og_i;
++
++        if( delta_L2 &gt; 0. )
++            weights[i] *= (1 - delta_L2);
++
++        weights[i] -= input[i % input_size] * lr_og_i;
++
++        if( delta_L1 &gt; 0. )
++        {
++                if( weights[i] &gt; delta_L1 )
++                    weights[i] -= delta_L1;
++                else if( weights[i] &lt; -delta_L1 )
++                    weights[i] += delta_L1;
++                else
++                    weights[i] = 0.;
++        }
++            if( between_0_and_1 )
++            {
++                if( weights[i] &gt; 1. )
++                    weights[i] = 1.;
++                if( weights[i] &lt; 0. )
++                    weights[i] = 0.;
++            }
++    }
++    step_number++;
++}
++
++void LinearFilterModule::bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++        Mat&amp; input_gradients,
++        const Mat&amp; output_gradients,
++        bool accumulate)
++{
++    PLASSERT( inputs.width() == input_size );
++    PLASSERT( outputs.width() == output_size );
++    PLASSERT( output_gradients.width() == output_size );
++
++    int n = inputs.length();
++
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradients.width() == input_size &amp;&amp;
++                input_gradients.length() == n,
++                &quot;Cannot resize input_gradients and accumulate into it&quot; );
++    }
++    else
++    {
++        input_gradients.resize(n, input_size);
++        input_gradients.fill(0);
++    }
++
++    learning_rate = start_learning_rate / (1+decrease_constant*step_number);
++    real avg_lr = learning_rate / n; // To obtain an average on a mini-batch.
++
++    // With L2 regularization, weights are scaled by a coefficient equal to
++    // 1 - learning rate * penalty.
++    real l2_scaling =
++        L2_penalty_factor &gt; 0 ? 1 - learning_rate * L2_penalty_factor
++                              : 1;
++    PLASSERT_MSG(l2_scaling &gt; 0, &quot;Learning rate too large&quot;);
++
++    // Compute input gradient.
++    for(int i_sample = 0; i_sample &lt; outputs.length() ;i_sample++)
++        for(int i = 0; i &lt; output_size; i++)
++            input_gradients(i_sample, i % input_size ) += weights[i] * output_gradients(i_sample,  i );
++
++    // Update bias.
++    if( !no_bias )
++    {
++        resizeOnes(n);
++        transposeProductScaleAcc(bias, output_gradients, ones, -avg_lr, real(1));
++    }
++    
++    // Update weights.
++    for(int i_sample = 0; i_sample &lt; outputs.length() ;i_sample++)
++        for(int i = 0; i &lt; output_size; i++ )
++        {
++            weights[i] -= avg_lr * l2_scaling * output_gradients(i_sample, i) * inputs(i_sample, i % input_size);
++            if( between_0_and_1 )
++            {
++                if( weights[i] &gt; 1. )
++                    weights[i] = 1.;
++                if( weights[i] &lt; 0. )
++                    weights[i] = 0.;
++            }
++        }
++
++    // Apply L1 penalty if needed (note: this is not very efficient).
++    if (L1_penalty_factor &gt; 0) {
++        real delta_L1 = learning_rate * L1_penalty_factor;
++        for( int i=0; i&lt;output_size; i++ )
++        {
++                if( weights[i] &gt; delta_L1 )
++                    weights[i] -= delta_L1;
++                else if( weights[i] &lt; -delta_L1 )
++                    weights[i] += delta_L1;
++                else
++                    weights[i] = 0.;
++        }
++    }
++    step_number += n;
++}
++    
++
++//////////////////
++// bbpropUpdate //
++//////////////////
++void LinearFilterModule::bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                                       const Vec&amp; output_gradient,
++                                       const Vec&amp; output_diag_hessian)
++{
++    PLASSERT_MSG( output_diag_hessian.size() == output_size,
++                  &quot;output_diag_hessian.size() should be equal to&quot;
++                  &quot; this-&gt;output_size&quot; );
++    bpropUpdate( input, output, output_gradient );
++}
++
++/* This implementation is incorrect. Let the PLERROR defined in parent version
++// Propagates back output_gradient and output_diag_hessian
++void LinearFilterModule::bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                                       Vec&amp;  input_gradient,
++                                       const Vec&amp; output_gradient,
++                                       Vec&amp;  input_diag_hessian,
++                                       const Vec&amp; output_diag_hessian,
++                                       bool accumulate)
++{
++    bpropUpdate( input, output, input_gradient, output_gradient, accumulate );
++}
++*/
++
++////////////
++// forget //
++////////////
++// Forget the bias and reinitialize the weights
++void LinearFilterModule::forget()
++{
++    learning_rate = start_learning_rate;
++    step_number = 0;
++
++    bias.resize( output_size );
++    if( init_bias.size() &gt; 0 )
++    {
++        if( init_bias.size() != output_size )
++            PLERROR( &quot;init_bias (%d) should have length equal to output_size (%d)&quot;,
++                     init_bias.size(), output_size );
++        bias &lt;&lt; init_bias;
++    }
++    else
++        bias.clear();
++    if( no_bias )
++        bias.clear();
++
++    weights.resize( output_size );
++    if( init_weights.size() &gt; 0 )
++    {
++        if( init_weights.length() != output_size )
++            PLERROR( &quot;init_weights (%d) should have size equal to (output_size) (%d)&quot;,
++                     init_weights.length(),
++                     output_size );
++
++        weights &lt;&lt; init_weights;
++    }
++    else if( init_weights_random_scale &lt; 0. )
++    {
++        real r = - init_weights_random_scale / sqrt( input_size );
++        random_gen-&gt;fill_random_uniform(weights, 1.-r, 1.);
++    }
++    else
++    {
++        real r = init_weights_random_scale / sqrt( input_size );
++        random_gen-&gt;fill_random_uniform(weights, 0., r);
++    }
++}
++
++void LinearFilterModule::setLearningRate( real dynamic_learning_rate )
++{
++    start_learning_rate = dynamic_learning_rate;
++    step_number = 0;
++    // learning_rate will automatically be set in bpropUpdate()
++}
++
++///////////
++// build //
++///////////
++void LinearFilterModule::build()
++{
++    inherited::build();
++    build_();
++}
++
++/////////////////////////////////
++// makeDeepCopyFromShallowCopy //
++/////////////////////////////////
++void LinearFilterModule::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    deepCopyField(init_weights, copies);
++    deepCopyField(init_bias,    copies);
++    deepCopyField(weights,      copies);
++    deepCopyField(bias,         copies);
++    deepCopyField(ones,         copies);
++}
++
++////////////////////
++// declareOptions //
++////////////////////
++void LinearFilterModule::declareOptions(OptionList&amp; ol)
++{
++    declareOption(ol, &quot;start_learning_rate&quot;,
++                  &amp;LinearFilterModule::start_learning_rate,
++                  OptionBase::buildoption,
++                  &quot;Learning-rate of stochastic gradient optimization&quot;);
++
++    declareOption(ol, &quot;decrease_constant&quot;,
++                  &amp;LinearFilterModule::decrease_constant,
++                  OptionBase::buildoption,
++                  &quot;Decrease constant of stochastic gradient optimization&quot;);
++
++    declareOption(ol, &quot;init_weights&quot;, &amp;LinearFilterModule::init_weights,
++                  OptionBase::buildoption,
++                  &quot;Optional initial weights of the neurons (one row per neuron).\n&quot;
++                  &quot;If not provided then weights are initialized according to a uniform\n&quot;
++                  &quot;distribution (see init_weights_random_scale)\n&quot;);
++
++    declareOption(ol, &quot;init_bias&quot;, &amp;LinearFilterModule::init_bias,
++                  OptionBase::buildoption,
++                  &quot;Optional initial bias of the neurons. If not provided, they are set to 0.\n&quot;);
++
++    declareOption(ol, &quot;init_weights_random_scale&quot;,
++                  &amp;LinearFilterModule::init_weights_random_scale,
++                  OptionBase::buildoption,
++                  &quot;If init_weights is not provided, the weights are initialized randomly\n&quot;
++                  &quot;from a uniform in [-r,r], with r = init_weights_random_scale/input_size.\n&quot;
++                  &quot;To clear the weights initially, just set this option to 0.&quot;);
++
++    declareOption(ol, &quot;L1_penalty_factor&quot;,
++                  &amp;LinearFilterModule::L1_penalty_factor,
++                  OptionBase::buildoption,
++                  &quot;Optional (default=0) factor of L1 regularization term, i.e.\n&quot;
++                  &quot;minimize L1_penalty_factor * sum_{ij} |weights(i,j)| during training.\n&quot;);
++
++    declareOption(ol, &quot;L2_penalty_factor&quot;,
++                  &amp;LinearFilterModule::L2_penalty_factor,
++                  OptionBase::buildoption,
++                  &quot;Optional (default=0) factor of L2 regularization term, i.e.\n&quot;
++                  &quot;minimize 0.5 * L2_penalty_factor * sum_{ij} weights(i,j)^2 during training.\n&quot;);
++
++    declareOption(ol, &quot;no_bias&quot;,
++                  &amp;LinearFilterModule::no_bias,
++                  OptionBase::buildoption,
++                  &quot;Wether or not to add biases.\n&quot;);
++
++    declareOption(ol, &quot;between_0_and_1&quot;,
++                  &amp;LinearFilterModule::between_0_and_1,
++                  OptionBase::buildoption,
++                  &quot;Should all weights stay between 0 and 1.\n&quot;);
++
++    declareOption(ol, &quot;weights&quot;, &amp;LinearFilterModule::weights,
++                  OptionBase::learntoption,
++                  &quot;Input weights of the neurons (one weight per neuron)&quot;);
++
++    declareOption(ol, &quot;bias&quot;, &amp;LinearFilterModule::bias,
++                  OptionBase::learntoption,
++                  &quot;Bias of the neurons&quot;);
++
++    inherited::declareOptions(ol);
++}
++
++////////////
++// build_ //
++////////////
++void LinearFilterModule::build_()
++{
++    if( input_size &lt; 0 ) // has not been initialized
++        return;
++
++    if( output_size &lt; 0 )
++        PLERROR(&quot;LinearFilterModule::build_: 'output_size' is &lt; 0 (%i),\n&quot;
++                &quot; you should set it to a positive integer (the number of&quot;
++                &quot; neurons).\n&quot;, output_size);
++
++    if( weights.length() != output_size
++        || bias.size() != output_size )
++    {
++        forget();
++    }
++}
++
++////////////////
++// resizeOnes //
++////////////////
++void LinearFilterModule::resizeOnes(int n)
++{
++    if (ones.length() &lt; n) {
++        ones.resize(n);
++        ones.fill(1);
++    } else if (ones.length() &gt; n)
++        ones.resize(n);
++}
++
++
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/online/LinearFilterModule.h
+===================================================================
+--- trunk/plearn_learners/online/LinearFilterModule.h	2007-11-23 20:16:36 UTC (rev 8291)
++++ trunk/plearn_learners/online/LinearFilterModule.h	2007-11-23 20:35:35 UTC (rev 8292)
+@@ -0,0 +1,205 @@
++// -*- C++ -*-
++
++// LinearFilterModule.h
++//
++// Copyright (C) 2005 Jerome Louradour
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++/* *******************************************************
++   * $Id: LinearFilterModule.h,v 1.3 2006/01/08 00:14:53 lamblinp Exp $
++   ******************************************************* */
++
++// Authors: Jerome Louradour
++
++/*! \file LinearFilterModule.h */
++
++
++#ifndef LinearFilterModule_INC
++#define LinearFilterModule_INC
++
++#include &lt;plearn/base/Object.h&gt;
++#include &lt;plearn/math/TMat_maths.h&gt;
++#include &quot;OnlineLearningModule.h&quot;
++
++namespace PLearn {
++
++/**
++ * Affine transformation module, with stochastic gradient descent updates.
++ *
++ * Neural Network layer, using stochastic gradient to update neuron weights,
++ *      Output = weights * Input + bias
++ * Weights and bias are updated by online gradient descent, with learning
++ * rate possibly decreasing in 1/(1 + n_updates_done * decrease_constant).
++ * An L1 and L2 regularization penalty can be added to push weights to 0.
++ * Weights can be initialized to 0, to a given initial matrix, or randomly
++ * from a uniform distribution.
++ *
++ */
++class LinearFilterModule : public OnlineLearningModule
++{
++    typedef OnlineLearningModule inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! Starting learning-rate, by which we multiply the gradient step
++    real start_learning_rate;
++
++    //! learning_rate = start_learning_rate / (1 + decrease_constant*t),
++    //! where t is the number of updates since the beginning
++    real decrease_constant;
++
++    //! Optional initial weights of the neurons (one row per neuron).
++    Vec init_weights;
++
++    //! Optional initial bias of the neurons.
++    Vec init_bias;
++
++    //! If init_weights is not provided, the weights are initialized randomly
++    //! from a uniform in [-r,r], with r = init_weights_random_scale/input_size
++    real init_weights_random_scale;
++
++    //! Optional (default=0) factor of L1 regularization term
++    real L1_penalty_factor;
++
++    //! Optional (default=0) factor of L2 regularization term
++    real L2_penalty_factor;
++
++    //! The weights, one neuron per line
++    Vec weights;
++
++    //! The bias
++    Vec bias;
++    
++    bool no_bias;
++    bool between_0_and_1;
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    LinearFilterModule();
++
++    // Your other public member functions go here
++
++    virtual void fprop(const Vec&amp; input, Vec&amp; output) const;
++
++    //! Overridden.
++    virtual void fprop(const Mat&amp; inputs, Mat&amp; outputs);
++
++    virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                             const Vec&amp; output_gradient);
++
++    virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                             Vec&amp; input_gradient, const Vec&amp; output_gradient,
++                             bool accumulate=false);
++
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             Mat&amp; input_gradients,
++                             const Mat&amp; output_gradients,
++                             bool accumulate = false);
++    
++    virtual void bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                              const Vec&amp; output_gradient,
++                              const Vec&amp; output_diag_hessian);
++
++    /* Bad implementation. Let the parent call PLERROR.
++    virtual void bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                              Vec&amp; input_gradient,
++                              const Vec&amp; output_gradient,
++                              Vec&amp; input_diag_hessian,
++                              const Vec&amp; output_diag_hessian,
++                              bool accumulate=false);
++    */
++
++    virtual void forget();
++
++    virtual void setLearningRate(real dynamic_learning_rate);
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    PLEARN_DECLARE_OBJECT(LinearFilterModule);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++
++    //! A vector filled with all ones.
++    Vec ones;
++    
++    //#####  Protected Options  ###############################################
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++
++    //! Resize vector 'ones'.
++    void resizeOnes(int n);
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++    real learning_rate;
++    int step_number;
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(LinearFilterModule);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001739.html">[Plearn-commits] r8291 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="001741.html">[Plearn-commits] r8293 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1740">[ date ]</a>
+              <a href="thread.html#1740">[ thread ]</a>
+              <a href="subject.html#1740">[ subject ]</a>
+              <a href="author.html#1740">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

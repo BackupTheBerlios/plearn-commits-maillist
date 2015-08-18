@@ -1,0 +1,248 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10055 - in trunk/plearn_learners: hyper testers
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10055%20-%20in%20trunk/plearn_learners%3A%20hyper%20testers&In-Reply-To=%3C200903251719.n2PHJplf001882%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003494.html">
+   <LINK REL="Next"  HREF="003496.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10055 - in trunk/plearn_learners: hyper testers</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10055%20-%20in%20trunk/plearn_learners%3A%20hyper%20testers&In-Reply-To=%3C200903251719.n2PHJplf001882%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10055 - in trunk/plearn_learners: hyper testers">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed Mar 25 18:19:51 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003494.html">[Plearn-commits] r10054 - trunk/plearn/misc
+</A></li>
+        <LI>Next message: <A HREF="003496.html">[Plearn-commits] r10056 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3495">[ date ]</a>
+              <a href="thread.html#3495">[ thread ]</a>
+              <a href="subject.html#3495">[ subject ]</a>
+              <a href="author.html#3495">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-03-25 18:19:51 +0100 (Wed, 25 Mar 2009)
+New Revision: 10055
+
+Modified:
+   trunk/plearn_learners/hyper/HyperLearner.cc
+   trunk/plearn_learners/hyper/HyperLearner.h
+   trunk/plearn_learners/testers/PTester.cc
+   trunk/plearn_learners/testers/PTester.h
+Log:
+modified how we reload an auto_saved learner to don't make an assignment to this.
+
+
+Modified: trunk/plearn_learners/hyper/HyperLearner.cc
+===================================================================
+--- trunk/plearn_learners/hyper/HyperLearner.cc	2009-03-25 15:14:51 UTC (rev 10054)
++++ trunk/plearn_learners/hyper/HyperLearner.cc	2009-03-25 17:19:51 UTC (rev 10055)
+@@ -66,8 +66,6 @@
+     &quot;They are accessible in the higher level PTester as: \n&quot;
+     &quot;for ex: E[test1.E[mse]]&quot;);
+ 
+-bool HyperLearner::reloading = false;
+-
+ TVec&lt;string&gt; HyperLearner::getTrainCostNames() const
+ {
+     if (strategy.size() &gt; 0)
+@@ -139,10 +137,7 @@
+ 
+     declareOption(ol, &quot;reloaded&quot;, &amp;HyperLearner::reloaded,
+                   OptionBase::learntoption|OptionBase::nosave,
+-        &quot;Used internally to avoid reloading a file, since the build function\n&quot;
+-        &quot;may be called many times after the expdir is set,in particular in\n&quot;
+-        &quot;PLearn::HyperLearner::setTrainingSet.&quot;);
+-
++                  &quot;Used to give a warning.&quot;);
+     inherited::declareOptions(ol);
+ 
+     // Hide some unused options.
+@@ -306,7 +301,6 @@
+     for(int commandnum=0; commandnum&lt;strategy.length(); commandnum++)
+         strategy[commandnum]-&gt;setHyperLearner(this);
+ 
+-    auto_load();
+ }
+ 
+ /////////
+@@ -374,45 +368,16 @@
+     PLearn::save(tmp, this);
+ 
+ #ifdef BOUNDCHECK
+-    HyperLearner n;
++    HyperLearner *n = new HyperLearner();
+     PLearn::load(tmp,n);
+-    PLCHECK(PLearn::diff(&amp;n,this));
++    PLCHECK(PLearn::diff(n,this));
++    delete n;
+ #endif
+ 
+     mvforce(tmp,f);
+     Profiler::pl_profile_end(&quot;HyperLearner::auto_save&quot;);
+ }
+ 
+-///////////////
+-// auto_load //
+-///////////////
+-void HyperLearner::auto_load()
+-{
+-    // Reload the saved HyperLearner. Note that becase the boolean 'reloading'
+-    // is static, it means we can currently reload only one single
+-    // HyperLearner at a time. It may be interesting in the future to change
+-    // this reload mechanism to let us reload multiple (chained) HyperLearners.
+-    if(expdir.isEmpty()){
+-        if(verbosity&gt;1)
+-            DBG_MODULE_LOG&lt;&lt;&quot;auto_load() - no expdir. Can't reload.&quot;&lt;&lt;endl;
+-        return;
+-    }
+-    PPath f = expdir/&quot;hyper_learner_auto_save.psave&quot;;
+-    bool isf=isfile(f);
+-    if(stage==0 &amp;&amp; !reloading &amp;&amp; !reloaded &amp;&amp; isf){
+-        Profiler::pl_profile_start(&quot;HyperLearner::auto_load&quot;);
+-        if(verbosity&gt;0)
+-            PLWARNING(&quot;In HyperLearner::auto_load() - reloading from file %s&quot;,f.c_str());
+-        reloading = true;
+-        PLearn::load(f,*this);
+-        reloading = false;
+-        reloaded = true;
+-        Profiler::pl_profile_end(&quot;HyperLearner::auto_load&quot;);
+-    }
+-    else if(!isf &amp;&amp; verbosity&gt;1)
+-        PLWARNING(&quot;In HyperLearner::auto_load() - no file to reload.&quot;);
+-}
+-
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/hyper/HyperLearner.h
+===================================================================
+--- trunk/plearn_learners/hyper/HyperLearner.h	2009-03-25 15:14:51 UTC (rev 10054)
++++ trunk/plearn_learners/hyper/HyperLearner.h	2009-03-25 17:19:51 UTC (rev 10055)
+@@ -75,8 +75,7 @@
+ 
+     bool provide_strategy_expdir; //!&lt; should each strategy step be provided a directory expdir/Step#
+     bool save_final_learner; //!&lt; should final learner be saved in expdir/final_learner.psave
+-    bool reloaded; //!&lt; Need to don't reload each time build is called as it can be called many time.
+-    static bool reloading;
++    bool reloaded; //!&lt; needed for a warning
+     // HyperLearner methods
+ 
+     //! if true, we finalize the learner after training.
+@@ -116,9 +115,6 @@
+     //! Save the current HyperLearner in its expdir
+     void auto_save();
+ 
+-    //! Load the previously saved HyperLearner in its expdir if available
+-    void auto_load();
+-
+ }; // class HyperLearner
+ 
+ DECLARE_OBJECT_PTR(HyperLearner);
+
+Modified: trunk/plearn_learners/testers/PTester.cc
+===================================================================
+--- trunk/plearn_learners/testers/PTester.cc	2009-03-25 15:14:51 UTC (rev 10054)
++++ trunk/plearn_learners/testers/PTester.cc	2009-03-25 17:19:51 UTC (rev 10055)
+@@ -47,6 +47,7 @@
+ #include &lt;plearn/vmat/MemoryVMatrix.h&gt;
+ #include &lt;assert.h&gt;
+ #include &lt;plearn/base/RemoteDeclareMethod.h&gt;
++#include &lt;plearn_learners/hyper/HyperLearner.h&gt;
+ 
+ #include &lt;plearn/misc/PLearnService.h&gt;
+ 
+@@ -85,6 +86,7 @@
+ // PTester //
+ /////////////
+ PTester::PTester():
++       reloaded(false),
+        need_to_save_test_names(false),
+        provide_learner_expdir(false),
+        report_stats(true),
+@@ -354,6 +356,30 @@
+     if (PLMPI::rank!=0)
+         expdir = &quot;&quot;;
+ #endif
++
++    if(!reloaded &amp;&amp; learner &amp;&amp; learner-&gt;classname()==&quot;HyperLearner&quot;){
++        if(expdir.isEmpty()){
++            PLWARNING(&quot;PTester::build_() - no expdir. Can't reload.&quot;);
++            return;
++        }
++        PPath f = expdir/&quot;Split0&quot;/&quot;LearnerExpdir&quot;/&quot;hyper_learner_auto_save.psave&quot;;
++        bool isf=isfile(f);
++        if(!reloaded &amp;&amp; isf){
++            if(splitter-&gt;nsplits()!=1){
++                PLERROR(&quot;In PTester::build_() - The auto_save function only work when their is one split.&quot;);
++                //TODO: this only work if we have only one split
++            }
++            Profiler::pl_profile_start(&quot;PTester::auto_load&quot;);
++            PLWARNING(&quot;In PTester::build_() - reloading from file %s&quot;,f.c_str());
++            HyperLearner *l = new HyperLearner();
++            PLearn::load(f,l);
++            l-&gt;reloaded=true;
++            learner=l;
++            reloaded = true;
++            Profiler::pl_profile_end(&quot;PTester::auto_load&quot;);
++        }
++    }
++
+     statnames_processed.resize(statnames.length());
+     statnames_processed &lt;&lt; statnames;
+     if (statmask) {
+
+Modified: trunk/plearn_learners/testers/PTester.h
+===================================================================
+--- trunk/plearn_learners/testers/PTester.h	2009-03-25 15:14:51 UTC (rev 10054)
++++ trunk/plearn_learners/testers/PTester.h	2009-03-25 17:19:51 UTC (rev 10055)
+@@ -60,7 +60,7 @@
+     //! It is private because it is safer to access stats from getStatNames,
+     //! since the 'statmask' option may modify the stats.
+     TVec&lt;string&gt; statnames;
+-
++    bool reloaded;
+ protected:
+ 
+     //! The 'real' statnames: these are obtained from 'statnames' by a
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003494.html">[Plearn-commits] r10054 - trunk/plearn/misc
+</A></li>
+	<LI>Next message: <A HREF="003496.html">[Plearn-commits] r10056 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3495">[ date ]</a>
+              <a href="thread.html#3495">[ thread ]</a>
+              <a href="subject.html#3495">[ subject ]</a>
+              <a href="author.html#3495">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

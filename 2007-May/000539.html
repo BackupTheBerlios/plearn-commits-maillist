@@ -1,0 +1,265 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7090 - in trunk/plearn/python: .	test/.pytest/EmbeddedPython_Instances/expected_results
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7090%20-%20in%20trunk/plearn/python%3A%20.%0A%09test/.pytest/EmbeddedPython_Instances/expected_results&In-Reply-To=%3C200705141926.l4EJQCHt015003%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000538.html">
+   <LINK REL="Next"  HREF="000540.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7090 - in trunk/plearn/python: .	test/.pytest/EmbeddedPython_Instances/expected_results</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7090%20-%20in%20trunk/plearn/python%3A%20.%0A%09test/.pytest/EmbeddedPython_Instances/expected_results&In-Reply-To=%3C200705141926.l4EJQCHt015003%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7090 - in trunk/plearn/python: .	test/.pytest/EmbeddedPython_Instances/expected_results">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Mon May 14 21:26:12 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000538.html">[Plearn-commits] r7089 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="000540.html">[Plearn-commits] r7091 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#539">[ date ]</a>
+              <a href="thread.html#539">[ thread ]</a>
+              <a href="subject.html#539">[ subject ]</a>
+              <a href="author.html#539">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2007-05-14 21:26:11 +0200 (Mon, 14 May 2007)
+New Revision: 7090
+
+Modified:
+   trunk/plearn/python/PythonCodeSnippet.cc
+   trunk/plearn/python/test/.pytest/EmbeddedPython_Instances/expected_results/RUN.log
+Log:
+- in PythonCodeSnippet: fixed cleanup of stack and traceback when a python exception is raised
+
+
+
+Modified: trunk/plearn/python/PythonCodeSnippet.cc
+===================================================================
+--- trunk/plearn/python/PythonCodeSnippet.cc	2007-05-14 18:47:11 UTC (rev 7089)
++++ trunk/plearn/python/PythonCodeSnippet.cc	2007-05-14 19:26:11 UTC (rev 7090)
+@@ -296,9 +296,13 @@
+ 
+         return_value = PyObject_CallObject(pFunc, NULL);
+         if (! return_value)
++        {
++            if(instance_method) 
++                Py_DECREF(pFunc);
+             handlePythonErrors(string(&quot;Error while calling function '&quot;)
+                                + function_name
+                                + &quot;' with no params.&quot;);
++        }
+ 
+         resetCurrentSnippet();
+     }
+@@ -353,22 +357,27 @@
+ 
+         Py_DECREF(pArgs);
+         if (! return_value)
++        {
++            if(instance_method) 
++                Py_DECREF(pFunc);
+             handlePythonErrors(string(&quot;Error while calling function '&quot;)
+                                + function_name
+                                + &quot;' with &quot; 
+                                + tostring(args.length())
+                                + &quot; params.&quot;);
+-
++        }
+         resetCurrentSnippet();        
+     }
+     else
+     {
+-        if(instance_method) Py_DECREF(pFunc);
++        if(instance_method) 
++            Py_DECREF(pFunc);
+         PLERROR(&quot;PythonCodeSnippet::invoke: cannot call function '%s'&quot;,
+                 function_name);
+     }
+ 
+-    if(instance_method) Py_DECREF(pFunc);
++    if(instance_method) 
++        Py_DECREF(pFunc);
+     return PythonObjectWrapper(return_value);
+ }
+ 
+@@ -389,8 +398,9 @@
+         int size = PyTuple_GET_SIZE(args);
+         TVec&lt;PythonObjectWrapper&gt; args_tvec(size);
+         for (int i=0 ; i&lt;size ; ++i) {
+-            args_tvec[i] = PythonObjectWrapper(PyTuple_GET_ITEM(args,i),
+-                                               PythonObjectWrapper::transfer_ownership);
++            args_tvec[i] = 
++                PythonObjectWrapper(PyTuple_GET_ITEM(args,i),
++                                    PythonObjectWrapper::transfer_ownership);
+         }
+         
+         // Now get the void* stored within the PyCObject of self
+@@ -399,18 +409,18 @@
+         PythonObjectWrapper returned_value = (*func)(args_tvec);
+         PyObject* to_return = returned_value.getPyObject();
+         Py_XINCREF(to_return);
+-
+         return to_return;
+     }
+-
+     // Catch PLERROR and such
+     catch (const PLearnError&amp; e) {
+-        PyErr_SetString(PyExc_Exception, e.message().c_str());
++        PyErr_SetString(PyExc_Exception, 
++                        (string(&quot;PLearn Error: &quot;)+e.message()).c_str());
+         return NULL;
+     }
+     // Catch C++ stdlib exceptions
+     catch (const std::exception&amp; e) {
+-        PyErr_SetString(PyExc_Exception, e.what());
++        PyErr_SetString(PyExc_Exception, 
++                        (string(&quot;C++ stdlib error: &quot;)+e.what()).c_str());
+         return NULL;
+     }
+     // Catch any other unexpected exceptions
+@@ -699,6 +709,11 @@
+             string str= PyString_AsString(pystr);
+             Py_XDECREF(pystr);
+             
++            PyErr_Clear();
++
++            Py_XDECREF(exception);
++            Py_XDECREF(v);
++            Py_XDECREF(traceback);
+             throw PythonException(str+extramsg);
+         }
+         else {
+
+Modified: trunk/plearn/python/test/.pytest/EmbeddedPython_Instances/expected_results/RUN.log
+===================================================================
+--- trunk/plearn/python/test/.pytest/EmbeddedPython_Instances/expected_results/RUN.log	2007-05-14 18:47:11 UTC (rev 7089)
++++ trunk/plearn/python/test/.pytest/EmbeddedPython_Instances/expected_results/RUN.log	2007-05-14 19:26:11 UTC (rev 7090)
+@@ -272,7 +272,7 @@
+    71 
+    72     def fini(self):
+ 
+-Exception: Exception
++Exception: PLearn Error: Exception
+ Python 2.X.Y: /usr/bin/python
+ 
+ 
+@@ -286,7 +286,7 @@
+    71 
+    72     def fini(self):
+ 
+-Exception: RuntimeError
++Exception: PLearn Error: RuntimeError
+ Python 2.X.Y: /usr/bin/python
+ 
+ 
+@@ -322,7 +322,7 @@
+     __init__ = &lt;bound method Exception.__init__ of &lt;exceptions.Exception instance&gt;&gt;
+     __module__ = 'exceptions'
+     __str__ = &lt;bound method Exception.__str__ of &lt;exceptions.Exception instance&gt;&gt;
+-    args = (&quot;RuntimeError\nPython 2.X.Y: /usr/bin/python\n\n\nA p...le calling function 'testRecCrash' with 1 params.&quot;,)
++    args = (&quot;PLearn Error: RuntimeError\nPython 2.X.Y: /usr/bi...le calling function 'testRecCrash' with 1 params.&quot;,)
+ 
+ The above is a description of an error in a Python program.  Here is
+ the original traceback:
+@@ -330,7 +330,7 @@
+ Traceback (most recent call last):
+   File &quot;PLEARN_PYTHON_PATH:plearn/pybridge/test_embedded_code_snippet.py&quot;, line 70, in testRecCrash
+     self.recTestCrash(n-1)
+-Exception: RuntimeError
++Exception: PLearn Error: RuntimeError
+ Python 2.X.Y: /usr/bin/python
+ 
+ 
+@@ -368,7 +368,7 @@
+     __init__ = &lt;bound method Exception.__init__ of &lt;exceptions.Exception instance&gt;&gt;
+     __module__ = 'exceptions'
+     __str__ = &lt;bound method Exception.__str__ of &lt;exceptions.Exception instance&gt;&gt;
+-    args = (&quot;Exception\nPython 2.X.Y: /usr/bin/python\n\n\nA prob...le calling function 'testRecCrash' with 1 params.&quot;,)
++    args = (&quot;PLearn Error: Exception\nPython 2.X.Y: /usr/bin/p...le calling function 'testRecCrash' with 1 params.&quot;,)
+ 
+ The above is a description of an error in a Python program.  Here is
+ the original traceback:
+@@ -376,7 +376,7 @@
+ Traceback (most recent call last):
+   File &quot;PLEARN_PYTHON_PATH:plearn/pybridge/test_embedded_code_snippet.py&quot;, line 70, in testRecCrash
+     self.recTestCrash(n-1)
+-Exception: Exception
++Exception: PLearn Error: Exception
+ Python 2.X.Y: /usr/bin/python
+ 
+ 
+@@ -390,7 +390,7 @@
+    71 
+    72     def fini(self):
+ 
+-Exception: RuntimeError
++Exception: PLearn Error: RuntimeError
+ Python 2.X.Y: /usr/bin/python
+ 
+ 
+@@ -426,7 +426,7 @@
+     __init__ = &lt;bound method Exception.__init__ of &lt;exceptions.Exception instance&gt;&gt;
+     __module__ = 'exceptions'
+     __str__ = &lt;bound method Exception.__str__ of &lt;exceptions.Exception instance&gt;&gt;
+-    args = (&quot;RuntimeError\nPython 2.X.Y: /usr/bin/python\n\n\nA p...le calling function 'testRecCrash' with 1 params.&quot;,)
++    args = (&quot;PLearn Error: RuntimeError\nPython 2.X.Y: /usr/bi...le calling function 'testRecCrash' with 1 params.&quot;,)
+ 
+ The above is a description of an error in a Python program.  Here is
+ the original traceback:
+@@ -434,7 +434,7 @@
+ Traceback (most recent call last):
+   File &quot;PLEARN_PYTHON_PATH:plearn/pybridge/test_embedded_code_snippet.py&quot;, line 70, in testRecCrash
+     self.recTestCrash(n-1)
+-Exception: RuntimeError
++Exception: PLearn Error: RuntimeError
+ Python 2.X.Y: /usr/bin/python
+ 
+ 
+@@ -472,7 +472,7 @@
+ refs0: 1
+ refs1: 1
+ nrefs 1010 1
+-self 12
++self 3
+ learner 0
+ testRec 0
+ recTest 2
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000538.html">[Plearn-commits] r7089 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="000540.html">[Plearn-commits] r7091 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#539">[ date ]</a>
+              <a href="thread.html#539">[ thread ]</a>
+              <a href="subject.html#539">[ subject ]</a>
+              <a href="author.html#539">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

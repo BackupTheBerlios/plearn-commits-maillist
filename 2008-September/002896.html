@@ -1,0 +1,288 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9456 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-September/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9456%20-%20trunk/plearn/vmat&In-Reply-To=%3C200809151733.m8FHXI6X026815%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002895.html">
+   <LINK REL="Next"  HREF="002897.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9456 - trunk/plearn/vmat</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9456%20-%20trunk/plearn/vmat&In-Reply-To=%3C200809151733.m8FHXI6X026815%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9456 - trunk/plearn/vmat">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Mon Sep 15 19:33:18 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002895.html">[Plearn-commits] r9455 - trunk/python_modules/plearn/gui_tools
+</A></li>
+        <LI>Next message: <A HREF="002897.html">[Plearn-commits] r9457 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2896">[ date ]</a>
+              <a href="thread.html#2896">[ thread ]</a>
+              <a href="subject.html#2896">[ subject ]</a>
+              <a href="author.html#2896">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-09-15 19:33:17 +0200 (Mon, 15 Sep 2008)
+New Revision: 9456
+
+Modified:
+   trunk/plearn/vmat/OneHotVMatrix.cc
+   trunk/plearn/vmat/OneHotVMatrix.h
+Log:
+Added a way to automatically figure out 'nclasses' from the source VMat
+
+Modified: trunk/plearn/vmat/OneHotVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/OneHotVMatrix.cc	2008-09-11 14:46:39 UTC (rev 9455)
++++ trunk/plearn/vmat/OneHotVMatrix.cc	2008-09-15 17:33:17 UTC (rev 9456)
+@@ -47,8 +47,23 @@
+ 
+ /** OneHotVMatrix **/
+ 
+-PLEARN_IMPLEMENT_OBJECT(OneHotVMatrix, &quot;ONE LINE DESC&quot;, &quot;NO HELP&quot;);
++PLEARN_IMPLEMENT_OBJECT(OneHotVMatrix,
++        &quot;Transform an index into a one-hot vector.&quot;,
++        &quot;Sampling from this VMat will return the corresponding sample from\n&quot;
++        &quot;the source VMat with last element ('target_classnum') replaced by\n&quot;
++        &quot;a vector of target_values of size nclasses in which only\n&quot;
++        &quot;target_values[target_classnum] is set to hot_value, and all the\n&quot;
++        &quot;others are set to cold_value.\n&quot;
++        &quot;In the special case where the VMat is built with nclasses==1, then\n&quot;
++        &quot;it is assumed that we have a 2 class classification problem but\n&quot;
++        &quot;we are using a single valued target.  For this special case only\n&quot;
++        &quot;the_cold_value is used as target for classnum 0 and the_hot_value\n&quot;
++        &quot;is used for classnum 1.\n&quot;
++);
+ 
++///////////////////
++// OneHotVMatrix //
++///////////////////
+ OneHotVMatrix::OneHotVMatrix(bool call_build_)
+     : inherited(call_build_),
+       nclasses(0), cold_value(0.0), hot_value(1.0), index(-1)
+@@ -73,12 +88,18 @@
+         build_();
+ }
+ 
++///////////
++// build //
++///////////
+ void OneHotVMatrix::build()
+ {
+     inherited::build();
+     build_();
+ }
+ 
++////////////
++// build_ //
++////////////
+ void OneHotVMatrix::build_()
+ {
+     int source_inputsize = source-&gt;inputsize();
+@@ -90,13 +111,13 @@
+     length_ = source_length;
+     width_ = source_width + nclasses - 1;
+ 
+-
+     if(source_inputsize+source_targetsize+source_weightsize != source_width
+        || source_targetsize != 1 ) // source-&gt;sizes are inconsistent
+     {
+         if( index &lt; 0 )
+         {
+             index = source_width - 1;
++            updateNClassesAndWidth();
+         }
+         if( inputsize_ + targetsize_ + weightsize_ != width() )
+         {
+@@ -111,6 +132,7 @@
+         if( index &lt; 0 )
+         {
+             index = source_inputsize;
++            updateNClassesAndWidth();
+         }
+         if( inputsize_ + targetsize_ + weightsize_ != width() )
+         {
+@@ -142,27 +164,40 @@
+     setMetaInfoFromSource();
+ }
+ 
++////////////////////
++// declareOptions //
++////////////////////
+ void OneHotVMatrix::declareOptions(OptionList &amp;ol)
+ {
+     declareOption(ol, &quot;underlying_distr&quot;, &amp;OneHotVMatrix::source,
+                   (OptionBase::learntoption | OptionBase::nosave),
+                   &quot;DEPRECATED - use 'source' instead.&quot;);
++
+     declareOption(ol, &quot;nclasses&quot;, &amp;OneHotVMatrix::nclasses,
+-                  OptionBase::buildoption, &quot;&quot;);
++                  OptionBase::buildoption,
++        &quot;Number of classes. If set to zero, then this number will be\n&quot;
++        &quot;automatically found from the source VMat.&quot;);
++
+     declareOption(ol, &quot;cold_value&quot;, &amp;OneHotVMatrix::cold_value,
+-                  OptionBase::buildoption, &quot;&quot;);
++                  OptionBase::buildoption,
++        &quot;Value used for non active elements in the one-hot vector.&quot;);
++
+     declareOption(ol, &quot;hot_value&quot;, &amp;OneHotVMatrix::hot_value,
+-                  OptionBase::buildoption, &quot;&quot;);
++                  OptionBase::buildoption,
++        &quot;Value used for the active element in the one-hot vector.&quot;);
++
+     declareOption(ol, &quot;index&quot;, &amp;OneHotVMatrix::index,
+                   OptionBase::buildoption,
+-                  &quot;(optional) index of the column on which we apply 'one_hot'.&quot;
+-                  &quot;\n&quot;
+-                  &quot;By default, if targetsize==1 we take corresponding column,&quot;
+-                  &quot;\n&quot;
+-                  &quot;else the last column.\n&quot;);
++        &quot;Index of the column on which we apply the one-hot transformation.\n&quot;
++        &quot;By default, if targetsize==1 we take the target column, otherwise\n&quot;
++        &quot;we take the last column.&quot;);
++    
+     inherited::declareOptions(ol);
+ }
+ 
++///////////////
++// getNewRow //
++///////////////
+ void OneHotVMatrix::getNewRow(int i, const Vec&amp; samplevec) const
+ {
+ #ifdef BOUNDCHECK
+@@ -176,11 +211,14 @@
+     Vec modified = samplevec.subVec(index, nclasses);
+     Vec right = samplevec.subVec(index+nclasses, width()-index-nclasses);
+     source-&gt;getSubRow(i, 0, left);
+-    int classnum = int(source-&gt;get(i, index));
++    int classnum = int(round(source-&gt;get(i, index)));
+     fill_one_hot(modified, classnum, cold_value, hot_value);
+     source-&gt;getSubRow(i, index+1, right);
+ }
+ 
++/////////
++// dot //
++/////////
+ real OneHotVMatrix::dot(int i1, int i2, int inputsize) const
+ {
+     return source-&gt;dot(i1, i2, inputsize);
+@@ -191,6 +229,25 @@
+     return source-&gt;dot(i, v);
+ }
+ 
++
++////////////////////////////
++// updateNClassesAndWidth //
++////////////////////////////
++void OneHotVMatrix::updateNClassesAndWidth()
++{
++    if (nclasses &gt; 0)
++        return;
++    PLASSERT( nclasses == 0 &amp;&amp; index &gt;= 0 );
++    real max = -1;
++    for (int i = 0; i &lt; source-&gt;length(); i++) {
++        real val = source-&gt;get(i, index);
++        if (val &gt; max)
++            max = val;
++    }
++    nclasses = int(round(max));
++    width_ += nclasses;
++}
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn/vmat/OneHotVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/OneHotVMatrix.h	2008-09-11 14:46:39 UTC (rev 9455)
++++ trunk/plearn/vmat/OneHotVMatrix.h	2008-09-15 17:33:17 UTC (rev 9456)
+@@ -50,32 +50,19 @@
+ namespace PLearn {
+ using namespace std;
+ 
+-
+-/*!
+-  Sampling from this VMat will return the corresponding sample
+-  from the source VMat with last element ('target_classnum')
+-  replaced by a vector of target_values of size nclasses in which only
+-  target_values[target_classnum] is set to hot_value, and all the
+-  others are set to cold_value.
+-  In the special case where the VMat is built with nclasses==1, then
+-  it is assumed that we have a 2 class classification problem but
+-  we are using a single valued target.  For this special case only
+-  the_cold_value is used as target for classnum 0 and the_hot_value is
+-  used for classnum 1.
+-*/
+-
+ class OneHotVMatrix: public SourceVMatrix
+ {
+     typedef SourceVMatrix inherited;
+ 
+-protected:
+-//    VMat underlying_distr; // DEPRECATED - use 'source' instead
++public:
++
+     int nclasses;
+     real cold_value;
+     real hot_value;
+     int index;
+ 
+ public:
++
+     // ******************
+     // *  Constructors  *
+     // ******************
+@@ -95,6 +82,12 @@
+     virtual void getNewRow(int i, const Vec&amp; samplevec) const;
+     static void declareOptions(OptionList &amp;ol);
+ 
++    //! If 'nclasses' is greater than zero, do nothing.
++    //! Otherwise, obtain 'nclasses' by finding the maximum value of the
++    //! source's 'index' column. Then update the width of this VMat
++    //! accordingly.
++    void updateNClassesAndWidth();
++
+ public:
+ 
+     virtual void build();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002895.html">[Plearn-commits] r9455 - trunk/python_modules/plearn/gui_tools
+</A></li>
+	<LI>Next message: <A HREF="002897.html">[Plearn-commits] r9457 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2896">[ date ]</a>
+              <a href="thread.html#2896">[ thread ]</a>
+              <a href="subject.html#2896">[ subject ]</a>
+              <a href="author.html#2896">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

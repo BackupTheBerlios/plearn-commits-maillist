@@ -1,0 +1,252 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8476 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8476%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200802061555.m16FtZQS010681%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001923.html">
+   <LINK REL="Next"  HREF="001925.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8476 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8476%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200802061555.m16FtZQS010681%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8476 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Wed Feb  6 16:55:35 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001923.html">[Plearn-commits] r8475 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001925.html">[Plearn-commits] r8477 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1924">[ date ]</a>
+              <a href="thread.html#1924">[ thread ]</a>
+              <a href="subject.html#1924">[ subject ]</a>
+              <a href="author.html#1924">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-02-06 16:55:34 +0100 (Wed, 06 Feb 2008)
+New Revision: 8476
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+   trunk/plearn_learners/online/RBMModule.h
+Log:
+- Added an option to use stochastic reconstruction instead of a deterministic one.
+- Added ability to provide a gradient on the activations of the hidden units.
+- Removed potential double call to forget on the same connection (this is mainly to be able to get the same deterministic results when using a reconstruction connection that is the same as the connection itself).
+
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2008-02-06 15:52:53 UTC (rev 8475)
++++ trunk/plearn_learners/online/RBMModule.cc	2008-02-06 15:55:34 UTC (rev 8476)
+@@ -59,7 +59,7 @@
+     &quot;  - 'hidden_activations.state' : activations of hidden units (given visible)\n&quot;
+     &quot;  - 'visible_sample' : random sample obtained on visible units (input or output port)\n&quot;
+     &quot;  - 'visible_expectation' : expectation of visible units (output port ONLY)\n&quot;
+-    &quot;  - 'visible_activation' : ectation of visible units (output port ONLY)\n&quot;
++    &quot;  - 'visible_activation' : activation of visible units (output port ONLY)\n&quot;
+     &quot;  - 'hidden_sample' : random sample obtained on hidden units\n&quot;
+     &quot;  - 'energy' : energy of the joint (visible,hidden) pair or free-energy\n&quot;
+     &quot;               of the visible (if given) or of the hidden (if given).\n&quot;
+@@ -87,6 +87,8 @@
+     &quot;     values (expectations) through the conditional expectations of hidden | visible.\n&quot;
+     &quot;  - 'reconstruction_error.state' : the auto-associator reconstruction error (NLL)\n&quot;
+     &quot;    obtained by matching the visible_reconstruction with the given visible.\n&quot;
++    &quot;Note that the above determnistic reconstruction may be made stochastic\n&quot;
++    &quot;by using the advanced option 'stochastic_reconstruction'.\n&quot;
+     &quot;If compute_contrastive_divergence is true, then the RBM also has these ports\n&quot;
+     &quot;  - 'contrastive_divergence' : the quantity minimized by contrastive-divergence training.\n&quot;
+     &quot;  - 'negative_phase_visible_samples.state' : the negative phase stochastic reconstruction\n&quot;
+@@ -116,6 +118,7 @@
+     log_partition_function(0),
+     partition_function_is_stale(true),
+     deterministic_reconstruction_in_cd(false),
++    stochastic_reconstruction(false),
+     standard_cd_grad(true),
+     standard_cd_bias_grad(true),
+     standard_cd_weights_grad(true),
+@@ -131,6 +134,8 @@
+ ////////////////////
+ void RBMModule::declareOptions(OptionList&amp; ol)
+ {
++    // Build options.
++    
+     declareOption(ol, &quot;visible_layer&quot;, &amp;RBMModule::visible_layer,
+                   OptionBase::buildoption,
+         &quot;Visible layer of the RBM.&quot;);
+@@ -148,6 +153,14 @@
+                   OptionBase::buildoption,
+         &quot;Reconstruction connection between the hidden and visible layers.&quot;);
+ 
++    declareOption(ol, &quot;stochastic_reconstruction&quot;,
++                  &amp;RBMModule::stochastic_reconstruction,
++                  OptionBase::buildoption,
++        &quot;If set to true, then reconstruction is not deterministic. Instead,\n&quot;
++        &quot;we sample a hidden vector given the visible input, then use the\n&quot;
++        &quot;visible layer's expectation given this sample as reconstruction.&quot;,
++                  OptionBase::advanced_level);
++
+     declareOption(ol, &quot;grad_learning_rate&quot;, &amp;RBMModule::grad_learning_rate,
+                   OptionBase::buildoption,
+         &quot;Learning rate for the gradient descent step.&quot;);
+@@ -239,6 +252,8 @@
+                   &quot;i.e. take stochastic gradient steps w.r.t. the log-likelihood instead\n&quot;
+                   &quot;of w.r.t. the contrastive divergence.\n&quot;);
+ 
++    // Learnt options.
++    
+     declareOption(ol, &quot;Gibbs_step&quot;,
+                   &amp;RBMModule::Gibbs_step,
+                   OptionBase::learntoption,
+@@ -946,16 +961,21 @@
+         PLASSERT( ports_value.length() == nPorts() );
+ 
+         Mat h;
+-        if (hidden &amp;&amp; !hidden_is_output)
++        if (hidden &amp;&amp; !hidden_is_output) {
+             h = *hidden;
+-        else {
++            PLASSERT(!stochastic_reconstruction);
++        } else {
+             if(!hidden_expectations_are_computed)
+             {
+                 computePositivePhaseHiddenActivations(*visible);
+                 hidden_layer-&gt;computeExpectations();
+                 hidden_expectations_are_computed=true;
+             }
+-            h = hidden_layer-&gt;getExpectations();
++            if (stochastic_reconstruction) {
++                hidden_layer-&gt;generateSamples();
++                h = hidden_layer-&gt;samples;
++            } else
++                h = hidden_layer-&gt;getExpectations();
+         }
+ 
+         // Don't need to verify if they are asked in a port, this was done previously
+@@ -995,6 +1015,8 @@
+     else if ( visible_reconstruction &amp;&amp; visible_reconstruction_is_output
+          &amp;&amp; hidden &amp;&amp; !hidden_is_output)
+     {
++        PLASSERT_MSG(!stochastic_reconstruction,
++                     &quot;Not yet implemented&quot;);
+         // Don't need to verify if they are asked in a port, this was done previously
+         computeVisibleActivations(*hidden,true);
+         if(visible_reconstruction_activations)
+@@ -1333,6 +1355,8 @@
+     Mat* visible = ports_value[getPortIndex(&quot;visible&quot;)];
+     Mat* visible_grad = ports_gradient[getPortIndex(&quot;visible&quot;)];
+     Mat* hidden_grad = ports_gradient[getPortIndex(&quot;hidden.state&quot;)];
++    Mat* hidden_activations_grad =
++        ports_gradient[getPortIndex(&quot;hidden_activations.state&quot;)];
+     Mat* hidden = ports_value[getPortIndex(&quot;hidden.state&quot;)];
+     hidden_act = ports_value[getPortIndex(&quot;hidden_activations.state&quot;)];
+     Mat* visible_activations = ports_value[getPortIndex(&quot;visible_activations.state&quot;)];
+@@ -1372,11 +1396,14 @@
+     bool compute_visible_grad = visible_grad &amp;&amp; visible_grad-&gt;isEmpty();
+     bool compute_hidden_grad = hidden_grad &amp;&amp; hidden_grad-&gt;isEmpty();
+     bool compute_weights_grad = weights_grad &amp;&amp; weights_grad-&gt;isEmpty();
++    bool provided_hidden_grad = hidden_grad &amp;&amp; !hidden_grad-&gt;isEmpty();
++    bool provided_hidden_act_grad = hidden_activations_grad &amp;&amp;
++                                    !hidden_activations_grad-&gt;isEmpty();
+ 
+     int mbs = (visible &amp;&amp; !visible-&gt;isEmpty()) ? visible-&gt;length() : -1;
+ 
+     // BPROP of UPWARD FPROP
+-    if (hidden_grad &amp;&amp; !hidden_grad-&gt;isEmpty())
++    if (provided_hidden_grad || provided_hidden_act_grad)
+     {
+         // Note: the assert below is for behavior compatibility with previous
+         // code. It might not be necessary, or might need to be modified.
+@@ -1390,11 +1417,27 @@
+         else
+            setAllLearningRates(grad_learning_rate);
+ 
+-        PLASSERT_MSG( hidden &amp;&amp; hidden_act , &quot;To compute gradients in bprop, the hidden_activations.state port must have been filled during fprop&quot;);
++        PLASSERT_MSG( hidden &amp;&amp; hidden_act ,
++                      &quot;To compute gradients in bprop, the &quot;
++                      &quot;hidden_activations.state port must have been filled &quot;
++                      &quot;during fprop&quot; );
++
+         // Compute gradient w.r.t. activations of the hidden layer.
+-        hidden_layer-&gt;bpropUpdate(
+-                *hidden_act, *hidden, hidden_act_grad, *hidden_grad,
+-                false);
++        if (provided_hidden_grad)
++            hidden_layer-&gt;bpropUpdate(
++                    *hidden_act, *hidden, hidden_act_grad, *hidden_grad,
++                    false);
++        if (provided_hidden_act_grad) {
++            if (!provided_hidden_grad) {
++                // 'hidden_act_grad' will not have been resized nor filled yet,
++                // so we need to do it now.
++                hidden_act_grad.resize(hidden_activations_grad-&gt;length(),
++                                       hidden_activations_grad-&gt;width());
++                hidden_act_grad.clear();
++            }
++            hidden_act_grad += *hidden_activations_grad;
++        }
++
+         if (hidden_bias_grad)
+         {
+             PLASSERT( hidden_bias_grad-&gt;isEmpty() &amp;&amp;
+@@ -1920,7 +1963,8 @@
+     hidden_layer-&gt;forget();
+     visible_layer-&gt;forget();
+     connection-&gt;forget();
+-    if (reconstruction_connection)
++    if (reconstruction_connection &amp;&amp; reconstruction_connection != connection)
++        // We avoid to call forget() twice if the connections are the same.
+         reconstruction_connection-&gt;forget();
+ }
+ 
+
+Modified: trunk/plearn_learners/online/RBMModule.h
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.h	2008-02-06 15:52:53 UTC (rev 8475)
++++ trunk/plearn_learners/online/RBMModule.h	2008-02-06 15:55:34 UTC (rev 8476)
+@@ -93,6 +93,7 @@
+     bool partition_function_is_stale;
+ 
+     bool deterministic_reconstruction_in_cd;
++    bool stochastic_reconstruction;
+ 
+     bool standard_cd_grad;
+     bool standard_cd_bias_grad;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001923.html">[Plearn-commits] r8475 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001925.html">[Plearn-commits] r8477 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1924">[ date ]</a>
+              <a href="thread.html#1924">[ thread ]</a>
+              <a href="subject.html#1924">[ subject ]</a>
+              <a href="author.html#1924">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

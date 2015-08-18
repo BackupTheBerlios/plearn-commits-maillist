@@ -1,0 +1,266 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7874 - trunk/plearn_learners/generic
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7874%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200707310018.l6V0IMUC011713%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001321.html">
+   <LINK REL="Next"  HREF="001323.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7874 - trunk/plearn_learners/generic</H1>
+    <B>manzagop at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7874%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200707310018.l6V0IMUC011713%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7874 - trunk/plearn_learners/generic">manzagop at mail.berlios.de
+       </A><BR>
+    <I>Tue Jul 31 02:18:22 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001321.html">[Plearn-commits] r7873 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001323.html">[Plearn-commits] r7875 -	trunk/plearn_learners/distributions/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1322">[ date ]</a>
+              <a href="thread.html#1322">[ thread ]</a>
+              <a href="subject.html#1322">[ subject ]</a>
+              <a href="author.html#1322">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: manzagop
+Date: 2007-07-31 02:18:20 +0200 (Tue, 31 Jul 2007)
+New Revision: 7874
+
+Modified:
+   trunk/plearn_learners/generic/NatGradEstimator.cc
+   trunk/plearn_learners/generic/NatGradEstimator.h
+Log:
+Added code to have a basic adaptive lambda based on the eigen decomposition.
+
+Modified: trunk/plearn_learners/generic/NatGradEstimator.cc
+===================================================================
+--- trunk/plearn_learners/generic/NatGradEstimator.cc	2007-07-30 22:57:05 UTC (rev 7873)
++++ trunk/plearn_learners/generic/NatGradEstimator.cc	2007-07-31 00:18:20 UTC (rev 7874)
+@@ -70,12 +70,15 @@
+ NatGradEstimator::NatGradEstimator()
+     /* ### Initialize all fields to their default value */
+     : cov_minibatch_size(10),
+-      lambda(1),
++      init_lambda(1.),
+       n_eigen(10),
+       gamma(0.99),
+       renormalize(true),
++      amari_version(false),
++      update_lambda_from_eigen(false),
+       previous_t(-1),
+-      first_t(-1)
++      first_t(-1),
++      lambda(1.)
+ {
+     build();
+ }
+@@ -119,13 +122,13 @@
+                   &quot;to operator() before re-estimating the principal\n&quot;
+                   &quot;eigenvectors/values. Note that each such re-computation will\n&quot;
+                   &quot;cost O(n_eigen * n)&quot;);
+-    declareOption(ol, &quot;lambda&quot;, &amp;NatGradEstimator::lambda,
++    declareOption(ol, &quot;init_lambda&quot;, &amp;NatGradEstimator::init_lambda,
+                   OptionBase::buildoption,
+                   &quot;Initial variance. The first covariance is assumed to be\n&quot;
+-                  &quot;lambda times the identity. Default = 1.\n&quot;);
+-    declareOption(ol, &quot;regularizer&quot;, &amp;NatGradEstimator::lambda,
++                  &quot;init_lambda times the identity. Default = 1.\n&quot;);
++    declareOption(ol, &quot;regularizer&quot;, &amp;NatGradEstimator::init_lambda,
+                   OptionBase::buildoption,
+-                  &quot;Proxy for option lambda (different name to avoid python problems).\n&quot;);
++                  &quot;Proxy for option init_lambda (different name to avoid python problems).\n&quot;);
+     declareOption(ol, &quot;n_eigen&quot;, &amp;NatGradEstimator::n_eigen,
+                   OptionBase::buildoption,
+                   &quot;Number of principal eigenvectors of the covariance matrix\n&quot;
+@@ -137,6 +140,10 @@
+                   OptionBase::buildoption,
+                   &quot;Instead of our tricks, use the formula Ginv &lt;-- (1+eps) Ginv - eps Ginv g g' Ginv\n&quot;
+                   &quot;to estimate the inverse of the covariance matrix, and multiply it with g at each step.\n&quot;);
++    declareOption(ol, &quot;update_lambda_from_eigen&quot;, &amp;NatGradEstimator::update_lambda_from_eigen,
++                  OptionBase::buildoption,
++                  &quot;Following an eigendecomposition, set lambda to the (n_eigen+1)th eigenvalue\n&quot;);
++
+     declareOption(ol, &quot;verbosity&quot;, &amp;NatGradEstimator::verbosity,
+                   OptionBase::buildoption,
+                   &quot;Verbosity level\n&quot;);
+@@ -182,12 +189,15 @@
+         Xt.resize(n_eigen+cov_minibatch_size, n_dim);
+         Xt.clear();
+         r.resize(n_eigen);
++        lambda = init_lambda;
+         for (int j=0;j&lt;n_eigen;j++)
+             G(j,j) = lambda;
+         first_t=-1;
+         previous_t=-1;
+     }
+ }
++// TODO replace the calls to pow by something else. It's notoriously
++// inefficient.
+ void NatGradEstimator::operator()(int t, const Vec&amp; g, Vec v)
+ {
+     if (previous_t&gt;=0)
+@@ -229,21 +239,17 @@
+         cout &lt;&lt; &quot;solution r = &quot; &lt;&lt; r &lt;&lt; endl;
+     // solution is in r
+     transposeProduct(v, Xt, r);
+-    if (renormalize)
++
++    // Multiply v by C's normalizer.
++    if (renormalize) 
+         v*=(1 - pow(gamma,real(t+1)))/(1 - gamma);
+-        //v/=(1 - pow(gamma,real(t+1)))/(1 - gamma);
+-/*    {
+-        real gnorm = dot(g,g);
+-        real vnorm = dot(v,v);
+-        g*=sqrt(vnorm/gnorm);
+-    }
+-*/
+-    if (verbosity&gt;0 &amp;&amp; i%(cov_minibatch_size/2)==0)
++
++    if (verbosity&gt;0 &amp;&amp; i%(cov_minibatch_size)==0)
+     {
+-        real gnorm = dot(g,g);
+-        real vnorm = dot(v,v);
+-        real angle = acos(dot(v,g)/sqrt(gnorm*vnorm))*360/(2*3.14159);
+-        cout &lt;&lt; &quot;angle(g,v)=&quot;&lt;&lt;angle&lt;&lt;&quot;, norm ratio=&quot;&lt;&lt;vnorm/gnorm&lt;&lt;endl;
++        real gnorm = sqrt(dot(g,g));
++        real vnorm = sqrt(dot(v,v));
++        real angle = acos(dot(v,g)/(gnorm*vnorm))*360/(2*3.14159);
++        cout &lt;&lt; &quot;angle(g,v)=&quot;&lt;&lt;angle&lt;&lt;&quot;, gnorm=&quot;&lt;&lt;gnorm&lt;&lt;&quot;, vnorm=&quot;&lt;&lt;vnorm&lt;&lt;&quot;, norm ratio=&quot;&lt;&lt;vnorm/gnorm&lt;&lt;endl;
+     }
+ 
+     // recompute the eigen-decomposition
+@@ -253,18 +259,28 @@
+         //if (save_G)
+         //    saveAscii(&quot;G.amat&quot;,G);
+         eigenVecOfSymmMat(G,n_eigen+1,D,Vt);
+-        
+-        // convert eigenvectors Vt of G into eigenvectors U of C
++        // Get all eigenvalues -&gt; this resizes D and Vt, but it doesn't matter
++//        eigenVecOfSymmMat(G,G.width(),D,Vt);
++//        cout &lt;&lt; &quot;-= &quot; &lt;&lt; t &lt;&lt; &quot; =-&quot; &lt;&lt; endl;
++//        cout &lt;&lt; D.length() &lt;&lt; &quot; eigenvalues = &quot; &lt;&lt; D &lt;&lt; endl;
++
++        if( D.length() &lt; n_eigen )
++            PLERROR(&quot;GOT LESS EIGENVECTORS THAN n_eigen.&quot;);
++
++        // convert eigenvectors Vt of G into *unnormalized* eigenvectors U of C
+         product(Ut,Vkt,Xt);
+         Ut *= 1.0/rn;
+         D *= 1.0/rn2;
+-        for (int j=0;j&lt;n_eigen;j++) 
++        for (int j=0;j&lt;n_eigen;j++) {
+             if (D[j]&lt;1e-10)
+                 PLWARNING(&quot;NatGradEstimator: very small eigenvalue %d = %g\n&quot;,j,D[j]);
++//            if (D[j]&lt;lambda)
++//                cout &lt;&lt; &quot; *** Small D[j] *** -&gt; &quot; &lt;&lt; D[j] &lt;&lt; endl;
++        }
+         if (verbosity&gt;0) // verifier Ut U = D/
+         {
+             static Mat Dmat;
+-            cout &lt;&lt; &quot;eigenvalues = &quot; &lt;&lt; D &lt;&lt; endl;
++            cout &lt;&lt; D.length() &lt;&lt; &quot; eigenvalues = &quot; &lt;&lt; D &lt;&lt; endl;
+             if (verbosity&gt;2)
+             {
+                 Dmat.resize(n_eigen,n_eigen);
+@@ -281,6 +297,28 @@
+         G.clear();
+         for (int j=0;j&lt;n_eigen;j++)
+             G(j,j) = D[j];
++
++        // Update lambda in a yet to be determined smart way
++        if( update_lambda_from_eigen )    {
++//            if (D[n_eigen-1]&gt;lambda)
++//                cout &lt;&lt; &quot; *** Last lambda too small? *** lambda, last eigen : &quot; &lt;&lt; lambda &lt;&lt; &quot;, &quot; &lt;&lt; D[n_eigen-1] &lt;&lt; endl;
++/*            float big_eig = D[0];
++            bool cont = true;
++            for (int j=0;j&lt;n_eigen &amp;&amp; cont;j++) {
++                if( D[j]&lt; (0.1*big_eig) ) {
++                    lambda = D[j];
++                    cont = false;
++                }
++            }
++            if(cont)*/
++                lambda = D[n_eigen-1];
++//          if (D[n_eigen]&lt;1e-6)
++//              PLWARNING(&quot;NatGradEstimator: updating lambda with small value %g\n&quot;,D[n_eigen]);
++//          lambda = D[n_eigen-1];
++
++//            if(lambda&lt;0.01)
++//                lambda = 0.01;
++        }
+     }
+     previous_t = t;
+ }
+
+Modified: trunk/plearn_learners/generic/NatGradEstimator.h
+===================================================================
+--- trunk/plearn_learners/generic/NatGradEstimator.h	2007-07-30 22:57:05 UTC (rev 7873)
++++ trunk/plearn_learners/generic/NatGradEstimator.h	2007-07-31 00:18:20 UTC (rev 7874)
+@@ -66,7 +66,7 @@
+     int cov_minibatch_size;
+ 
+     //! regularization coefficient of covariance matrix (initial values on diagonal)
+-    real lambda;
++    real init_lambda;
+ 
+     //! number of eigenvectors-eigenvalues that is preserved of the covariance matrix
+     int n_eigen;
+@@ -80,6 +80,10 @@
+     //! to estimate the inverse of the covariance matrix
+     bool amari_version;
+ 
++    //! Following an eigendecomposition, set lambda to the (n_eigen+1)th
++    //! eigenvalue.
++    bool update_lambda_from_eigen;
++
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+@@ -148,7 +152,7 @@
+     //#####  Private Data Members  ############################################
+ 
+     // The rest of the private stuff goes here
+-
++    real lambda;
+     Vec r; //! rhs of linear system (G + gamma^{-i} lambda I) a = r
+     Mat Vt;
+     Mat Vkt; //! sub-matrix of Vt with first n_eigen eigen-vectors
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001321.html">[Plearn-commits] r7873 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001323.html">[Plearn-commits] r7875 -	trunk/plearn_learners/distributions/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1322">[ date ]</a>
+              <a href="thread.html#1322">[ thread ]</a>
+              <a href="subject.html#1322">[ subject ]</a>
+              <a href="author.html#1322">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

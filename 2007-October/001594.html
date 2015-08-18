@@ -1,0 +1,374 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8146 -	branches/cgi-desjardin/plearn_learners/second_iteration
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8146%20-%0A%09branches/cgi-desjardin/plearn_learners/second_iteration&In-Reply-To=%3C200710041419.l94EJwLr027538%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001593.html">
+   <LINK REL="Next"  HREF="001595.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8146 -	branches/cgi-desjardin/plearn_learners/second_iteration</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8146%20-%0A%09branches/cgi-desjardin/plearn_learners/second_iteration&In-Reply-To=%3C200710041419.l94EJwLr027538%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8146 -	branches/cgi-desjardin/plearn_learners/second_iteration">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Thu Oct  4 16:19:58 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001593.html">[Plearn-commits] r8145 - trunk/plearn/base
+</A></li>
+        <LI>Next message: <A HREF="001595.html">[Plearn-commits] r8147 - trunk/plearn_learners/testers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1594">[ date ]</a>
+              <a href="thread.html#1594">[ thread ]</a>
+              <a href="subject.html#1594">[ subject ]</a>
+              <a href="author.html#1594">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-10-04 16:19:54 +0200 (Thu, 04 Oct 2007)
+New Revision: 8146
+
+Modified:
+   branches/cgi-desjardin/plearn_learners/second_iteration/TestImputations.cc
+   branches/cgi-desjardin/plearn_learners/second_iteration/TestImputations.h
+Log:
+Modified to calculate the neighrest neighbors in two way: ignore missing value, use impoted covpres value for missing. Also tell how many point was used
+
+
+Modified: branches/cgi-desjardin/plearn_learners/second_iteration/TestImputations.cc
+===================================================================
+--- branches/cgi-desjardin/plearn_learners/second_iteration/TestImputations.cc	2007-10-04 13:23:13 UTC (rev 8145)
++++ branches/cgi-desjardin/plearn_learners/second_iteration/TestImputations.cc	2007-10-04 14:19:54 UTC (rev 8146)
+@@ -133,16 +133,18 @@
+   row 0: nb_present
+   row 1: mean/mode imputation from preprocessing/final_train_input_preprocessed.pmat.metadata/mean_median_mode_file.pmat
+   row 2: median/mode imputation from preprocessing/final_train_input_preprocessed.pmat.metadata/mean_median_mode_file.pmat
+-  row 3: treeconditionalmean imputation from prep/data/targeted_ind_no_imp.vmat.metadata/TreeCondMean/dir/'field_names'/Split0/test1_outputs.pmat
+-  row 4: covariance preservation imputation from preprocessing/final_train_input_preprocessed.pmat.metadata/covariance_file.pmat
+-  row 5 to 24: (row - 4) * i neighbors imputation from neighborhood/test_train_imputed_with_covariance_preservation.pmat.metadata/neighborhood_file.pmat
++  row 3: mode
++  row 4: treeconditionalmean imputation from prep/data/targeted_ind_no_imp.vmat.metadata/TreeCondMean/dir/'field_names'/Split0/test1_outputs.pmat
++  row 5: covariance preservation imputation from preprocessing/final_train_input_preprocessed.pmat.metadata/covariance_file.pmat
++  row 6 to 24: (row - 4) * i neighbors imputation from neighborhood/test_train_imputed_with_covariance_preservation.pmat.metadata/neighborhood_file.pmat
+   lire le train_set
+ */
++    int nb_neighbors=100;
+     MODULE_LOG &lt;&lt; &quot;build_() called&quot; &lt;&lt; endl;
+     if (train_set)
+     {
+-        build_ball_tree();
+-        output_file_name = train_metadata + &quot;/TestImputation/output.pmat&quot;;
++        build_ball_tree(nb_neighbors*3);
++        output_file_name = train_metadata + &quot;/TestImputation2/output.pmat&quot;;
+         for (int iteration = 1; iteration &lt;= train_set-&gt;width(); iteration++)
+         {
+             cout &lt;&lt; &quot;In TestImputations, Iteration # &quot; &lt;&lt; iteration &lt;&lt; endl;
+@@ -150,14 +152,14 @@
+             computeMeanMedianModeStats();
+             computeTreeCondMeanStats();
+             computeCovPresStats();
+-            computeNeighborhoodStats();
++            computeNeighborhoodStats(nb_neighbors,nb_neighbors*3);
+             train();
+         }
+         endtestimputation(&quot;In TestImputations::build_(): we are done here&quot;);
+     }
+ }
+ 
+-void TestImputations::build_ball_tree()
++void TestImputations::build_ball_tree(int nb_neighbors)
+ { 
+    // initialize primary dataset
+     cout &lt;&lt; &quot;initialize the train set&quot; &lt;&lt; endl;
+@@ -203,7 +205,7 @@
+     if (!reference_set_with_covpres) PLERROR(&quot;In TestImputations::build_ball_tree() no reference_set_with_covpres provided.&quot;);
+     if (!reference_set_with_missing) PLERROR(&quot;In TestImputations::build_ball_tree() no reference_set_with_missing provided.&quot;);
+     ball_tree = new ExhaustiveNearestNeighbors();
+-    ball_tree-&gt;setOption(&quot;num_neighbors&quot;, &quot;100&quot;);
++    ball_tree-&gt;setOption(&quot;num_neighbors&quot;, tostring(nb_neighbors));
+     ball_tree-&gt;setOption(&quot;copy_input&quot;, &quot;0&quot;);
+     ball_tree-&gt;setOption(&quot;copy_target&quot;, &quot;0&quot;);
+     ball_tree-&gt;setOption(&quot;copy_weight&quot;, &quot;0&quot;);
+@@ -302,7 +304,7 @@
+     cout &lt;&lt; &quot;initialize the header file&quot; &lt;&lt; endl;
+     train_set-&gt;lockMetaDataDir();
+     header_record.resize(train_width);
+-    header_file_name = train_metadata + &quot;/TestImputation/header.pmat&quot;;
++    header_file_name = train_metadata + &quot;/TestImputation2/header.pmat&quot;;
+     cout &lt;&lt; &quot;header_file_name: &quot; &lt;&lt; header_file_name &lt;&lt; endl;
+     if (!isfile(header_file_name)) createHeaderFile();
+     else getHeaderRecord();
+@@ -332,8 +334,8 @@
+     
+     // find the available samples with non-missing values for this variable
+     train_stats = train_set-&gt;getStats(to_deal_with_next);
+-    train_total = train_stats.n();
+-    train_missing = train_stats.nmissing();
++    train_total = (int)train_stats.n();
++    train_missing = (int)train_stats.nmissing();
+     train_present = train_total - train_missing;
+     indices.resize((int) train_present);
+     int ind_next = 0;
+@@ -357,8 +359,8 @@
+     // load the test samples for this variable
+     if (indices.length() &gt; max_number_of_samples) test_length = max_number_of_samples;
+     else if (indices.length() &lt; min_number_of_samples)
+-        PLERROR(&quot;TestImputations::initialize() Their is less examples for the variable %s then the min_number_of semples(%d)&quot;,
+-                to_deal_with_name.c_str(),min_number_of_samples);
++        PLERROR(&quot;TestImputations::initialize() Their is less examples(%d) for the variable %s then the min_number_of semples(%d)&quot;,
++                indices.length(),to_deal_with_name.c_str(),min_number_of_samples);
+     else test_length = indices.length();
+     test_width = train_width;
+     test_samples_set = new MemoryVMatrix(test_length, test_width);
+@@ -413,7 +415,6 @@
+         PLERROR(&quot;In TestImputations::computeTreeCondMeanStats(): The '%s' file was not found in the tcf directory.&quot;,tcmf_file_name.c_str());
+     tcmf_file = new FileVMatrix(tcmf_file_name);
+     int tcmf_length = tcmf_file-&gt;length();
+-    int tcmf_width = tcmf_file-&gt;width();
+     if (tcmf_length &lt; train_length) 
+         PLERROR(&quot;In TestImputations::computeTreeCondMeanStats(): there are only %d records in the tree conditional output file. We need %d.&quot;,tcmf_length,train_length);
+     tcmf_mean_err = 0.0;
+@@ -486,12 +487,18 @@
+     return cvpf_value;
+ }
+ 
+-void TestImputations::computeNeighborhoodStats()
++//nb_neighbors, the number of neighbors to calculate
++//max_miss_neigbors, the additional neighbors we found so that we have replacement neighbors for neighbors with missing value
++void TestImputations::computeNeighborhoodStats(int nb_neighbors,int max_miss_neigbors)
+ {
+     knnf_input.resize(train_width);
+-    knnf_neighbors.resize(100);
+-    knnf_mean_err.resize(100);
+-    knnf_mean_err.clear();
++    knnf_neighbors.resize(nb_neighbors+max_miss_neigbors);
++    knnf_mean_cov_err.resize(nb_neighbors);
++    knnf_mean_miss_err.resize(nb_neighbors);
++    knnf_nmiss_value_count.resize(nb_neighbors);
++    knnf_mean_cov_err.clear();
++    knnf_mean_miss_err.clear();
++    knnf_nmiss_value_count.clear();
+     ProgressBar* pb = new ProgressBar( &quot;computing the neighborhood imputation errors for &quot; + to_deal_with_name, test_length);
+     for (int test_row = 0; test_row &lt; test_length; test_row++)
+     {
+@@ -503,33 +510,37 @@
+             else knnf_input[test_col] = train_input[test_col];
+         }
+         ball_tree-&gt;computeOutput(knnf_input, knnf_neighbors);
+-        real knnf_sum_value = 0.0;
+-        real knnf_sum_cov = 0.0;
+-        real knnv_value_count = 0.0;
+-        for (int knnf_row = 0; knnf_row &lt; knnf_neighbors.size(); knnf_row++)
++        real knnf_sum_cov_value = 0.0;
++        real knnf_sum_miss_value = 0.0;
++        int  knnv_value_count = 0;
++        for (int knnf_row = 0; knnf_row &lt; knnf_neighbors.size() &amp;&amp; knnv_value_count&lt;nb_neighbors; knnf_row++)
+         {
+             real knnf_value = ref_mis((int) knnf_neighbors[knnf_row], to_deal_with_next);
+-            if (!is_missing(knnf_value))
++            if(!is_missing(knnf_value))
+             {
+-                knnf_sum_value += knnf_value;
+-                knnv_value_count += 1.0;
++                knnf_sum_miss_value += knnf_value;
++                knnf_nmiss_value_count[knnv_value_count]+=1;
++                knnf_mean_miss_err[knnv_value_count] += pow(to_deal_with_value - (knnf_sum_miss_value / (knnv_value_count+1)), 2);
++                knnv_value_count += 1;
+             }
+-            if (knnv_value_count &gt; 0.0)
++            if (!is_missing(knnf_value) &amp;&amp; knnf_row&lt;nb_neighbors)
+             {
+-                knnf_mean_err[knnf_row] += pow(to_deal_with_value - (knnf_sum_value / knnv_value_count), 2);
+-                continue;
++                knnf_sum_cov_value += knnf_value;
++                knnf_mean_cov_err[knnf_row] += pow(to_deal_with_value - (knnf_sum_cov_value / (knnf_row+1)), 2);
++            }else if(knnf_row&lt;nb_neighbors){
++                knnf_value = ref_cov((int) knnf_neighbors[knnf_row], to_deal_with_next);
++                if (is_missing(knnf_value))
++                    PLERROR(&quot;In TestImputations::computeNeighborhoodStats(): missing value found in the reference with covariance preserved at: %i , %i&quot;,
++                            (int) knnf_neighbors[knnf_row], to_deal_with_next);
++                knnf_sum_cov_value += knnf_value;
++                knnf_mean_cov_err[knnf_row] += pow(to_deal_with_value - (knnf_sum_cov_value / (knnf_row+1)), 2);
+             }
+-            knnf_value = ref_cov((int) knnf_neighbors[knnf_row], to_deal_with_next);
+-            if (is_missing(knnf_value))
+-                PLERROR(&quot;In TestImputations::computeNeighborhoodStats(): missing value found in the reference with covariance preserved at: %i , %i&quot;,
+-                         (int) knnf_neighbors[knnf_row], to_deal_with_next);
+-            knnf_sum_cov += knnf_value;
+-            knnf_mean_err[knnf_row] += pow(to_deal_with_value - (knnf_sum_cov / (knnf_row + 1)), 2);
+         }
+-        pb-&gt;update( test_row );
++        pb-&gt;update( test_row );  
+     }
+     delete pb;
+-    knnf_mean_err/=(real) test_length;
++    knnf_mean_cov_err/=test_length;
++    knnf_mean_miss_err/=knnf_nmiss_value_count;
+ }
+ 
+ void TestImputations::createHeaderFile()
+@@ -538,14 +549,14 @@
+     for (int train_col = 0; train_col &lt; train_width; train_col++)
+     {
+         train_stats = train_set-&gt;getStats(train_col);
+-        train_total = train_stats.n();
+-        train_missing = train_stats.nmissing();
++        train_total = (int)train_stats.n();
++        train_missing = (int)train_stats.nmissing();
+         train_present = train_total - train_missing;
+         if (train_missing &lt;= 0.0) header_record[train_col] = 0.0;                       // no missing, noting to do.
+         else if (train_present &lt; min_number_of_samples){
+             header_record[train_col] = -1.0; // should not happen
+-            PLERROR(&quot;In TestImputations::createHeaderFile: train_present(%d) &lt; min_number_of_samples (%d)&quot;,
+-                    train_present,min_number_of_samples);
++            PLERROR(&quot;In TestImputations::createHeaderFile: train_present(%d) &lt; min_number_of_samples (%d) for variable %d()&quot;,
++                    train_present,min_number_of_samples,train_col,train_set.fieldName(train_col).c_str());
+         }
+         else header_record[train_col] = 1.0;                                            // test imputations
+     }
+@@ -570,34 +581,46 @@
+     // initialize the output file
+     cout &lt;&lt; &quot;initialize the output file: &quot; &lt;&lt; output_file_name &lt;&lt; endl;
+     train_set-&gt;lockMetaDataDir();
+-    output_record.resize(knnf_mean_err.size()+5);
++    output_record.resize(6+knnf_mean_cov_err.size()+knnf_mean_miss_err.size()+knnf_nmiss_value_count.size());
+     if (!isfile(output_file_name)) createOutputFile();
+     else getOutputRecord(to_deal_with_next);
+-    output_record[0] = mmmf_mean_err;
+-    output_record[1] = mmmf_median_err;
+-    output_record[2] = mmmf_mode_err;
+-    output_record[3] = tcmf_mean_err;
+-    output_record[4] = cvpf_mean_err;
+-    for (int knnf_row = 0; knnf_row &lt; knnf_mean_err.size(); knnf_row++)
+-    {
+-       output_record[knnf_row + 5] = knnf_mean_err[knnf_row];
+-    }
++    output_record.resize(6);
++    output_record[0] = test_length;
++    output_record[1] = mmmf_mean_err;
++    output_record[2] = mmmf_median_err;
++    output_record[3] = mmmf_mode_err;
++    output_record[4] = tcmf_mean_err;
++    output_record[5] = cvpf_mean_err;
++    output_record.append(knnf_mean_cov_err);
++    output_record.append(knnf_mean_miss_err);
++    output_record.append(knnf_nmiss_value_count);
+     updateOutputRecord(to_deal_with_next);
+     train_set-&gt;unlockMetaDataDir();
+ }
+ 
+ void TestImputations::createOutputFile()
+ {
+-    output_names.resize(knnf_mean_err.size()+5);
+-    output_names[0] = &quot;mean&quot;;
+-    output_names[1] = &quot;median&quot;;
+-    output_names[2] = &quot;mode&quot;;
+-    output_names[3] = &quot;tree_cond&quot;;
+-    output_names[4] = &quot;cov_pres&quot;;
+-    for (int knnf_row = 0; knnf_row &lt; knnf_mean_err.size(); knnf_row++)
++    output_names.resize(6,knnf_mean_cov_err.size()+knnf_mean_miss_err.size()
++                        + knnf_nmiss_value_count.size());
++    output_names[0] = &quot;test_length&quot;;
++    output_names[1] = &quot;mean&quot;;
++    output_names[2] = &quot;median&quot;;
++    output_names[3] = &quot;mode&quot;;
++    output_names[4] = &quot;tree_cond&quot;;
++    output_names[5] = &quot;cov_pres&quot;;
++    for (int knnf_row = 0; knnf_row &lt; knnf_mean_cov_err.size(); knnf_row++)
+     {
+-       output_names[knnf_row + 5] = &quot;KNN_&quot; + tostring(knnf_row);
++        output_names.append(&quot;KNN_COV_&quot; + tostring(knnf_row+1));
+     }
++    for (int knnf_row = 0; knnf_row &lt; knnf_mean_cov_err.size(); knnf_row++)
++    {
++        output_names.append(&quot;KNN_MISS_&quot; + tostring(knnf_row+1));
++    }
++    for (int knnf_row = 0; knnf_row &lt; knnf_nmiss_value_count.size(); knnf_row++)
++    {
++        output_names.append(&quot;KNN_NB_MISS_&quot; + tostring(knnf_row+1));
++    }
++
+     output_record.clear();
+     output_file = new FileVMatrix(output_file_name, train_width, output_names);
+     for (int train_col = 0; train_col &lt; train_width; train_col++)
+
+Modified: branches/cgi-desjardin/plearn_learners/second_iteration/TestImputations.h
+===================================================================
+--- branches/cgi-desjardin/plearn_learners/second_iteration/TestImputations.h	2007-10-04 13:23:13 UTC (rev 8145)
++++ branches/cgi-desjardin/plearn_learners/second_iteration/TestImputations.h	2007-10-04 14:19:54 UTC (rev 8146)
+@@ -130,13 +130,13 @@
+ 
+     //! This does the actual building.
+     void build_();
+-    void build_ball_tree();
++    void build_ball_tree(int nb_neighbors);
+     void initialize();
+     void computeMeanMedianModeStats();
+     void computeTreeCondMeanStats();
+     void computeCovPresStats();
+     real covariancePreservationValue(int col);
+-    void computeNeighborhoodStats();
++    void computeNeighborhoodStats(int nb_neighbors,int max_miss_neigbors);
+     void createHeaderFile();
+     void getHeaderRecord();
+     void updateHeaderRecord(int var_col);
+@@ -157,9 +157,9 @@
+     TVec&lt;string&gt; train_names;
+     PPath train_metadata;
+     StatsCollector train_stats;
+-    real train_total;
+-    real train_missing;
+-    real train_present;
++    int train_total;
++    int train_missing;
++    int train_present;
+     PPath header_file_name;
+     VMat header_file;
+     Vec header_record;
+@@ -182,7 +182,9 @@
+     real cvpf_mean_err;
+     Vec knnf_input;
+     Vec knnf_neighbors;
+-    Vec knnf_mean_err;
++    Vec knnf_mean_cov_err;
++    Vec knnf_mean_miss_err;
++    Vec knnf_nmiss_value_count;
+     Vec weights;
+     WeightedDistance* weighted_distance_kernel;
+     PPath output_file_name;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001593.html">[Plearn-commits] r8145 - trunk/plearn/base
+</A></li>
+	<LI>Next message: <A HREF="001595.html">[Plearn-commits] r8147 - trunk/plearn_learners/testers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1594">[ date ]</a>
+              <a href="thread.html#1594">[ thread ]</a>
+              <a href="subject.html#1594">[ subject ]</a>
+              <a href="author.html#1594">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

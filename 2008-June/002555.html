@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9107 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9107%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200806051733.m55HXlVM005882%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002554.html">
+   <LINK REL="Next"  HREF="002556.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9107 - trunk/plearn_learners/online</H1>
+    <B>dumitruerhan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9107%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200806051733.m55HXlVM005882%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9107 - trunk/plearn_learners/online">dumitruerhan at mail.berlios.de
+       </A><BR>
+    <I>Thu Jun  5 19:33:47 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002554.html">[Plearn-commits] r9106 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="002556.html">[Plearn-commits] r9108 - in trunk/plearn_learners: generic hyper
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2555">[ date ]</a>
+              <a href="thread.html#2555">[ thread ]</a>
+              <a href="subject.html#2555">[ subject ]</a>
+              <a href="author.html#2555">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: dumitruerhan
+Date: 2008-06-05 19:33:46 +0200 (Thu, 05 Jun 2008)
+New Revision: 9107
+
+Modified:
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+Log:
+bugfix + added functionality to compute the outputs without correlation connections for a matrix of inputs (not just one input)
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2008-06-04 23:36:54 UTC (rev 9106)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2008-06-05 17:33:46 UTC (rev 9107)
+@@ -280,6 +280,14 @@
+          ArgDoc (&quot;input&quot;, &quot;Input vector (should have width inputsize)&quot;),
+          RetDoc (&quot;Computed output (will have width outputsize)&quot;)));
+ 
++    declareMethod(
++        rmm, &quot;computeOutputsWithoutCorrelationConnections&quot;, 
++        &amp;StackedAutoassociatorsNet::remote_computeOutputsWithoutCorrelationConnections,
++        (BodyDoc(&quot;On a trained learner, this computes the outputs from the inputs without using the correlation_connections&quot;),
++         ArgDoc (&quot;input&quot;, &quot;Input matrix (should have width inputsize)&quot;),
++         RetDoc (&quot;Computed outputs (will have width outputsize)&quot;)));
++
++
+ }
+ 
+ void StackedAutoassociatorsNet::build_()
+@@ -1956,6 +1964,21 @@
+                              output );
+ }
+ 
++void StackedAutoassociatorsNet::computeOutputsWithoutCorrelationConnections(const Mat&amp; inputs, Mat&amp; outputs) const
++{
++
++    int n=inputs.length();
++    PLASSERT(outputs.length()==n);
++    for (int i=0;i&lt;n;i++)
++    {
++        Vec in_i = inputs(i);
++        Vec out_i = outputs(i);
++        computeOutputWithoutCorrelationConnections(in_i,out_i);
++    }
++
++}
++
++
+ void StackedAutoassociatorsNet::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
+                                            const Vec&amp; target, Vec&amp; costs) const
+ {
+@@ -2131,14 +2154,23 @@
+     final_module-&gt;setLearningRate( the_learning_rate );
+ }
+ 
+-//! Version of computeOutput that returns a result by value
++//! Version of computeOutputWithoutCorrelationConnections(Vec,Vec) that returns a result by value
+ Vec StackedAutoassociatorsNet::remote_computeOutputWithoutCorrelationConnections(const Vec&amp; input) const
+ {
+     tmp_output.resize(outputsize());
+-    computeOutput(input, tmp_output);
++    computeOutputWithoutCorrelationConnections(input, tmp_output);
+     return tmp_output;
+ }
+ 
++//! Version of computeOutputsWithoutCorrelationConnections(Mat,Mat) that returns a result by value
++Mat StackedAutoassociatorsNet::remote_computeOutputsWithoutCorrelationConnections(const Mat&amp; inputs) const
++{
++    tmp_output_mat.resize(inputs.length(),outputsize());
++    computeOutputsWithoutCorrelationConnections(inputs, tmp_output_mat);
++    return tmp_output_mat;
++}
++
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2008-06-04 23:36:54 UTC (rev 9106)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2008-06-05 17:33:46 UTC (rev 9107)
+@@ -194,6 +194,9 @@
+     //! Computes the output from the input.
+     virtual void computeOutputWithoutCorrelationConnections(const Vec&amp; input, 
+                                                         Vec&amp; output) const;
++    //! Computes the output from the input
++    virtual void computeOutputsWithoutCorrelationConnections(const Mat&amp; input, 
++                                                        Mat&amp; output) const;
+ 
+     //! Computes the output from the input.
+     virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
+@@ -373,14 +376,15 @@
+ 
+     void setLearningRate( real the_learning_rate );
+ 
+-    // List of remote methods
++    // List of remote methods    
++    Vec remote_computeOutputWithoutCorrelationConnections(const Vec&amp; input) const;
+     
+-    Vec remote_computeOutputWithoutCorrelationConnections(const Vec&amp; input) const;
++    Mat remote_computeOutputsWithoutCorrelationConnections(const Mat&amp; inputs) const;
+ 
+     //! Global storage to save memory allocations.
+     mutable Vec tmp_output;
++    mutable Mat tmp_output_mat;
+ 
+-
+ private:
+     //#####  Private Data Members  ############################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002554.html">[Plearn-commits] r9106 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="002556.html">[Plearn-commits] r9108 - in trunk/plearn_learners: generic hyper
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2555">[ date ]</a>
+              <a href="thread.html#2555">[ thread ]</a>
+              <a href="subject.html#2555">[ subject ]</a>
+              <a href="author.html#2555">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

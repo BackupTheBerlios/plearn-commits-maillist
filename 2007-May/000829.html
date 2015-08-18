@@ -1,0 +1,157 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7380 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7380%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705281724.l4SHODZu031117%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000828.html">
+   <LINK REL="Next"  HREF="000830.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7380 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7380%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705281724.l4SHODZu031117%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7380 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Mon May 28 19:24:13 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000828.html">[Plearn-commits] r7379 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000830.html">[Plearn-commits] r7381 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#829">[ date ]</a>
+              <a href="thread.html#829">[ thread ]</a>
+              <a href="subject.html#829">[ subject ]</a>
+              <a href="author.html#829">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-05-28 19:24:11 +0200 (Mon, 28 May 2007)
+New Revision: 7380
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+Log:
+- Safety initialization of 'hidden_activations_are_computed'
+- Added missing deep copy statement
+- Proper update according to reconstruction error even when 'visible_grad' is filled in previous code
+- Fixed bug in NLL computation
+
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-05-28 16:58:07 UTC (rev 7379)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-05-28 17:24:11 UTC (rev 7380)
+@@ -99,7 +99,8 @@
+     Gibbs_step(0),
+     log_partition_function(0),
+     partition_function_is_stale(true),
+-    hidden_bias(0)
++    hidden_bias(0),
++    hidden_activations_are_computed(false)
+ {
+ }
+ 
+@@ -320,7 +321,6 @@
+     deepCopyField(hidden_act_store, copies);
+ 
+     deepCopyField(ports, copies);
+-    deepCopyField(portname_to_index, copies);
+ }
+ 
+ ///////////
+@@ -428,8 +428,7 @@
+             {
+                 PLASSERT(visible_layer-&gt;classname()==&quot;RBMBinomialLayer&quot;);
+                 // assuming a binary input we sum over all bit configurations
+-                int n_configurations = 1;
+-                n_configurations &lt;&lt; visible_layer-&gt;size; // = 2^{visible_layer-&gt;size}
++                int n_configurations = 1 &lt;&lt; visible_layer-&gt;size; // = 2^{visible_layer-&gt;size}
+                 Mat inputs = visible_layer-&gt;getExpectations();
+                 inputs.resize(1,visible_layer-&gt;size);
+                 Vec input = inputs(0);
+@@ -458,8 +457,7 @@
+             {
+                 PLASSERT(hidden_layer-&gt;classname()==&quot;RBMBinomialLayer&quot;);
+                 // assuming a binary hidden we sum over all bit configurations
+-                int n_configurations = 1;
+-                n_configurations &lt;&lt; hidden_layer-&gt;size; // = 2^{hidden_layer-&gt;size}
++                int n_configurations = 1 &lt;&lt; hidden_layer-&gt;size; // = 2^{hidden_layer-&gt;size}
+                 Mat&amp; inputs = hidden_layer-&gt;getExpectations();
+                 inputs.resize(1,hidden_layer-&gt;size);
+                 Vec input = inputs(0);
+@@ -732,9 +730,13 @@
+         reconstruction_error_grad = 
+             ports_gradient[portname2index(&quot;reconstruction_error.state&quot;)];
+ 
++    // Ensure the visible gradient is not provided as input. This is because we
++    // accumulate more than once in 'visible_grad'.
++    PLASSERT_MSG( !visible_grad || visible_grad-&gt;isEmpty(), &quot;Cannot provide &quot;
++            &quot;an input gradient w.r.t. visible units&quot; );
++    
+     if (visible &amp;&amp; !visible-&gt;isEmpty() &amp;&amp; 
+-        (hidden_grad &amp;&amp; !hidden_grad-&gt;isEmpty() &amp;&amp;
+-         (!visible_grad || visible_grad-&gt;isEmpty())))
++        (hidden_grad &amp;&amp; !hidden_grad-&gt;isEmpty()))
+     {
+         int mbs = visible-&gt;length();
+         if (grad_learning_rate &gt; 0) {
+@@ -831,8 +833,7 @@
+             partition_function_is_stale = true;
+     }
+ 
+-    if (reconstruction_error_grad &amp;&amp; !reconstruction_error_grad-&gt;isEmpty()
+-        &amp;&amp; ( !visible_grad || visible_grad-&gt;isEmpty() ) ) {
++    if (reconstruction_error_grad &amp;&amp; !reconstruction_error_grad-&gt;isEmpty()) {
+         setAllLearningRates(grad_learning_rate);
+         PLASSERT( reconstruction_connection != 0 );
+         // Perform gradient descent on Autoassociator reconstruction cost
+@@ -886,7 +887,12 @@
+         // Connection update
+         if(visible_grad)
+         {
+-            PLASSERT( visible_grad-&gt;width() == visible_layer-&gt;size );
++            // The length of 'visible_grad' must be either 0 (if not computed
++            // previously) or the size of the mini-batches (otherwise).
++            PLASSERT( visible_grad-&gt;width() == visible_layer-&gt;size &amp;&amp;
++                      visible_grad-&gt;length() == 0 ||
++                      visible_grad-&gt;length() == mbs );
++            visible_grad-&gt;resize(mbs, visible_grad-&gt;width());
+             connection-&gt;bpropUpdate(
+                 *visible, *hidden_act,
+                 *visible_grad, hidden_act_grad, true);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000828.html">[Plearn-commits] r7379 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000830.html">[Plearn-commits] r7381 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#829">[ date ]</a>
+              <a href="thread.html#829">[ thread ]</a>
+              <a href="subject.html#829">[ subject ]</a>
+              <a href="author.html#829">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

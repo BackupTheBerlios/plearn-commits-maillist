@@ -1,0 +1,219 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9082 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9082%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200806021840.m52IeNp2030373%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002529.html">
+   <LINK REL="Next"  HREF="002531.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9082 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9082%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200806021840.m52IeNp2030373%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9082 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Mon Jun  2 20:40:23 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002529.html">[Plearn-commits] r9081 - trunk/plearn_learners/regressors
+</A></li>
+        <LI>Next message: <A HREF="002531.html">[Plearn-commits] r9083 - in trunk/python_modules/plearn: plotting	utilities
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2530">[ date ]</a>
+              <a href="thread.html#2530">[ thread ]</a>
+              <a href="subject.html#2530">[ subject ]</a>
+              <a href="author.html#2530">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-06-02 20:40:23 +0200 (Mon, 02 Jun 2008)
+New Revision: 9082
+
+Modified:
+   trunk/plearn_learners/online/RBMMatrixTransposeConnection.cc
+   trunk/plearn_learners/online/RBMMatrixTransposeConnection.h
+Log:
+Added an option to learn the scale of the transposed matrix.
+
+
+Modified: trunk/plearn_learners/online/RBMMatrixTransposeConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixTransposeConnection.cc	2008-06-02 14:54:36 UTC (rev 9081)
++++ trunk/plearn_learners/online/RBMMatrixTransposeConnection.cc	2008-06-02 18:40:23 UTC (rev 9082)
+@@ -53,7 +53,9 @@
+     real the_learning_rate,
+     bool call_build_) :
+     inherited(the_learning_rate, call_build_),
+-    rbm_matrix_connection(the_rbm_matrix_connection)
++    rbm_matrix_connection(the_rbm_matrix_connection),
++    learn_scale( false ),
++    scale( 1.0 )
+ {
+     if (call_build_)
+         build_();
+@@ -66,6 +68,17 @@
+                   OptionBase::buildoption,
+                   &quot;RBMMatrixConnection from which the weights are taken&quot;);
+ 
++    declareOption(ol, &quot;learn_scale&quot;, 
++                  &amp;RBMMatrixTransposeConnection::learn_scale,
++                  OptionBase::buildoption,
++                  &quot;Indication that the scale of the weight matrix should be &quot;
++                  &quot;learned.\n&quot;);
++
++    declareOption(ol, &quot;scale&quot;, 
++                  &amp;RBMMatrixTransposeConnection::scale,
++                  OptionBase::learntoption,
++                  &quot;Learned scale for weight matrix.\n&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ 
+@@ -144,6 +157,9 @@
+ 
+ void RBMMatrixTransposeConnection::update()
+ {
++    if( learn_scale )
++        PLERROR(&quot;In RBMMatrixTransposeConnection::update(): not implemented &quot;
++                &quot;for learned scale&quot;);
+     // updates parameters
+     //weights -= learning_rate * (weights_pos_stats/pos_count
+     //                              - weights_neg_stats/neg_count)
+@@ -199,6 +215,10 @@
+                                            const Vec&amp; neg_down_values, // v_1
+                                            const Vec&amp; neg_up_values )  // h_1
+ {
++    if( learn_scale )
++        PLERROR(&quot;In RBMMatrixTransposeConnection::update(): not implemented &quot;
++                &quot;for learned scale&quot;);
++
+     PLASSERT_MSG( rbm_matrix_connection, &quot;RBMMatrixTransposeConnection must be given an rbm_matrix_connection.\n&quot;);
+     // weights -= learning_rate * ( h_0 v_0' - h_1 v_1' );
+     // or:
+@@ -290,6 +310,8 @@
+                      weights.subMatRows(start,length),
+                      input_vec );
+     }
++    if( learn_scale)
++        activations *= scale;
+ }
+ 
+ void RBMMatrixTransposeConnection::computeProducts(int start, int length,
+@@ -325,6 +347,9 @@
+                     inputs_mat,
+                     weights.subMatRows(start,length) );
+     }
++
++    if( learn_scale)
++        activations *= scale;
+ }
+ 
+ //! this version allows to obtain the input gradient as well
+@@ -357,6 +382,19 @@
+     
+     // weights -= learning_rate * output_gradient * input'
+     externalProductScaleAcc( weights, input, output_gradient, -learning_rate );
++    if( learn_scale )
++    {
++        real* in = input.data();
++        real* out_g;
++        real* wj;
++        for( int j=0; j&lt;weights.width(); j++)
++        {
++            out_g = output_gradient.data();
++            wj = weights[j];
++            for( int i=0; i&lt;weights.length(); i++ )
++                scale -= learning_rate * out_g[i] * wj[i] * in[j];
++        }
++    }
+ }
+ 
+ void RBMMatrixTransposeConnection::bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
+@@ -388,6 +426,23 @@
+     // weights -= learning_rate/n * output_gradients' * inputs
+     transposeProductScaleAcc(weights, inputs, output_gradients,
+                              -learning_rate / inputs.length(), real(1));
++
++    if( learn_scale )
++    {
++        for( int t=0; t&lt;inputs.length(); t++)
++        {
++            real* in = inputs[t];
++            real* out_g;
++            real* wj;
++            for( int j=0; j&lt;weights.width(); j++)
++            {
++                out_g = output_gradients[t];
++                wj = weights[j];
++                for( int i=0; i&lt;weights.length(); i++ )
++                    scale -= learning_rate * out_g[i] * wj[i] * in[j];
++            }
++        }
++    }
+ }
+ 
+ 
+@@ -406,6 +461,8 @@
+     if( !(rbm_matrix_connection-&gt;random_gen) )
+         rbm_matrix_connection-&gt;random_gen = random_gen;
+     rbm_matrix_connection-&gt;forget();
++    if( learn_scale )
++        scale = 1;
+ }
+ 
+ 
+
+Modified: trunk/plearn_learners/online/RBMMatrixTransposeConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixTransposeConnection.h	2008-06-02 14:54:36 UTC (rev 9081)
++++ trunk/plearn_learners/online/RBMMatrixTransposeConnection.h	2008-06-02 18:40:23 UTC (rev 9082)
+@@ -65,8 +65,14 @@
+     //! RBMMatrixConnection from which the weights are taken
+     PP&lt;RBMMatrixConnection&gt; rbm_matrix_connection;
+ 
++    //! Indication that the scale of the weight matrix should be learned
++    bool learn_scale;
++
+     //#####  Not Options  #####################################################
+ 
++    //! Learned scale for weight matrix
++    real scale;
++
+     //! Accumulates positive contribution to the weights' gradient
+     Mat weights_pos_stats;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002529.html">[Plearn-commits] r9081 - trunk/plearn_learners/regressors
+</A></li>
+	<LI>Next message: <A HREF="002531.html">[Plearn-commits] r9083 - in trunk/python_modules/plearn: plotting	utilities
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2530">[ date ]</a>
+              <a href="thread.html#2530">[ thread ]</a>
+              <a href="subject.html#2530">[ subject ]</a>
+              <a href="author.html#2530">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

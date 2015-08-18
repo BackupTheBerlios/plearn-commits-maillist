@@ -1,0 +1,172 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6577 - trunk/plearn_learners/generic
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6577%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200701152217.l0FMHxZm008946%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000025.html">
+   <LINK REL="Next"  HREF="000027.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6577 - trunk/plearn_learners/generic</H1>
+    <B>chrish at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6577%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200701152217.l0FMHxZm008946%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6577 - trunk/plearn_learners/generic">chrish at mail.berlios.de
+       </A><BR>
+    <I>Mon Jan 15 23:17:59 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000025.html">[Plearn-commits] r6576 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="000027.html">[Plearn-commits] r6578 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26">[ date ]</a>
+              <a href="thread.html#26">[ thread ]</a>
+              <a href="subject.html#26">[ subject ]</a>
+              <a href="author.html#26">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chrish
+Date: 2007-01-15 23:17:59 +0100 (Mon, 15 Jan 2007)
+New Revision: 6577
+
+Modified:
+   trunk/plearn_learners/generic/VPLProcessor.cc
+Log:
+Fix problem with VPLProcessor not copying targets, etc. when corresponding 
+target_prg, etc. is empty.
+
+
+Modified: trunk/plearn_learners/generic/VPLProcessor.cc
+===================================================================
+--- trunk/plearn_learners/generic/VPLProcessor.cc	2007-01-15 21:54:00 UTC (rev 6576)
++++ trunk/plearn_learners/generic/VPLProcessor.cc	2007-01-15 22:17:59 UTC (rev 6577)
+@@ -40,6 +40,7 @@
+ 
+ /*! \file VPLProcessor.cc */
+ 
++#include &lt;sstream&gt;
+ 
+ #include &quot;VPLProcessor.h&quot;
+ #include &lt;plearn/vmat/ProcessingVMatrix.h&gt;
+@@ -66,17 +67,6 @@
+ 
+ void VPLProcessor::declareOptions(OptionList&amp; ol)
+ {
+-    // ### Declare all of this object's options here
+-    // ### For the &quot;flags&quot; of each option, you should typically specify  
+-    // ### one of OptionBase::buildoption, OptionBase::learntoption or 
+-    // ### OptionBase::tuningoption. Another possible flag to be combined with
+-    // ### is OptionBase::nosave
+-
+-    // ### ex:
+-    // declareOption(ol, &quot;myoption&quot;, &amp;VPLProcessor::myoption, OptionBase::buildoption,
+-    //               &quot;Help text describing this option&quot;);
+-    // ...
+-
+     declareOption(ol, &quot;filtering_prg&quot;, &amp;VPLProcessor::filtering_prg, OptionBase::buildoption,
+                   &quot;Optional program string in VPL language to apply as filtering on the training VMat.\n&quot;
+                   &quot;This program is to produce a single value interpreted as a boolean: only the rows for which\n&quot;
+@@ -139,7 +129,6 @@
+ 
+ }
+ 
+-// ### Nothing to add here, simply calls build_
+ void VPLProcessor::build()
+ {
+     inherited::build();
+@@ -193,6 +182,9 @@
+ 
+ }
+ 
++/// @todo Check if this method works according to the documentation. For
++/// example, the next to last line (VMatr processed_trainset = new ...) has 
++/// no impact.
+ void VPLProcessor::setTrainingSet(VMat training_set, bool call_forget)
+ {
+     orig_fieldnames = training_set-&gt;fieldNames();
+@@ -212,13 +204,48 @@
+ 
+ VMat VPLProcessor::processDataSet(VMat dataset) const
+ {
+-    VMat filtered_dataset= dataset;
++    VMat filtered_dataset = dataset;
+     PPath filtered_dataset_metadatadir = getExperimentDirectory() / &quot;filtered_dataset.metadata&quot;;
+     if(!filtering_prg.empty())
+         filtered_dataset = new FilteredVMatrix(dataset, filtering_prg, filtered_dataset_metadatadir, verbosity&gt;1,
+                                                use_filtering_prg_for_repeat, repeat_id_field_name, repeat_count_field_name);
+ 
+-    return new ProcessingVMatrix(filtered_dataset, input_prg, target_prg, weight_prg, extra_prg);
++    // Since ProcessingVMatrix produces 0 length vectors when given an empty
++    // program (which is not the behavior that VPLProcessors is documented as
++    // implementing), we need to replace each program that is an empty string
++    // by a small VPL snippet that copies all the fields for the input or
++    // target, etc.
++
++    // First compute the start of each section (input, target, etc.) in the
++    // columns of the dataset.
++    const int start_of_targets = dataset-&gt;inputsize();
++    const int start_of_weights = start_of_targets + dataset-&gt;targetsize();
++    const int start_of_extras = start_of_weights + dataset-&gt;weightsize();
++
++    // Now compute each processing_*_prg program.
++    string processing_input_prg = input_prg;
++    if (processing_input_prg.empty() &amp;&amp; dataset-&gt;inputsize() &gt; 0) {
++        processing_input_prg = &quot;[%0:%&quot; + tostring(start_of_targets-1) + &quot;]&quot;;
++    }
++    
++    string processing_target_prg = target_prg;
++    if (processing_target_prg.empty() &amp;&amp; dataset-&gt;targetsize() &gt; 0) {
++        processing_target_prg = &quot;[%&quot; + tostring(start_of_targets) + &quot;:%&quot; + tostring(start_of_weights-1) + &quot;]&quot;;
++    }
++
++    string processing_weight_prg = weight_prg;
++    if (processing_weight_prg.empty() &amp;&amp; dataset-&gt;weightsize() &gt; 0) {
++        processing_weight_prg = &quot;[%&quot; + tostring(start_of_weights) + &quot;:%&quot; + tostring(start_of_extras-1) + &quot;]&quot;;
++    }
++
++    string processing_extras_prg = extra_prg;
++    if (processing_extras_prg.empty() &amp;&amp; dataset-&gt;extrasize() &gt; 0) {
++        processing_extras_prg = &quot;[%&quot; + tostring(start_of_extras) + &quot;:END]&quot;;
++    }
++    
++    return new ProcessingVMatrix(filtered_dataset, processing_input_prg,
++                                 processing_target_prg, processing_weight_prg,
++                                 processing_extras_prg);
+ }
+ 
+ void VPLProcessor::computeOutput(const Vec&amp; input, Vec&amp; output) const
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000025.html">[Plearn-commits] r6576 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="000027.html">[Plearn-commits] r6578 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#26">[ date ]</a>
+              <a href="thread.html#26">[ thread ]</a>
+              <a href="subject.html#26">[ subject ]</a>
+              <a href="author.html#26">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

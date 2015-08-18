@@ -1,0 +1,249 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7490 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7490%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200706011629.l51GTVUB011542%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000938.html">
+   <LINK REL="Next"  HREF="000940.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7490 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7490%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200706011629.l51GTVUB011542%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7490 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Fri Jun  1 18:29:31 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000938.html">[Plearn-commits] r7489 - trunk/python_modules/plearn/learners/autolr
+</A></li>
+        <LI>Next message: <A HREF="000940.html">[Plearn-commits] r7491 - trunk/python_modules/plearn/learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#939">[ date ]</a>
+              <a href="thread.html#939">[ thread ]</a>
+              <a href="subject.html#939">[ subject ]</a>
+              <a href="author.html#939">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-06-01 18:29:31 +0200 (Fri, 01 Jun 2007)
+New Revision: 7490
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+   trunk/plearn_learners/online/RBMModule.h
+Log:
+Added option 'standard_weights_grad' to choose between the usual weights update formula and the 'true' contrastive divergence gradient (only when using an external weights matrix)
+
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-06-01 15:12:59 UTC (rev 7489)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-06-01 16:29:31 UTC (rev 7490)
+@@ -100,6 +100,7 @@
+     Gibbs_step(0),
+     log_partition_function(0),
+     partition_function_is_stale(true),
++    standard_weights_grad(true),
+     hidden_bias(NULL),
+     weights(NULL),
+     hidden_act(NULL),
+@@ -135,12 +136,23 @@
+ 
+     declareOption(ol, &quot;cd_learning_rate&quot;, &amp;RBMModule::cd_learning_rate,
+                   OptionBase::buildoption,
+-        &quot;Learning rate for the constrastive divergence step.&quot;);
++        &quot;Learning rate for the constrastive divergence step. Note that when\n&quot;
++        &quot;set to 0, the gradient of the contrastive divergence will not be\n&quot;
++        &quot;computed at all.&quot;);
+ 
+     declareOption(ol, &quot;compute_contrastive_divergence&quot;, &amp;RBMModule::compute_contrastive_divergence,
+                   OptionBase::buildoption,
+         &quot;Compute the constrastive divergence in an output port.&quot;);
+ 
++    declareOption(ol, &quot;standard_weights_grad&quot;,
++                  &amp;RBMModule::standard_weights_grad,
++                  OptionBase::buildoption,
++        &quot;This option is only used when weights of the connection are given\n&quot;
++        &quot;through the 'weights' port. When this is the case, the gradient of\n&quot;
++        &quot;contrastive divergence w.r.t. weights is either computed:\n&quot;
++        &quot;- by the usual formula if 'standard_weights_grad' is true\n&quot;
++        &quot;- by the true gradient if 'standard_weights_grad' is false.&quot;);
++
+     declareOption(ol, &quot;n_Gibbs_steps_CD&quot;, 
+                   &amp;RBMModule::n_Gibbs_steps_CD,
+                   OptionBase::buildoption,
+@@ -958,11 +970,16 @@
+             &quot;an input gradient w.r.t. visible units&quot; );
+ 
+     bool compute_visible_grad = visible_grad &amp;&amp; visible_grad-&gt;isEmpty();
++    bool compute_weights_grad = weights_grad &amp;&amp; weights_grad-&gt;isEmpty();
+     
+     int mbs = (visible &amp;&amp; !visible-&gt;isEmpty()) ? visible-&gt;length() : -1;
+-    if (visible &amp;&amp; !visible-&gt;isEmpty() &amp;&amp; 
+-        (hidden_grad &amp;&amp; !hidden_grad-&gt;isEmpty()))
++
++    if (hidden_grad &amp;&amp; !hidden_grad-&gt;isEmpty())
+     {
++        // Note: the assert below is for behavior compatibility with previous
++        // code. It might not be necessary, or might need to be modified.
++        PLASSERT( visible &amp;&amp; !visible-&gt;isEmpty() );
++
+         // Note: we need to perform the following steps even if the gradient
+         // learning rate is equal to 0. This is because we must propagate the
+         // gradient to the visible layer, even though no update is required.
+@@ -1076,45 +1093,84 @@
+                   !negative_phase_hidden_activations-&gt;isEmpty() );
+         // Perform update.
+         visible_layer-&gt;update(*visible, *negative_phase_visible_samples);
+-        if (weights_grad)
+-        {
++
++        bool connection_update_is_done = false;
++        if (compute_weights_grad) {
++            // First resize the 'weights_grad' matrix.
+             int up = connection-&gt;up_size;
+             int down = connection-&gt;down_size;
+             PLASSERT( weights &amp;&amp; !weights-&gt;isEmpty() &amp;&amp;
+-                    weights_grad-&gt;isEmpty() &amp;&amp;
+-                    weights_grad-&gt;width() == up * down );
++                      weights_grad-&gt;width() == up * down );
+             weights_grad-&gt;resize(mbs, up * down);
+ 
+-            Mat wg;
+-            Vec vp, hp, vn, hn;
+-            for(int i=0; i&lt;mbs; i++)
++            if (standard_weights_grad)
+             {
+-                vp = (*visible)(i);
+-                hp = (*hidden)(i);
+-                vn = (*negative_phase_visible_samples)(i);
+-                hn = (*negative_phase_hidden_expectations)(i);
+-                wg = Mat(up, down,(*weights_grad)(i));
+-                connection-&gt;petiteCulotteOlivierCD(
+-                        vp, hp,
+-                        vn,
+-                        hn,
+-                        wg,
+-                        true);
++                // Perform both computation of weights gradient and do update
++                // at the same time.
++                Mat wg;
++                Vec vp, hp, vn, hn;
++                for(int i=0; i&lt;mbs; i++)
++                {
++                    vp = (*visible)(i);
++                    hp = (*hidden)(i);
++                    vn = (*negative_phase_visible_samples)(i);
++                    hn = (*negative_phase_hidden_expectations)(i);
++                    wg = Mat(up, down,(*weights_grad)(i));
++                    connection-&gt;petiteCulotteOlivierCD(
++                            vp, hp,
++                            vn,
++                            hn,
++                            wg,
++                            true);
++                    connection_update_is_done = true;
++                }
++            } else {
++                // Only do computation of gradient here.
++                PLASSERT( connection-&gt;classname() == &quot;RBMMatrixConnection&quot; &amp;&amp;
++                          visible_layer-&gt;classname() == &quot;RBMBinomialLayer&quot; &amp;&amp;
++                          hidden_layer-&gt;classname() == &quot;RBMBinomialLayer&quot; );
++
++                for (int k = 0; k &lt; mbs; k++) {
++                    int idx = 0;
++                    for (int i = 0; i &lt; up; i++) {
++                        real p_i_p = (*hidden)(k, i);
++                        real a_i_p = (*hidden_act)(k, i);
++                        real p_i_n =
++                            (*negative_phase_hidden_expectations)(k, i);
++                        real a_i_n =
++                            (*negative_phase_hidden_activations)(k, i);
++                        real scale_p = 1 - (1 - p_i_p) * a_i_p;
++                        real scale_n = 1 - (1 - p_i_n) * a_i_n;
++                        for (int j = 0; j &lt; down; j++, idx++) {
++                            // Weight 'idx' is the (i,j)-th element in the
++                            // 'weights' matrix.
++                            real v_j_p = (*visible)(k, j);
++                            real v_j_n =
++                                (*negative_phase_visible_samples)(k, j);
++                            (*weights_grad)(k, idx) +=
++                                p_i_p * v_j_p * scale_p   // Positive phase.
++                             - (p_i_n * v_j_n * scale_n); // Negative phase.
++                        }
++                    }
++                }
+             }
+         }
+-        else
+-        {
++        if (!connection_update_is_done)
+             connection-&gt;update(*visible, *hidden,
+                     *negative_phase_visible_samples,
+                     *negative_phase_hidden_expectations);
+-        }
++
+         hidden_layer-&gt;update(*hidden, *negative_phase_hidden_expectations);
++
+         if (hidden_bias_grad)
+         {
+             if (hidden_bias_grad-&gt;isEmpty()) {
+                 PLASSERT(hidden_bias_grad-&gt;width() == hidden_layer-&gt;size);
+                 hidden_bias_grad-&gt;resize(mbs,hidden_layer-&gt;size);
+             }
++            PLASSERT_MSG( hidden_layer-&gt;classname() == &quot;RBMBinomialLayer&quot; &amp;&amp;
++                          visible_layer-&gt;classname() == &quot;RBMBinomialLayer&quot;,
++                          &quot;Only implemented for binomial layers&quot; );
+             // d(contrastive_divergence)/dhidden_bias
+             for (int k = 0; k &lt; hidden_bias_grad-&gt;length(); k++) {
+                 for (int i = 0; i &lt; hidden_bias_grad-&gt;width(); i++) {
+
+Modified: trunk/plearn_learners/online/RBMModule.h
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.h	2007-06-01 15:12:59 UTC (rev 7489)
++++ trunk/plearn_learners/online/RBMModule.h	2007-06-01 16:29:31 UTC (rev 7490)
+@@ -90,6 +90,8 @@
+     real log_partition_function;
+     bool partition_function_is_stale;
+ 
++    bool standard_weights_grad;
++
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000938.html">[Plearn-commits] r7489 - trunk/python_modules/plearn/learners/autolr
+</A></li>
+	<LI>Next message: <A HREF="000940.html">[Plearn-commits] r7491 - trunk/python_modules/plearn/learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#939">[ date ]</a>
+              <a href="thread.html#939">[ thread ]</a>
+              <a href="subject.html#939">[ subject ]</a>
+              <a href="author.html#939">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

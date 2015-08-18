@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9579 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9579%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200810181636.m9IGauAu006911%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003018.html">
+   <LINK REL="Next"  HREF="003020.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9579 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9579%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200810181636.m9IGauAu006911%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9579 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Sat Oct 18 18:36:56 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003018.html">[Plearn-commits] r9578 - trunk/plearn/sys
+</A></li>
+        <LI>Next message: <A HREF="003020.html">[Plearn-commits] r9580 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3019">[ date ]</a>
+              <a href="thread.html#3019">[ thread ]</a>
+              <a href="subject.html#3019">[ subject ]</a>
+              <a href="author.html#3019">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-10-18 18:36:54 +0200 (Sat, 18 Oct 2008)
+New Revision: 9579
+
+Modified:
+   trunk/plearn_learners/online/RBMWoodsLayer.cc
+   trunk/plearn_learners/online/RBMWoodsLayer.h
+Log:
+Corrected bugs with use_signed_samples=1 setting...
+
+
+Modified: trunk/plearn_learners/online/RBMWoodsLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMWoodsLayer.cc	2008-10-16 21:39:39 UTC (rev 9578)
++++ trunk/plearn_learners/online/RBMWoodsLayer.cc	2008-10-18 16:36:54 UTC (rev 9579)
+@@ -69,10 +69,7 @@
+     PLCHECK_MSG(expectation_is_up_to_date, &quot;Expectation should be computed &quot;
+             &quot;before calling generateSample()&quot;);
+ 
+-    if(use_signed_samples)
+-        sample.fill(-1);
+-    else
+-        sample.clear();
++    sample.clear();
+ 
+     int n_nodes_per_tree = size / n_trees;
+     int node, depth, node_sample, sub_tree_size;
+@@ -85,6 +82,9 @@
+         sub_tree_size = node;
+         while( depth &lt; tree_depth )
+         {
++            // HUGO: Note that local_node_expectation is really
++            // used as a probability, even for signed samples.
++            // Sorry for the misleading choice of variable name...
+             node_sample = random_gen-&gt;binomial_sample(
+                 local_node_expectation[ node + offset ] );
+             if( use_signed_samples )
+@@ -152,6 +152,10 @@
+ 
+     // Get local expectations at every node
+ 
++    // HUGO: Note that local_node_expectation is really
++    // used as a probability, even for signed samples.
++    // Sorry for the misleading choice of variable name...
++
+     // Divide and conquer computation of local (conditional) free energies
+     for( int t=0; t&lt;n_trees; t++ )
+     {
+@@ -297,6 +301,10 @@
+         offset += n_nodes_per_tree;
+     }
+ 
++    if( use_signed_samples )
++        for( int i=0; i&lt;expectation.length(); i++ )
++            expectation[i] = expectation[i] - off_expectation[i];
++
+     expectation_is_up_to_date = true;
+ }
+ 
+@@ -471,6 +479,10 @@
+         }
+         offset += n_nodes_per_tree;
+     }
++
++    if( use_signed_samples )
++        for( int i=0; i&lt;output.length(); i++ )
++            output[i] = output[i] - off_expectation[i];
+ }
+ 
+ void RBMWoodsLayer::fprop( const Mat&amp; inputs, Mat&amp; outputs )
+@@ -546,7 +558,10 @@
+                 if( left_of_grand_parent )
+                 {
+                     grand_parent = n + offset + 3*sub_tree_size + 3;
+-                    grand_parent_prob = output[ grand_parent ];
++                    if( use_signed_samples )
++                        grand_parent_prob = output[ grand_parent ] + off_expectation[grand_parent];
++                    else
++                        grand_parent_prob = output[ grand_parent ];
+                     // Gradient for rest of the tree
+                     on_tree_gradient[ grand_parent ] +=
+                         ( out_grad * node_exp
+@@ -591,7 +606,10 @@
+                 if( left_of_grand_parent )
+                 {
+                     grand_parent = n + offset + sub_tree_size + 1;
+-                    grand_parent_prob = output[ grand_parent ];
++                    if( use_signed_samples )
++                        grand_parent_prob = output[ grand_parent ] + off_expectation[ grand_parent ];
++                    else
++                        grand_parent_prob = output[ grand_parent ];
+                     // Gradient for rest of the tree
+                     on_tree_gradient[ grand_parent ] +=
+                         ( out_grad * node_exp
+@@ -967,7 +985,8 @@
+ 
+     declareOption(ol, &quot;use_signed_samples&quot;, &amp;RBMWoodsLayer::use_signed_samples,
+                   OptionBase::buildoption,
+-                  &quot;Indication that samples should be in {-1,1}, not {0,1}.&quot;);
++                  &quot;Indication that samples should be in {-1,1}, not {0,1}, at nodes where a\n&quot;
++                  &quot;left/right decision is made. Other nodes are set to 0.\n&quot;);
+ 
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+@@ -1242,6 +1261,8 @@
+             }
+             else
+             {
++                if( use_signed_samples )
++                    output_i[current_node] = -1;
+                 sub_tree_size /= 2;
+                 current_node += sub_tree_size+1;
+             }
+
+Modified: trunk/plearn_learners/online/RBMWoodsLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMWoodsLayer.h	2008-10-16 21:39:39 UTC (rev 9578)
++++ trunk/plearn_learners/online/RBMWoodsLayer.h	2008-10-18 16:36:54 UTC (rev 9579)
+@@ -56,13 +56,14 @@
+ public:
+     //#####  Public Build Options  ############################################
+ 
+-    // Number of trees in the woods
++    //! Number of trees in the woods
+     int n_trees;
+ 
+-    // Depth of the trees in the woods (1 gives the ordinary RBMBinomialLayer)
++    //! Depth of the trees in the woods (1 gives the ordinary RBMBinomialLayer)
+     int tree_depth;
+ 
+-    // Indication that samples should be in {-1,1}, not {0,1}
++    //! Indication that samples should be in {-1,1}, not {0,1}, at nodes where a
++    //! left/right decision is made. Other nodes are set to 0.
+     bool use_signed_samples;
+ 
+ public:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003018.html">[Plearn-commits] r9578 - trunk/plearn/sys
+</A></li>
+	<LI>Next message: <A HREF="003020.html">[Plearn-commits] r9580 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3019">[ date ]</a>
+              <a href="thread.html#3019">[ thread ]</a>
+              <a href="subject.html#3019">[ subject ]</a>
+              <a href="author.html#3019">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,144 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9473 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-September/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9473%20-%20trunk/plearn/vmat&In-Reply-To=%3C200809221851.m8MIpFDt027693%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002912.html">
+   <LINK REL="Next"  HREF="002914.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9473 - trunk/plearn/vmat</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9473%20-%20trunk/plearn/vmat&In-Reply-To=%3C200809221851.m8MIpFDt027693%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9473 - trunk/plearn/vmat">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Mon Sep 22 20:51:15 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002912.html">[Plearn-commits] r9472 -	trunk/plearn/vmat/test/.pytest/PL_SelectRowsVMatrix/expected_results
+</A></li>
+        <LI>Next message: <A HREF="002914.html">[Plearn-commits] r9474 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2913">[ date ]</a>
+              <a href="thread.html#2913">[ thread ]</a>
+              <a href="subject.html#2913">[ subject ]</a>
+              <a href="author.html#2913">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-09-22 20:51:15 +0200 (Mon, 22 Sep 2008)
+New Revision: 9473
+
+Modified:
+   trunk/plearn/vmat/ReplicateSamplesVMatrix.cc
+Log:
+Fixed potential issue with ReplicateSamplesVMatrix when using missing targets: calling is_missing on an integer is not a good idea
+
+Modified: trunk/plearn/vmat/ReplicateSamplesVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/ReplicateSamplesVMatrix.cc	2008-09-22 18:14:25 UTC (rev 9472)
++++ trunk/plearn/vmat/ReplicateSamplesVMatrix.cc	2008-09-22 18:51:15 UTC (rev 9473)
+@@ -50,9 +50,12 @@
+     &quot;the first 'n-n_j' samples of class j (having n_j samples) will be\n&quot;
+     &quot;replicated so that each class also has n samples. If required, samples\n&quot;
+     &quot;will be replicated more than once.\n&quot;
+-    &quot;The class index is assumed to be the first element of the target. When\n&quot;
+-    &quot;the 'operate_on_bags' option is set to true, the bag information must\n&quot;
+-    &quot;be stored in the last element of the target.\n&quot;
++    &quot;The class index is assumed to be the first element of the target. It\n&quot;
++    &quot;can be either an integer (negative class indices are also allowed) or\n&quot;
++    &quot;a missing value (all examples with missing values are considered as\n&quot;
++    &quot;belonging to the same class).\n&quot;
++    &quot;When the 'operate_on_bags' option is set to true, the bag information\n&quot;
++    &quot;must be stored in the last element of the target.\n&quot;
+     &quot;All samples are also shuffled so as to mix classes together.&quot;
+ );
+ 
+@@ -138,33 +141,38 @@
+     Vec input, target;
+     real weight;
+     TVec&lt; TVec&lt;int&gt;  &gt; class_indices;  // Indices of samples in each class.
+-    TVec&lt;int&gt; nan_indices(0); // Indices of missing class
++    TVec&lt;int&gt; nan_indices; // Indices of missing class
+     TVec&lt; TVec&lt;int&gt; &gt; negativeclass_indices;
+     map&lt;int, int&gt; bag_sizes; // Map a source index to the size of its bag.
+     int bag_start_idx = -1;
+     int bag_idx = bag_index &gt;= 0 ? bag_index : source-&gt;targetsize() - 1;
+     for (int i = 0; i &lt; source-&gt;length(); i++) {
+         source-&gt;getExample(i, input, target, weight);
+-        int c = int(round(target[0]));
+-        if (c &gt;= class_indices.length()) {
+-            int n_to_add = c - class_indices.length() + 1;
+-            for (int j = 0; j &lt; n_to_add; j++)
+-                class_indices.append(TVec&lt;int&gt;());
++        real c_real = target[0];
++        int c = int(round(c_real));
++        if (!is_missing(c_real)) {
++            if (c &gt;= class_indices.length()) {
++                int n_to_add = c - class_indices.length() + 1;
++                for (int j = 0; j &lt; n_to_add; j++)
++                    class_indices.append(TVec&lt;int&gt;());
++            }
++            else if ( -c &gt;= negativeclass_indices.length() ) {
++                int n_to_add = -c - negativeclass_indices.length() + 1;
++                for (int j = 0; j &lt; n_to_add; j++)
++                    negativeclass_indices.append(TVec&lt;int&gt;());
++            }
+         }
+-        else if ( -c &gt;= negativeclass_indices.length() ) {
+-            int n_to_add = -c - negativeclass_indices.length() + 1;
+-            for (int j = 0; j &lt; n_to_add; j++)
+-                negativeclass_indices.append(TVec&lt;int&gt;());
+-        }
+         
+         if (!operate_on_bags || int(round(target[bag_idx])) &amp;
+                                 SumOverBagsVariable::TARGET_COLUMN_FIRST) {
+-            if( c&gt;= 0 )
++            if( is_missing(c_real) )
++                nan_indices.append(i);
++            else if( c&gt;= 0 )
+                 class_indices[c].append(i);
+             else if( c&lt; 0 )
+                 negativeclass_indices[-c].append(i);
+-            else if( is_missing(c) )
+-                nan_indices.append(i);
++            else
++                PLERROR(&quot;In ReplicateSamplesVMatrix::build_ - Invalid class&quot;);
+             indices.append(i);
+             bag_sizes[i] = 0;
+             bag_start_idx = i;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002912.html">[Plearn-commits] r9472 -	trunk/plearn/vmat/test/.pytest/PL_SelectRowsVMatrix/expected_results
+</A></li>
+	<LI>Next message: <A HREF="002914.html">[Plearn-commits] r9474 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2913">[ date ]</a>
+              <a href="thread.html#2913">[ thread ]</a>
+              <a href="subject.html#2913">[ subject ]</a>
+              <a href="author.html#2913">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

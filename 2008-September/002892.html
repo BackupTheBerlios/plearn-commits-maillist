@@ -1,0 +1,151 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9452 - in trunk: python_modules/plearn/parallel	scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-September/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9452%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200809101943.m8AJhDAc020254%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002891.html">
+   <LINK REL="Next"  HREF="002893.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9452 - in trunk: python_modules/plearn/parallel	scripts</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9452%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200809101943.m8AJhDAc020254%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9452 - in trunk: python_modules/plearn/parallel	scripts">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed Sep 10 21:43:13 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002891.html">[Plearn-commits] r9451 - trunk/plearn_learners/regressors
+</A></li>
+        <LI>Next message: <A HREF="002893.html">[Plearn-commits] r9453 - in trunk: plearn_learners/meta	python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2892">[ date ]</a>
+              <a href="thread.html#2892">[ thread ]</a>
+              <a href="subject.html#2892">[ subject ]</a>
+              <a href="author.html#2892">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-09-10 21:43:13 +0200 (Wed, 10 Sep 2008)
+New Revision: 9452
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+dbidispatch --cpu=N work for condor. It tell the number of cores to reserve for a job.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2008-09-09 20:58:19 UTC (rev 9451)
++++ trunk/python_modules/plearn/parallel/dbi.py	2008-09-10 19:43:13 UTC (rev 9452)
+@@ -685,6 +685,7 @@
+         # in Meg for initialization for consistency with cluster
+         # then in kilo as that is what is needed by condor
+         self.mem = 0
++        self.cpu = 0
+         self.req = ''
+         self.raw = ''
+         self.rank = ''
+@@ -832,6 +833,8 @@
+             req+=&quot;&amp;&amp;((Arch == \&quot;INTEL\&quot;)||(Arch == \&quot;X86_64\&quot;))&quot;
+         else :
+             req+=&quot;&amp;&amp;(Arch == \&quot;%s\&quot;)&quot;%(self.targetcondorplatform)
++        if self.cpu&gt;0:
++            req+='&amp;&amp;(target.CPUS=='+self.cpu+')'
+ 
+         if self.os:
+             req=reduce(lambda x,y:x+' || (OpSys == &quot;'+str(y)+'&quot;)',
+@@ -1072,6 +1075,8 @@
+             req+=&quot;&amp;&amp;((Arch == \&quot;INTEL\&quot;)||(Arch == \&quot;X86_64\&quot;))&quot;
+         else :
+             req+=&quot;&amp;&amp;(Arch == \&quot;%s\&quot;)&quot;%(self.targetcondorplatform)
++        if self.cpu&gt;0:
++            req+='&amp;&amp;(target.CPUS=='+self.cpu+')'
+ 
+         if self.os:
+             req=reduce(lambda x,y:x+' || (OpSys == &quot;'+str(y)+'&quot;)',
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2008-09-09 20:58:19 UTC (rev 9451)
++++ trunk/scripts/dbidispatch	2008-09-10 19:43:13 UTC (rev 9452)
+@@ -9,6 +9,7 @@
+     bqtools, cluster option  :[--duree=X]
+     bqtools options          :[--micro[=nb_batch]] [--[*no_]long]
+     cluster, condor options  : [--32|--64|--3264] [--os=X] [--mem=N]
++                               [--cpu=nb_cpu_per_node]
+     condor option            : [--req=&quot;CONDOR_REQUIREMENT&quot;] [--[*no_]nice]
+                                [--[*no_]getenv] [*--[no_]prefserver] 
+                                [--rank=RANK_EXPRESSION] 
+@@ -17,7 +18,7 @@
+                                [--raw=CONDOR_EXPRESSION] [--tasks_filename={compact,explicit,*nb0,nb1,sh}+]
+                                [*--[no_]set_special_env]
+     cluster option           : [*--[no_]cwait]  [--[*no_]force]
+-                               [--[*no_]interruptible] [--cpu=nb_cpu_per_node]
++                               [--[*no_]interruptible]
+ An * after '[', '{' or ',' signals the default value.
+ An + after } tell that we can put one or more of the choise separeted by a comma
+ '''
+@@ -77,6 +78,8 @@
+     Cluster default: fc7. Cluster accepted value fc4, fc7 and fc9.
+     Condor default to the same as the submit host and --os=FC7,FC9 
+     tell to use FC7 or FC9 hosts.
++  The '--cpu=nb_cpu_per_node' option determine the number of cpu(cores) that 
++    will be reserved for each job.
+ 
+ cluster only options:
+   The '--[no_]cwait' is transfered to cluster. 
+@@ -84,7 +87,6 @@
+     when there are no nodes available, the launch of that command fails.
+   The '--force' option is passed to cluster
+   The '--interruptible' option is passed to cluster
+-  The '--cpu=nb_cpu_per_node' option is passed to cluster
+ 
+ condor only options:
+   If the CONDOR_HOME environment variable is set, then the HOME variable will
+@@ -299,7 +301,7 @@
+                        &quot;duree&quot;,&quot;cpu&quot;,&quot;mem&quot;,&quot;os&quot;]
+ elif launch_cmd==&quot;Condor&quot;:
+     valid_dbi_param +=[&quot;req&quot;, &quot;arch&quot;, &quot;getenv&quot;, &quot;nice&quot;, &quot;files&quot;, &quot;rank&quot;, &quot;env&quot;,
+-                       &quot;raw&quot;, &quot;os&quot;, &quot;set_special_env&quot;]
++                       &quot;raw&quot;, &quot;os&quot;, &quot;set_special_env&quot;, &quot;mem&quot;, &quot;cpu&quot;]
+ elif launch_cmd==&quot;Bqtools&quot;:
+     valid_dbi_param +=[&quot;micro&quot;, &quot;long&quot;, &quot;duree&quot;]
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002891.html">[Plearn-commits] r9451 - trunk/plearn_learners/regressors
+</A></li>
+	<LI>Next message: <A HREF="002893.html">[Plearn-commits] r9453 - in trunk: plearn_learners/meta	python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2892">[ date ]</a>
+              <a href="thread.html#2892">[ thread ]</a>
+              <a href="subject.html#2892">[ subject ]</a>
+              <a href="author.html#2892">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,172 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7812 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7812%20-%20trunk/plearn/vmat&In-Reply-To=%3C200707201936.l6KJaLDs012994%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001259.html">
+   <LINK REL="Next"  HREF="001261.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7812 - trunk/plearn/vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7812%20-%20trunk/plearn/vmat&In-Reply-To=%3C200707201936.l6KJaLDs012994%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7812 - trunk/plearn/vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Jul 20 21:36:21 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001259.html">[Plearn-commits] r7811 - trunk/plearn/math
+</A></li>
+        <LI>Next message: <A HREF="001261.html">[Plearn-commits] r7813 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1260">[ date ]</a>
+              <a href="thread.html#1260">[ thread ]</a>
+              <a href="subject.html#1260">[ subject ]</a>
+              <a href="author.html#1260">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-07-20 21:36:21 +0200 (Fri, 20 Jul 2007)
+New Revision: 7812
+
+Modified:
+   trunk/plearn/vmat/SelectColumnsVMatrix.cc
+   trunk/plearn/vmat/SelectColumnsVMatrix.h
+Log:
+Added the possibility to revert the selection.
+That way we can tell the columns we don't want
+
+
+Modified: trunk/plearn/vmat/SelectColumnsVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/SelectColumnsVMatrix.cc	2007-07-20 19:34:46 UTC (rev 7811)
++++ trunk/plearn/vmat/SelectColumnsVMatrix.cc	2007-07-20 19:36:21 UTC (rev 7812)
+@@ -58,13 +58,15 @@
+ //////////////////////////
+ SelectColumnsVMatrix::SelectColumnsVMatrix()
+     : extend_with_missing(false),
+-      fields_partial_match(false)
++      fields_partial_match(false),
++      inverse_fields_selection(false)
+ {}
+ 
+ SelectColumnsVMatrix::SelectColumnsVMatrix(VMat the_source, TVec&lt;string&gt; the_fields, bool the_extend_with_missing)
+     : extend_with_missing(the_extend_with_missing),
+       fields(the_fields),
+-      fields_partial_match(false)
++      fields_partial_match(false),
++      inverse_fields_selection(false)
+ {
+     source = the_source;
+     build_();
+@@ -76,7 +78,8 @@
+     inherited(the_source, call_build_),
+     extend_with_missing(false),
+     indices(the_indices),
+-    fields_partial_match(false)
++    fields_partial_match(false),
++    inverse_fields_selection(false)
+ {
+     if (call_build_)
+         build_();
+@@ -84,7 +87,8 @@
+ 
+ SelectColumnsVMatrix::SelectColumnsVMatrix(VMat the_source, Vec the_indices)
+     : extend_with_missing(false),
+-      fields_partial_match(false)
++      fields_partial_match(false),
++      inverse_fields_selection(false)
+ {
+     source = the_source;
+     indices.resize(the_indices.length());
+@@ -137,6 +141,10 @@
+     declareOption(ol, &quot;extend_with_missing&quot;, &amp;SelectColumnsVMatrix::extend_with_missing, OptionBase::buildoption,
+                   &quot;If set to 1, then fields specified in the 'fields' option that do not exist\n&quot;
+                   &quot;in the source VMatrix will be filled with missing values.&quot;);
++    declareOption(ol, &quot;inverse_fields_selection&quot;, &amp;SelectColumnsVMatrix::inverse_fields_selection,
++                  OptionBase::buildoption,
++                  &quot;If set to true, after all previous fields selection, we inverse the selection.\n&quot;
++                  &quot;This way we can specify the indicies we don't want.&quot;);
+ 
+     inherited::declareOptions(ol);
+ }
+@@ -150,6 +158,7 @@
+     deepCopyField(sinput, copies);
+     deepCopyField(indices, copies);
+     deepCopyField(fields, copies);
++    deepCopyField(inverse_fields_selection, copies);
+ }
+ 
+ ///////////
+@@ -216,7 +225,22 @@
+                         }
+             }
+         }
+-
++        
++        //we inverse the selection
++        if(inverse_fields_selection){
++            TVec&lt;int&gt; newindices;
++            for (int i = 0;i&lt;source.width();i++){
++                bool found=false;
++                for(int j=0;j&lt;indices.size();j++)
++                    if(indices[j]==i){
++                        found = true;
++                        break;
++                    }
++                if(!found)
++                    newindices.append(i);
++            }
++            indices = newindices;
++        }
+         // Copy matrix dimensions
+         width_ = indices.length();
+         length_ = source-&gt;length();
+
+Modified: trunk/plearn/vmat/SelectColumnsVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/SelectColumnsVMatrix.h	2007-07-20 19:34:46 UTC (rev 7811)
++++ trunk/plearn/vmat/SelectColumnsVMatrix.h	2007-07-20 19:36:21 UTC (rev 7812)
+@@ -71,6 +71,7 @@
+     TVec&lt;int&gt; indices;
+     TVec&lt;string&gt; fields;
+     bool fields_partial_match;
++    bool inverse_fields_selection;
+ 
+ public:
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001259.html">[Plearn-commits] r7811 - trunk/plearn/math
+</A></li>
+	<LI>Next message: <A HREF="001261.html">[Plearn-commits] r7813 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1260">[ date ]</a>
+              <a href="thread.html#1260">[ thread ]</a>
+              <a href="subject.html#1260">[ subject ]</a>
+              <a href="author.html#1260">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

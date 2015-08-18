@@ -1,0 +1,252 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6849 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6849%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200704071409.l37E9Gnf010081%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000297.html">
+   <LINK REL="Next"  HREF="000299.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6849 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6849%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200704071409.l37E9Gnf010081%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6849 - trunk/plearn_learners/generic/EXPERIMENTAL">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Sat Apr  7 16:09:16 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000297.html">[Plearn-commits] r6848 - trunk/plearn_learners_experimental
+</A></li>
+        <LI>Next message: <A HREF="000299.html">[Plearn-commits] r6850 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#298">[ date ]</a>
+              <a href="thread.html#298">[ thread ]</a>
+              <a href="subject.html#298">[ subject ]</a>
+              <a href="author.html#298">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-04-07 16:09:16 +0200 (Sat, 07 Apr 2007)
+New Revision: 6849
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+Log:
+Added options to perform moving average of parameters during training
+for use only on test prediction.
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-04-07 02:43:40 UTC (rev 6848)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-04-07 14:09:16 UTC (rev 6849)
+@@ -56,6 +56,8 @@
+ 
+ NatGradNNet::NatGradNNet()
+     : noutputs(-1),
++      params_averaging_coeff(1.0),
++      params_averaging_freq(5),
+       init_lrate(0.01),
+       lrate_decay(0),
+       output_layer_lrate_scale(1),
+@@ -98,10 +100,30 @@
+ 
+     declareOption(ol, &quot;layer_params&quot;, &amp;NatGradNNet::layer_params,
+                   OptionBase::learntoption,
+-                  &quot;Parameters for each layer, organized as follows: layer_params[i] \n&quot;
++                  &quot;Training parameters for each layer, organized as follows: layer_params[i] \n&quot;
+                   &quot;is a matrix of dimension layer_sizes[i+1] x (layer_sizes[i]+1)\n&quot;
+                   &quot;containing the neuron biases in its first column.\n&quot;);
+ 
++    declareOption(ol, &quot;layer_mparams&quot;, &amp;NatGradNNet::layer_mparams,
++                  OptionBase::learntoption,
++                  &quot;Test parameters for each layer, organized like layer_params.\n&quot;
++                  &quot;This is a moving average of layer_params, computed with\n&quot;
++                  &quot;coefficient params_averaging_coeff. Thus the mparams are\n&quot;
++                  &quot;a smoothed version of the params, and they are used only\n&quot;
++                  &quot;during testing.\n&quot;);
++
++    declareOption(ol, &quot;params_averaging_coeff&quot;, &amp;NatGradNNet::params_averaging_coeff,
++                  OptionBase::buildoption,
++                  &quot;Coefficient used to control how fast we forget old parameters\n&quot;
++                  &quot;in the moving average performed as follows:\n&quot;
++                  &quot;mparams &lt;-- (1-params_averaging_coeff)mparams + params_averaging_coeff*params\n&quot;);
++
++    declareOption(ol, &quot;params_averaging_freq&quot;, &amp;NatGradNNet::params_averaging_freq,
++                  OptionBase::buildoption,
++                  &quot;How often (in terms of number of minibatches, i.e. weight updates)\n&quot;
++                  &quot;do we perform the moving average update calculation\n&quot;
++                  &quot;mparams &lt;-- (1-params_averaging_coeff)mparams + params_averaging_coeff*params\n&quot;);
++
+     declareOption(ol, &quot;init_lrate&quot;, &amp;NatGradNNet::init_lrate,
+                   OptionBase::buildoption,
+                   &quot;Initial learning rate\n&quot;);
+@@ -190,6 +212,7 @@
+     layer_sizes[0]=inputsize_;
+     layer_sizes[n_layers-1]=noutputs;
+     layer_params.resize(n_layers-1);
++    layer_mparams.resize(n_layers-1);
+     layer_params_delta.resize(n_layers-1);
+     layer_params_gradient.resize(n_layers-1);
+     biases.resize(n_layers-1);
+@@ -202,6 +225,7 @@
+         n_params+=layer_sizes[i+1]*(1+layer_sizes[i]);
+     }
+     all_params.resize(n_params);
++    all_mparams.resize(n_params);
+     all_params_gradient.resize(n_params);
+     all_params_delta.resize(n_params);
+     neuron_params.resize(n_neurons);
+@@ -211,6 +235,7 @@
+     {
+         int np=layer_sizes[i+1]*(1+layer_sizes[i]);
+         layer_params[i]=all_params.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
++        layer_mparams[i]=all_mparams.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
+         biases[i]=layer_params[i].subMatColumns(0,1);
+         weights[i]=layer_params[i].subMatColumns(1,layer_sizes[i]); // weights[0] from layer 0 to layer 1
+         layer_params_gradient[i]=all_params_gradient.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
+@@ -271,6 +296,7 @@
+ 
+     deepCopyField(hidden_layer_sizes, copies);
+     deepCopyField(layer_params, copies);
++    deepCopyField(layer_mparams, copies);
+     deepCopyField(neurons_natgrad_template, copies);
+     deepCopyField(neurons_natgrad_per_layer, copies);
+     deepCopyField(params_natgrad_template, copies);
+@@ -283,6 +309,7 @@
+     deepCopyField(neuron_outputs_per_layer, copies);
+     deepCopyField(neuron_extended_outputs_per_layer, copies);
+     deepCopyField(all_params, copies);
++    deepCopyField(all_mparams, copies);
+     deepCopyField(all_params_gradient, copies);
+     deepCopyField(layer_params_gradient, copies);
+     deepCopyField(neuron_gradients, copies);
+@@ -317,6 +344,8 @@
+     }
+     stage = 0;
+     cumulative_training_time=0;
++    if (params_averaging_coeff!=1.0)
++        all_mparams &lt;&lt; all_params;
+ }
+ 
+ void NatGradNNet::train()
+@@ -369,6 +398,11 @@
+                 
+             }
+         }
++        if (params_averaging_coeff!=1.0 &amp;&amp; 
++            b==minibatch_size-1 &amp;&amp; 
++            (stage+1)%(minibatch_size*params_averaging_freq)==0)
++            multiplyScaledAdd(all_params, 1-params_averaging_coeff,
++                              params_averaging_coeff, all_mparams);
+         if( pb )
+             pb-&gt;update( stage + 1 );
+     }
+@@ -391,7 +425,7 @@
+     // mean gradient over minibatch_size examples has less variance, can afford larger learning rate
+     real lrate = sqrt(real(minibatch_size))*init_lrate/(1 + t*lrate_decay);
+     PLASSERT(targets.length()==minibatch_size &amp;&amp; train_costs.length()==minibatch_size &amp;&amp; example_weights.length()==minibatch_size);
+-    fpropNet(minibatch_size);
++    fpropNet(minibatch_size,true);
+     fbpropLoss(neuron_outputs_per_layer[n_layers-1],targets,example_weights,train_costs);
+     for (int i=n_layers-1;i&gt;0;i--)
+     {
+@@ -461,12 +495,12 @@
+ void NatGradNNet::computeOutput(const Vec&amp; input, Vec&amp; output) const
+ {
+     neuron_outputs_per_layer[0](0) &lt;&lt; input;
+-    fpropNet(1);
++    fpropNet(1,false);
+     output &lt;&lt; neuron_outputs_per_layer[n_layers-1](0);
+ }
+ 
+ //! compute (pre-final-non-linearity) network top-layer output given input
+-void NatGradNNet::fpropNet(int n_examples) const
++void NatGradNNet::fpropNet(int n_examples, bool during_training) const
+ {
+     PLASSERT_MSG(n_examples&lt;=minibatch_size,&quot;NatGradNNet::fpropNet: nb input vectors treated should be &lt;= minibatch_size\n&quot;);
+     for (int i=0;i&lt;n_layers-1;i++)
+@@ -479,7 +513,9 @@
+             next_layer = next_layer.subMatRows(0,n_examples);
+         }
+         // try to use BLAS for the expensive operation
+-        productScaleAcc(next_layer, prev_layer, false, layer_params[i], true, 1, 0);
++        productScaleAcc(next_layer, prev_layer, false, 
++                        during_training?layer_params[i]:layer_mparams[i], 
++                        true, 1, 0);
+         // compute layer's output non-linearity
+         if (i+1&lt;n_layers-1)
+             for (int k=0;k&lt;n_examples;k++)
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-04-07 02:43:40 UTC (rev 6848)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-04-07 14:09:16 UTC (rev 6849)
+@@ -64,7 +64,14 @@
+     //! layer_params[i] is a matrix of dimension layer_sizes[i+1] x (layer_sizes[i]+1)
+     //! containing the neuron biases in its first column.
+     TVec&lt;Mat&gt; layer_params;
++    //! mean layer_params, averaged over past updates (moving average)
++    TVec&lt;Mat&gt; layer_mparams;
+ 
++    //! mparams &lt;-- (1-params_averaging_coeff)mparams + params_averaging_coeff*params
++    real params_averaging_coeff;
++    //! how often (in terms of minibatches, i.e. weight updates) do we perform the above?
++    int params_averaging_freq;
++
+     //! initial learning rate
+     real init_lrate;
+ 
+@@ -202,7 +209,7 @@
+ 
+     //! compute a minibatch of size n_examples network top-layer output given layer 0 output (= network input)
+     //! (note that log-probabilities are computed for classification tasks, output_type=NLL)
+-    void fpropNet(int n_examples) const;
++    void fpropNet(int n_examples, bool during_training) const;
+ 
+     //! compute train costs given the network top-layer output
+     //! and write into neuron_gradients_per_layer[n_layers-2], gradient on pre-non-linearity activation
+@@ -223,6 +230,7 @@
+     Vec all_params; // all the parameters in one vector
+     Vec all_params_delta; // update direction
+     Vec all_params_gradient; // all the parameter gradients in one vector
++    Vec all_mparams; // mean parameters (moving-averaged over past values)
+     TVec&lt;Mat&gt; layer_params_gradient;
+     TVec&lt;Vec&gt; layer_params_delta;
+     TVec&lt;Vec&gt; neuron_params; // params of each neuron (pointing in all_params)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000297.html">[Plearn-commits] r6848 - trunk/plearn_learners_experimental
+</A></li>
+	<LI>Next message: <A HREF="000299.html">[Plearn-commits] r6850 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#298">[ date ]</a>
+              <a href="thread.html#298">[ thread ]</a>
+              <a href="subject.html#298">[ subject ]</a>
+              <a href="author.html#298">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

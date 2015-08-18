@@ -1,0 +1,200 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8217 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8217%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200710261857.l9QIvP1k023898%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001664.html">
+   <LINK REL="Next"  HREF="001666.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8217 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8217%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200710261857.l9QIvP1k023898%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8217 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Fri Oct 26 20:57:25 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001664.html">[Plearn-commits] r8216 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="001666.html">[Plearn-commits] r8218 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1665">[ date ]</a>
+              <a href="thread.html#1665">[ thread ]</a>
+              <a href="subject.html#1665">[ subject ]</a>
+              <a href="author.html#1665">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2007-10-26 20:57:24 +0200 (Fri, 26 Oct 2007)
+New Revision: 8217
+
+Modified:
+   trunk/plearn_learners_experimental/StackedFocusedAutoassociatorsNet.cc
+   trunk/plearn_learners_experimental/StackedFocusedAutoassociatorsNet.h
+Log:
+Added a precision factor for dissimilar examples...
+
+
+Modified: trunk/plearn_learners_experimental/StackedFocusedAutoassociatorsNet.cc
+===================================================================
+--- trunk/plearn_learners_experimental/StackedFocusedAutoassociatorsNet.cc	2007-10-26 16:10:33 UTC (rev 8216)
++++ trunk/plearn_learners_experimental/StackedFocusedAutoassociatorsNet.cc	2007-10-26 18:57:24 UTC (rev 8217)
+@@ -67,6 +67,7 @@
+     fine_tuning_decrease_ct( 0. ),
+     k_neighbors( 1 ),
+     n_classes( -1 ),
++    dissimilar_example_cost_precision(2.77), // Value taken from original paper
+     do_not_use_knn_classifier(false),
+     output_weights_l1_penalty_factor(0),
+     output_weights_l2_penalty_factor(0),
+@@ -177,6 +178,11 @@
+                   OptionBase::buildoption,
+                   &quot;Number of classes.&quot;);
+ 
++    declareOption(ol, &quot;dissimilar_example_cost_precision&quot;, 
++                  &amp;StackedFocusedAutoassociatorsNet::dissimilar_example_cost_precision,
++                  OptionBase::buildoption,
++                  &quot;Parameter that constrols the importance of the dissimilar example cost.&quot;);
++
+     declareOption(ol, &quot;do_not_use_knn_classifier&quot;, 
+                   &amp;StackedFocusedAutoassociatorsNet::do_not_use_knn_classifier,
+                   OptionBase::buildoption,
+@@ -636,7 +642,7 @@
+     Vec target2( targetsize() );
+     real weight; // unused
+     real weight2; // unused
+-
++    
+     Vec similar_example_index(1);
+ 
+     TVec&lt;string&gt; train_cost_names = getTrainCostNames() ;
+@@ -806,11 +812,20 @@
+             if( pb )
+                 pb-&gt;update( stage - init_stage + 1 );
+         }
++
++        if(verbosity&gt;2)
++        {
++            Vec train_stats_vec = train_stats-&gt;getMean();
++            cout &lt;&lt; &quot;similarity_cost = &quot; &lt;&lt; train_stats_vec[train_stats_vec.length()-3] &lt;&lt; endl;
++            cout &lt;&lt; &quot;dissimilarity_cost = &quot; &lt;&lt; train_stats_vec[train_stats_vec.length()-2] &lt;&lt; endl;
++            cout &lt;&lt; &quot;metric_cost = &quot; &lt;&lt; train_stats_vec[train_stats_vec.length()-1] &lt;&lt; endl;
++        }
+     }
+     
+     train_stats-&gt;finalize();
+     MODULE_LOG &lt;&lt; &quot;  train costs = &quot; &lt;&lt; train_stats-&gt;getMean() &lt;&lt; endl;
+ 
++
+     // Update currently_trained_layer
+     if(stage &gt; 0)
+         currently_trained_layer = n_layers;
+@@ -902,8 +917,8 @@
+     substract(input_representation,dissimilar_example_representation,
+               dissimilar_gradient_contribution);
+     
+-    dissimilar_gradient_contribution *= -5.54*
+-        safeexp(-2.77*dist/sqrt(layers[index+1]-&gt;size));
++    dissimilar_gradient_contribution *= -2* dissimilar_example_cost_precision*
++        safeexp(-dissimilar_example_cost_precision*dist/sqrt(layers[index+1]-&gt;size));
+     
+     expectation_gradients[index+1] += dissimilar_gradient_contribution;
+         //}
+@@ -1040,11 +1055,21 @@
+                   expectation_gradients[n_layers-1]);
+         expectation_gradients[n_layers-1] *= 4/sqrt(layers[n_layers-1]-&gt;size);
+     
++        train_costs[train_costs.length()-3] = 
++            2 * sqrt(powdistance(previous_input_representation,
++                                 similar_example_representation,
++                                 2)) / sqrt(layers[n_layers-1]-&gt;size);
++        
+         // Dissimilar example contribution
+         real dist = sqrt(powdistance(previous_input_representation,
+                                      dissimilar_example_representation,
+                                      2));
+-    
++
++        train_costs[train_costs.length()-2] = 
++            2 * sqrt(layers[n_layers-1]-&gt;size) * safeexp( -dissimilar_example_cost_precision
++                                                          *dist/sqrt(layers[n_layers-1]-&gt;size));
++        train_costs.last() = train_costs[train_costs.length()-3] + 
++            train_costs[train_costs.length()-2];
+         //if( dist == 0 )
+         //    PLWARNING(&quot;StackedFocusedAutoassociatorsNet::fineTuningStep(): dissimilar&quot;
+         //              &quot; example representation is exactly the sample as the&quot;
+@@ -1057,8 +1082,8 @@
+                   dissimilar_example_representation,
+                   dissimilar_gradient_contribution);
+         
+-        dissimilar_gradient_contribution *= -5.54*
+-            safeexp(-2.77*dist/sqrt(layers[n_layers-1]-&gt;size));
++        dissimilar_gradient_contribution *= -2 * dissimilar_example_cost_precision*
++            safeexp(-dissimilar_example_cost_precision*dist/sqrt(layers[n_layers-1]-&gt;size));
+         
+         expectation_gradients[n_layers-1] += dissimilar_gradient_contribution;
+         //}
+@@ -1230,7 +1255,11 @@
+ 
+ TVec&lt;string&gt; StackedFocusedAutoassociatorsNet::getTrainCostNames() const
+ {
+-    return getTestCostNames() ;    
++    TVec&lt;string&gt; cost_names = getTestCostNames();
++    cost_names.push_back(&quot;similarity_cost&quot;);
++    cost_names.push_back(&quot;dissimilarity_cost&quot;);
++    cost_names.push_back(&quot;metric_cost&quot;);
++    return cost_names;    
+ }
+ 
+ void StackedFocusedAutoassociatorsNet::setTrainingSet(VMat training_set, bool call_forget)
+
+Modified: trunk/plearn_learners_experimental/StackedFocusedAutoassociatorsNet.h
+===================================================================
+--- trunk/plearn_learners_experimental/StackedFocusedAutoassociatorsNet.h	2007-10-26 16:10:33 UTC (rev 8216)
++++ trunk/plearn_learners_experimental/StackedFocusedAutoassociatorsNet.h	2007-10-26 18:57:24 UTC (rev 8217)
+@@ -124,6 +124,9 @@
+     //! Number of classes
+     int n_classes;
+ 
++    //! Parameter that constrols the importance of the dissimilar example cost
++    real dissimilar_example_cost_precision;
++
+     //! Use standard neural net architecture, not 
+     //! the nearest neighbor model.
+     bool do_not_use_knn_classifier;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001664.html">[Plearn-commits] r8216 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="001666.html">[Plearn-commits] r8218 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1665">[ date ]</a>
+              <a href="thread.html#1665">[ thread ]</a>
+              <a href="subject.html#1665">[ subject ]</a>
+              <a href="author.html#1665">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

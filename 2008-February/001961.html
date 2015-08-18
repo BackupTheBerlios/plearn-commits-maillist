@@ -1,0 +1,400 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8513 - in trunk: commands plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8513%20-%20in%20trunk%3A%20commands%20plearn/vmat&In-Reply-To=%3C200802142115.m1ELFrKN016950%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001960.html">
+   <LINK REL="Next"  HREF="001962.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8513 - in trunk: commands plearn/vmat</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8513%20-%20in%20trunk%3A%20commands%20plearn/vmat&In-Reply-To=%3C200802142115.m1ELFrKN016950%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8513 - in trunk: commands plearn/vmat">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Thu Feb 14 22:15:53 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001960.html">[Plearn-commits] r8512 - trunk/python_modules/plearn/pyplearn
+</A></li>
+        <LI>Next message: <A HREF="001962.html">[Plearn-commits] r8514 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1961">[ date ]</a>
+              <a href="thread.html#1961">[ thread ]</a>
+              <a href="subject.html#1961">[ subject ]</a>
+              <a href="author.html#1961">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-02-14 22:15:53 +0100 (Thu, 14 Feb 2008)
+New Revision: 8513
+
+Added:
+   trunk/plearn/vmat/ReplicateSamplesVMatrix.cc
+   trunk/plearn/vmat/ReplicateSamplesVMatrix.h
+Modified:
+   trunk/commands/plearn_noblas_inc.h
+Log:
+Added new VMat to replicate samples so as to rebalance classes in a dataset
+
+Modified: trunk/commands/plearn_noblas_inc.h
+===================================================================
+--- trunk/commands/plearn_noblas_inc.h	2008-02-14 17:00:42 UTC (rev 8512)
++++ trunk/commands/plearn_noblas_inc.h	2008-02-14 21:15:53 UTC (rev 8513)
+@@ -335,6 +335,7 @@
+ #include &lt;plearn/vmat/RegularGridVMatrix.h&gt;
+ #include &lt;plearn/vmat/RemoveDuplicateVMatrix.h&gt;
+ #include &lt;plearn/vmat/ReorderByMissingVMatrix.h&gt;
++#include &lt;plearn/vmat/ReplicateSamplesVMatrix.h&gt;
+ //#include &lt;plearn/vmat/SelectAttributsSequenceVMatrix.h&gt;
+ #include &lt;plearn/vmat/SelectRowsMultiInstanceVMatrix.h&gt;
+ #include &lt;plearn/vmat/ShuffleColumnsVMatrix.h&gt;
+
+Added: trunk/plearn/vmat/ReplicateSamplesVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/ReplicateSamplesVMatrix.cc	2008-02-14 17:00:42 UTC (rev 8512)
++++ trunk/plearn/vmat/ReplicateSamplesVMatrix.cc	2008-02-14 21:15:53 UTC (rev 8513)
+@@ -0,0 +1,170 @@
++// -*- C++ -*-
++
++// ReplicateSamplesVMatrix.cc
++//
++// Copyright (C) 2008 Olivier Delalleau
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Olivier Delalleau
++
++/*! \file ReplicateSamplesVMatrix.cc */
++
++
++#include &quot;ReplicateSamplesVMatrix.h&quot;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    ReplicateSamplesVMatrix,
++    &quot;VMat that replicates samples in order to reweight classes evenly.&quot;,
++    &quot;If the class with most samples in the source VMat has n samples, then\n&quot;
++    &quot;the first 'n-n_j' samples of class j (having n_j samples) will be\n&quot;
++    &quot;replicated so that each class also has n samples. If required, samples\n&quot;
++    &quot;will be replicated more than once.\n&quot;
++    &quot;All samples are also shuffled so as to mix classes together.&quot;
++);
++
++/////////////////////////////
++// ReplicateSamplesVMatrix //
++/////////////////////////////
++ReplicateSamplesVMatrix::ReplicateSamplesVMatrix():
++    seed(1827),
++    random_gen(new PRandom())
++{}
++
++////////////////////
++// declareOptions //
++////////////////////
++void ReplicateSamplesVMatrix::declareOptions(OptionList&amp; ol)
++{
++    // ### Declare all of this object's options here.
++    // ### For the &quot;flags&quot; of each option, you should typically specify
++    // ### one of OptionBase::buildoption, OptionBase::learntoption or
++    // ### OptionBase::tuningoption. If you don't provide one of these three,
++    // ### this option will be ignored when loading values from a script.
++    // ### You can also combine flags, for example with OptionBase::nosave:
++    // ### (OptionBase::buildoption | OptionBase::nosave)
++
++    declareOption(ol, &quot;seed&quot;, &amp;ReplicateSamplesVMatrix::seed,
++                  OptionBase::buildoption,
++        &quot;Seed for the random number generator (to shuffle data).&quot;);
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++///////////
++// build //
++///////////
++void ReplicateSamplesVMatrix::build()
++{
++    // ### Nothing to add here, simply calls build_
++    inherited::build();
++    build_();
++}
++
++////////////
++// build_ //
++////////////
++void ReplicateSamplesVMatrix::build_()
++{
++    if (!source)
++        return;
++    PLCHECK_MSG(source-&gt;targetsize() == 1,
++                &quot;In ReplicateSamplesVMatrix::build_ - The source VMat must &quot;
++                &quot;have a targetsize equal to 1&quot;);
++    
++    // Build the vector of indices.
++    indices.resize(0);
++    Vec input, target;
++    real weight;
++    TVec&lt; TVec&lt;int&gt;  &gt; class_indices;  // Indices of samples in each class.
++    for (int i = 0; i &lt; source-&gt;length(); i++) {
++        source-&gt;getExample(i, input, target, weight);
++        int c = int(round(target[0]));
++        if (c &gt;= class_indices.length()) {
++            int n_to_add = c - class_indices.length() + 1;
++            for (int j = 0; j &lt; n_to_add; j++)
++                class_indices.append(TVec&lt;int&gt;());
++        }
++        class_indices[c].append(i);
++        indices.append(i);
++    }
++    int max_n = -1;
++    for (int c = 0; c &lt; class_indices.length(); c++)
++        if (class_indices[c].length() &gt; max_n)
++            max_n = class_indices[c].length();
++    for (int c = 0; c &lt; class_indices.length(); c++) {
++        int n_replicated = max_n - class_indices[c].length();
++        for (int i = 0; i &lt; n_replicated; i++) {
++            indices.append(class_indices[c][i % class_indices[c].length()]);
++        }
++    }
++
++    // Shuffle data.
++    random_gen-&gt;manual_seed(seed);
++    random_gen-&gt;shuffleElements(indices);
++    
++    // Re-build since indices have changed.
++    inherited::build();
++}
++
++/////////////////////////////////
++// makeDeepCopyFromShallowCopy //
++/////////////////////////////////
++void ReplicateSamplesVMatrix::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    // ### Call deepCopyField on all &quot;pointer-like&quot; fields
++    // ### that you wish to be deepCopied rather than
++    // ### shallow-copied.
++    // ### ex:
++    // deepCopyField(trainvec, copies);
++
++    // ### Remove this line when you have fully implemented this method.
++    PLERROR(&quot;ReplicateSamplesVMatrix::makeDeepCopyFromShallowCopy not fully (correctly) implemented yet!&quot;);
++}
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn/vmat/ReplicateSamplesVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/ReplicateSamplesVMatrix.h	2008-02-14 17:00:42 UTC (rev 8512)
++++ trunk/plearn/vmat/ReplicateSamplesVMatrix.h	2008-02-14 21:15:53 UTC (rev 8513)
+@@ -0,0 +1,132 @@
++// -*- C++ -*-
++
++// ReplicateSamplesVMatrix.h
++//
++// Copyright (C) 2008 Olivier Delalleau
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Olivier Delalleau
++
++/*! \file ReplicateSamplesVMatrix.h */
++
++
++#ifndef ReplicateSamplesVMatrix_INC
++#define ReplicateSamplesVMatrix_INC
++
++#include &lt;plearn/math/PRandom.h&gt;
++#include &lt;plearn/vmat/SelectRowsVMatrix.h&gt;
++
++namespace PLearn {
++
++/**
++ * The first sentence should be a BRIEF DESCRIPTION of what the class does.
++ * Place the rest of the class programmer documentation here.  Doxygen supports
++ * Javadoc-style comments.  See <A HREF="http://www.doxygen.org/manual.html">http://www.doxygen.org/manual.html</A>
++ *
++ * @todo Write class to-do's here if there are any.
++ *
++ * @deprecated Write deprecated stuff here if there is any.  Indicate what else
++ * should be used instead.
++ */
++class ReplicateSamplesVMatrix : public SelectRowsVMatrix
++{
++    typedef SelectRowsVMatrix inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    int32_t seed;
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    ReplicateSamplesVMatrix();
++
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    // ### If your class is not instantiatable (it has pure virtual methods)
++    // ### you should replace this by PLEARN_DECLARE_ABSTRACT_OBJECT_METHODS
++    PLEARN_DECLARE_OBJECT(ReplicateSamplesVMatrix);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++
++    PP&lt;PRandom&gt; random_gen;
++    
++    //#####  Protected Options  ###############################################
++
++    // ### Declare protected option fields (such as learned parameters) here
++    // ...
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(ReplicateSamplesVMatrix);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001960.html">[Plearn-commits] r8512 - trunk/python_modules/plearn/pyplearn
+</A></li>
+	<LI>Next message: <A HREF="001962.html">[Plearn-commits] r8514 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1961">[ date ]</a>
+              <a href="thread.html#1961">[ thread ]</a>
+              <a href="subject.html#1961">[ subject ]</a>
+              <a href="author.html#1961">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

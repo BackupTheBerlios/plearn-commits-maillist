@@ -1,0 +1,778 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7633 -	branches/cgi-desjardin/plearn_learners/second_iteration
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7633%20-%0A%09branches/cgi-desjardin/plearn_learners/second_iteration&In-Reply-To=%3C200706221924.l5MJO1KD008833%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001080.html">
+   <LINK REL="Next"  HREF="001082.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7633 -	branches/cgi-desjardin/plearn_learners/second_iteration</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7633%20-%0A%09branches/cgi-desjardin/plearn_learners/second_iteration&In-Reply-To=%3C200706221924.l5MJO1KD008833%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7633 -	branches/cgi-desjardin/plearn_learners/second_iteration">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Jun 22 21:24:01 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001080.html">[Plearn-commits] r7632 - trunk/scripts
+</A></li>
+        <LI>Next message: <A HREF="001082.html">[Plearn-commits] r7634 - in	trunk/python_modules/plearn/learners/modulelearners: . examples
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1081">[ date ]</a>
+              <a href="thread.html#1081">[ thread ]</a>
+              <a href="subject.html#1081">[ subject ]</a>
+              <a href="author.html#1081">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-06-22 21:24:00 +0200 (Fri, 22 Jun 2007)
+New Revision: 7633
+
+Added:
+   branches/cgi-desjardin/plearn_learners/second_iteration/ImputationVMatrix.cc
+Modified:
+   branches/cgi-desjardin/plearn_learners/second_iteration/ConditionalMeanImputationVMatrix.cc
+   branches/cgi-desjardin/plearn_learners/second_iteration/ConditionalMeanImputationVMatrix.h
+   branches/cgi-desjardin/plearn_learners/second_iteration/CovariancePreservationImputationVMatrix.cc
+   branches/cgi-desjardin/plearn_learners/second_iteration/CovariancePreservationImputationVMatrix.h
+   branches/cgi-desjardin/plearn_learners/second_iteration/GaussianizeVMatrix.h
+   branches/cgi-desjardin/plearn_learners/second_iteration/MeanMedianModeImputationVMatrix.cc
+   branches/cgi-desjardin/plearn_learners/second_iteration/MeanMedianModeImputationVMatrix.h
+   branches/cgi-desjardin/plearn_learners/second_iteration/NeighborhoodImputationVMatrix.cc
+   branches/cgi-desjardin/plearn_learners/second_iteration/NeighborhoodImputationVMatrix.h
+   branches/cgi-desjardin/plearn_learners/second_iteration/TestImputations.cc
+Log:
+-Made a super VMatrix ImputationVMatrxi and all VMatrix that replace missing value inherit from it
+-NeighborhoodImputationVMatrix take an optional imputation_spec that take a specific number of neighbor by column
+-MeanMedianModeImputationVMatrix, made 1 global variable local
+
+
+Modified: branches/cgi-desjardin/plearn_learners/second_iteration/ConditionalMeanImputationVMatrix.cc
+===================================================================
+--- branches/cgi-desjardin/plearn_learners/second_iteration/ConditionalMeanImputationVMatrix.cc	2007-06-22 12:09:19 UTC (rev 7632)
++++ branches/cgi-desjardin/plearn_learners/second_iteration/ConditionalMeanImputationVMatrix.cc	2007-06-22 19:24:00 UTC (rev 7633)
+@@ -67,8 +67,6 @@
+ 
+ void ConditionalMeanImputationVMatrix::declareOptions(OptionList &amp;ol)
+ {
+-  declareOption(ol, &quot;source&quot;, &amp;ConditionalMeanImputationVMatrix::source, OptionBase::buildoption,
+-                &quot;The source VMatrix with missing values.\n&quot;);
+   declareOption(ol, &quot;condmean_dir&quot;, &amp;ConditionalMeanImputationVMatrix::condmean_dir, OptionBase::buildoption, 
+                 &quot;The directory in the source metadatadir housing the variable conditional mean files.\n&quot;);
+   declareOption(ol, &quot;condmean&quot;, &amp;ConditionalMeanImputationVMatrix::condmean, OptionBase::learntoption, 
+@@ -86,7 +84,6 @@
+ 
+ void ConditionalMeanImputationVMatrix::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+-  deepCopyField(source, copies);
+   deepCopyField(condmean_dir, copies);
+   deepCopyField(condmean, copies);
+   deepCopyField(condmean_col_ref, copies);
+@@ -164,6 +161,7 @@
+ {
+     if (!source) PLERROR(&quot;In ConditionalMeanImputationVMatrix::source vmat must be supplied&quot;);
+     loadCondMeanMatrix(); 
++    testResultantVMatrix();
+ }
+ 
+ void ConditionalMeanImputationVMatrix::loadCondMeanMatrix()
+@@ -215,10 +213,11 @@
+     {
+         source_stats = source-&gt;getStats(source_col);
+         if (source_stats.nmissing() &lt;= 0) continue;
+-        condmean_col = condmean_col_ref[source_col];
+-        condmean_variable_file_name = source_metadata + &quot;/&quot; + condmean_dir + &quot;/dir/&quot; + source_names[source_col] + &quot;/Split0/test1_outputs.pmat&quot;;
+-        if (!isfile(condmean_variable_file_name)) PLERROR(&quot;In ConditionalMeanImputationVMatrix::A conditional mean file was not found for variable %s&quot;, source_names[source_col].c_str());
+-        condmean_variable_file = new FileVMatrix(condmean_variable_file_name, false);
++        int condmean_col = condmean_col_ref[source_col];
++        PPath condmean_variable_file_name = source_metadata + &quot;/&quot; + condmean_dir + &quot;/dir/&quot; + source_names[source_col] + &quot;/Split0/test1_outputs.pmat&quot;;
++        if (!isfile(condmean_variable_file_name)) PLERROR(&quot;In ConditionalMeanImputationVMatrix::A conditional mean file(%s) was not found for variable %s&quot;,
++                                                          condmean_variable_file_name.c_str(),source_names[source_col].c_str());
++        VMat condmean_variable_file = new FileVMatrix(condmean_variable_file_name, false);
+         if (condmean_variable_file-&gt;length() != source_length)
+             PLERROR(&quot;In ConditionalMeanImputationVMatrix::Source and conditional mean file length are not equal for variable %s&quot;, source_names[source_col].c_str());
+         for (source_row = 0; source_row &lt; source_length; source_row++)
+
+Modified: branches/cgi-desjardin/plearn_learners/second_iteration/ConditionalMeanImputationVMatrix.h
+===================================================================
+--- branches/cgi-desjardin/plearn_learners/second_iteration/ConditionalMeanImputationVMatrix.h	2007-06-22 12:09:19 UTC (rev 7632)
++++ branches/cgi-desjardin/plearn_learners/second_iteration/ConditionalMeanImputationVMatrix.h	2007-06-22 19:24:00 UTC (rev 7633)
+@@ -44,21 +44,18 @@
+ #ifndef ConditionalMeanImputationVMatrix_INC
+ #define ConditionalMeanImputationVMatrix_INC
+ 
+-#include &lt;plearn/vmat/SourceVMatrix.h&gt;
++#include &quot;ImputationVMatrix.h&quot;
+ #include &lt;plearn/vmat/FileVMatrix.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+ 
+-class ConditionalMeanImputationVMatrix: public VMatrix
++class ConditionalMeanImputationVMatrix: public ImputationVMatrix
+ {
+-  typedef VMatrix inherited;
++  typedef ImputationVMatrix inherited;
+   
+ public:
+ 
+-  //! The source VMatrix with missing values.
+-  VMat                 source;
+-
+   //! The directory in the source metadatadir housing the variable conditional mean files.
+   string               condmean_dir;
+ 
+@@ -100,9 +97,6 @@
+   PPath                source_metadata;
+   TVec&lt;string&gt;         source_names;
+   StatsCollector       source_stats;
+-  PPath                condmean_variable_file_name;
+-  VMat                 condmean_variable_file;
+-  int                  condmean_col;
+         
+ 
+           void         build_();
+
+Modified: branches/cgi-desjardin/plearn_learners/second_iteration/CovariancePreservationImputationVMatrix.cc
+===================================================================
+--- branches/cgi-desjardin/plearn_learners/second_iteration/CovariancePreservationImputationVMatrix.cc	2007-06-22 12:09:19 UTC (rev 7632)
++++ branches/cgi-desjardin/plearn_learners/second_iteration/CovariancePreservationImputationVMatrix.cc	2007-06-22 19:24:00 UTC (rev 7633)
+@@ -64,8 +64,6 @@
+ 
+ void CovariancePreservationImputationVMatrix::declareOptions(OptionList &amp;ol)
+ {
+-  declareOption(ol, &quot;source&quot;, &amp;CovariancePreservationImputationVMatrix::source, OptionBase::buildoption, 
+-                &quot;The source VMatrix with missing values.\n&quot;);
+ 
+   declareOption(ol, &quot;train_set&quot;, &amp;CovariancePreservationImputationVMatrix::train_set, OptionBase::buildoption, 
+                 &quot;A referenced train set.\n&quot;
+@@ -82,7 +80,6 @@
+ 
+ void CovariancePreservationImputationVMatrix::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+-  deepCopyField(source, copies);
+   deepCopyField(train_set, copies);
+   inherited::makeDeepCopyFromShallowCopy(copies);
+ }
+
+Modified: branches/cgi-desjardin/plearn_learners/second_iteration/CovariancePreservationImputationVMatrix.h
+===================================================================
+--- branches/cgi-desjardin/plearn_learners/second_iteration/CovariancePreservationImputationVMatrix.h	2007-06-22 12:09:19 UTC (rev 7632)
++++ branches/cgi-desjardin/plearn_learners/second_iteration/CovariancePreservationImputationVMatrix.h	2007-06-22 19:24:00 UTC (rev 7633)
+@@ -44,6 +44,7 @@
+ #ifndef CovariancePreservationImputationVMatrix_INC
+ #define CovariancePreservationImputationVMatrix_INC
+ 
++#include &quot;ImputationVMatrix.h&quot;
+ #include &lt;plearn/vmat/SourceVMatrix.h&gt;
+ #include &lt;plearn/vmat/FileVMatrix.h&gt;
+ #include &lt;plearn/io/fileutils.h&gt;                     //!&lt;  For isfile()
+@@ -52,14 +53,11 @@
+ namespace PLearn {
+ using namespace std;
+ 
+-class CovariancePreservationImputationVMatrix: public VMatrix
++class CovariancePreservationImputationVMatrix: public ImputationVMatrix
+ {
+-  typedef VMatrix inherited;
++  typedef ImputationVMatrix inherited;
+   
+ public:
+-
+-  //! The source VMatrix with missing values.
+-  VMat                  source;
+   
+   //! A referenced train set.
+   //! The covariance imputation is computed with the observed values in this data set.
+
+Modified: branches/cgi-desjardin/plearn_learners/second_iteration/GaussianizeVMatrix.h
+===================================================================
+--- branches/cgi-desjardin/plearn_learners/second_iteration/GaussianizeVMatrix.h	2007-06-22 12:09:19 UTC (rev 7632)
++++ branches/cgi-desjardin/plearn_learners/second_iteration/GaussianizeVMatrix.h	2007-06-22 19:24:00 UTC (rev 7633)
+@@ -40,7 +40,7 @@
+ #ifndef GaussianizeVMatrix_INC
+ #define GaussianizeVMatrix_INC
+ 
+-#include &lt;plearn/vmat/SourceVMatrix.h&gt;
++#include &quot;ImputationVMatrix.h&quot;
+ 
+ namespace PLearn {
+ 
+
+Added: branches/cgi-desjardin/plearn_learners/second_iteration/ImputationVMatrix.cc
+===================================================================
+--- branches/cgi-desjardin/plearn_learners/second_iteration/ImputationVMatrix.cc	2007-06-22 12:09:19 UTC (rev 7632)
++++ branches/cgi-desjardin/plearn_learners/second_iteration/ImputationVMatrix.cc	2007-06-22 19:24:00 UTC (rev 7633)
+@@ -0,0 +1,161 @@
++// -*- C++ -*-
++
++// PLearn (A C++ Machine Learning Library)
++// Copyright (C) 1998 Pascal Vincent
++// Copyright (C) 1999-2001 Pascal Vincent, Yoshua Bengio, Rejean Ducharme and University of Montreal
++// Copyright (C) 2002 Pascal Vincent, Julien Keable, Xavier Saint-Mleux
++// Copyright (C) 2003 Olivier Delalleau
++// Copyright (C) 2007 Frederic Bastien
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++// 
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++// 
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++// 
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++// 
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++// 
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++
++/* *******************************************************************    
++   * $Id: NeighborhoodImputationVMatrix.cc 3658 2005-07-06 20:30:15  Godbout $
++   ******************************************************************* */
++
++
++#include &quot;ImputationVMatrix.h&quot;
++
++namespace PLearn {
++using namespace std;
++
++/** ImputationVMatrix **/
++
++PLEARN_IMPLEMENT_ABSTRACT_OBJECT(
++  ImputationVMatrix,
++  &quot;Super-class for VMatrices that replace missing value in another one&quot;,
++  &quot;&quot;
++  );
++
++  ImputationVMatrix::ImputationVMatrix():
++    test_level(0)
++{
++}
++
++ImputationVMatrix::~ImputationVMatrix()
++{
++}
++
++void ImputationVMatrix::declareOptions(OptionList &amp;ol)
++{
++  declareOption(ol, &quot;source&quot;, &amp;ImputationVMatrix::source, OptionBase::buildoption, 
++                &quot;The source VMatrix with missing values that will be filled.\n&quot;);
++  declareOption(ol, &quot;test_level&quot;, &amp;ImputationVMatrix::test_level, OptionBase::buildoption, 
++                &quot;The level of test of final matrix. 0 : no test, 1: linear in column or row test, 2: linear in cell\n&quot;);
++
++  inherited::declareOptions(ol);
++}
++
++void ImputationVMatrix::build()
++{
++  inherited::build();
++  build_();
++}
++
++void ImputationVMatrix::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++  deepCopyField(source, copies);
++  inherited::makeDeepCopyFromShallowCopy(copies);
++}
++
++void ImputationVMatrix::build_()
++{
++}
++
++void ImputationVMatrix::testResultantVMatrix()
++{
++  TVec&lt;string&gt; source_names(source-&gt;width());
++  source_names = source-&gt;fieldNames();
++  
++  if(test_level&gt;=1){
++    for(int row=0;row&lt;length();row++)
++      for(int col=0;col&lt;width();col++){
++        real data=get(row,col);
++        real sourcedata=source-&gt;get(row,col);
++
++        //test if variable not missing are not changed.
++        if(!is_missing(sourcedata))
++          if(data!=sourcedata){
++            PLERROR(&quot;ImputationImputations::testResultantVMatrix() data at [%d,%d] are different but the data is not missing&quot;,row,col);
++          }
++
++        //test if missing variable are replaced by a value not missing.
++        if(is_missing(data))
++          PLERROR(&quot;ImputationImputations::testResultantVMatrix() data at [%d,%d] in the final matrix is missing&quot;,row,col);
++      }
++  }
++  if(test_level&gt;=2){ //Must verify if source-&gt;getStats is linear
++    getStats();
++    source-&gt;getStats();
++    //print the variable that the replacement of missing value change the mean by more then 3 times the stderr
++    int nberr = 0;
++    for(int col=0;col&lt;width();col++)
++      {
++        real mean = field_stats[col].mean();
++        real smean = source-&gt;getStats(col).mean();
++        real sstderr = source-&gt;getStats(col).stddev()/sqrt(source-&gt;getStats(col).nnonmissing());
++        real val=(mean-smean)/sstderr;
++        if(fabs(val)&gt;3){
++          PLWARNING(&quot;ImputationImputations::testResultantVMatrix() the variable %d(%s) have a value of %f for abs((mean-sourcemean)/source_stderr)&quot;,col,source_names[col].c_str(),val);
++          nberr++;
++        }
++      }
++    if(nberr&gt;0)
++      PLWARNING(&quot;ImputationImputations::testResultantVMatrix() There have been %d variables with the mean after imputation outside of sourcemean +- 3*source_stderr&quot;,nberr);
++  }
++  //    for(int row=0;row&lt;length();row++)
++  /*    for(int col=0;col&lt;width();col++)
++        {
++        StatsCollector sstats=source-&gt;getStats(col);
++        StatsCollector stats=getStats(col);
++        if(sstats.nmissing()!=0){
++        real sum=0;
++        condmean_variable_file_name = source_metadata + &quot;/&quot; + condmean_dir + &quot;/dir/&quot; + source_names[col] + &quot;/Split0/test1_outputs.pmat&quot;;
++        
++        if (!isfile(condmean_variable_file_name))
++        PLERROR(&quot;In ImputationVMatrix::A conditional mean file was not found for variable %s&quot;, source_names[col].c_str());
++        condmean_variable_file = new FileVMatrix(condmean_variable_file_name, false);
++        if (condmean_variable_file-&gt;length() != source_length)
++        PLERROR(&quot;In ImputationVMatrix::Source and conditional mean file length are not equal for variable %s&quot;, source_names[col].c_str());
++        for (int source_row = 0; source_row &lt; source_length; source_row++){
++        real rdata = condmean_variable_file-&gt;get(source_row, 0);
++        real data = get(source_row, col);
++        if(!is_missing(rdata))
++        sum+=pow(data - rdata, 2.0);
++        }
++        real mse=sum/stats.nnonmissing();
++        real diff=mse/sstats.variance();
++        if(diff &gt;0.9){
++        perr &lt;&lt;col&lt;&lt;&quot; &quot;&lt;&lt;diff&lt;&lt;endl;
++        PLWARNING(&quot;ImputationImputations::testresultantVMatrix() the variable %d(%s) have a MSEtreecondmean(%f)/MSEmean(%f) of %f&quot;,col,source_names[col].c_str(),mse,sstats.variance(),diff);
++        }
++        }*/
++}
++} // end of namespcae PLearn
+
+Modified: branches/cgi-desjardin/plearn_learners/second_iteration/MeanMedianModeImputationVMatrix.cc
+===================================================================
+--- branches/cgi-desjardin/plearn_learners/second_iteration/MeanMedianModeImputationVMatrix.cc	2007-06-22 12:09:19 UTC (rev 7632)
++++ branches/cgi-desjardin/plearn_learners/second_iteration/MeanMedianModeImputationVMatrix.cc	2007-06-22 19:24:00 UTC (rev 7633)
+@@ -65,9 +65,6 @@
+ 
+ void MeanMedianModeImputationVMatrix::declareOptions(OptionList &amp;ol)
+ {
+-  declareOption(ol, &quot;source&quot;, &amp;MeanMedianModeImputationVMatrix::source, OptionBase::buildoption, 
+-                &quot;The source VMatrix with missing values.\n&quot;);
+-
+   declareOption(ol, &quot;train_set&quot;, &amp;MeanMedianModeImputationVMatrix::train_set, OptionBase::buildoption, 
+                 &quot;A referenced train set.\n&quot;
+                 &quot;The mean, median or mode is computed with the observed values in this data set.\n&quot;
+@@ -114,7 +111,6 @@
+ 
+ void MeanMedianModeImputationVMatrix::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+-  deepCopyField(source, copies);
+   deepCopyField(train_set, copies);
+   deepCopyField(number_of_train_samples_to_use, copies);
+   deepCopyField(imputation_spec, copies);
+@@ -242,7 +238,7 @@
+     variable_mode.resize(train_width);
+     variable_imputation_instruction.resize(train_width);
+     variable_imputation_instruction.clear();
+-    for (spec_col = 0; spec_col &lt; imputation_spec.size(); spec_col++)
++    for (int spec_col = 0; spec_col &lt; imputation_spec.size(); spec_col++)
+     {
+         for (train_col = 0; train_col &lt; train_width; train_col++)
+         {
+
+Modified: branches/cgi-desjardin/plearn_learners/second_iteration/MeanMedianModeImputationVMatrix.h
+===================================================================
+--- branches/cgi-desjardin/plearn_learners/second_iteration/MeanMedianModeImputationVMatrix.h	2007-06-22 12:09:19 UTC (rev 7632)
++++ branches/cgi-desjardin/plearn_learners/second_iteration/MeanMedianModeImputationVMatrix.h	2007-06-22 19:24:00 UTC (rev 7633)
+@@ -44,7 +44,7 @@
+ #ifndef MeanMedianModeImputationVMatrix_INC
+ #define MeanMedianModeImputationVMatrix_INC
+ 
+-#include &lt;plearn/vmat/SourceVMatrix.h&gt;
++#include &quot;ImputationVMatrix.h&quot;
+ #include &lt;plearn/vmat/FileVMatrix.h&gt;
+ #include &lt;plearn/io/fileutils.h&gt;                     //!&lt;  For isfile()
+ #include &lt;plearn/math/BottomNI.h&gt;
+@@ -52,14 +52,12 @@
+ namespace PLearn {
+ using namespace std;
+ 
+-class MeanMedianModeImputationVMatrix: public VMatrix
++class MeanMedianModeImputationVMatrix: public ImputationVMatrix
+ {
+-  typedef VMatrix inherited;
++  typedef ImputationVMatrix inherited;
+   
+ public:
+ 
+-  //! The source VMatrix with missing values.
+-  VMat                          source;
+   
+   //! A referenced train set.
+   //! The mean, median or mode is computed with the observed values in this data set.
+@@ -136,7 +134,6 @@
+   int                  source_targetsize;
+   int                  source_weightsize;
+   Vec                  variable_vec;
+-  int                  spec_col;
+   int                  current_value_count;
+   real                 current_value;
+   PPath                mean_median_mode_file_name;
+
+Modified: branches/cgi-desjardin/plearn_learners/second_iteration/NeighborhoodImputationVMatrix.cc
+===================================================================
+--- branches/cgi-desjardin/plearn_learners/second_iteration/NeighborhoodImputationVMatrix.cc	2007-06-22 12:09:19 UTC (rev 7632)
++++ branches/cgi-desjardin/plearn_learners/second_iteration/NeighborhoodImputationVMatrix.cc	2007-06-22 19:24:00 UTC (rev 7633)
+@@ -55,6 +55,7 @@
+   );
+ 
+ NeighborhoodImputationVMatrix::NeighborhoodImputationVMatrix()
++  : count_missing_neighbors(0)
+ {
+ }
+ 
+@@ -64,12 +65,9 @@
+ 
+ void NeighborhoodImputationVMatrix::declareOptions(OptionList &amp;ol)
+ {
+-  declareOption(ol, &quot;source_with_missing&quot;, &amp;NeighborhoodImputationVMatrix::source_with_missing, OptionBase::buildoption, 
+-                &quot;The source VMatrix with missing values.\n&quot;);
+-
+   declareOption(ol, &quot;reference_index&quot;, &amp;NeighborhoodImputationVMatrix::reference_index, OptionBase::buildoption, 
+                 &quot;The set of pre-computed neighbors index.\n&quot;
+-                &quot;his can be done with BallTreeNearestNeighbors.\n&quot;);
++                &quot;This can be done with BallTreeNearestNeighbors.\n&quot;);
+ 
+   declareOption(ol, &quot;reference_with_missing&quot;, &amp;NeighborhoodImputationVMatrix::reference_with_missing, OptionBase::buildoption, 
+                 &quot;The reference set corresponding to the pre-computed index with missing values.&quot;);
+@@ -77,10 +75,18 @@
+   declareOption(ol, &quot;reference_with_covariance_preserved&quot;, &amp;NeighborhoodImputationVMatrix::reference_with_covariance_preserved, OptionBase::buildoption, 
+                 &quot;The reference set corresponding to the pre-computed index with the initial imputations.&quot;);
+ 
+-  declareOption(ol, &quot;number_of_neighbors&quot;, &amp;NeighborhoodImputationVMatrix::number_of_neighbors, OptionBase::learntoption,
++  declareOption(ol, &quot;number_of_neighbors&quot;, &amp;NeighborhoodImputationVMatrix::number_of_neighbors, OptionBase::buildoption,
+                 &quot;This is usually called K, the number of neighbors to consider.\n&quot;   
+                 &quot;It must be less or equal than the with of the reference index.&quot;);
+ 
++  declareOption(ol, &quot;count_missing_neighbors&quot;, &amp;NeighborhoodImputationVMatrix::count_missing_neighbors, OptionBase::buildoption,
++                &quot;0: (default) We do not count a neighbour with a missing value in the number of neighbors.\n&quot;   
++                &quot;1: We count a neighbour with a missing value in the number of neighbors.\n&quot;);
++
++  declareOption(ol, &quot;imputation_spec&quot;, &amp;NeighborhoodImputationVMatrix::imputation_spec, OptionBase::buildoption,
++                &quot;A vector that give for each variable the number of neighbors to use.\n&quot;
++                &quot;If a variable don't have a value, we use the value of the varialbe: number_of_neighbors.\n&quot;
++                &quot; Ex: [ varname1 : nbneighbors1, varname2 : nbneighbors2 ]\n&quot;);
+   inherited::declareOptions(ol);
+ }
+ 
+@@ -88,21 +94,23 @@
+ {
+   inherited::build();
+   build_();
++  testResultantVMatrix();
+ }
+ 
+ void NeighborhoodImputationVMatrix::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+-  deepCopyField(source_with_missing, copies);
+   deepCopyField(reference_index, copies);
+   deepCopyField(reference_with_missing, copies);
+   deepCopyField(reference_with_covariance_preserved, copies);
+   deepCopyField(number_of_neighbors, copies);
++  deepCopyField(count_missing_neighbors, copies);
++  deepCopyField(imputation_spec, copies);
+   inherited::makeDeepCopyFromShallowCopy(copies);
+ }
+ 
+ void NeighborhoodImputationVMatrix::getExample(int i, Vec&amp; input, Vec&amp; target, real&amp; weight)
+ {
+-  source_with_missing-&gt;getExample(i, input, target, weight);
++  source-&gt;getExample(i, input, target, weight);
+   for (int source_col = 0; source_col &lt; input-&gt;length(); source_col++)
+   {
+     if (is_missing(input[source_col])) input[source_col] = impute(i, source_col);
+@@ -111,7 +119,7 @@
+ 
+ real NeighborhoodImputationVMatrix::get(int i, int j) const
+ { 
+-  real variable_value = source_with_missing-&gt;get(i, j);
++  real variable_value = source-&gt;get(i, j);
+   if (!is_missing(variable_value)) return variable_value;
+   return impute(i, j);
+ }
+@@ -123,7 +131,7 @@
+ 
+ void NeighborhoodImputationVMatrix::getSubRow(int i, int j, Vec v) const
+ {  
+-  source_with_missing-&gt;getSubRow(i, j, v);
++  source-&gt;getSubRow(i, j, v);
+   for (int source_col = 0; source_col &lt; v-&gt;length(); source_col++) 
+     if (is_missing(v[source_col])) v[source_col] = impute(i, source_col + j);
+ }
+@@ -145,7 +153,7 @@
+ 
+ void NeighborhoodImputationVMatrix::getRow(int i, Vec v) const
+ {  
+-  source_with_missing-&gt; getRow(i, v);
++  source-&gt; getRow(i, v);
+   for (int source_col = 0; source_col &lt; v-&gt;length(); source_col++)
+     if (is_missing(v[source_col])) v[source_col] = impute(i, source_col); 
+ }
+@@ -157,34 +165,33 @@
+ 
+ void NeighborhoodImputationVMatrix::getColumn(int i, Vec v) const
+ {  
+-  source_with_missing-&gt; getColumn(i, v);
++  source-&gt; getColumn(i, v);
+   for (int source_row = 0; source_row &lt; v-&gt;length(); source_row++)
+     if (is_missing(v[source_row])) v[source_row] = impute(source_row, i);
+ }
+ 
+ void NeighborhoodImputationVMatrix::build_()
+ {
+-    if (!source_with_missing)                 PLERROR(&quot;In NeighborhoodImputationVMatrix::source with missing set must be supplied&quot;);
++    if (!source)                 PLERROR(&quot;In NeighborhoodImputationVMatrix::source with missing set must be supplied&quot;);
+     if (!reference_index)                     PLERROR(&quot;In NeighborhoodImputationVMatrix::reference index set must be supplied&quot;);
+     if (!reference_with_missing)              PLERROR(&quot;In NeighborhoodImputationVMatrix::reference with missing set must be supplied&quot;);
+     if (!reference_with_covariance_preserved) PLERROR(&quot;In NeighborhoodImputationVMatrix::reference with covariance preserved must be supplied&quot;);
+-    src_length = source_with_missing-&gt;length();
++    src_length = source-&gt;length();
+     if (src_length != reference_index-&gt;length())
+         PLERROR(&quot;In NeighborhoodImputationVMatrix::length of the source and its index must agree, got: %i - %i&quot;, src_length, reference_index-&gt;length());
+     ref_length = reference_with_missing-&gt;length();
+     if (ref_length != reference_with_covariance_preserved-&gt;length())
+         PLERROR(&quot;In NeighborhoodImputationVMatrix::length of the reference set with missing and with covariance preserved must agree, got: %i - %i&quot;,
+                 ref_length, reference_with_covariance_preserved-&gt;length());
+-    src_width = source_with_missing-&gt;width();
++    src_width = source-&gt;width();
+     if (src_width != reference_with_missing-&gt;width())
+         PLERROR(&quot;In NeighborhoodImputationVMatrix::width of the source and the reference with missing must agree, got: %i - %i&quot;,
+                 src_width, reference_with_missing-&gt;width());
+     if (src_width != reference_with_covariance_preserved-&gt;width())
+-        PLERROR(&quot;In NeighborhoodImputationVMatrix::width of the source and the reference with missing must agree, got: %i - %i&quot;,
++        PLERROR(&quot;In NeighborhoodImputationVMatrix::width of the source and the reference with covariance preserved must agree, got: %i - %i&quot;,
+                 src_width, reference_with_covariance_preserved-&gt;width());
+     if (number_of_neighbors &lt; 1)
+-        PLERROR(&quot;In NeighborhoodImputationVMatrix::the index must contains at least as many reference as the specified number of neighbors, got: %i - %i&quot;,
+-                number_of_neighbors, reference_index-&gt;width());
++      PLERROR(&quot;In NeighborhoodImputationVMatrix::there must be at least 1 neighbors, got: %d&quot;,number_of_neighbors);
+     if (number_of_neighbors &gt; reference_index-&gt;width())
+         PLERROR(&quot;In NeighborhoodImputationVMatrix::the index must contains at least as many reference as the specified number of neighbors, got: %i - %i&quot;,
+                 number_of_neighbors, reference_index-&gt;width());
+@@ -194,38 +201,57 @@
+     ref_mis = reference_with_missing-&gt;toMat();
+     ref_cov.resize(reference_with_covariance_preserved-&gt;length(), reference_with_covariance_preserved-&gt;width());
+     ref_cov = reference_with_covariance_preserved-&gt;toMat();
++
+     length_ = src_length;
+     width_ = src_width;
+-    inputsize_ = source_with_missing-&gt;inputsize();
+-    targetsize_ = source_with_missing-&gt;targetsize();
+-    weightsize_ = source_with_missing-&gt;weightsize();
+-    declareFieldNames(source_with_missing-&gt;fieldNames());
++    inputsize_ = source-&gt;inputsize();
++    targetsize_ = source-&gt;targetsize();
++    weightsize_ = source-&gt;weightsize();
++    declareFieldNames(source-&gt;fieldNames());
++
++    nb_neighbors.resize(source-&gt;inputsize());
++    nb_neighbors.fill(number_of_neighbors);
++    for (int spec_col = 0; spec_col &lt; imputation_spec.size(); spec_col++)
++      {
++        int source_col = fieldIndex(imputation_spec[spec_col].first);
++        if (source_col &lt; 0) 
++          PLERROR(&quot;In NeighborhoodImputationVMatrix::build_() no field with this name in source data set: %s&quot;, (imputation_spec[spec_col].first).c_str());
++        nb_neighbors[source_col] = imputation_spec[spec_col].second;
++      }
+ }
+ real NeighborhoodImputationVMatrix::impute(int i, int j) const
+ {
+-    int ref_idx_col;
+     int ref_row;
+     real return_value = 0.0;
+-    real value_count = 0.0;
+-    for (ref_idx_col = 0; ref_idx_col &lt; number_of_neighbors; ref_idx_col++)
++    int value_count = 0;
++    int neighbors_count = 0;
++    for (int ref_idx_col = 0; ref_idx_col &lt; ref_idx.width() &amp;&amp;
++           neighbors_count &lt; nb_neighbors[j]; ref_idx_col++)
+     {
+         ref_row = (int) ref_idx(i, ref_idx_col);
+         if (ref_row &lt; 0 || ref_row &gt;= ref_length)
+             PLERROR(&quot;In NeighborhoodImputationVMatrix::invalid index reference, got: %i for sample %i&quot;, ref_row, i);
+-        if (is_missing(ref_mis(ref_row, j))) continue;
++        if (is_missing(ref_mis(ref_row, j))){
++          if(count_missing_neighbors)
++            neighbors_count++;
++          continue;
++        }
+         return_value += ref_mis(ref_row, j);
+-        value_count += 1.0;
++        value_count++;
++        neighbors_count++;
+     }
+     if (value_count &gt; 0) return return_value / value_count;
++    //if all neighbors have missing value we use the inputed version
++    //TODO put a warning
+     return_value = 0.0;
+-    value_count = 0.0;
+-    for (ref_idx_col = 0; ref_idx_col &lt; number_of_neighbors; ref_idx_col++)
++    value_count = 0;
++    for (int ref_idx_col = 0; ref_idx_col &lt; number_of_neighbors; ref_idx_col++)
+     {
+         ref_row = (int) ref_idx(i, ref_idx_col);
+         if (is_missing(ref_cov(ref_row, j)))
+             PLERROR(&quot;In NeighborhoodImputationVMatrix::missing value found in the reference with covariance preserved at: %i , %i&quot;, ref_row, j);
+         return_value += ref_cov(ref_row, j);
+-        value_count += 1.0;
++        value_count += 1;
+     }
+     return return_value / value_count;
+ }
+
+Modified: branches/cgi-desjardin/plearn_learners/second_iteration/NeighborhoodImputationVMatrix.h
+===================================================================
+--- branches/cgi-desjardin/plearn_learners/second_iteration/NeighborhoodImputationVMatrix.h	2007-06-22 12:09:19 UTC (rev 7632)
++++ branches/cgi-desjardin/plearn_learners/second_iteration/NeighborhoodImputationVMatrix.h	2007-06-22 19:24:00 UTC (rev 7633)
+@@ -44,7 +44,7 @@
+ #ifndef NeighborhoodImputationVMatrix_INC
+ #define NeighborhoodImputationVMatrix_INC
+ 
+-#include &lt;plearn/vmat/SourceVMatrix.h&gt;
++#include &quot;ImputationVMatrix.h&quot;
+ #include &lt;plearn/vmat/FileVMatrix.h&gt;
+ #include &lt;plearn/io/fileutils.h&gt;                     //!&lt;  For isfile()
+ #include &lt;plearn/math/BottomNI.h&gt;
+@@ -52,15 +52,12 @@
+ namespace PLearn {
+ using namespace std;
+ 
+-class NeighborhoodImputationVMatrix: public VMatrix
++class NeighborhoodImputationVMatrix: public ImputationVMatrix
+ {
+-  typedef VMatrix inherited;
++  typedef ImputationVMatrix inherited;
+   
+ public:
+ 
+-  //! The source VMatrix with missing values.
+-  VMat                          source_with_missing;
+-  
+   //! The set of pre-computed neighbors index.
+   //! This can be done with BallTreeNearestNeighbors.
+   VMat                          reference_index;
+@@ -74,8 +71,15 @@
+   //! This is usually called K, the number of neighbors to consider.
+   //! It must be less or equal than the with of the reference index.
+   int                           number_of_neighbors;
+-  
+ 
++  //! A vector that give for each variable the number of neighbors to use
++  //! If a variable is not in the spec, it will use number_of_neighbors
++  TVec&lt; pair&lt;string, int&gt; &gt;  imputation_spec;
++
++  //!0: (default) We do not count a neighbour with a missing value in the number of neighbors
++  //!1: We count a neighbour with a missing value in the number of neighbors
++  int                           count_missing_neighbors;
++
+                         NeighborhoodImputationVMatrix();
+   virtual               ~NeighborhoodImputationVMatrix();
+ 
+@@ -103,6 +107,7 @@
+           Mat          ref_idx;
+           Mat          ref_mis;
+           Mat          ref_cov;
++          TVec&lt;int&gt;    nb_neighbors;
+ 
+           void         build_();
+           real         impute(int i, int j) const;
+
+Modified: branches/cgi-desjardin/plearn_learners/second_iteration/TestImputations.cc
+===================================================================
+--- branches/cgi-desjardin/plearn_learners/second_iteration/TestImputations.cc	2007-06-22 12:09:19 UTC (rev 7632)
++++ branches/cgi-desjardin/plearn_learners/second_iteration/TestImputations.cc	2007-06-22 19:24:00 UTC (rev 7633)
+@@ -399,6 +399,11 @@
+     mmmf_mean_err = mmmf_mean_err / (real) test_length;
+     mmmf_median_err = mmmf_median_err / (real) test_length;
+     mmmf_mode_err = mmmf_mode_err / (real) test_length;
++    //TODO check the formul
++    //mmmf_mean_stddev = sqrt(mmmf_mean_err);
++    //mmmf_median_stddev = sqrt(mmmf_median_err);
++    //mmmf_mode_stddev = sqrt(mmmf_mode_err);
++
+ }
+ 
+ void TestImputations::computeTreeCondMeanStats()
+@@ -421,6 +426,8 @@
+     }
+     delete pb;
+     tcmf_mean_err = tcmf_mean_err / (real) test_length;
++    //TODO check the formul
++    //tcmf_mean_stddev = sqrt(tcmf_mean_err);
+ }
+ 
+ void TestImputations::computeCovPresStats()
+@@ -457,6 +464,9 @@
+     }
+     delete pb;
+     cvpf_mean_err = cvpf_mean_err / (real) test_length;
++    //TODO check the formul
++    //cvpf_mean_stddev = sqrt(cvpf_mean_err);
++
+ }
+ 
+ real TestImputations::covariancePreservationValue(int col)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001080.html">[Plearn-commits] r7632 - trunk/scripts
+</A></li>
+	<LI>Next message: <A HREF="001082.html">[Plearn-commits] r7634 - in	trunk/python_modules/plearn/learners/modulelearners: . examples
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1081">[ date ]</a>
+              <a href="thread.html#1081">[ thread ]</a>
+              <a href="subject.html#1081">[ subject ]</a>
+              <a href="author.html#1081">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

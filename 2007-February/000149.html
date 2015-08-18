@@ -1,0 +1,202 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6700 - in trunk: plearn/misc	plearn_learners/testers scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6700%20-%20in%20trunk%3A%20plearn/misc%0A%09plearn_learners/testers%20scripts&In-Reply-To=%3C200702281744.l1SHiaIp010007%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000148.html">
+   <LINK REL="Next"  HREF="000150.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6700 - in trunk: plearn/misc	plearn_learners/testers scripts</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6700%20-%20in%20trunk%3A%20plearn/misc%0A%09plearn_learners/testers%20scripts&In-Reply-To=%3C200702281744.l1SHiaIp010007%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6700 - in trunk: plearn/misc	plearn_learners/testers scripts">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Wed Feb 28 18:44:36 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000148.html">[Plearn-commits] r6699 - trunk/plearn/opt/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="000150.html">[Plearn-commits] r6701 - in trunk: plearn/misc	plearn_learners/testers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#149">[ date ]</a>
+              <a href="thread.html#149">[ thread ]</a>
+              <a href="subject.html#149">[ subject ]</a>
+              <a href="author.html#149">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2007-02-28 18:44:33 +0100 (Wed, 28 Feb 2007)
+New Revision: 6700
+
+Modified:
+   trunk/plearn/misc/PLearnService.cc
+   trunk/plearn_learners/testers/PTester.cc
+   trunk/plearn_learners/testers/PTester.h
+   trunk/scripts/xdispatch
+Log:
+- fixed PTester to take call_forget_in_run into account
+
+
+
+Modified: trunk/plearn/misc/PLearnService.cc
+===================================================================
+--- trunk/plearn/misc/PLearnService.cc	2007-02-28 15:36:03 UTC (rev 6699)
++++ trunk/plearn/misc/PLearnService.cc	2007-02-28 17:44:33 UTC (rev 6700)
+@@ -388,6 +388,7 @@
+         {
+             // do nothing...
+         }
++
+     }
+ }
+ 
+@@ -404,8 +405,6 @@
+ void PLearnService::progress_callback(PP&lt;RemotePLearnServer&gt; server, unsigned int pbar, char action, 
+                                       unsigned int pos, const string&amp; title)
+ {
+-    //unsigned int server_id= reinterpret_cast&lt;unsigned int&gt;(static_cast&lt;RemotePLearnServer*&gt;(server));
+-    //unsigned int server_id= getServerID(server);
+     static bool need_to_set_pb_plugin= true;
+     if(need_to_set_pb_plugin)
+     {
+
+Modified: trunk/plearn_learners/testers/PTester.cc
+===================================================================
+--- trunk/plearn_learners/testers/PTester.cc	2007-02-28 15:36:03 UTC (rev 6699)
++++ trunk/plearn_learners/testers/PTester.cc	2007-02-28 17:44:33 UTC (rev 6700)
+@@ -292,6 +292,7 @@
+         rmm, &quot;perform1Split&quot;, &amp;PTester::perform1Split,
+         (BodyDoc(&quot;Performs train/test for one split, returns splitres.&quot;),
+          ArgDoc (&quot;splitnum&quot;,&quot;Split number on which to perform train/test&quot;),
++         ArgDoc (&quot;call_forget&quot;,&quot;Whether forget() should be called in setTrainingSet().&quot;),
+          RetDoc (&quot;Vector of test statistics corresponding to the requested statnames&quot;)));
+ 
+     declareMethod(
+@@ -748,7 +749,7 @@
+ }
+ 
+ 
+-Vec PTester::perform1Split(int splitnum)
++Vec PTester::perform1Split(int splitnum, bool call_forget)
+ {
+     if (!learner)
+         PLERROR(&quot;PTester::perform1Split : No learner specified for PTester.&quot;);
+@@ -819,7 +820,7 @@
+                 learner-&gt;setExperimentDirectory(&quot;&quot;);
+         }
+ 
+-        learner-&gt;setTrainingSet(trainset, should_train);
++        learner-&gt;setTrainingSet(trainset, call_forget &amp;&amp; should_train);
+         if (dsets.size() &gt; 1)
+             learner-&gt;setValidationSet(dsets[1]);
+ 
+@@ -1069,7 +1070,7 @@
+                     int id;
+                     s-&gt;getResults(id);
+                     testers_ids[s]= id;
+-                    s-&gt;callMethod(id, &quot;perform1Split&quot;, splits_called);
++                    s-&gt;callMethod(id, &quot;perform1Split&quot;, splits_called, call_forget);
+                     splitnums[s]= splits_called;
+                     ++splits_called;
+                 }
+@@ -1088,7 +1089,6 @@
+                 if (split_stats_vm)
+                 {
+                     split_stats_vm-&gt;putRow(splitnums[s],splitres);
+-                    //split_stats_vm-&gt;appendRow(splitres);
+                     split_stats_vm-&gt;flush();
+                 }
+             
+@@ -1096,7 +1096,7 @@
+ 
+                 if(splits_called &lt; nsplits)//call for another split
+                 {
+-                    s-&gt;callMethod(testers_ids[s], &quot;perform1Split&quot;, splits_called);
++                    s-&gt;callMethod(testers_ids[s], &quot;perform1Split&quot;, splits_called, call_forget);
+                     ++splits_called;
+                 }
+                 else
+@@ -1110,12 +1110,11 @@
+     else
+         for (int splitnum= 0; splitnum &lt; nsplits; ++splitnum)
+         {
+-            Vec splitres= perform1Split(splitnum);
++            Vec splitres= perform1Split(splitnum, call_forget);
+             
+             if (split_stats_vm)
+             {
+                 split_stats_vm-&gt;putRow(splitnum, splitres);
+-                //split_stats_vm-&gt;appendRow(splitres);
+                 split_stats_vm-&gt;flush();
+             }
+             
+
+Modified: trunk/plearn_learners/testers/PTester.h
+===================================================================
+--- trunk/plearn_learners/testers/PTester.h	2007-02-28 15:36:03 UTC (rev 6699)
++++ trunk/plearn_learners/testers/PTester.h	2007-02-28 17:44:33 UTC (rev 6700)
+@@ -190,7 +190,7 @@
+      *  statnames
+      */
+     Vec perform(bool call_forget=true);
+-    Vec perform1Split(int splitnum);
++    Vec perform1Split(int splitnum, bool call_forget=true);
+ 
+     Vec oldperform(bool call_forget=true);
+ 
+
+Modified: trunk/scripts/xdispatch
+===================================================================
+--- trunk/scripts/xdispatch	2007-02-28 15:36:03 UTC (rev 6699)
++++ trunk/scripts/xdispatch	2007-02-28 17:44:33 UTC (rev 6700)
+@@ -41,12 +41,12 @@
+     parser.add_option('-l', '--max-load', type= &quot;float&quot;,
+                       dest= &quot;max_load&quot;,
+                       help='Sets the default maximum load',
+-                      default=2.0)
++                      default=1.0)
+ 
+     parser.add_option('-s', '--nb-servers', type=&quot;int&quot;,
+                       dest= &quot;nb_servers&quot;,
+                       help='Number of servers to launch (maximum)',
+-                      default=1)
++                      default=3)
+    
+     (options, args) = parser.parse_args()
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000148.html">[Plearn-commits] r6699 - trunk/plearn/opt/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="000150.html">[Plearn-commits] r6701 - in trunk: plearn/misc	plearn_learners/testers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#149">[ date ]</a>
+              <a href="thread.html#149">[ thread ]</a>
+              <a href="subject.html#149">[ subject ]</a>
+              <a href="author.html#149">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

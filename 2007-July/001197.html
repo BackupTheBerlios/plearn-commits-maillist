@@ -1,0 +1,171 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7749 - trunk/plearn_learners/online/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7749%20-%20trunk/plearn_learners/online/EXPERIMENTAL&In-Reply-To=%3C200707112209.l6BM9ExA024012%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001196.html">
+   <LINK REL="Next"  HREF="001198.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7749 - trunk/plearn_learners/online/EXPERIMENTAL</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7749%20-%20trunk/plearn_learners/online/EXPERIMENTAL&In-Reply-To=%3C200707112209.l6BM9ExA024012%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7749 - trunk/plearn_learners/online/EXPERIMENTAL">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Thu Jul 12 00:09:14 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001196.html">[Plearn-commits] r7748 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001198.html">[Plearn-commits] r7750 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1197">[ date ]</a>
+              <a href="thread.html#1197">[ thread ]</a>
+              <a href="subject.html#1197">[ subject ]</a>
+              <a href="author.html#1197">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-07-12 00:09:14 +0200 (Thu, 12 Jul 2007)
+New Revision: 7749
+
+Modified:
+   trunk/plearn_learners/online/EXPERIMENTAL/KLp0p1RBMModule.cc
+Log:
+fixed KLp0p1 computation and gradient
+
+
+Modified: trunk/plearn_learners/online/EXPERIMENTAL/KLp0p1RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/EXPERIMENTAL/KLp0p1RBMModule.cc	2007-07-11 21:35:30 UTC (rev 7748)
++++ trunk/plearn_learners/online/EXPERIMENTAL/KLp0p1RBMModule.cc	2007-07-11 22:09:14 UTC (rev 7749)
+@@ -884,7 +884,8 @@
+         hidden_layer-&gt;setBatchSize(n);
+         visible_layer-&gt;setBatchSize(n);
+         const Mat&amp; ph=hidden_layer-&gt;getExpectations();
+-        training_set-&gt;getMat(0,0,visible_layer-&gt;getExpectations());
++        const Mat&amp; X=visible_layer-&gt;getExpectations();
++        training_set-&gt;getMat(0,0,X);
+         connection-&gt;setAsDownInputs(visible_layer-&gt;getExpectations());
+         hidden_layer-&gt;getAllActivations(connection,0,true);
+         hidden_layer-&gt;computeExpectations();
+@@ -920,20 +921,16 @@
+             Vec h = conf_hidden_layer-&gt;samples(c);
+             for (int k=0;k&lt;n;k++)
+             {
+-                real lp=h[0]==1?safelog(ph(k,0)):safelog(1-ph(k,0));
+-                for (int i=1;i&lt;hidden_layer-&gt;size;i++)
+-                {
+-                    real p_hi_given_xk = h[i]==1?safelog(ph(k,i)):safelog(1-ph(k,i)); 
+-                    lp = logadd(lp,p_hi_given_xk);
+-                }
++                real lp=0;
++                for (int i=0;i&lt;hidden_layer-&gt;size;i++)
++                    lp += h[i]==1?safelog(ph(k,i)):safelog(1-ph(k,i)); 
+                 // now lp = log P(h|x^k)
+                 if (k==0)
+                     log_sum_ph_given_xk = lp;
+                 else
+                     log_sum_ph_given_xk = logadd(log_sum_ph_given_xk,lp);
+             }
+-            log_sum_ph_given_xk -= logn;
+-            // now log_sum_ph_given_xk = log (1/n) sum_k P(h|x^k)
++            // now log_sum_ph_given_xk = log sum_k P(h|x^k)
+             for (int t=0;t&lt;mbs;t++)
+                 if (c==0)
+                     (*KLp0p1)(t,0) = conf_visible_layer-&gt;fpropNLL((*visible)(t)) + log_sum_ph_given_xk;
+@@ -941,6 +938,7 @@
+                     (*KLp0p1)(t,0) = logadd((*KLp0p1)(t,0), conf_visible_layer-&gt;fpropNLL((*visible)(t)) + log_sum_ph_given_xk);
+         }
+         *KLp0p1 *= -1;
++        *KLp0p1 += logn;
+         // reset sizes as before
+         hidden_layer-&gt;setBatchSize(mbs);
+         visible_layer-&gt;setBatchSize(mbs);
+@@ -1650,6 +1648,8 @@
+         int n=training_set.length();
+         PLASSERT(connection-&gt;classname()==&quot;RBMMatrixConnection&quot;);
+         PP&lt;RBMMatrixConnection&gt; matrix_connection = PP&lt;RBMMatrixConnection&gt;(connection);
++        hidden_layer-&gt;setBatchSize(n);
++        visible_layer-&gt;setBatchSize(n);
+         Mat&amp; W = matrix_connection-&gt;weights;
+         Vec&amp; hidden_bias = hidden_layer-&gt;bias;
+         Vec&amp; visible_bias = visible_layer-&gt;bias;
+@@ -1657,6 +1657,7 @@
+         Vec phi_given_xk(hidden_layer-&gt;size);
+         const Mat&amp; ph_given_Xk=hidden_layer-&gt;getExpectations();
+         const Mat&amp; pvisible_given_H=conf_visible_layer-&gt;getExpectations();
++        const Mat&amp; X=visible_layer-&gt;getExpectations();
+         int n_configurations = 1 &lt;&lt; hidden_layer-&gt;size; // = 2^{hidden_layer-&gt;size}
+         real logn=safelog(n);
+         for (int t=0;t&lt;mbs;t++)
+@@ -1665,7 +1666,7 @@
+             for (int k=0;k&lt;n;k++)
+             {
+                 Vec ph_given_xk = ph_given_Xk(k);
+-                Vec xk = (*visible)(k);
++                Vec xk = X(k);
+                 for (int c=0;c&lt;n_configurations;c++)
+                 {
+                     Vec h = conf_hidden_layer-&gt;samples(c);
+@@ -1673,12 +1674,13 @@
+                     real lp = (*KLp0p1)(t,0) - logn; // lp = log (1/(n P1(x^t)))
+                     // compute and multiply by P(h|x^k)
+                     for (int i=0;i&lt;hidden_layer-&gt;size;i++)
+-                        lp = logadd(lp,phi_given_xk[i]=(h[i]==1?safelog(ph_given_xk[i]):safelog(1-ph_given_xk[i]))); 
++                        lp += (phi_given_xk[i]=(h[i]==1?safelog(ph_given_xk[i]):safelog(1-ph_given_xk[i]))); 
+                     // now lp = log ( (1/(n P1(x^t))) P(h|x^k) )
+ 
+                     // compute and multiply by P(x^t|h)
+                     for (int j=0;j&lt;visible_layer-&gt;size;j++)
+-                        lp = logadd(lp,pxtj_given_h[j]=(xt[j]*safelog(pvisible_given_h[j])+(1-xt[j])*safelog(1-pvisible_given_h[j])));
++                        lp += pxtj_given_h[j]=(xt[j]*safelog(pvisible_given_h[j])+
++                                               (1-xt[j])*safelog(1-pvisible_given_h[j]));
+                     // now lp = log ( (1/(n P1(x^t))) P(h|x^k)  P(x^t|h) )
+                     real coeff = exp(lp);
+                     for (int j=0;j&lt;visible_layer-&gt;size;j++)
+@@ -1687,7 +1689,8 @@
+                     {
+                         hidden_bias[i] -= klp0p1_learning_rate*coeff*(h[i]-phi_given_xk[i]);
+                         for (int j=0;j&lt;visible_layer-&gt;size;j++)
+-                            W(i,j) -= klp0p1_learning_rate*coeff*(h[i]*(xt[j]-pxtj_given_h[j])-xk[j]*(h[i]-phi_given_xk[i]));
++                            W(i,j) -= klp0p1_learning_rate*coeff*
++                                (h[i]*(xt[j]-pxtj_given_h[j])-xk[j]*(h[i]-phi_given_xk[i]));
+                     }
+                 }
+             }
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001196.html">[Plearn-commits] r7748 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001198.html">[Plearn-commits] r7750 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1197">[ date ]</a>
+              <a href="thread.html#1197">[ thread ]</a>
+              <a href="subject.html#1197">[ subject ]</a>
+              <a href="author.html#1197">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

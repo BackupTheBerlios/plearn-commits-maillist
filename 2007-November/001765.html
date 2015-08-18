@@ -1,0 +1,220 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8317 - trunk/scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-November/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8317%20-%20trunk/scripts&In-Reply-To=%3C200711282023.lASKNJ9i032371%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001764.html">
+   <LINK REL="Next"  HREF="001766.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8317 - trunk/scripts</H1>
+    <B>louradou at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8317%20-%20trunk/scripts&In-Reply-To=%3C200711282023.lASKNJ9i032371%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8317 - trunk/scripts">louradou at mail.berlios.de
+       </A><BR>
+    <I>Wed Nov 28 21:23:19 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001764.html">[Plearn-commits] r8316 - trunk/plearn/misc
+</A></li>
+        <LI>Next message: <A HREF="001766.html">[Plearn-commits] r8318 - trunk/plearn/base
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1765">[ date ]</a>
+              <a href="thread.html#1765">[ thread ]</a>
+              <a href="subject.html#1765">[ subject ]</a>
+              <a href="author.html#1765">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: louradou
+Date: 2007-11-28 21:23:19 +0100 (Wed, 28 Nov 2007)
+New Revision: 8317
+
+Modified:
+   trunk/scripts/appendresults
+   trunk/scripts/makeresults
+Log:
+Fixed: a problem with makeresults (that did not lock the .amat file,
+so appendresults could write in this .amat file at the same time as appendresults)
+
+Added: the possibility to also give the statistics values as arguments
+(instead of the path to the global_stats.pmat which contains them)
+
+
+
+Modified: trunk/scripts/appendresults
+===================================================================
+--- trunk/scripts/appendresults	2007-11-28 18:45:33 UTC (rev 8316)
++++ trunk/scripts/appendresults	2007-11-28 20:23:19 UTC (rev 8317)
+@@ -5,14 +5,25 @@
+ #   appendresults ${dir} results.amat ${param_1} ${param_2} ... ${param_n}
+ 
+ if [ &quot;$3&quot; = &quot;&quot; ]; then
+-  echo Usage: $0 dir output param_1 ... param_n
+-  echo See code for more info.
++  echo &quot;Usage:&quot;
++  echo &quot;     $0 dir output param_1 ... param_n&quot;
++  echo &quot;OR   $0 output param_1 ... param_n perf_1 ... perf_m&quot;
++  echo &quot;See code for more info.&quot;
+   exit 127
+ fi
+ DIR=&quot;$1&quot;
+-OUTPUT=&quot;$2&quot;
+ shift
+-shift
++if [ -d $DIR ];then
++    OUTPUT=&quot;$1&quot;
++    shift
++else
++    OUTPUT=$DIR
++fi
++if [ ! -f $OUTPUT ];then
++    echo &quot;$OUTPUT is not a file!&quot;
++    exit 69
++fi
++
+ PARAMS=&quot;$1 &quot;
+ shift
+ for PARAM in $@; do
+@@ -22,8 +33,12 @@
+ # Wait until nobody else is messing with the output file.
+ lockfile $OUTPUT.lock
+ 
+-echo -n &quot;$PARAMS&quot; &gt;&gt; $OUTPUT
+-plearn vmat cat $DIR/global_stats.pmat &quot;rowindex 1 ==&quot; &gt;&gt; $OUTPUT
++if [ -d $DIR ];then
++    echo -n &quot;$PARAMS&quot; &gt;&gt; $OUTPUT
++    plearn vmat cat $DIR/global_stats.pmat &quot;rowindex 1 ==&quot; &gt;&gt; $OUTPUT
++else
++    echo &quot;$PARAMS&quot; &gt;&gt; $OUTPUT
++fi
+ 
+ # Release the lock
+ rm -f $OUTPUT.lock
+
+Modified: trunk/scripts/makeresults
+===================================================================
+--- trunk/scripts/makeresults	2007-11-28 18:45:33 UTC (rev 8316)
++++ trunk/scripts/makeresults	2007-11-28 20:23:19 UTC (rev 8317)
+@@ -9,20 +9,27 @@
+ #   &lt;template_mat&gt; : a matrix file readable by 'plearn vmat fields', whose fields names
+ #                    will be copied into the .amat field names
+ #   &lt;parameter_i&gt;  : the name of the i-th parameter to be reported in the results
++#   &lt;performance_i&gt; : the name of the i-th statistics to be reported in the results
+ #
+ # Output: two files (.vmat and .amat), used respectively to visualize and store the results of
+ #         the experiments (using the appendresults script)
+ 
+ if [ &quot;$2&quot; = &quot;&quot; ]; then
+-  echo &quot;Usage: makeresults &lt;matrix_name&gt; &lt;template_mat&gt; &lt;parameter_1&gt; ... &lt;parameter_N&gt;&quot;
++  echo &quot;Usage:&quot;
++  echo &quot;     $0 &lt;matrix_name&gt; &lt;template_mat&gt; &lt;parameter_1&gt; ... &lt;parameter_N&gt;&quot;
++  echo &quot;OR   $0 &lt;matrix_name&gt; &lt;parameter_1&gt; ... &lt;parameter_N&gt; &lt;performance_1&gt; ... &lt;performance_M&gt;&quot;
+   exit 127
+ fi
+ 
+ MATNAME=&quot;$1&quot;
+ shift
+ 
++# Wait until nobody else is messing with the output file.
++lockfile $MATNAME.amat.lock
++
+ # Don't do anything if files already exist.
+ if [ -f $MATNAME.amat ] &amp;&amp; [ -f $MATNAME.vmat ]; then
++  rm -f $MATNAME.amat.lock
+   exit 0
+ fi
+ 
+@@ -31,12 +38,10 @@
+   echo &quot;In makeresults script: one of the following files already exist:&quot;
+   echo &quot;  $MATNAME.amat, or&quot;
+   echo &quot;  $MATNAME.vmat&quot;
++  rm -f $MATNAME.amat.lock
+   exit 127
+ fi
+ 
+-TEMPLATEMAT=&quot;$1&quot;
+-shift
+-
+ # Make the .vmat.
+ echo &quot;# Wrapper to visualize the results stored in $MATNAME.amat.&quot; &gt; $MATNAME.vmat
+ echo &quot;SortRowsVMatrix(&quot; &gt;&gt; $MATNAME.vmat
+@@ -47,16 +52,39 @@
+ echo &quot;  ]&quot; &gt;&gt; $MATNAME.vmat
+ echo &quot;)&quot; &gt;&gt; $MATNAME.vmat
+ 
++
++TEMPLATEMAT=&quot;$1&quot;
++if [ -f $TEMPLATEMAT ];then
++   if [ ! -r $TEMPLATEMAT ];then
++       echo &quot;ERROR: file &quot;$TEMPLATEMAT&quot; exists but cannot be read!&quot;
++       rm -f $MATNAME.amat.lock
++       exit 69
++   fi
++   shift
++fi
++
+ # Make the .amat.
+ echo &quot;# Data collected from PLearn experiments, to be visualized through $MATNAME.vmat.&quot; &gt; $MATNAME.amat
+ echo &quot;# Fieldnames:&quot; &gt;&gt; $MATNAME.amat
+ echo -n &quot;#: &quot; &gt;&gt; $MATNAME.amat
+-for PARAM in $@; do
+-  echo -n &quot;$PARAM &quot; &gt;&gt; $MATNAME.amat
+-done
+ 
+-# Now uses the template matrix to complete the field names.
+-plearn vmat fields $TEMPLATEMAT name_only transpose &gt;&gt; $MATNAME.amat
++# Write the parameters and statistics names
++if [ -f $TEMPLATEMAT ];then
++    for PARAM in $@; do
++        echo -n &quot;$PARAM &quot; &gt;&gt; $MATNAME.amat
++    done
++    # Now uses the template matrix to complete the field names.
++    plearn vmat fields $TEMPLATEMAT name_only transpose &gt;&gt; $MATNAME.amat
++else
++    for PARAM in $@; do
++        echo -n &quot;$PARAM &quot; &gt;&gt; $MATNAME.amat
++    done
++    echo &gt;&gt; $MATNAME.amat
++fi
+ 
++# Release the lock
++rm -f $MATNAME.amat.lock
++
++
+ # Display exit message.
+ echo &quot;Files $MATNAME.vmat and $MATNAME.amat successfully created&quot;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001764.html">[Plearn-commits] r8316 - trunk/plearn/misc
+</A></li>
+	<LI>Next message: <A HREF="001766.html">[Plearn-commits] r8318 - trunk/plearn/base
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1765">[ date ]</a>
+              <a href="thread.html#1765">[ thread ]</a>
+              <a href="subject.html#1765">[ subject ]</a>
+              <a href="author.html#1765">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

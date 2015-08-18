@@ -1,0 +1,203 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7089 - trunk/plearn_learners/online/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7089%20-%20trunk/plearn_learners/online/EXPERIMENTAL&In-Reply-To=%3C200705141847.l4EIlCJh010220%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000537.html">
+   <LINK REL="Next"  HREF="000539.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7089 - trunk/plearn_learners/online/EXPERIMENTAL</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7089%20-%20trunk/plearn_learners/online/EXPERIMENTAL&In-Reply-To=%3C200705141847.l4EIlCJh010220%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7089 - trunk/plearn_learners/online/EXPERIMENTAL">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Mon May 14 20:47:12 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000537.html">[Plearn-commits] r7088 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="000539.html">[Plearn-commits] r7090 - in trunk/plearn/python: .	test/.pytest/EmbeddedPython_Instances/expected_results
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#538">[ date ]</a>
+              <a href="thread.html#538">[ thread ]</a>
+              <a href="subject.html#538">[ subject ]</a>
+              <a href="author.html#538">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-05-14 20:47:11 +0200 (Mon, 14 May 2007)
+New Revision: 7089
+
+Modified:
+   trunk/plearn_learners/online/EXPERIMENTAL/LearningNetwork.cc
+   trunk/plearn_learners/online/EXPERIMENTAL/MatrixModule.cc
+   trunk/plearn_learners/online/EXPERIMENTAL/MatrixModule.h
+Log:
+The default gradient of a MatrixModule is now 0 instead of 1 (this is safer: one now needs to explicitely set the gradient to 1 if he wants to)
+
+Modified: trunk/plearn_learners/online/EXPERIMENTAL/LearningNetwork.cc
+===================================================================
+--- trunk/plearn_learners/online/EXPERIMENTAL/LearningNetwork.cc	2007-05-14 18:06:31 UTC (rev 7088)
++++ trunk/plearn_learners/online/EXPERIMENTAL/LearningNetwork.cc	2007-05-14 18:47:11 UTC (rev 7089)
+@@ -472,6 +472,12 @@
+         }
+     }
+ 
++    // Initialize cost gradients to 1.
++    // Note that we may not need to re-do it at every iteration, but this is so
++    // cheap it should not impact performance.
++    if (cost_module)
++        store_costs-&gt;setGradientTo(1);
++
+     // Backpropagate gradient to optimize parameters.
+     for (int i = 0; i &lt; bprop_path.length(); i++) {
+         PP&lt;OnlineLearningModule&gt; module = all_modules[bprop_path[i]];
+
+Modified: trunk/plearn_learners/online/EXPERIMENTAL/MatrixModule.cc
+===================================================================
+--- trunk/plearn_learners/online/EXPERIMENTAL/MatrixModule.cc	2007-05-14 18:06:31 UTC (rev 7088)
++++ trunk/plearn_learners/online/EXPERIMENTAL/MatrixModule.cc	2007-05-14 18:47:11 UTC (rev 7089)
+@@ -77,6 +77,10 @@
+                   OptionBase::buildoption,
+         &quot;The matrix seen by this module.&quot;);
+ 
++    declareOption(ol, &quot;data_gradient&quot;, &amp;MatrixModule::data_gradient,
++                  OptionBase::buildoption,
++        &quot;The gradient w.r.t. 'data'. If not provided, is assumed to be 0.&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -85,18 +89,7 @@
+ // build_ //
+ ////////////
+ void MatrixModule::build_()
+-{
+-    // ### This method should do the real building of the object,
+-    // ### according to set 'options', in *any* situation.
+-    // ### Typical situations include:
+-    // ###  - Initial building of an object from a few user-specified options
+-    // ###  - Building of a &quot;reloaded&quot; object: i.e. from the complete set of
+-    // ###    all serialised options.
+-    // ###  - Updating or &quot;re-building&quot; of an object after a few &quot;tuning&quot;
+-    // ###    options have been modified.
+-    // ### You should assume that the parent class' build_() has already been
+-    // ### called.
+-}
++{}
+ 
+ ///////////
+ // build //
+@@ -118,10 +111,17 @@
+     if (!grad)
+         return;
+     if (grad-&gt;isEmpty()) {
+-        // Accumulate ones into gradient.
++        // Accumulate 'data_gradient' into gradient (if there actually is a
++        // gradient).
+         grad-&gt;resize(data.length(), data.width());
+-        *grad += real(1);
++        if (!data_gradient.isEmpty()) {
++            PLASSERT( data.length() == data_gradient.length() &amp;&amp;
++                      data.width()  == data_gradient.width() );
++            *grad += data_gradient;
++        }
+     } else {
++        data_gradient.resize(grad-&gt;length(), grad-&gt;width());
++        data_gradient &lt;&lt; *grad;
+         PLERROR(&quot;In MatrixModule::bpropAccUpdate - Update of the underlying &quot;
+                 &quot;data matrix is not yet implemented&quot;);
+     }
+@@ -266,6 +266,15 @@
+ }
+ */
+ 
++///////////////////
++// setGradientTo //
++///////////////////
++void MatrixModule::setGradientTo(real g)
++{
++    data_gradient.resize(data.length(), data.width());
++    data_gradient.fill(g);
++}
++
+ /////////////////////
+ // setLearningRate //
+ /////////////////////
+
+Modified: trunk/plearn_learners/online/EXPERIMENTAL/MatrixModule.h
+===================================================================
+--- trunk/plearn_learners/online/EXPERIMENTAL/MatrixModule.h	2007-05-14 18:06:31 UTC (rev 7088)
++++ trunk/plearn_learners/online/EXPERIMENTAL/MatrixModule.h	2007-05-14 18:47:11 UTC (rev 7089)
+@@ -62,6 +62,7 @@
+     //#####  Public Build Options  ############################################
+ 
+     Mat data;
++    Mat data_gradient;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+@@ -167,11 +168,12 @@
+     */
+ 
+     //! If provided, the matrix value is used to fill 'data'.
+-    //! If not provided, it is filled with 'data'.
++    //! If required, it is filled with 'data'.
+     virtual void fprop(const TVec&lt;Mat*&gt;&amp; ports_value);
+ 
+-    //! If provided, the gradient is used to update 'data'.
+-    //! If not provided, the gradient is filled with ones.
++    //! If provided, the gradient is used to update 'data' (and fill
++    //! 'data_gradient').
++    //! If required, it is filled with 'gradient'.
+     virtual void bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
+                                 const TVec&lt;Mat*&gt;&amp; ports_gradient);
+ 
+@@ -181,6 +183,11 @@
+     //! Overridden.
+     virtual const TMat&lt;int&gt;&amp; getPortSizes();
+ 
++    //! Set the gradient w.r.t. 'data' to the provided constant value 'g'.
++    //! The result is that 'data_gradient' is resized to the same size as 'data'
++    //! and filled with 'g'.
++    void setGradientTo(real g);
++
+     //#####  PLearn::Object Protocol  #########################################
+ 
+     // Declares other standard object methods.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000537.html">[Plearn-commits] r7088 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="000539.html">[Plearn-commits] r7090 - in trunk/plearn/python: .	test/.pytest/EmbeddedPython_Instances/expected_results
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#538">[ date ]</a>
+              <a href="thread.html#538">[ thread ]</a>
+              <a href="subject.html#538">[ subject ]</a>
+              <a href="author.html#538">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

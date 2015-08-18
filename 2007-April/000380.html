@@ -1,0 +1,219 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6931 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6931%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704241454.l3OEsHsb013888%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000379.html">
+   <LINK REL="Next"  HREF="000381.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6931 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6931%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704241454.l3OEsHsb013888%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6931 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue Apr 24 16:54:17 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000379.html">[Plearn-commits] r6930 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="000381.html">[Plearn-commits] r6932 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#380">[ date ]</a>
+              <a href="thread.html#380">[ thread ]</a>
+              <a href="subject.html#380">[ subject ]</a>
+              <a href="author.html#380">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-04-24 16:54:16 +0200 (Tue, 24 Apr 2007)
+New Revision: 6931
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+Log:
+Various bug fixes for mini-batch setting
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-04-24 14:45:24 UTC (rev 6930)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-04-24 14:54:16 UTC (rev 6931)
+@@ -449,8 +449,6 @@
+ /////////////////////////////////
+ void DeepBeliefNet::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+-    // TODO Add missing fields.
+-
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+     deepCopyField(training_schedule,        copies);
+@@ -464,9 +462,13 @@
+     deepCopyField(classification_cost,      copies);
+     deepCopyField(joint_layer,              copies);
+     deepCopyField(activation_gradients,     copies);
++    deepCopyField(activations_gradients,    copies);
+     deepCopyField(expectation_gradients,    copies);
++    deepCopyField(expectations_gradients,   copies);
+     deepCopyField(final_cost_input,         copies);
++    deepCopyField(final_cost_inputs,        copies);
+     deepCopyField(final_cost_value,         copies);
++    deepCopyField(final_cost_values,        copies);
+     deepCopyField(final_cost_output,        copies);
+     deepCopyField(class_output,             copies);
+     deepCopyField(class_gradient,           copies);
+@@ -475,8 +477,11 @@
+     deepCopyField(final_cost_gradients,     copies);
+     deepCopyField(save_layer_activation,    copies);
+     deepCopyField(save_layer_expectation,   copies);
+-    deepCopyField(pos_down_val,          copies);
+-    deepCopyField(pos_up_val,            copies);
++    deepCopyField(pos_down_val,             copies);
++    deepCopyField(pos_up_val,               copies);
++    deepCopyField(pos_down_vals,            copies);
++    deepCopyField(pos_up_vals,              copies);
++    deepCopyField(optimized_costs,          copies);
+     deepCopyField(final_cost_indices,       copies);
+     deepCopyField(partial_cost_indices,     copies);
+ }
+@@ -546,6 +551,7 @@
+         }
+         if (final_cost)
+             final_cost_gradients.resize(minibatch_size, final_cost-&gt;input_size);
++        optimized_costs.resize(minibatch_size);
+     }
+ 
+     layers[n_layers-1]-&gt;random_gen = random_gen;
+@@ -666,7 +672,7 @@
+                     int sample_start = stage % nsamples;
+                     if (batch_size &gt; 1) {
+                         train_set-&gt;getExamples(sample_start, minibatch_size,
+-                                inputs, targets, weights);
++                                inputs, targets, weights, NULL, true);
+                         greedyStep( inputs, targets, i );
+                     } else {
+                         train_set-&gt;getExample(sample_start, input, target, weight);
+@@ -726,6 +732,8 @@
+ 
+         // TODO Do we really want to systematically compute this reconstruction
+         // error?
++
++        if (batch_size == 1) {
+         for(int train_index = 0 ; train_index &lt; nsamples ; train_index++)
+         {
+ 
+@@ -756,6 +764,10 @@
+         }
+ 
+         train_recons_error /= nsamples ;
++        } else {
++            // Currently do not compute reconstruction error with mini-batches.
++            train_recons_error = MISSING_VALUE;
++        }
+ 
+ 
+         /***** fine-tuning by gradient descent *****/
+@@ -792,7 +804,7 @@
+ 
+                 if (minibatch_size &gt; 1) {
+                     train_set-&gt;getExamples(sample_start, minibatch_size, inputs,
+-                            targets, weights);
++                            targets, weights, NULL, true);
+                     fineTuningStep(inputs, targets, train_costs_m);
+                 } else {
+                     train_set-&gt;getExample( sample_start, input, target, weight );
+@@ -1341,9 +1353,6 @@
+     }
+ }
+ 
+-////////////////////
+-// fineTuningStep //
+-////////////////////
+ void DeepBeliefNet::fineTuningStep(const Mat&amp; inputs, const Mat&amp; targets,
+                                    Mat&amp; train_costs )
+ {
+@@ -1368,11 +1377,14 @@
+ 
+         if( final_module )
+         {
++            final_cost_inputs.resize(minibatch_size,
++                                     final_module-&gt;output_size);
+             final_module-&gt;fprop( layers[ n_layers-1 ]-&gt;getExpectations(),
+                                  final_cost_inputs );
+             final_cost-&gt;fprop( final_cost_inputs, targets, final_cost_values );
+ 
+-            Mat optimized_costs = final_cost_values.column(0);
++            // TODO This extra memory copy is annoying: how can we avoid it?
++            optimized_costs &lt;&lt; final_cost_values.column(0);
+             final_cost-&gt;bpropUpdate( final_cost_inputs, targets,
+                                      optimized_costs,
+                                      final_cost_gradients );
+@@ -1386,7 +1398,7 @@
+             final_cost-&gt;fprop( layers[ n_layers-1 ]-&gt;getExpectations(), targets,
+                                final_cost_values );
+ 
+-            Mat optimized_costs = final_cost_values.column(0);
++            optimized_costs &lt;&lt; final_cost_values.column(0);
+             final_cost-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;getExpectations(),
+                                      targets, optimized_costs,
+                                      expectations_gradients[ n_layers-1 ] );
+@@ -1415,7 +1427,8 @@
+ 
+     if( use_classification_cost )
+     {
+-        PLASSERT_MSG(batch_size == 1, &quot;Not implemented for mini-batches&quot;);
++        PLERROR(&quot;DeepBeliefNet::fineTuningStep - Not implemented for &quot;
++                &quot;mini-batches&quot;);
+         /*
+         classification_module-&gt;fprop( layers[ n_layers-2 ]-&gt;expectation,
+                                       class_output );
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2007-04-24 14:45:24 UTC (rev 6930)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2007-04-24 14:54:16 UTC (rev 6931)
+@@ -309,6 +309,9 @@
+     mutable Mat pos_down_vals;
+     mutable Mat pos_up_vals;
+ 
++    //! Used to store the costs optimized by the final cost module.
++    Vec optimized_costs;
++
+     //! Keeps the index of the NLL cost in train_costs
+     int nll_cost_index;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000379.html">[Plearn-commits] r6930 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="000381.html">[Plearn-commits] r6932 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#380">[ date ]</a>
+              <a href="thread.html#380">[ thread ]</a>
+              <a href="subject.html#380">[ subject ]</a>
+              <a href="author.html#380">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

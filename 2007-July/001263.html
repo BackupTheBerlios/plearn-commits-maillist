@@ -1,0 +1,189 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7815 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7815%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200707220230.l6M2UY1C022883%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001262.html">
+   <LINK REL="Next"  HREF="001264.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7815 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7815%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200707220230.l6M2UY1C022883%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7815 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Sun Jul 22 04:30:34 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001262.html">[Plearn-commits] r7814 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="001264.html">[Plearn-commits] r7816 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1263">[ date ]</a>
+              <a href="thread.html#1263">[ thread ]</a>
+              <a href="subject.html#1263">[ subject ]</a>
+              <a href="author.html#1263">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-07-22 04:30:33 +0200 (Sun, 22 Jul 2007)
+New Revision: 7815
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+Log:
+Better asserts and avoid some recomputations.
+
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-07-22 02:29:08 UTC (rev 7814)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-07-22 02:30:33 UTC (rev 7815)
+@@ -691,11 +691,12 @@
+     if (compute_contrastive_divergence)
+     {
+         contrastive_divergence = ports_value[getPortIndex(&quot;contrastive_divergence&quot;)];
+-        if (!contrastive_divergence || !contrastive_divergence-&gt;isEmpty())
++/* YB: I don't agree with this error message: the behavior should be adapted to the provided ports. 
++      if (!contrastive_divergence || !contrastive_divergence-&gt;isEmpty())
+             PLERROR(&quot;In RBMModule::fprop - When option &quot;
+                     &quot;'compute_contrastive_divergence' is 'true', the &quot;
+                     &quot;'contrastive_divergence' port should be provided, as an &quot;
+-                    &quot;output.&quot;);
++                    &quot;output.&quot;);*/
+         negative_phase_visible_samples =
+             ports_value[getPortIndex(&quot;negative_phase_visible_samples.state&quot;)];
+         negative_phase_hidden_expectations =
+@@ -703,7 +704,6 @@
+         negative_phase_hidden_activations =
+             ports_value[getPortIndex(&quot;negative_phase_hidden_activations.state&quot;)];
+     }
+-
+     bool hidden_expectations_are_computed = false;
+     hidden_activations_are_computed = false;
+     bool found_a_valid_configuration = false;
+@@ -804,16 +804,23 @@
+     {
+         // Autoassociator reconstruction cost
+         PLASSERT( ports_value.length() == nPorts() );
+-        if(!hidden_expectations_are_computed)
+-        {
+-            computePositivePhaseHiddenActivations(*visible);
+-            hidden_layer-&gt;computeExpectations();
+-            hidden_expectations_are_computed=true;
++
++        Mat h;
++        if (hidden &amp;&amp; !hidden-&gt;isEmpty())
++            h = *hidden;
++        else {
++            if(!hidden_expectations_are_computed)
++            {
++                computePositivePhaseHiddenActivations(*visible);
++                hidden_layer-&gt;computeExpectations();
++                hidden_expectations_are_computed=true;
++            }
++            h = hidden_layer-&gt;getExpectations();
+         }
+ 
+         // Don't need to verify if they are asked in a port, this was done previously
+ 
+-        computeVisibleActivations(hidden_layer-&gt;getExpectations(), true);
++        computeVisibleActivations(h, true);
+         if(visible_reconstruction_activations)
+         {
+             PLASSERT( visible_reconstruction_activations-&gt;isEmpty() );
+@@ -1102,9 +1109,12 @@
+     Mat* weights_grad = ports_gradient[getPortIndex(&quot;weights&quot;)];
+     hidden_bias = ports_value[getPortIndex(&quot;hidden_bias&quot;)];
+     Mat* contrastive_divergence_grad = NULL;
++    Mat* contrastive_divergence = ports_value[getPortIndex(&quot;contrastive_divergence&quot;)];
++    bool computed_contrastive_divergence = compute_contrastive_divergence &amp;&amp; 
++        contrastive_divergence &amp;&amp; !contrastive_divergence-&gt;isEmpty();
+ 
+     // Ensure the gradient w.r.t. contrastive divergence is 1 (if provided).
+-    if (compute_contrastive_divergence) {
++    if (computed_contrastive_divergence) {
+         contrastive_divergence_grad =
+             ports_gradient[getPortIndex(&quot;contrastive_divergence&quot;)];
+         if (contrastive_divergence_grad) {
+@@ -1120,8 +1130,8 @@
+ 
+     // Ensure the visible gradient is not provided as input. This is because we
+     // accumulate more than once in 'visible_grad'.
+-    PLASSERT_MSG( !visible_grad || visible_grad-&gt;isEmpty(), &quot;Cannot provide &quot;
+-            &quot;an input gradient w.r.t. visible units&quot; );
++    PLASSERT_MSG( !visible_grad || visible_grad-&gt;isEmpty(), &quot;If visible gradient is desired &quot;
++                  &quot; the corresponding matrix should have 0 length&quot; );
+ 
+     bool compute_visible_grad = visible_grad &amp;&amp; visible_grad-&gt;isEmpty();
+     bool compute_weights_grad = weights_grad &amp;&amp; weights_grad-&gt;isEmpty();
+@@ -1138,7 +1148,7 @@
+         // learning rate is equal to 0. This is because we must propagate the
+         // gradient to the visible layer, even though no update is required.
+         setAllLearningRates(grad_learning_rate);
+-        PLASSERT( hidden &amp;&amp; hidden_act );
++        PLASSERT_MSG( hidden &amp;&amp; hidden_act , &quot;To compute gradients in bprop, the hidden_activations.state port must have been filled during fprop&quot;);
+         // Compute gradient w.r.t. activations of the hidden layer.
+         hidden_layer-&gt;bpropUpdate(
+                 *hidden_act, *hidden, hidden_act_grad, *hidden_grad,
+@@ -1278,13 +1288,13 @@
+         PLASSERT( visible &amp;&amp; !visible-&gt;isEmpty() );
+         setAllLearningRates(cd_learning_rate);
+         Mat* negative_phase_visible_samples =
+-            compute_contrastive_divergence?ports_value[getPortIndex(&quot;negative_phase_visible_samples.state&quot;)]:0;
++            computed_contrastive_divergence?ports_value[getPortIndex(&quot;negative_phase_visible_samples.state&quot;)]:0;
+         const Mat* negative_phase_hidden_expectations =
+-            compute_contrastive_divergence ?
++            computed_contrastive_divergence ?
+                 ports_value[getPortIndex(&quot;negative_phase_hidden_expectations.state&quot;)]
+                 : NULL;
+         Mat* negative_phase_hidden_activations =
+-            compute_contrastive_divergence ?
++            computed_contrastive_divergence ?
+                 ports_value[getPortIndex(&quot;negative_phase_hidden_activations.state&quot;)]
+                 : NULL;
+ 
+@@ -1304,7 +1314,7 @@
+                 computeHiddenActivations(visible_layer-&gt;samples);
+                 hidden_layer-&gt;computeExpectations();
+             }
+-            PLASSERT( !compute_contrastive_divergence );
++            PLASSERT( !computed_contrastive_divergence );
+             PLASSERT( !negative_phase_hidden_expectations );
+             PLASSERT( !negative_phase_hidden_activations );
+             negative_phase_hidden_expectations = &amp;(hidden_layer-&gt;getExpectations());
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001262.html">[Plearn-commits] r7814 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="001264.html">[Plearn-commits] r7816 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1263">[ date ]</a>
+              <a href="thread.html#1263">[ thread ]</a>
+              <a href="subject.html#1263">[ subject ]</a>
+              <a href="author.html#1263">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,259 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8942 - trunk/plearn/python
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8942%20-%20trunk/plearn/python&In-Reply-To=%3C200805061458.m46Ewfrv006423%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002389.html">
+   <LINK REL="Next"  HREF="002391.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8942 - trunk/plearn/python</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8942%20-%20trunk/plearn/python&In-Reply-To=%3C200805061458.m46Ewfrv006423%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8942 - trunk/plearn/python">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Tue May  6 16:58:41 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002389.html">[Plearn-commits] r8941 - trunk/python_modules/plearn/learners
+</A></li>
+        <LI>Next message: <A HREF="002391.html">[Plearn-commits] r8943 - in trunk/python_modules/plearn: pybridge	pyext
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2390">[ date ]</a>
+              <a href="thread.html#2390">[ thread ]</a>
+              <a href="subject.html#2390">[ subject ]</a>
+              <a href="author.html#2390">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2008-05-06 16:58:40 +0200 (Tue, 06 May 2008)
+New Revision: 8942
+
+Modified:
+   trunk/plearn/python/PythonExtension.cc
+   trunk/plearn/python/PythonObjectWrapper.cc
+   trunk/plearn/python/PythonObjectWrapper.h
+Log:
+- allow conversion of numpy array to TVec&lt;T&gt; or TMat&lt;T&gt; for T != real
+- new python wrapper for VMats: includes __len__, __getitem__, etc.
+ 
+
+
+Modified: trunk/plearn/python/PythonExtension.cc
+===================================================================
+--- trunk/plearn/python/PythonExtension.cc	2008-05-06 14:26:48 UTC (rev 8941)
++++ trunk/plearn/python/PythonExtension.cc	2008-05-06 14:58:40 UTC (rev 8942)
+@@ -38,6 +38,7 @@
+ #include &lt;plearn/base/TypeFactory.h&gt;
+ #include &lt;plearn/base/PMemPool.h&gt;
+ #include &lt;plearn/base/stringutils.h&gt;
++#include &lt;plearn/vmat/VMatrix.h&gt;
+ 
+ namespace PLearn {
+ 
+@@ -248,6 +249,13 @@
+         if(!tit-&gt;second.constructor)
+             continue; //skip abstract classes
+ 
++        string actual_wrapper_name= wrapper_name;
++        Object* temp_obj= tit-&gt;second.constructor();
++        // use different wrapper for VMats (w/ len, getitem, etc.)
++        if(dynamic_cast&lt;VMatrix*&gt;(temp_obj))
++            actual_wrapper_name= &quot;WrappedPLearnVMat&quot;;
++        delete temp_obj;
++
+         // create new python type deriving from WrappedPLearnObject
+         string classname= tit-&gt;first;
+         string pyclassname= classname;
+@@ -255,7 +263,7 @@
+         search_replace(pyclassname, &quot;&lt;&quot;, &quot;_&quot;);
+         search_replace(pyclassname, &quot;&gt;&quot;, &quot;_&quot;);
+         string derivcode= string(&quot;\nclass &quot;)
+-            + pyclassname + &quot;(&quot; + wrapper_name + &quot;):\n&quot;
++            + pyclassname + &quot;(&quot; + actual_wrapper_name + &quot;):\n&quot;
+             &quot;  \&quot;\&quot;\&quot; ... \&quot;\&quot;\&quot;\n&quot;
+             &quot;  def __new__(cls,*args,**kwargs):\n&quot;
+             &quot;    #print '** &quot;+pyclassname+&quot;.__new__',kwargs\n&quot;
+@@ -267,6 +275,7 @@
+         PyObject* res= PyRun_String(derivcode.c_str(), 
+                                     Py_file_input, 
+                                     PyModule_GetDict(module), PyModule_GetDict(module));
++
+         Py_XDECREF(res);
+         env= PythonObjectWrapper(
+             PyModule_GetDict(module), 
+@@ -276,7 +285,7 @@
+             PLERROR(&quot;in injectPLearnClasses : &quot;
+                     &quot;Cannot create new python class deriving from &quot;
+                     &quot;%s (%s).&quot;, 
+-                    wrapper_name.c_str(),
++                    actual_wrapper_name.c_str(),
+                     classname.c_str());
+ 
+         //set option names
+
+Modified: trunk/plearn/python/PythonObjectWrapper.cc
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.cc	2008-05-06 14:26:48 UTC (rev 8941)
++++ trunk/plearn/python/PythonObjectWrapper.cc	2008-05-06 14:58:40 UTC (rev 8942)
+@@ -306,6 +306,41 @@
+     return static_cast&lt;VarArray&gt;(ConvertFromPyObject&lt;TVec&lt;Var&gt; &gt;::convert(pyobj, print_traceback));
+ }
+ 
++template&lt;&gt; int numpyType&lt;bool&gt;()               { return NPY_BOOL; }
++template&lt;&gt; int numpyType&lt;signed char&gt;()        { return NPY_BYTE; }
++template&lt;&gt; int numpyType&lt;unsigned char&gt;()      { return NPY_UBYTE; }
++template&lt;&gt; int numpyType&lt;signed short&gt;()       { return NPY_SHORT; }
++template&lt;&gt; int numpyType&lt;unsigned short&gt;()     { return NPY_USHORT; }
++template&lt;&gt; int numpyType&lt;signed int&gt;()         { return NPY_INT; }
++template&lt;&gt; int numpyType&lt;unsigned int&gt;()       { return NPY_UINT; }
++template&lt;&gt; int numpyType&lt;signed long&gt;()        { return NPY_LONG; }
++template&lt;&gt; int numpyType&lt;unsigned long&gt;()      { return NPY_ULONG; }
++template&lt;&gt; int numpyType&lt;signed long long&gt;()   { return NPY_LONGLONG; }
++template&lt;&gt; int numpyType&lt;unsigned long long&gt;() { return NPY_ULONGLONG; }
++template&lt;&gt; int numpyType&lt;float&gt;()              { return NPY_FLOAT; }
++template&lt;&gt; int numpyType&lt;double&gt;()             { return NPY_DOUBLE; }
++template&lt;&gt; int numpyType&lt;long double&gt;()        { return NPY_LONGDOUBLE; }
++
++PyObject* convertArrayCheck(PyObject* pyobj, int numpy_type, int ndim, bool print_traceback)
++{
++    PythonGlobalInterpreterLock gil;         // For thread-safety
++    static PythonEmbedder embedder;
++    PythonObjectWrapper::initializePython();
++
++    if(!PyArray_Check(pyobj)) return 0; //not an array
++
++    PyObject* pyarr0= PyArray_CheckFromAny(pyobj, NULL,
++                                           ndim, ndim, NPY_CARRAY_RO, Py_None);
++    PyObject* pyarr= 
++        PyArray_CastToType(reinterpret_cast&lt;PyArrayObject*&gt;(pyarr0),
++                           PyArray_DescrFromType(numpy_type), 0);
++    Py_XDECREF(pyarr0);
++    if(!pyarr)
++        PLPythonConversionError(&quot;convertArrayCheck&quot;, pyobj,
++                                print_traceback);
++    return pyarr;
++}
++
+ //#####  Constructors+Destructors  ############################################
+ 
+ PythonObjectWrapper::PythonObjectWrapper(OwnershipMode o,
+
+Modified: trunk/plearn/python/PythonObjectWrapper.h
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.h	2008-05-06 14:26:48 UTC (rev 8941)
++++ trunk/plearn/python/PythonObjectWrapper.h	2008-05-06 14:58:40 UTC (rev 8942)
+@@ -452,7 +452,33 @@
+ };
+ 
+ 
++/*****
++ * Equivalence of types C++ -&gt; numpy
++ */
++template &lt;typename T&gt;
++int numpyType()
++{
++    PLERROR(&quot;in numpyType: no numpy equivalent to C++ type &quot;,
++            TypeTraits&lt;T*&gt;::name().c_str());
++    return -1; //shut up compiler
++}
+ 
++template&lt;&gt; int numpyType&lt;bool&gt;();
++template&lt;&gt; int numpyType&lt;signed char&gt;();
++template&lt;&gt; int numpyType&lt;unsigned char&gt;();
++template&lt;&gt; int numpyType&lt;signed short&gt;();
++template&lt;&gt; int numpyType&lt;unsigned short&gt;();
++template&lt;&gt; int numpyType&lt;signed int&gt;();
++template&lt;&gt; int numpyType&lt;unsigned int&gt;();
++template&lt;&gt; int numpyType&lt;signed long&gt;();
++template&lt;&gt; int numpyType&lt;unsigned long&gt;();
++template&lt;&gt; int numpyType&lt;signed long long&gt;();
++template&lt;&gt; int numpyType&lt;unsigned long long&gt;();
++template&lt;&gt; int numpyType&lt;float&gt;();
++template&lt;&gt; int numpyType&lt;double&gt;();
++template&lt;&gt; int numpyType&lt;long double&gt;();
++
++
+ //! Used to convert integer values to python, using PyInt if possible
+ template &lt;class I&gt;
+ PyObject* integerToPyObject(const I&amp; x)
+@@ -971,6 +997,13 @@
+     return p;
+ }
+ 
++/*****
++ * convert numpy array to the right array type; return 0 if pyobj is not an array
++ * pyobj is the python object to check/convert, numpy_type is an int representing a
++ * numpy type, ndim is the number of dimensions that the array should have (1=vec, 2=mat, 0=any)
++ */
++PyObject* convertArrayCheck(PyObject* pyobj, int numpy_type, int ndim, bool print_traceback);
++
+ template &lt;class T&gt;
+ TVec&lt;T&gt; ConvertFromPyObject&lt; TVec&lt;T&gt; &gt;::convert(PyObject* pyobj,
+                                                 bool print_traceback)
+@@ -998,6 +1031,14 @@
+         }
+         return v;
+     }
++    else if (PyObject* pyarr= convertArrayCheck(pyobj, numpyType&lt;T&gt;(), 1, print_traceback))
++    {
++        int sz= PyArray_DIM(pyarr,0);
++        TVec&lt;T&gt; v(sz);
++        v.copyFrom(static_cast&lt;T*&gt;(PyArray_DATA(pyarr)), sz);
++        Py_XDECREF(pyarr);
++        return v;
++    }
+     else
+         PLPythonConversionError(&quot;ConvertFromPyObject&lt; TVec&lt;T&gt; &gt;&quot;, pyobj,
+                                 print_traceback);
+@@ -1042,6 +1083,15 @@
+         }
+         return v;
+     }
++    else if (PyObject* pyarr= convertArrayCheck(pyobj, numpyType&lt;T&gt;(), 2, print_traceback))
++    {
++        TMat&lt;T&gt; m;
++        m.resize(PyArray_DIM(pyarr,0), PyArray_DIM(pyarr,1));
++        m.toVec().copyFrom(static_cast&lt;T*&gt;(PyArray_DATA(pyarr)),
++                           PyArray_DIM(pyarr,0) * PyArray_DIM(pyarr,1));
++        Py_XDECREF(pyarr);
++        return m;
++    }
+     else
+         PLPythonConversionError(&quot;ConvertFromPyObject&lt; TMat&lt;T&gt; &gt;&quot;, pyobj,
+                                 print_traceback);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002389.html">[Plearn-commits] r8941 - trunk/python_modules/plearn/learners
+</A></li>
+	<LI>Next message: <A HREF="002391.html">[Plearn-commits] r8943 - in trunk/python_modules/plearn: pybridge	pyext
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2390">[ date ]</a>
+              <a href="thread.html#2390">[ thread ]</a>
+              <a href="subject.html#2390">[ subject ]</a>
+              <a href="author.html#2390">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

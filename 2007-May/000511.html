@@ -1,0 +1,286 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7062 - trunk/python_modules/plearn/pytest
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7062%20-%20trunk/python_modules/plearn/pytest&In-Reply-To=%3C200705111713.l4BHDgOG023236%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000510.html">
+   <LINK REL="Next"  HREF="000512.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7062 - trunk/python_modules/plearn/pytest</H1>
+    <B>dorionc at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7062%20-%20trunk/python_modules/plearn/pytest&In-Reply-To=%3C200705111713.l4BHDgOG023236%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7062 - trunk/python_modules/plearn/pytest">dorionc at mail.berlios.de
+       </A><BR>
+    <I>Fri May 11 19:13:42 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000510.html">[Plearn-commits] r7061 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="000512.html">[Plearn-commits] r7063 - trunk/python_modules/plearn/pyplearn
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#511">[ date ]</a>
+              <a href="thread.html#511">[ thread ]</a>
+              <a href="subject.html#511">[ subject ]</a>
+              <a href="author.html#511">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: dorionc
+Date: 2007-05-11 19:13:41 +0200 (Fri, 11 May 2007)
+New Revision: 7062
+
+Modified:
+   trunk/python_modules/plearn/pytest/modes.py
+   trunk/python_modules/plearn/pytest/programs.py
+Log:
+The --pymake-compile option was improved to --pymake-compile-options to allow for a wider use.
+
+
+Modified: trunk/python_modules/plearn/pytest/modes.py
+===================================================================
+--- trunk/python_modules/plearn/pytest/modes.py	2007-05-11 15:27:42 UTC (rev 7061)
++++ trunk/python_modules/plearn/pytest/modes.py	2007-05-11 17:13:41 UTC (rev 7062)
+@@ -77,14 +77,16 @@
+                                     help='The maximum number of hosts to use simultaneously.',
+                                     default=10 )
+ 
+-        testing_options.add_option( '--pymake-compile',
+-                                    default=&quot;dbg&quot;,
+-                                    choices=Program.pymake_opt_options,
+-                                    help=&quot;Changes the *default* compilation flag used by pymake (dbg) &quot;
+-                                    &quot;for the one provided. DO NOT preceed the option name by a dash, &quot;
+-                                    &quot;i.e. use '--pymake-compile opt' and not '--pymake-compile -opt'. &quot;
+-                                    &quot;Note that if the tests is already specified with one of the &quot;
+-                                    &quot;above compile options, that compile option will remain unchanged.&quot; )
++        testing_options.add_option( '--pymake-compile-options', default=&quot;&quot;,
++            help=&quot;The default behavior of tests being compiled with Pymake is to &quot;
++                &quot;forward their 'compile_options' to Pymake. This command line &quot;
++                &quot;option can be used to add flags to the compilation process. DO &quot;
++                &quot;NOT preceed the option(s) name by a dash. If you want to provide many &quot;
++                &quot;flags, provide a CSV list of flags, e.g. \n&quot;
++                &quot;    --pymake-compile-options safeopt,fastmath \n&quot;
++                &quot;For now, it is the user's responsability to ensure that the options &quot;
++                &quot;provided here do not clash with the ones potentially provided &quot;
++                &quot;through the tests' option 'compile_options'.&quot;)
+         
+         return testing_options
+     testing_options = classmethod( testing_options )
+@@ -717,8 +719,9 @@
+     #  Instance methods
+     #    
+     def __init__( self, targets, options ):
+-        logging.debug(&quot;--pymake-compile (=%s) option forwarded to Program.&quot;%options.pymake_compile)
+-        Program.pymake_opt_override = options.pymake_compile
++        logging.debug(&quot;--pymake-compile-options (=%s) option forwarded to Program.&quot;
++                      % options.pymake_compile_options)
++        Program.cmdline_compile_options = options.pymake_compile_options
+ 
+         # The option had to be forwarded to Program *before* calling the
+         # inherited ctor since Program instances are instanciated there...
+
+Modified: trunk/python_modules/plearn/pytest/programs.py
+===================================================================
+--- trunk/python_modules/plearn/pytest/programs.py	2007-05-11 15:27:42 UTC (rev 7061)
++++ trunk/python_modules/plearn/pytest/programs.py	2007-05-11 17:13:41 UTC (rev 7062)
+@@ -1,4 +1,4 @@
+-import logging, os, sys
++import logging, os, sets, sys
+ from plearn.utilities import ppath
+ from plearn.utilities import moresh
+ from plearn.utilities import toolkit
+@@ -76,20 +76,6 @@
+ 
+     return command_path
+ 
+-#SING: def Singleton(SuperMeta):
+-#SING:     class _Singleton(SuperMeta):
+-#SING:         def __init__(self, *args):
+-#SING:             type.__init__(self, *args)
+-#SING:             self._singletons = {}
+-#SING:     
+-#SING:         def __call__(self, **overrides):
+-#SING:             signature = self._signature(**overrides)
+-#SING:             if not signature in self._singletons:
+-#SING:                 overrides['_signature'] = signature
+-#SING:                 self._singletons[signature] = type.__call__(self, **overrides)
+-#SING:             return self._singletons[signature]
+-#SING:     return _Singleton
+-
+ class Program(core.PyTestObject):
+ 
+     #######  Options  #############################################################
+@@ -99,22 +85,7 @@
+     compile_options = PLOption(None)
+     no_plearn_options = PLOption(False)
+ 
+-    #######  Program instances are singletons  ####################################
+ 
+-    #SING: __metaclass__ = Singleton(core.PyTestObject.__metaclass__)
+-    def _signature(cls, **overrides):
+-        options = dict([ (opt, None) for opt in cls.class_options() ])
+-        options.update(overrides)                
+-        if options['compiler'] is None:
+-            signature = options['name']
+-        else:
+-            if options['compile_options'] == &quot;&quot;:                
+-                options['compile_options'] = None
+-            signature =\
+-                &quot;%(name)s__compiler_%(compiler)s__options_%(compile_options)s&quot;%options
+-        return signature.replace(' ', '_')
+-    _signature = classmethod(_signature)
+-
+     #######  Class Variables  #####################################################
+ 
+     # Default compiler: for programs assumed to be compilable but for which
+@@ -127,10 +98,8 @@
+     # If True, no compilations done; assume old executables are valid
+     compilation_disabled = False
+ 
+-    # Special pymake hacks --- see hackCompileOptions()
+-    pymake_opt_options = [ 'dbg', 'opt', 'pintel', 'gprof',
+-                           'safegprof', 'safeopt', 'safeoptdbg', 'checkopt' ]
+-    pymake_opt_override = &quot;dbg&quot;
++    # Special pymake hack --- see handleCompileOptions()
++    cmdline_compile_options = &quot;&quot;
+ 
+ 
+     #######  Instance Methods  ####################################################
+@@ -138,14 +107,15 @@
+     def __init__(self, **overrides):
+         core.PyTestObject.__init__(self, **overrides)
+         assert self.name is not None
+-        assert self.compiler is not None or self.compile_options is None
+-        logging.debug(&quot;Creating program using compiler %s with compile_options '%s'.&quot;%(self.compiler, self.compile_options))
+ 
+-        # Methods are called even if messages are not logged
++        # Some command line options can modify the default values for those...
++        self.handleCompileOptions()
++
++        # Methods are called even if messages are not logged...
++        ##  The getProgramPath() method call is required here so as to
++        ##  initialize the '_program_path' and '__is_global' members
+         logging.debug(&quot;\nProgram: &quot;+self.getProgramPath())
+ 
+-        #SING: internal_exec_path = self.getInternalExecPath(overrides.pop('_signature'))
+-        #CLS:  internal_exec_path = self.getInternalExecPath(self._signature(**overrides))
+         internal_exec_path = self.getInternalExecPath(self.__signature())
+         logging.debug(&quot;Internal Exec Path: %s&quot;%internal_exec_path)
+         if self.isCompilable():
+@@ -155,12 +125,29 @@
+             self.__log_file_path = internal_exec_path+'.log'
+         logging.debug(&quot;Program instance: %s\n&quot;%repr(self))
+ 
++    def handleCompileOptions(self):        
++        assert self.compiler is not None or self.compile_options is None, \
++            &quot;One cannot provide compile options without providing a compiler...&quot;
++        logging.debug(&quot;Creating program using compiler %s with compile_options '%s'.&quot;%(self.compiler, self.compile_options))
++
++        if self.cmdline_compile_options and self.compiler == &quot;pymake&quot;:
++            config_options = [ opt.replace(&quot;-&quot;, &quot;&quot;)
++                               for opt in self.compile_options.split() ]
++            cmdline_options = self.cmdline_compile_options.split(&quot;,&quot;)
++
++            options = list( sets.Set(config_options+cmdline_options) )
++            options = &quot; -&quot;.join([&quot;&quot;]+options).strip()
++
++            logging.debug(&quot;Test %s: Using compile options '%s' instead of '%s'...&quot;,
++                          self.name, self.compile_options, options)
++            self.compile_options = options
++            
+     def __signature(self):
+         if self.compiler is None:
+             signature = self.name
+         else:
+             if self.compile_options == &quot;&quot;:
+-                self.compile_options = None                
++                self.compile_options = None
+             signature = &quot;%s__compiler_%s__options_%s&quot;%(
+                 self.name, self.compiler, self.compile_options)
+         signature = signature.replace('-', '') # Compile options...
+@@ -238,10 +225,6 @@
+         moresh.pushd(targetdir)
+         logging.debug(&quot;\nIn %s:&quot;%os.getcwd())
+         
+-#       compile_cmd = &quot;%s %s %s -link-target %s &gt; %s&quot; \
+-#           % (self.compiler, self.compile_options,
+-#              self.getProgramPath(), self.getInternalExecPath(), log_fname)
+- 
+         if sys.platform == 'win32':
+             # We assume the compiler is pymake.
+             if self.compiler != &quot;pymake&quot;:
+@@ -319,31 +302,10 @@
+             try:
+                 self._program_path = find_global_program(self.name)
+                 self.__is_global = True                
+-                if self.compiler is not None:
+-                    self.hackCompileOptions()                        
+             except core.PyTestUsageError, neither_global:
+                 raise core.PyTestUsageError(&quot;%s %s&quot;%(not_local, neither_global))
+         return self._program_path
+ 
+-    def hackCompileOptions(self):
+-        assert self.compiler
+-        if self.compile_options is None: self.compile_options = ''
+-            
+-        if self.compiler == &quot;pymake&quot; and self.pymake_opt_override!=&quot;dbg&quot;:
+-            try:
+-                actual_options = self.compile_options.split()
+-                logging.debug(&quot;- actual_options: %s&quot;%actual_options)
+-                if actual_options:
+-                    for opt_option in self.pymake_opt_options:
+-                        assert ('-%s'%opt_option) not in actual_options, opt_option
+-
+-                # No AssertionError raised
+-                self.compile_options = ' '.join(
+-                    ['-%s'%self.pymake_opt_override, self.compile_options])
+-
+-            except AssertionError, opt_option:
+-                logging.debug(&quot;+ pytest.config provided '-%s' prevails&quot;%opt_option)    
+-
+     def invoke(self, arguments, logfname):
+         if self.isPLearnCommand() and not self.no_plearn_options:            
+             # arguments = &quot;--no-version %s&quot;%arguments
+@@ -411,7 +373,7 @@
+     print Program(name=&quot;simplenet&quot;, compiler=&quot;pymake&quot;, compile_options=&quot;-safeopt&quot;)
+ 
+     print &quot;\nOpt hack:&quot;
+-    Program.pymake_opt_override = 'opt'
++    Program.cmdline_compile_options = 'opt'
+     plearn_tests = Program(name=&quot;plearn_tests&quot;, compiler=&quot;pymake&quot;)
+     print plearn_tests
+     print Program(name=&quot;plearn_tests&quot;, compiler=&quot;pymake&quot;, compile_options='-dbg')
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000510.html">[Plearn-commits] r7061 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="000512.html">[Plearn-commits] r7063 - trunk/python_modules/plearn/pyplearn
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#511">[ date ]</a>
+              <a href="thread.html#511">[ thread ]</a>
+              <a href="subject.html#511">[ subject ]</a>
+              <a href="author.html#511">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

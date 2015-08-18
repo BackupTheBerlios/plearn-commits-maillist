@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8816 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8816%20-%20trunk/plearn/vmat&In-Reply-To=%3C200804151707.m3FH7E0K008527%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002263.html">
+   <LINK REL="Next"  HREF="002265.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8816 - trunk/plearn/vmat</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8816%20-%20trunk/plearn/vmat&In-Reply-To=%3C200804151707.m3FH7E0K008527%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8816 - trunk/plearn/vmat">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue Apr 15 19:07:14 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002263.html">[Plearn-commits] r8815 - trunk/python_modules/plearn/learners
+</A></li>
+        <LI>Next message: <A HREF="002265.html">[Plearn-commits] r8817 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2264">[ date ]</a>
+              <a href="thread.html#2264">[ thread ]</a>
+              <a href="subject.html#2264">[ subject ]</a>
+              <a href="author.html#2264">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-04-15 19:07:13 +0200 (Tue, 15 Apr 2008)
+New Revision: 8816
+
+Modified:
+   trunk/plearn/vmat/AddBagInformationVMatrix.cc
+   trunk/plearn/vmat/AddBagInformationVMatrix.h
+Log:
+Added an option to remove the bag information column from the source VMat
+
+Modified: trunk/plearn/vmat/AddBagInformationVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/AddBagInformationVMatrix.cc	2008-04-15 16:40:04 UTC (rev 8815)
++++ trunk/plearn/vmat/AddBagInformationVMatrix.cc	2008-04-15 17:07:13 UTC (rev 8816)
+@@ -60,6 +60,7 @@
+ // AddBagInformationVMatrix //
+ //////////////////////////////
+ AddBagInformationVMatrix::AddBagInformationVMatrix():
++    remove_bag_info_column(false),
+     bag_info_idx(-1)
+ {
+ }
+@@ -75,6 +76,12 @@
+         &quot;The source's column that is used to find bags in the data. It can\n&quot;
+         &quot;be either a number or a column's name.&quot;);
+ 
++    declareOption(ol, &quot;remove_bag_info_column&quot;,
++                  &amp;AddBagInformationVMatrix::remove_bag_info_column,
++                  OptionBase::buildoption,
++        &quot;If true, then the source's column given by bag_info_column is\n&quot;
++        &quot;removed from the resulting data.&quot;);
++ 
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -84,7 +91,6 @@
+ ///////////
+ void AddBagInformationVMatrix::build()
+ {
+-    // ### Nothing to add here, simply calls build_
+     inherited::build();
+     build_();
+ }
+@@ -98,7 +104,6 @@
+         updateMtime(source);
+         bag_info_idx = source-&gt;getFieldIndex(bag_info_column);
+         sourcerow.resize(source-&gt;width());
+-        width_ = source-&gt;width() + 1;
+         int st = source-&gt;targetsize();
+         if (st &gt;= 0)
+             targetsize_ = st + 1;
+@@ -106,8 +111,22 @@
+         // Set field infos.
+         Array&lt;VMField&gt; fields = source-&gt;getFieldInfos().copy();
+         fields.append(VMField(&quot;bag_info&quot;));
++
++        width_ = source-&gt;width() + 1;
++        inputsize_ = source-&gt;inputsize();
++
++        if (remove_bag_info_column) {
++            // We need to remove a column from the source VMat.
++            width_--;
++            inputsize_--;
++            Array&lt;VMField&gt; new_fields;
++            for (int i = 0; i &lt; fields.length(); i++)
++                if (i != bag_info_idx)
++                    new_fields.append(fields[i]);
++            fields = new_fields;
++        }
++
+         setFieldInfos(fields);
+-
+         setMetaInfoFromSource();
+     }
+ }
+@@ -142,7 +161,13 @@
+                                     : 1
+                            : is_end ? 2
+                                     : 0;
+-    v.subVec(0, sourcerow.length()) &lt;&lt; sourcerow;
++    if (remove_bag_info_column) {
++        v.subVec(0, bag_info_idx) &lt;&lt; sourcerow.subVec(0, bag_info_idx);
++        int n_left = sourcerow.length() - bag_info_idx - 1;
++        v.subVec(bag_info_idx, n_left) &lt;&lt;
++            sourcerow.subVec(bag_info_idx + 1, n_left);
++    } else
++        v.subVec(0, sourcerow.length()) &lt;&lt; sourcerow;
+     v.lastElement() = bag_info;
+ }
+ 
+
+Modified: trunk/plearn/vmat/AddBagInformationVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/AddBagInformationVMatrix.h	2008-04-15 16:40:04 UTC (rev 8815)
++++ trunk/plearn/vmat/AddBagInformationVMatrix.h	2008-04-15 17:07:13 UTC (rev 8816)
+@@ -62,6 +62,7 @@
+     //#####  Public Build Options  ############################################
+ 
+     string bag_info_column;
++    bool remove_bag_info_column;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002263.html">[Plearn-commits] r8815 - trunk/python_modules/plearn/learners
+</A></li>
+	<LI>Next message: <A HREF="002265.html">[Plearn-commits] r8817 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2264">[ date ]</a>
+              <a href="thread.html#2264">[ thread ]</a>
+              <a href="subject.html#2264">[ subject ]</a>
+              <a href="author.html#2264">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

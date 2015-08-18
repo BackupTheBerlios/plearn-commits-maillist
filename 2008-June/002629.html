@@ -1,0 +1,714 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9181 - trunk/plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9181%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200806261754.m5QHsCjJ030820%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002628.html">
+   <LINK REL="Next"  HREF="002630.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9181 - trunk/plearn_learners/regressors</H1>
+    <B>ducharme at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9181%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200806261754.m5QHsCjJ030820%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9181 - trunk/plearn_learners/regressors">ducharme at mail.berlios.de
+       </A><BR>
+    <I>Thu Jun 26 19:54:12 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002628.html">[Plearn-commits] r9180 - trunk/plearn/misc
+</A></li>
+        <LI>Next message: <A HREF="002630.html">[Plearn-commits] r9182 - trunk/python_modules/plearn/pymake
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2629">[ date ]</a>
+              <a href="thread.html#2629">[ thread ]</a>
+              <a href="subject.html#2629">[ subject ]</a>
+              <a href="author.html#2629">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: ducharme
+Date: 2008-06-26 19:54:11 +0200 (Thu, 26 Jun 2008)
+New Revision: 9181
+
+Modified:
+   trunk/plearn_learners/regressors/BasisSelectionRegressor.cc
+   trunk/plearn_learners/regressors/BasisSelectionRegressor.h
+Log:
+Ajout de quelques options :
+    - Termes d'interactions avec les meilleurs candidats seulement,
+    - Ordre maximum pour les termes d'interactions,
+    - Range qui debutent tous a -infini.
+
+Refactorisation d'une partie du code.
+- 
+
+
+Modified: trunk/plearn_learners/regressors/BasisSelectionRegressor.cc
+===================================================================
+--- trunk/plearn_learners/regressors/BasisSelectionRegressor.cc	2008-06-26 17:52:19 UTC (rev 9180)
++++ trunk/plearn_learners/regressors/BasisSelectionRegressor.cc	2008-06-26 17:54:11 UTC (rev 9181)
+@@ -69,11 +69,14 @@
+       consider_raw_inputs(true),
+       consider_normalized_inputs(false),
+       consider_input_range_indicators(false),
++      fixed_min_range(false),
+       indicator_desired_prob(0.05),
+       indicator_min_prob(0.01),
+       n_kernel_centers_to_pick(-1),
+       consider_interaction_terms(false),
+       max_interaction_terms(-1),
++      consider_n_best_for_interaction(-1),
++      interaction_max_order(-1),
+       consider_sorted_encodings(false),
+       max_n_vals_for_sorted_encodings(-1),
+       normalize_features(false),
+@@ -125,7 +128,7 @@
+ 
+     declareOption(ol, &quot;consider_input_range_indicators&quot;, &amp;BasisSelectionRegressor::consider_input_range_indicators,
+                   OptionBase::buildoption,
+-                  &quot;If true, then we'll include in the dictionary indicatr functions\n&quot;
++                  &quot;If true, then we'll include in the dictionary indicator functions\n&quot;
+                   &quot;triggered by input ranges and input special values\n&quot;
+                   &quot;Special values will include all symbolic values\n&quot;
+                   &quot;(detected by the existance of a corresponding string mapping)\n&quot;
+@@ -135,9 +138,14 @@
+                   &quot;and indicator_min_prob options. The necessary statistics are obtained\n&quot;
+                   &quot;from the counts in the StatsCollector of the train_set VMatrix.\n&quot;);
+ 
++    declareOption(ol, &quot;fixed_min_range&quot;, &amp;BasisSelectionRegressor::fixed_min_range,
++                  OptionBase::buildoption,
++                  &quot;If true, the min value of all range functions will be set to -FLT_MAX.\n&quot;
++                  &quot;This correspond to a 'thermometer' type of mapping.&quot;);
++
+     declareOption(ol, &quot;indicator_desired_prob&quot;, &amp;BasisSelectionRegressor::indicator_desired_prob,
+                   OptionBase::buildoption,
+-                  &quot;The algo will try to build input ranges that have at least that probability of occurencein the training set.&quot;);
++                  &quot;The algo will try to build input ranges that have at least that probability of occurence in the training set.&quot;);
+ 
+     declareOption(ol, &quot;indicator_min_prob&quot;, &amp;BasisSelectionRegressor::indicator_min_prob,
+                   OptionBase::buildoption,
+@@ -170,6 +178,14 @@
+                   &quot;Maximum number of interaction terms to consider.  -1 means no max.\n&quot;
+                   &quot;If more terms are possible, some are chosen randomly at each stage.\n&quot;);
+ 
++    declareOption(ol, &quot;consider_n_best_for_interaction&quot;, &amp;BasisSelectionRegressor::consider_n_best_for_interaction,
++                  OptionBase::buildoption,
++                  &quot;Only the top best functions of single variables are considered when building interaction terms.  -1 means no max.\n&quot;);
++
++    declareOption(ol, &quot;interaction_max_order&quot;, &amp;BasisSelectionRegressor::interaction_max_order,
++                  OptionBase::buildoption,
++                  &quot;Maximum order of a feature in an interaction function.  -1 means no max.\n&quot;);
++
+     declareOption(ol, &quot;consider_sorted_encodings&quot;, &amp;BasisSelectionRegressor::consider_sorted_encodings,
+                   OptionBase::buildoption,
+                   &quot;If true, the dictionary will be enriched with encodings sorted in target order.\n&quot;
+@@ -210,6 +226,11 @@
+                   OptionBase::learntoption,
+                   &quot;CURRENTLY UNUSED&quot;);
+ 
++    declareOption(ol, &quot;scores&quot;, &amp;BasisSelectionRegressor::scores,
++                  OptionBase::learntoption,
++                  &quot;Matrice of the scores for each candidate function.\n&quot;
++                  &quot;Used only when 'consider_n_best_for_interaction' &gt; 0.&quot;);
++
+     declareOption(ol, &quot;candidate_functions&quot;, &amp;BasisSelectionRegressor::candidate_functions,
+                   OptionBase::learntoption,
+                   &quot;The list of current candidate functions.&quot;);
+@@ -259,6 +280,7 @@
+     deepCopyField(learner, copies);
+     deepCopyField(selected_functions, copies);
+     deepCopyField(alphas, copies);
++    deepCopyField(scores, copies);
+ 
+     deepCopyField(simple_candidate_functions, copies);
+     deepCopyField(candidate_functions, copies);
+@@ -308,110 +330,167 @@
+ 
+ void BasisSelectionRegressor::appendCandidateFunctionsOfSingleField(int fieldnum, TVec&lt;RealFunc&gt;&amp; functions) const
+ {
+-    string fieldname = train_set-&gt;fieldName(fieldnum);
+-    StatsCollector&amp; st = train_set-&gt;getStats(fieldnum);
+-    if(consider_raw_inputs)
++    VMField field_info = train_set-&gt;getFieldInfos(fieldnum);
++    string fieldname = field_info.name;
++    VMField::FieldType fieldtype = field_info.fieldtype;
++    StatsCollector&amp; stats_collector = train_set-&gt;getStats(fieldnum);
++
++    real n           = stats_collector.n();
++    real nmissing    = stats_collector.nmissing();
++    real nnonmissing = stats_collector.nnonmissing();
++    real min_count     = indicator_min_prob * n;
++    real desired_count = indicator_desired_prob * n;
++
++    // Raw inputs for non-discrete variables
++    if (consider_raw_inputs  &amp;&amp;  (fieldtype != VMField::DiscrGeneral))
+     {
+         RealFunc f = new RealFunctionOfInputFeature(fieldnum);
+         f-&gt;setInfo(fieldname);
+         functions.append(f);
+     }
+-    if(consider_normalized_inputs)
++
++    // Normalized inputs for non-discrete variables
++    if (consider_normalized_inputs  &amp;&amp;  (fieldtype != VMField::DiscrGeneral))
+     {
+-        if(st.nnonmissing()&gt;0)
++        if (nnonmissing &gt; 0)
+         {
+-            real m = st.mean();
+-            real stddev = st.stddev();
+-            if(stddev&gt;1e-9)
++            real mean   = stats_collector.mean();
++            real stddev = stats_collector.stddev();
++            if (stddev &gt; 1e-9)
+             {
+-                RealFunc f = new ShiftAndRescaleFeatureRealFunction(fieldnum, -m, 1./stddev, 0.);
+-                f-&gt;setInfo(fieldname+&quot;-&quot;+tostring(m)+&quot;/&quot;+tostring(stddev));
++                RealFunc f = new ShiftAndRescaleFeatureRealFunction(fieldnum, -mean, 1./stddev, 0.);
++                string info = fieldname + &quot;-&quot; + tostring(mean) + &quot;/&quot; + tostring(stddev);
++                f-&gt;setInfo(info);
+                 functions.append(f);
+             }
+         }
+ 
+     }
+-    if(consider_input_range_indicators)
++
++    if (consider_input_range_indicators)
+     {
+         const map&lt;real,string&gt;&amp; smap = train_set-&gt;getRealToStringMapping(fieldnum);
+-        map&lt;real,string&gt;::const_iterator sit = smap.begin();
+-        map&lt;real,string&gt;::const_iterator smapend = smap.end();
++        map&lt;real,string&gt;::const_iterator smap_it  = smap.begin();
++        map&lt;real,string&gt;::const_iterator smap_end = smap.end();
+ 
+-        while(sit!=smapend)
++        map&lt;real, StatsCollectorCounts&gt;* counts = stats_collector.getApproximateCounts();
++        map&lt;real,StatsCollectorCounts&gt;::const_iterator count_it = counts-&gt;begin();
++        map&lt;real,StatsCollectorCounts&gt;::const_iterator count_end = counts-&gt;end();
++
++        // Indicator function for mapped variables
++        while (smap_it != smap_end)
+         {
+-            RealFunc f = new RealValueIndicatorFunction(fieldnum, sit-&gt;first);
+-            f-&gt;setInfo(fieldname+&quot;=&quot;+sit-&gt;second);
++            RealFunc f = new RealValueIndicatorFunction(fieldnum, smap_it-&gt;first);
++            string info = fieldname + &quot;=&quot; + smap_it-&gt;second;
++            f-&gt;setInfo(info);
+             functions.append(f);
+-            ++sit;
++            ++smap_it;
+         }
+ 
+-        real n = st.n();
+-        real min_count = indicator_min_prob*n;
+-        real desired_count = indicator_desired_prob*n;
+-        if(st.nmissing() &gt;= min_count &amp;&amp; n-st.nmissing() &gt;= min_count)
++        // Indicator function for discrete variables not using mapping
++        if (fieldtype == VMField::DiscrGeneral  ||  fieldtype == VMField::DiscrMonotonic)
+         {
++            while (count_it != count_end)
++            {
++                real val = count_it-&gt;first;
++                // Make sure the variable don't use mapping for this particular value
++                bool mapped_value = false;
++                smap_it = smap.begin();
++                while (smap_it != smap_end)
++                {
++                    if (smap_it-&gt;first == val)
++                    {
++                        mapped_value = true;
++                        break;
++                    }
++                    ++smap_it;
++                }
++
++                if (!mapped_value)
++                {
++                    RealFunc f = new RealValueIndicatorFunction(fieldnum, val);
++                    string info = fieldname + &quot;=&quot; + tostring(val);
++                    f-&gt;setInfo(info);
++                    functions.append(f);
++                }
++                ++count_it;
++            }
++        }
++
++        // If enough missing values, add an indicator function for it
++        if (nmissing &gt;= min_count &amp;&amp; nnonmissing &gt;= min_count)
++        {
+             RealFunc f = new RealValueIndicatorFunction(fieldnum, MISSING_VALUE);
+-            f-&gt;setInfo(fieldname+&quot;=MISSING&quot;);
++            string info = fieldname + &quot;=MISSING&quot;;
++            f-&gt;setInfo(info);
+             functions.append(f);
+         }
++
++        // For fieldtype DiscrGeneral, it stops here.
++        // A RealRangeIndicatorFunction makes no sense for DiscrGeneral
++        if (fieldtype == VMField::DiscrGeneral) return;
+         
+-        map&lt;real, StatsCollectorCounts&gt;* counts = st.getApproximateCounts();
+-        map&lt;real,StatsCollectorCounts&gt;::const_iterator cit = counts-&gt;begin();
+-        map&lt;real,StatsCollectorCounts&gt;::const_iterator cend = counts-&gt;end();
+-        real cumcount = 0;
++        real cum_count = 0;
+         real low = -FLT_MAX;
+         real val = FLT_MAX;
+-        while(cit!=cend)
++        count_it = counts-&gt;begin();
++        while (count_it != count_end)
+         {
+-            val = cit-&gt;first;
+-            cumcount += cit-&gt;second.nbelow;
+-            bool in_smap = (smap.find(val)!=smapend);
+-            if((cumcount&gt;=desired_count || in_smap&amp;&amp;cumcount&gt;=min_count) &amp;&amp;
+-               (n-cumcount&gt;=desired_count || in_smap&amp;&amp;n-cumcount&gt;=min_count))
++            val = count_it-&gt;first;
++            cum_count += count_it-&gt;second.nbelow;
++            bool in_smap = (smap.find(val) != smap_end);
++            if((cum_count&gt;=desired_count || in_smap&amp;&amp;cum_count&gt;=min_count) &amp;&amp; (n-cum_count&gt;=desired_count || in_smap&amp;&amp;n-cum_count&gt;=min_count))
+             {
+                 RealRange range(']',low,val,'[');
++                if (fixed_min_range) range.low = -FLT_MAX;
+                 RealFunc f = new RealRangeIndicatorFunction(fieldnum, range);
+-                f-&gt;setInfo(fieldname+&quot;__&quot;+tostring(range));
++                string info = fieldname + &quot;__&quot; + tostring(range);
++                f-&gt;setInfo(info);
+                 functions.append(f);
+-                cumcount = 0;
++                cum_count = 0;
+                 low = val;
+             }
+ 
+-            cumcount += cit-&gt;second.n;
+-            if(in_smap)
++            cum_count += count_it-&gt;second.n;
++            if (in_smap)
+             {
+-                cumcount = 0;
++                cum_count = 0;
+                 low = val;
+             }
+-            else if(cumcount&gt;=desired_count &amp;&amp; n-cumcount&gt;=desired_count)
++            else if (cum_count&gt;=desired_count &amp;&amp; n-cum_count&gt;=desired_count)
+             {
+                 RealRange range(']',low,val,']');
++                if (fixed_min_range) range.low = -FLT_MAX;
+                 RealFunc f = new RealRangeIndicatorFunction(fieldnum, range);
+-                f-&gt;setInfo(fieldname+&quot;__&quot;+tostring(range));
++                string info = fieldname + &quot;__&quot; + tostring(range);
++                f-&gt;setInfo(info);
+                 functions.append(f);
+-                cumcount = 0;
++                cum_count = 0;
+                 low = val;
+             }            
+-            ++cit;
++            ++count_it;
+         }
+         // last chunk
+-        if(cumcount&gt;0)
++        if (cum_count &gt; 0)
+         {
+-            if(cumcount&gt;=min_count &amp;&amp; n-cumcount&gt;=min_count)
++            if (cum_count&gt;=min_count &amp;&amp; n-cum_count&gt;=min_count)
+             {
+                 RealRange range(']',low,val,']');
++                if (fixed_min_range) range.low = -FLT_MAX;
+                 RealFunc f = new RealRangeIndicatorFunction(fieldnum, range);
+-                f-&gt;setInfo(fieldname+&quot;__&quot;+tostring(range));
++                string info = fieldname + &quot;__&quot; + tostring(range);
++                f-&gt;setInfo(info);
+                 functions.append(f);
+             }
+-            else if(functions.length()&gt;0) // possibly lump it together with last range
++            else if (functions.length()&gt;0) // possibly lump it together with last range
+             {
+                 RealRangeIndicatorFunction* f = (RealRangeIndicatorFunction*)(RealFunction*)functions.lastElement();
+                 RealRange&amp; range = f-&gt;range;
+-                if(smap.find(range.high)!=smapend) // last element does not appear to be symbolic
++                if(smap.find(range.high) != smap_end) // last element does not appear to be symbolic
+                 {                    
+                     range.high = val; // OK, change the last range to include val
+-                    f-&gt;setInfo(fieldname+&quot;__&quot;+tostring(range));
++                    string info = fieldname + &quot;__&quot; + tostring(range);
++                    f-&gt;setInfo(info);
+                 }
+             }
+         }
+@@ -424,7 +503,7 @@
+     {
+         int nc = n_kernel_centers_to_pick;
+         kernel_centers.resize(nc, inputsize());
+-        real weight;        
++        real weight;
+         int l = train_set-&gt;length();
+         if(random_gen.isNull())
+             random_gen = new PRandom();
+@@ -467,13 +546,11 @@
+ 
+ void BasisSelectionRegressor::buildAllCandidateFunctions()
+ {
+-    bool mandatory_fns_just_added= false;
+     if(selected_functions.length()==0)
+     {
+         candidate_functions= mandatory_functions.copy();
+         while(candidate_functions.length() &gt; 0)
+             appendFunctionToSelection(0);
+-        mandatory_fns_just_added= true;
+     }
+ 
+     if(simple_candidate_functions.length()==0)
+@@ -482,50 +559,97 @@
+     candidate_functions = simple_candidate_functions.copy();
+     TVec&lt;RealFunc&gt; interaction_candidate_functions;
+ 
+-    int candidate_start = consider_constant_function?1:0; // skip bias
+-    int ncandidates = simple_candidate_functions.length();
+-    if(consider_interaction_terms)
++    int candidate_start = consider_constant_function ? 1 : 0; // skip bias
++    int ncandidates = candidate_functions.length();
++    int nselected = selected_functions.length();
++    if (nselected &gt; 0  &amp;&amp;  consider_interaction_terms)
+     {
+-        int nselected = selected_functions.length();
+-        for(int k=0; k&lt;nselected; k++)
++        TVec&lt;RealFunc&gt; top_candidate_functions = simple_candidate_functions.copy();
++        int start = candidate_start;
++        if (consider_n_best_for_interaction &gt; 0  &amp;&amp;  ncandidates &gt; consider_n_best_for_interaction)
+         {
+-            for(int j=candidate_start; j&lt;ncandidates; j++)
++            top_candidate_functions = buildTopCandidateFunctions();
++            start = 0;
++        }
++
++        for (int k=0; k&lt;nselected; k++)
++        {
++            for (int j=start; j&lt;top_candidate_functions.length(); j++)
+             {
+-                RealFunc f = new RealFunctionProduct(selected_functions[k],simple_candidate_functions[j]);
+-                f-&gt;setInfo(&quot;(&quot;+selected_functions[k]-&gt;getInfo()+&quot;*&quot;+simple_candidate_functions[j]-&gt;getInfo()+&quot;)&quot;);
+-                interaction_candidate_functions.append(f);
++                addInteractionFunction(selected_functions[k], top_candidate_functions[j], interaction_candidate_functions);
+             }
+         }
+     }
+ 
+-    // explicit interaction variables / functions
++    // Build explicit_interaction_functions from explicit_interaction_variables
+     explicit_interaction_functions.resize(0);
+-    for(int k= 0; k &lt; explicit_interaction_variables.length(); ++k)
+-        appendCandidateFunctionsOfSingleField(train_set-&gt;getFieldIndex(explicit_interaction_variables[k]), 
+-                                              explicit_interaction_functions);
++    for(int k=0; k&lt;explicit_interaction_variables.length(); ++k)
++        appendCandidateFunctionsOfSingleField(train_set-&gt;getFieldIndex(explicit_interaction_variables[k]), explicit_interaction_functions);
+ 
++    // Add interaction_candidate_functions from explicit_interaction_functions
+     for(int k= 0; k &lt; explicit_interaction_functions.length(); ++k)
+     {
+-        for(int j= candidate_start; j &lt; ncandidates; ++j)
++        for(int j=candidate_start; j&lt;ncandidates; ++j)
+         {
+-            RealFunc f = new RealFunctionProduct(explicit_interaction_functions[k],simple_candidate_functions[j]);
+-            f-&gt;setInfo(&quot;(&quot;+explicit_interaction_functions[k]-&gt;getInfo()+&quot;*&quot;+simple_candidate_functions[j]-&gt;getInfo()+&quot;)&quot;);
+-            interaction_candidate_functions.append(f);
++            addInteractionFunction(explicit_interaction_functions[k], simple_candidate_functions[j], interaction_candidate_functions);
+         }
+     }
+ 
+-    
+-    if(max_interaction_terms &lt; 0)
+-        candidate_functions.append(interaction_candidate_functions);
+-    else
++    // If too many interaction_candidate_functions, we choose them at random
++    if(max_interaction_terms &gt; 0  &amp;&amp;  interaction_candidate_functions.length() &gt; max_interaction_terms)
+     {
+         shuffleElements(interaction_candidate_functions);
+-        for(int i= 0; i &lt; max_interaction_terms &amp;&amp; i &lt; interaction_candidate_functions.length(); ++i)
+-            candidate_functions.append(interaction_candidate_functions[i]);
++        interaction_candidate_functions.resize(max_interaction_terms);
+     }
++    candidate_functions.append(interaction_candidate_functions);
++}
+ 
++void BasisSelectionRegressor::addInteractionFunction(RealFunc&amp; f1, RealFunc&amp; f2, TVec&lt;RealFunc&gt;&amp; all_functions)
++{
++    // Check that feature in f2 don't exceed &quot;interaction_max_order&quot; of that feature in f1
++    // Note that f2 should be a new function to be added (and thus an instance of RealFunctionOfInputFeature)
++    if (interaction_max_order &gt; 0)
++    {
++        int order = 0;
++        computeOrder(f1, order);
++        computeOrder(f2, order);
++        if (order &gt; interaction_max_order)
++            return;
++    }
++
++    RealFunc f = new RealFunctionProduct(f1, f2);
++    f-&gt;setInfo(&quot;(&quot; + f1-&gt;getInfo() + &quot;*&quot; + f2-&gt;getInfo() + &quot;)&quot;);
++    all_functions.append(f);
+ }
+ 
++void BasisSelectionRegressor::computeOrder(RealFunc&amp; func, int&amp; order)
++{
++    if (dynamic_cast&lt;RealFunctionOfInputFeature*&gt;((RealFunction*) func))
++    {
++        ++order;
++    }
++    else if (RealFunctionProduct* f = dynamic_cast&lt;RealFunctionProduct*&gt;((RealFunction*) func))
++    {
++        computeOrder(f-&gt;f1, order);
++        computeOrder(f-&gt;f2, order);
++    }
++    else
++        PLERROR(&quot;In BasisSelectionRegressor::computeOrder: bad function type.&quot;);
++}
++
++TVec&lt;RealFunc&gt; BasisSelectionRegressor::buildTopCandidateFunctions()
++{
++    // The scores matrix should match (in size) the candidate_functions matrix
++    assert(scores.length() == candidate_functions.length());
++
++    sortRows(scores, 1, false);
++    TVec&lt;RealFunc&gt; top_best_functions;
++    for (int i=0; i&lt;consider_n_best_for_interaction; i++)
++        top_best_functions.append(simple_candidate_functions[(int)scores(i,0)]);
++
++    return top_best_functions;
++}
++
+ /* Returns the index of the most correlated (or anti-correlated) feature 
+ among the full candidate features. 
+ */
+@@ -541,7 +665,7 @@
+ 
+     computeWeightedAveragesWithResidue(candidate_functions, wsum, E_x, E_xx, E_y, E_yy, E_xy);
+     
+-    Vec scores = (E_xy-E_y*E_x)/sqrt(E_xx-square(E_x));
++    scores.resize(simple_candidate_functions.length(), 2);
+ 
+     if(verbosity&gt;=5)
+         perr &lt;&lt; &quot;n_candidates = &quot; &lt;&lt; n_candidates &lt;&lt; endl;
+@@ -551,8 +675,6 @@
+     best_candidate_index = -1;
+     best_score = 0;
+ 
+-    if(verbosity&gt;=10)
+-        perr &lt;&lt; &quot;scores: &quot;;
+     for(int j=0; j&lt;n_candidates; j++)
+     {
+         real score = 0;
+@@ -561,12 +683,18 @@
+         else
+             score = fabs(E_xy[j]);
+         if(verbosity&gt;=10)
+-            perr &lt;&lt; score &lt;&lt; ' '; 
++            perr &lt;&lt; score &lt;&lt; ' ';
+         if(score&gt;best_score)
+         {
+             best_candidate_index = j;
+             best_score = score;
+         }
++        // we keep the score only for the simple_candidate_functions
++        if (j &lt; simple_candidate_functions.length())
++        {
++            scores(j, 0) = j;
++            scores(j, 1) = score;
++        }
+     }
+ 
+     if(verbosity&gt;=10)
+@@ -587,7 +715,7 @@
+     Vec&amp; E_xy;
+     const Vec&amp; Y;
+     boost::mutex&amp; ts_mx;
+-    const VMat&amp; train_set;  
++    const VMat&amp; train_set;
+     boost::mutex&amp; pb_mx;
+     PP&lt;ProgressBar&gt; pb;
+     int thread_subtrain_length;
+@@ -800,6 +928,7 @@
+ }
+ 
+ 
++/*
+ void BasisSelectionRegressor::computeWeightedCorrelationsWithY(const TVec&lt;RealFunc&gt;&amp; functions, const Vec&amp; Y,  
+                                                                real&amp; wsum,
+                                                                Vec&amp; E_x, Vec&amp; V_x,
+@@ -917,14 +1046,15 @@
+     covar = E_xy - E_x*E_y;
+     correl = covar/sqrt(V_x*V_y);
+ }
++*/
+ 
+ void BasisSelectionRegressor::appendFunctionToSelection(int candidate_index)
+ {
+     RealFunc f = candidate_functions[candidate_index];
+-    int l = train_set-&gt;length();
+-    int nf = selected_functions.length();    
+     if(precompute_features)
+     {
++        int l = train_set-&gt;length();
++        int nf = selected_functions.length();
+         features.resize(l,nf+1, max(1,static_cast&lt;int&gt;(0.25*l*nf)),true);  // enlarge width while preserving content
+         real weight;
+         for(int i=0; i&lt;l; i++)
+@@ -973,7 +1103,7 @@
+         newtrainset= new RealFunctionsProcessedVMatrix(train_set, selected_functions, false, true, true);
+     newtrainset-&gt;defineSizes(nf,1,weighted?1:0);
+     // perr.clearOutMap();
+-    // perr &lt;&lt; &quot;new train set:\n&quot; &lt;&lt; newtrainset &lt;&lt; endl; 
++    // perr &lt;&lt; &quot;new train set:\n&quot; &lt;&lt; newtrainset &lt;&lt; endl;
+     learner-&gt;setTrainingSet(newtrainset);
+     learner-&gt;forget();
+     learner-&gt;train();
+@@ -1016,7 +1146,7 @@
+ 
+         if(candidate_functions.length()&gt;0)
+         {
+-            int best_candidate_index = -1;  
++            int best_candidate_index = -1;
+             real best_score = 0;
+             findBestCandidateFunction(best_candidate_index, best_score);
+             if(verbosity&gt;=2)
+@@ -1026,7 +1156,7 @@
+             if(best_candidate_index&gt;=0)
+             {
+                 if(verbosity&gt;=2)
+-                    perr &lt;&lt; &quot;  function info = &quot; &lt;&lt; candidate_functions[best_candidate_index]-&gt;getInfo() &lt;&lt; endl;                
++                    perr &lt;&lt; &quot;  function info = &quot; &lt;&lt; candidate_functions[best_candidate_index]-&gt;getInfo() &lt;&lt; endl;
+                 if(verbosity&gt;=3)
+                     perr &lt;&lt; &quot;  function= &quot; &lt;&lt; candidate_functions[best_candidate_index] &lt;&lt; endl;
+                 appendFunctionToSelection(best_candidate_index);
+@@ -1066,7 +1196,7 @@
+         targets[i] = t;
+         residue[i] = t;
+         residue_sum += w*t;
+-        residue_sum_sq += w*square(t);        
++        residue_sum_sq += w*square(t);
+         weights[i] = w;
+         weights_sum += w;
+     }
+@@ -1084,7 +1214,7 @@
+     {
+         train_set-&gt;getExample(i, input, targ, weight);
+         Vec v = features(i);
+-        evaluate_functions(selected_functions, input, v);        
++        evaluate_functions(selected_functions, input, v);
+     }    
+ }
+ 
+@@ -1162,7 +1292,7 @@
+ 
+ void BasisSelectionRegressor::setTrainStatsCollector(PP&lt;VecStatsCollector&gt; statscol)
+ { 
+-    train_stats = statscol; 
++    train_stats = statscol;
+     learner-&gt;setTrainStatsCollector(statscol);
+ }
+ 
+
+Modified: trunk/plearn_learners/regressors/BasisSelectionRegressor.h
+===================================================================
+--- trunk/plearn_learners/regressors/BasisSelectionRegressor.h	2008-06-26 17:52:19 UTC (rev 9180)
++++ trunk/plearn_learners/regressors/BasisSelectionRegressor.h	2008-06-26 17:54:11 UTC (rev 9181)
+@@ -71,6 +71,7 @@
+     bool consider_raw_inputs;
+     bool consider_normalized_inputs;
+     bool consider_input_range_indicators;
++    bool fixed_min_range;
+     real indicator_desired_prob;
+     real indicator_min_prob;
+     TVec&lt;Ker&gt; kernels;
+@@ -78,6 +79,8 @@
+     int n_kernel_centers_to_pick;
+     bool consider_interaction_terms;
+     int max_interaction_terms;
++    int consider_n_best_for_interaction;
++    int interaction_max_order;
+     bool consider_sorted_encodings;
+     int max_n_vals_for_sorted_encodings;
+     bool normalize_features;
+@@ -89,6 +92,7 @@
+     //#####  Public Learnt Options  ############################################
+     TVec&lt;RealFunc&gt; selected_functions;
+     Vec alphas;
++    mutable Mat scores;
+ 
+ 
+     struct thread_wawr;
+@@ -190,20 +194,30 @@
+     void buildSimpleCandidateFunctions();
+ 
+     //! Builds candidate_functions.
+-    //! If consider_interactionis false, candidate_functions is the same as simple_candidate_functions
++    //! If consider_interactions is false, candidate_functions is the same as simple_candidate_functions
+     //! If consider_interactions is true,  candidate_functions will in addidion include all products 
+     //! between simple_candidate_functions and selected_functions 
+     void buildAllCandidateFunctions();
+ 
++    //! Builds top best candidate functions (from simple_candidate_functions only)
++    TVec&lt;RealFunc&gt; buildTopCandidateFunctions();
++
+     //! Returns the index of the best candidate function (most colinear with the residue)
+     void findBestCandidateFunction(int&amp; best_candidate_index, real&amp; best_score) const;
+ 
++    //! Adds an interaction term to all_functions as RealFunctionProduct(f1, f2)
++    void addInteractionFunction(RealFunc&amp; f1, RealFunc&amp; f2, TVec&lt;RealFunc&gt;&amp; all_functions);
++
++    //! Computes the order of the given function (number of single function embedded)
++    void computeOrder(RealFunc&amp; func, int&amp; order);
++
+     void computeWeightedAveragesWithResidue(const TVec&lt;RealFunc&gt;&amp; functions,   
+                                             real&amp; wsum,
+                                             Vec&amp; E_x, Vec&amp; E_xx,
+                                             real&amp; E_y, real&amp; E_yy,
+                                             Vec&amp; E_xy) const;
+ 
++    /*
+     void computeWeightedCorrelationsWithY(const TVec&lt;RealFunc&gt;&amp; functions, const Vec&amp; Y,  
+                                           real&amp; wsum,
+                                           Vec&amp; E_x, Vec&amp; V_x,
+@@ -211,6 +225,7 @@
+                                           Vec&amp; E_xy, Vec&amp; V_xy,
+                                           Vec&amp; covar, Vec&amp; correl,
+                                           real min_variance = 1e-6) const;
++    */
+     void appendFunctionToSelection(int candidate_index);
+     void retrainLearner();
+     void initTargetsResidueWeight();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002628.html">[Plearn-commits] r9180 - trunk/plearn/misc
+</A></li>
+	<LI>Next message: <A HREF="002630.html">[Plearn-commits] r9182 - trunk/python_modules/plearn/pymake
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2629">[ date ]</a>
+              <a href="thread.html#2629">[ thread ]</a>
+              <a href="subject.html#2629">[ subject ]</a>
+              <a href="author.html#2629">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

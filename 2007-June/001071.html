@@ -1,0 +1,904 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7623 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7623%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200706210014.l5L0EalF014041%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001070.html">
+   <LINK REL="Next"  HREF="001072.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7623 - trunk/plearn_learners/online</H1>
+    <B>louradou at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7623%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200706210014.l5L0EalF014041%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7623 - trunk/plearn_learners/online">louradou at mail.berlios.de
+       </A><BR>
+    <I>Thu Jun 21 02:14:36 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001070.html">[Plearn-commits] r7622 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001072.html">[Plearn-commits] r7624 - trunk/python_modules/plearn/analysis
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1071">[ date ]</a>
+              <a href="thread.html#1071">[ thread ]</a>
+              <a href="subject.html#1071">[ subject ]</a>
+              <a href="author.html#1071">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: louradou
+Date: 2007-06-21 02:14:35 +0200 (Thu, 21 Jun 2007)
+New Revision: 7623
+
+Modified:
+   trunk/plearn_learners/online/RBMGaussianLayer.cc
+   trunk/plearn_learners/online/RBMGaussianLayer.h
+   trunk/plearn_learners/online/RBMLayer.cc
+   trunk/plearn_learners/online/RBMModule.cc
+Log:
+RBMGaussianLayer: added an option share_quad_coeff
+                  fixed a bug concerning the learning rate
+		        for quadratic coefficients with batch_size&gt;1
+RBMModule: things a bit improved for sampling
+
+
+
+Modified: trunk/plearn_learners/online/RBMGaussianLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMGaussianLayer.cc	2007-06-20 19:04:58 UTC (rev 7622)
++++ trunk/plearn_learners/online/RBMGaussianLayer.cc	2007-06-21 00:14:35 UTC (rev 7623)
+@@ -53,6 +53,7 @@
+ RBMGaussianLayer::RBMGaussianLayer( real the_learning_rate ) :
+     inherited( the_learning_rate ),
+     min_quad_coeff( 0. ),
++    share_quad_coeff( false ),
+     sigma_is_up_to_date( false )
+ {
+ }
+@@ -60,6 +61,7 @@
+ RBMGaussianLayer::RBMGaussianLayer( int the_size, real the_learning_rate ) :
+     inherited( the_learning_rate ),
+     min_quad_coeff( 0. ),
++    share_quad_coeff( false ),
+     quad_coeff( the_size, 1. ), // or 1./M_SQRT2 ?
+     quad_coeff_pos_stats( the_size ),
+     quad_coeff_neg_stats( the_size ),
+@@ -75,6 +77,30 @@
+     bias_neg_stats.resize( the_size );
+ }
+ 
++RBMGaussianLayer::RBMGaussianLayer( int the_size, real the_learning_rate, bool do_share_quad_coeff ) :
++    inherited( the_learning_rate ),
++    min_quad_coeff( 0. ),
++    sigma_is_up_to_date( false ),
++    quad_coeff_pos_stats( the_size ),
++    quad_coeff_neg_stats( the_size )
++{
++    size = the_size;
++    activation.resize( the_size );
++    sample.resize( the_size );
++    expectation.resize( the_size );
++    bias.resize( the_size );
++    bias_pos_stats.resize( the_size );
++    bias_neg_stats.resize( the_size );
++    share_quad_coeff = do_share_quad_coeff;
++    if ( share_quad_coeff )
++       size_quad_coeff=1;
++    else
++       size_quad_coeff=size;
++    quad_coeff=Vec(size_quad_coeff,1.);
++    sigma=Vec(size_quad_coeff);
++}
++
++
+ void RBMGaussianLayer::generateSample()
+ {
+     PLASSERT_MSG(random_gen,
+@@ -84,8 +110,12 @@
+             &quot;before calling generateSample()&quot;);
+ 
+     computeStdDeviation();
+-    for( int i=0 ; i&lt;size ; i++ )
+-        sample[i] = random_gen-&gt;gaussian_mu_sigma( expectation[i], sigma[i] );
++    if(share_quad_coeff)
++        for( int i=0 ; i&lt;size ; i++ )
++            sample[i] = random_gen-&gt;gaussian_mu_sigma( expectation[i], sigma[0] );
++    else
++        for( int i=0 ; i&lt;size ; i++ )
++            sample[i] = random_gen-&gt;gaussian_mu_sigma( expectation[i], sigma[i] );
+ }
+ 
+ void RBMGaussianLayer::generateSamples()
+@@ -99,10 +129,14 @@
+     computeStdDeviation();
+     PLASSERT( samples.width() == size &amp;&amp; samples.length() == batch_size );
+ 
+-    for (int k = 0; k &lt; batch_size; k++) {
+-        for (int i=0 ; i&lt;size ; i++)
+-            samples(k, i) = random_gen-&gt;gaussian_mu_sigma( expectations(k, i), sigma[i] );
+-    }
++    if(share_quad_coeff)
++        for (int k = 0; k &lt; batch_size; k++)
++            for (int i=0 ; i&lt;size ; i++)
++                samples(k, i) = random_gen-&gt;gaussian_mu_sigma( expectations(k, i), sigma[0] );
++    else
++        for (int k = 0; k &lt; batch_size; k++)
++            for (int i=0 ; i&lt;size ; i++)
++                samples(k, i) = random_gen-&gt;gaussian_mu_sigma( expectations(k, i), sigma[i] );
+ }
+ 
+ 
+@@ -112,11 +146,20 @@
+         return;
+ 
+     // mu = activations[i] / (2 * quad_coeff[i]^2)
+-    for( int i=0 ; i&lt;size ; i++ )
++    if(share_quad_coeff)
+     {
+-        real a_i = quad_coeff[i];
+-        expectation[i] = - activation[i] / (2 * a_i * a_i);
++        real a_i = quad_coeff[0];
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            expectation[i] = - activation[i] / (2 * a_i * a_i);
++        }
+     }
++    else
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            real a_i = quad_coeff[i];
++            expectation[i] = - activation[i] / (2 * a_i * a_i);
++        }
+ 
+     expectation_is_up_to_date = true;
+ }
+@@ -129,13 +172,22 @@
+     PLASSERT( expectations.width() == size
+               &amp;&amp; expectations.length() == batch_size );
+ 
+-    for (int k = 0; k &lt; batch_size; k++)
+-        for (int i = 0 ; i &lt; size ; i++)
+-            {
+-                real a_i = quad_coeff[i];
+-                expectations(k, i) = -activations(k, i) / (2 * a_i * a_i) ;
+-            }
+-
++    if(share_quad_coeff)
++    {
++        real a_i = quad_coeff[0];
++        for (int k = 0; k &lt; batch_size; k++)
++            for (int i = 0 ; i &lt; size ; i++)
++                {
++                    expectations(k, i) = -activations(k, i) / (2 * a_i * a_i) ;
++                }
++    }
++    else
++        for (int k = 0; k &lt; batch_size; k++)
++            for (int i = 0 ; i &lt; size ; i++)
++                {
++                    real a_i = quad_coeff[i];
++                    expectations(k, i) = -activations(k, i) / (2 * a_i * a_i) ;
++                }
+     expectations_are_up_to_date = true;
+ }
+ 
+@@ -145,9 +197,12 @@
+     if( sigma_is_up_to_date )
+         return;
+ 
+-    // sigma = 1 / (sqrt(2) * quad_coeff[i])
+-    for( int i=0 ; i&lt;size ; i++ )
+-        sigma[i] = 1 / (M_SQRT2 * quad_coeff[i]);
++    // sigma = 1 / (sqrt(2) * quad_coeff[i])    
++    if(share_quad_coeff)
++        sigma[0] = 1 / (M_SQRT2 * quad_coeff[0]);
++    else
++        for( int i=0 ; i&lt;size ; i++ )
++            sigma[i] = 1 / (M_SQRT2 * quad_coeff[i]);
+ 
+     sigma_is_up_to_date = true;
+ }
+@@ -157,11 +212,20 @@
+     PLASSERT( input.size() == input_size );
+     output.resize( output_size );
+ 
+-    for( int i=0 ; i&lt;size ; i++ )
++    if(share_quad_coeff)
+     {
+-        real a_i = quad_coeff[i];
+-        output[i] = - (input[i] + bias[i]) / (2 * a_i * a_i);
++        real a_i = quad_coeff[0];
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            output[i] = - (input[i] + bias[i]) / (2 * a_i * a_i);
++        }
+     }
++    else
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            real a_i = quad_coeff[i];
++            output[i] = - (input[i] + bias[i]) / (2 * a_i * a_i);
++        }
+ }
+ 
+ void RBMGaussianLayer::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+@@ -187,13 +251,15 @@
+     if( momentum != 0. )
+     {
+         bias_inc.resize( size );
+-        //quad_coeff_inc.resize( size );
++        //quad_coeff_inc.resize( size );//quad_coeff_inc.resize( 1 );
+     }
+ 
+     // real two_lr = 2 * learning_rate;
++    real a_i = quad_coeff[0];
+     for( int i=0 ; i&lt;size ; ++i )
+     {
+-        real a_i = quad_coeff[i];
++        if(!share_quad_coeff)
++            a_i = quad_coeff[i];
+         real in_grad_i = - output_gradient[i] / (2 * a_i * a_i);
+         input_gradient[i] += in_grad_i;
+ 
+@@ -208,10 +274,10 @@
+             // update the quadratic coefficient:
+             // a_i += learning_rate * out_grad_i * (b_i + input_i) / a_i^3
+             // (or a_i += 2 * learning_rate * in_grad_i * (b_i + input_i) / a_i
+-            quad_coeff[i] += two_lr * in_grad_i * (bias[i] + input[i])
+-                                                    / quad_coeff[i];
+-            if( quad_coeff[i] &lt; min_quad_coeff )
+-                quad_coeff[i] = min_quad_coeff;
++            a_i += two_lr * in_grad_i * (bias[i] + input[i])
++                                                    / a_i;
++            if( a_i &lt; min_quad_coeff )
++                a_i = min_quad_coeff;
+             */
+         }
+         else
+@@ -228,10 +294,10 @@
+             // a_i += a_inc_i
+             quad_coeff_inc[i] += momentum * quad_coeff_inc[i]
+                 + two_lr * in_grad_i * (bias[i] + input[i])
+-                                         / quad_coeff[i];
+-            quad_coeff[i] += quad_coeff_inc[i];
+-            if( quad_coeff[i] &lt; min_quad_coeff )
+-                quad_coeff[i] = min_quad_coeff;
++                                         / a_i;
++            a_i += quad_coeff_inc[i];
++            if( a_i &lt; min_quad_coeff )
++                a_i = min_quad_coeff;
+             */
+         }
+     }
+@@ -254,9 +320,7 @@
+ 
+ void RBMGaussianLayer::forget()
+ {
+-    quad_coeff.fill( 2. );
+-//    quad_coeff.fill( 1. );
+-
++    quad_coeff.fill( 1. );
+     inherited::forget();
+ }
+ 
+@@ -270,16 +334,28 @@
+                   OptionBase::learntoption,
+                   &quot;Quadratic coefficients of the units.&quot;);
+ 
++    declareOption(ol, &quot;share_quad_coeff&quot;, &amp;RBMGaussianLayer::share_quad_coeff,
++                  OptionBase::buildoption,
++                  &quot;Should all the units share the same quadratic coefficients?\n&quot;
++		  &quot;Suitable to avoid unstability (overfitting)  in cases where\n&quot;
++		  &quot;all the units have the same 'meaning'  (pixels of an image)&quot;);
++
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+ 
+ void RBMGaussianLayer::build_()
+ {
+-    sigma.resize( size );
++    if(share_quad_coeff)
++        size_quad_coeff=1;
++    else
++        size_quad_coeff=size;
++
++    sigma.resize( size_quad_coeff );
+     sigma_is_up_to_date = false;
+ 
+-    quad_coeff.resize( size );
++    quad_coeff.resize( size_quad_coeff );
+     quad_coeff_pos_stats.resize( size );
+     quad_coeff_neg_stats.resize( size );
+ }
+@@ -305,21 +381,36 @@
+ 
+ void RBMGaussianLayer::accumulatePosStats( const Vec&amp; pos_values )
+ {
+-    for( int i=0 ; i&lt;size ; i++ )
+-    {
+-        real x_i = pos_values[i];
+-        quad_coeff_pos_stats[i] += 2 * quad_coeff[i] * x_i * x_i;
+-    }
++    if (share_quad_coeff)
++       for( int i=0 ; i&lt;size ; i++ )
++       {
++           real x_i = pos_values[i];
++           quad_coeff_pos_stats[i] += 2 * quad_coeff[0] * x_i * x_i;
++       }
++    else
++       for( int i=0 ; i&lt;size ; i++ )
++       {
++           real x_i = pos_values[i];
++           quad_coeff_pos_stats[i] += 2 * quad_coeff[i] * x_i * x_i;
++       }
++
+     inherited::accumulatePosStats( pos_values );
+ }
+ 
+ void RBMGaussianLayer::accumulateNegStats( const Vec&amp; neg_values )
+ {
+-    for( int i=0 ; i&lt;size ; i++ )
+-    {
+-        real x_i = neg_values[i];
+-        quad_coeff_neg_stats[i] += 2 * quad_coeff[i] * x_i * x_i;
+-    }
++    if (share_quad_coeff)
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            real x_i = neg_values[i];
++            quad_coeff_neg_stats[i] += 2 * quad_coeff[0] * x_i * x_i;
++        }
++    else
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            real x_i = neg_values[i];
++            quad_coeff_neg_stats[i] += 2 * quad_coeff[i] * x_i * x_i;
++        }
+     inherited::accumulateNegStats( neg_values );
+ }
+ 
+@@ -336,25 +427,52 @@
+ 
+     if( momentum == 0. )
+     {
+-        // no need to use bias_inc
+-        for( int i=0 ; i&lt;size ; i++ )
+-        {
+-            a[i] += pos_factor * aps[i] + neg_factor * ans[i];
+-            if( a[i] &lt; min_quad_coeff )
+-                a[i] = min_quad_coeff;
++        if(share_quad_coeff)
++	{
++	    real update=0;
++            for( int i=0 ; i&lt;size ; i++ )
++            {
++                update += pos_factor * aps[i] + neg_factor * ans[i];
++            }
++	    a[0] += update/(real)size;
++            if( a[0] &lt; min_quad_coeff )
++                a[0] = min_quad_coeff;
+         }
++	else
++            for( int i=0 ; i&lt;size ; i++ )
++            {
++                a[i] += pos_factor * aps[i] + neg_factor * ans[i];
++                if( a[i] &lt; min_quad_coeff )
++                    a[i] = min_quad_coeff;
++            }
+     }
+     else
+     {
+-        quad_coeff_inc.resize( size );
+-        real* ainc = quad_coeff_inc.data();
+-        for( int i=0 ; i&lt;size ; i++ )
+-        {
+-            ainc[i] = momentum*ainc[i] + pos_factor*aps[i] + neg_factor*ans[i];
+-            a[i] += ainc[i];
+-            if( a[i] &lt; min_quad_coeff )
+-                a[i] = min_quad_coeff;
++        if(share_quad_coeff)
++	{
++            quad_coeff_inc.resize( 1 );
++            real* ainc = quad_coeff_inc.data();
++            for( int i=0 ; i&lt;size ; i++ )
++            {
++                ainc[0] = momentum*ainc[0] + pos_factor*aps[i] + neg_factor*ans[i];
++		ainc[0] /= (real)size;
++                a[0] += ainc[0];
++            }
++            if( a[0] &lt; min_quad_coeff )
++                a[0] = min_quad_coeff;
+         }
++	else
++	{
++            quad_coeff_inc.resize( size );
++            real* ainc = quad_coeff_inc.data();
++            for( int i=0 ; i&lt;size ; i++ )
++            {
++                ainc[i] = momentum*ainc[i] + pos_factor*aps[i] + neg_factor*ans[i];
++                a[i] += ainc[i];
++                if( a[i] &lt; min_quad_coeff )
++                    a[i] = min_quad_coeff;
++            }
++        }
+     }
+ 
+     // We will need to recompute sigma
+@@ -375,25 +493,54 @@
+ 
+     if( momentum == 0. )
+     {
+-        for( int i=0 ; i&lt;size ; i++ )
+-        {
+-            a[i] += two_lr * a[i] * (nv[i]*nv[i] - pv[i]*pv[i]);
+-            if( a[i] &lt; min_quad_coeff )
+-                a[i] = min_quad_coeff;
++        if (share_quad_coeff)
++	{
++	    real update=0;
++            for( int i=0 ; i&lt;size ; i++ )
++            {
++                update += two_lr * a[0] * (nv[i]*nv[i] - pv[i]*pv[i]);
++            }
++	    a[0] += update/(real)size;
++            if( a[0] &lt; min_quad_coeff )
++                a[0] = min_quad_coeff;
+         }
++	else
++            for( int i=0 ; i&lt;size ; i++ )
++            {
++                a[i] += two_lr * a[i] * (nv[i]*nv[i] - pv[i]*pv[i]);
++                if( a[i] &lt; min_quad_coeff )
++                    a[i] = min_quad_coeff;
++            }	
+     }
+     else
+     {
+-        quad_coeff_inc.resize( size );
++        
+         real* ainc = quad_coeff_inc.data();
+-        for( int i=0 ; i&lt;size ; i++ )
++        if(share_quad_coeff)
+         {
+-            ainc[i] = momentum*ainc[i]
+-                + two_lr * a[i] * (nv[i]*nv[i] - pv[i]*pv[i]);
+-            a[i] += ainc[i];
+-            if( a[i] &lt; min_quad_coeff )
+-                a[i] = min_quad_coeff;
++	   quad_coeff_inc.resize( 1 );
++           for( int i=0 ; i&lt;size ; i++ )
++           {
++                ainc[0] = momentum*ainc[0]
++                    + two_lr * a[0] * (nv[i]*nv[i] - pv[i]*pv[i]);
++		ainc[0] /= (real)size;
++                a[0] += ainc[0];
++           }
++           if( a[0] &lt; min_quad_coeff )
++               a[0] = min_quad_coeff;
+         }
++        else
++	{
++	   quad_coeff_inc.resize( size );
++           for( int i=0 ; i&lt;size ; i++ )
++           {
++                ainc[i] = momentum*ainc[i]
++                    + two_lr * a[i] * (nv[i]*nv[i] - pv[i]*pv[i]);
++                a[i] += ainc[i];
++                if( a[i] &lt; min_quad_coeff )
++                    a[i] = min_quad_coeff;
++           }
++        }
+     }
+ 
+     // We will need to recompute sigma
+@@ -405,6 +552,7 @@
+ 
+ void RBMGaussianLayer::update( const Mat&amp; pos_values, const Mat&amp; neg_values )
+ {
++    
+     PLASSERT( pos_values.width() == size );
+     PLASSERT( neg_values.width() == size );
+ 
+@@ -414,22 +562,37 @@
+     // quad_coeff[i] -= learning_rate * 2 * quad_coeff[i] * (pos_values[i]^2
+     //                                                       - neg_values[i]^2)
+ 
+-    real two_lr = 2 * learning_rate;
++    real two_lr = 2 * learning_rate / batch_size;
+     real* a = quad_coeff.data();
+ 
+     if( momentum == 0. )
+     {
+-        for( int k=0; k&lt;batch_size; k++ )
+-        {
+-            real *pv_k = pos_values[k];
+-            real *nv_k = neg_values[k];
+-            for( int i=0; i&lt;size; i++ )
++        if (share_quad_coeff)
++            for( int k=0; k&lt;batch_size; k++ )
+             {
+-                a[i] += two_lr * a[i] * (nv_k[i]*nv_k[i] - pv_k[i]*pv_k[i]);
+-                if( a[i] &lt; min_quad_coeff )
+-                    a[i] = min_quad_coeff;
++                real *pv_k = pos_values[k];
++                real *nv_k = neg_values[k];
++		real update=0;
++                for( int i=0; i&lt;size; i++ )
++                {
++                    update += two_lr * a[0] * (nv_k[i]*nv_k[i] - pv_k[i]*pv_k[i]);
++                }
++		a[0] += update/(real)size;
++                if( a[0] &lt; min_quad_coeff )
++                    a[0] = min_quad_coeff;
+             }
+-        }
++	else
++            for( int k=0; k&lt;batch_size; k++ )
++            {
++                real *pv_k = pos_values[k];
++                real *nv_k = neg_values[k];
++                for( int i=0; i&lt;size; i++ )
++                {
++                    a[i] += two_lr * a[i] * (nv_k[i]*nv_k[i] - pv_k[i]*pv_k[i]);
++                    if( a[i] &lt; min_quad_coeff )
++                        a[i] = min_quad_coeff;
++                }
++            }
+     }
+     else
+         PLCHECK_MSG( false,
+@@ -453,11 +616,18 @@
+         real* v = unit_values.data();
+         real* a = quad_coeff.data();
+         real* b = bias.data();
+-        for(register int i=0; i&lt;size; i++)
+-        {
+-            tmp = a[i]*v[i];
+-            en += tmp*tmp + b[i]*v[i];
+-        }
++	if(share_quad_coeff)
++            for(register int i=0; i&lt;size; i++)
++            {
++                tmp = a[0]*v[i];
++                en += tmp*tmp + b[i]*v[i];
++            }
++	else
++            for(register int i=0; i&lt;size; i++)
++            {
++                tmp = a[i]*v[i];
++                en += tmp*tmp + b[i]*v[i];
++            }
+     }
+     return en;
+ }
+@@ -469,14 +639,20 @@
+     computeStdDeviation();
+ 
+     real ret = 0;
+-    for( int i=0 ; i&lt;size ; i++ )
+-    {
+-        // ret += (target[i]-expectation[i])^2/(2 sigma[i]^2)
+-        //      + log(sqrt(2*Pi) * sigma[i])
+-
+-        real r = (target[i] - expectation[i]) * quad_coeff[i];
+-        ret += r * r + pl_log(sigma[i]);
+-    }
++    if(share_quad_coeff)
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            real r = (target[i] - expectation[i]) * quad_coeff[0];
++            ret += r * r + pl_log(sigma[0]);
++        }
++    else
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            // ret += (target[i]-expectation[i])^2/(2 sigma[i]^2)
++            //      + log(sqrt(2*Pi) * sigma[i])
++            real r = (target[i] - expectation[i]) * quad_coeff[i];
++            ret += r * r + pl_log(sigma[i]);
++        }
+     ret += 0.5*size*Log2Pi;
+     return ret;
+ }
+@@ -496,21 +672,36 @@
+     real nll;
+     real *expectation, *target;
+ 
+-    for (int k=0;k&lt;batch_size;k++) // loop over minibatch
+-    {
+-        nll = 0;
+-        expectation = expectations[k];
+-        target = targets[k];
+-        for( register int i=0 ; i&lt;size ; i++ ) // loop over outputs
++    if(share_quad_coeff)
++        for (int k=0;k&lt;batch_size;k++) // loop over minibatch
+         {
+-            // nll += (target[i]-expectation[i])^2/(2 sigma[i]^2)
+-            //      + log(sqrt(2*Pi) * sigma[i])
+-            real r = (target[i] - expectation[i]) * quad_coeff[i];
+-            nll += r * r + pl_log(sigma[i]);
++            nll = 0;
++            expectation = expectations[k];
++            target = targets[k];
++            for( register int i=0 ; i&lt;size ; i++ ) // loop over outputs
++            {
++                real r = (target[i] - expectation[i]) * quad_coeff[0];
++                nll += r * r + pl_log(sigma[0]);
++            }
++            nll += 0.5*size*Log2Pi;
++            costs_column(k,0) = nll;
+         }
+-        nll += 0.5*size*Log2Pi;
+-        costs_column(k,0) = nll;
+-    }
++    else
++        for (int k=0;k&lt;batch_size;k++) // loop over minibatch
++        {
++            nll = 0;
++            expectation = expectations[k];
++            target = targets[k];
++            for( register int i=0 ; i&lt;size ; i++ ) // loop over outputs
++            {
++                // nll += (target[i]-expectation[i])^2/(2 sigma[i]^2)
++                //      + log(sqrt(2*Pi) * sigma[i])
++                real r = (target[i] - expectation[i]) * quad_coeff[i];
++                nll += r * r + pl_log(sigma[i]);
++            }
++            nll += 0.5*size*Log2Pi;
++            costs_column(k,0) = nll;
++        }
+ }
+ 
+ void RBMGaussianLayer::bpropNLL(const Vec&amp; target, real nll, Vec&amp; bias_gradient)
+
+Modified: trunk/plearn_learners/online/RBMGaussianLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMGaussianLayer.h	2007-06-20 19:04:58 UTC (rev 7622)
++++ trunk/plearn_learners/online/RBMGaussianLayer.h	2007-06-21 00:14:35 UTC (rev 7623)
+@@ -58,6 +58,12 @@
+     //#####  Public Build Options  ############################################
+ 
+     real min_quad_coeff;
++    
++    bool share_quad_coeff;
++    
++    //! Number of units when share_quad_coeff is False
++    //! or 1 when share_quad_coeff is True
++    int size_quad_coeff;
+ 
+ 
+ public:
+@@ -69,6 +75,8 @@
+     //! Constructor from the number of units in the multinomial
+     RBMGaussianLayer( int the_size, real the_learning_rate=0. );
+ 
++    //! Constructor from the number of units in the multinomial, with an aditional option
++    RBMGaussianLayer( int the_size, real the_learning_rate=0., bool do_share_quad_coeff=false );
+ 
+     //! compute a sample, and update the sample field
+     virtual void generateSample() ;
+
+Modified: trunk/plearn_learners/online/RBMLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.cc	2007-06-20 19:04:58 UTC (rev 7622)
++++ trunk/plearn_learners/online/RBMLayer.cc	2007-06-21 00:14:35 UTC (rev 7623)
+@@ -471,7 +471,7 @@
+     }
+     else
+     {
+-        PLERROR(&quot;RBMLayer::update - Not implemented yet&quot;);
++        PLERROR(&quot;RBMLayer::update - Not implemented yet with momentum&quot;);
+         /*
+         bias_inc.resize( size );
+         real* binc = bias_inc.data();
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-06-20 19:04:58 UTC (rev 7622)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-06-21 00:14:35 UTC (rev 7623)
+@@ -57,7 +57,8 @@
+     &quot;  - 'visible' : expectations of the visible (normally input) layer\n&quot;
+     &quot;  - 'hidden.state' : expectations of the hidden (normally output) layer\n&quot;
+     &quot;  - 'hidden_activations.state' : activations of hidden units (given visible)\n&quot;
+-    &quot;  - 'visible_sample' : random sample obtained on visible units\n&quot;
++    &quot;  - 'visible_sample' : random sample obtained on visible units (input or output port)\n&quot;
++    &quot;  - 'visible_expectation' : expectation of visible units (output port ONLY, for sampling)\n&quot;
+     &quot;  - 'hidden_sample' : random sample obtained on hidden units\n&quot;
+     &quot;  - 'energy' : energy of the joint (visible,hidden) pair or free-energy\n&quot;
+     &quot;               of the visible (if given) or of the hidden (if given).\n&quot;
+@@ -279,6 +280,7 @@
+     addPortName(&quot;hidden.state&quot;);
+     addPortName(&quot;hidden_activations.state&quot;);
+     addPortName(&quot;visible_sample&quot;);
++    addPortName(&quot;visible_expectation&quot;);
+     addPortName(&quot;hidden_sample&quot;);
+     addPortName(&quot;energy&quot;);
+     addPortName(&quot;hidden_bias&quot;); 
+@@ -303,6 +305,7 @@
+     if (visible_layer) {
+         port_sizes(getPortIndex(&quot;visible&quot;), 1) = visible_layer-&gt;size;
+         port_sizes(getPortIndex(&quot;visible_sample&quot;), 1) = visible_layer-&gt;size;
++        port_sizes(getPortIndex(&quot;visible_expectation&quot;), 1) = visible_layer-&gt;size;
+     }
+     if (hidden_layer) {
+         port_sizes(getPortIndex(&quot;hidden.state&quot;), 1) = hidden_layer-&gt;size;
+@@ -586,6 +589,7 @@
+     Mat* hidden = ports_value[getPortIndex(&quot;hidden.state&quot;)];
+     hidden_act = ports_value[getPortIndex(&quot;hidden_activations.state&quot;)];
+     Mat* visible_sample = ports_value[getPortIndex(&quot;visible_sample&quot;)];
++    Mat* visible_expectation = ports_value[getPortIndex(&quot;visible_expectation&quot;)];
+     Mat* hidden_sample = ports_value[getPortIndex(&quot;hidden_sample&quot;)];
+     Mat* energy = ports_value[getPortIndex(&quot;energy&quot;)];
+     Mat* neg_log_likelihood = ports_value[getPortIndex(&quot;neg_log_likelihood&quot;)];
+@@ -780,29 +784,41 @@
+         found_a_valid_configuration = true;
+     } 
+     
+-    // SAMPLING inputs
+-    if ((visible_sample &amp;&amp; visible_sample-&gt;isEmpty()) // it is asked to sample the visible units
+-        &amp;&amp; (!visible || !visible-&gt;isEmpty() ))
+-//        || (hidden_sample &amp;&amp; hidden_sample-&gt;isEmpty())) // or to sample the hidden units
++    // SAMPLING
++    if ((visible_sample &amp;&amp; visible_sample-&gt;isEmpty())               // is asked to sample visible units (discrete)
++        || (visible_expectation &amp;&amp; visible_expectation-&gt;isEmpty())  //              &quot;                   (continous)
++	|| (hidden_sample &amp;&amp; hidden_sample-&gt;isEmpty()))             // or to sample hidden units
+     {
+         if (hidden_sample &amp;&amp; !hidden_sample-&gt;isEmpty()) // sample visible conditionally on hidden
+         {
+             sampleVisibleGivenHidden(*hidden_sample);
+-	    cout &lt;&lt; &quot;(discrete visible) sampling init (from hidden)&quot; &lt;&lt; endl;
++	    Gibbs_step=0;
++	    cout &lt;&lt; &quot;sampling init (from hidden)&quot; &lt;&lt; endl;
+         }
++        else if (visible_sample &amp;&amp; !visible_sample-&gt;isEmpty()) // if an input is provided, sample hidden conditionally
++        {
++            sampleHiddenGivenVisible(*visible_sample);
++	    Gibbs_step=0;
++	    cout &lt;&lt; &quot;sampling init (from visible)&quot; &lt;&lt; endl;
++	}
+         else if (visible &amp;&amp; !visible-&gt;isEmpty()) // if an input is provided, sample hidden conditionally
+         {
+-            sampleHiddenGivenVisible(*visible);
+-            sampleVisibleGivenHidden(hidden_layer-&gt;samples);
+-	    cout &lt;&lt; &quot;(discrete visible) sampling init (from visible)&quot; &lt;&lt; endl;
++            visible_layer-&gt;generateSamples();
++	    sampleHiddenGivenVisible(visible_layer-&gt;samples);
++	    Gibbs_step=0;
++	    cout &lt;&lt; &quot;sampling init (from visible)&quot; &lt;&lt; endl;
+         }
++        else if (visible_expectation &amp;&amp; !visible_expectation-&gt;isEmpty()) 
++        {
++	     PLERROR(&quot;In RBMModule::fprop visible_expectation can only be an output port (use visible as input port&quot;);
++	}
+         else // sample unconditionally: Gibbs sample after k steps
+         {
+             // the visible_layer-&gt;expectations contain the &quot;state&quot; from which we
+             // start or continue the chain
+             int min_n = max(Gibbs_step+n_Gibbs_steps_per_generated_sample,
+                             min_n_Gibbs_steps);
+-            cout &lt;&lt; &quot;(discrete visible) gibbs &quot; &lt;&lt; Gibbs_step;
++            cout &lt;&lt; &quot;Gibbs sampling &quot; &lt;&lt; Gibbs_step;
+             for (;Gibbs_step&lt;min_n;Gibbs_step++)
+             {
+                 sampleHiddenGivenVisible(visible_layer-&gt;samples);
+@@ -810,62 +826,37 @@
+             }
+   	    cout &lt;&lt; &quot; -&gt; &quot; &lt;&lt; Gibbs_step-1 &lt;&lt; endl;
+         }
+-        found_a_valid_configuration = true;
+-    }
+-    // SAMPLING continuous inputs (computing visible expectation)
+-    if (visible &amp;&amp; visible-&gt;isEmpty()) { // it is asked the expectations of visible units
+-    
+-        if (visible_sample &amp;&amp; !visible_sample-&gt;isEmpty())
+-        {
+-            sampleHiddenGivenVisible(*visible_sample);
+-            sampleVisibleGivenHidden(hidden_layer-&gt;samples);
+-	    cout &lt;&lt; &quot;(continuous visible) sampling init (from visible)&quot; &lt;&lt; endl;
+-	}
+-	else if ( hidden_sample &amp;&amp; !hidden_sample-&gt;isEmpty() )
+-	{
+-	   sampleVisibleGivenHidden(*hidden_sample);
+-	   cout &lt;&lt; &quot;(continuous visible) sampling init (from hidden)&quot; &lt;&lt; endl;	   
+-	}
+-	else
+-	{
+-           int min_n = max(Gibbs_step+n_Gibbs_steps_per_generated_sample,
+-                            min_n_Gibbs_steps);
+-	   PLASSERT( min_n &gt; 0 );
+-           cout &lt;&lt; &quot;(continuous visible) gibbs &quot; &lt;&lt; Gibbs_step;
+-	   for (;Gibbs_step&lt;min_n;Gibbs_step++)
+-           {
+-                sampleHiddenGivenVisible(visible_layer-&gt;samples);
+-                sampleVisibleGivenHidden(hidden_layer-&gt;samples);
+-           }
+-  	   cout &lt;&lt; &quot; -&gt; &quot; &lt;&lt; Gibbs_step-1 &lt;&lt; endl;
+-	}
+-        
++
+ 	if ( hidden &amp;&amp; hidden-&gt;isEmpty())   // fill hidden.state with expectations
+         {
+    	      const Mat&amp; hidden_expect = hidden_layer-&gt;getExpectations();
+               hidden-&gt;resize(hidden_expect.length(), hidden_expect.width());
+               *hidden &lt;&lt; hidden_expect;
+         }
+-	 
+-        const Mat&amp; to_store = visible_layer-&gt;getExpectations();
+-        visible-&gt;resize(to_store.length(), to_store.width());
+-        *visible &lt;&lt; to_store;
++        if (visible_sample &amp;&amp; visible_sample-&gt;isEmpty()) // provide sample of the visible units
++        {
++            visible_sample-&gt;resize(visible_layer-&gt;samples.length(),
++                                   visible_layer-&gt;samples.width());
++            *visible_sample &lt;&lt; visible_layer-&gt;samples;
++        }
++        if (hidden_sample &amp;&amp; hidden_sample-&gt;isEmpty()) // provide sample of the hidden units
++        {
++            hidden_sample-&gt;resize(hidden_layer-&gt;samples.length(),
++                                  hidden_layer-&gt;samples.width());
++            *hidden_sample &lt;&lt; hidden_layer-&gt;samples;
++        }
++        if (visible_expectation &amp;&amp; visible_expectation-&gt;isEmpty()) // provide expectation of the visible units
++        {
++	    const Mat&amp; to_store = visible_layer-&gt;getExpectations();
++            visible_expectation-&gt;resize(to_store.length(),
++	                                to_store.width());
++            *visible_expectation &lt;&lt; to_store;
++        }
+ 
+ 	found_a_valid_configuration = true;
+-    }
+-    if (visible_sample &amp;&amp; visible_sample-&gt;isEmpty()) // provide sample of the visible units
+-    {
+-        visible_sample-&gt;resize(visible_layer-&gt;samples.length(),
+-                               visible_layer-&gt;samples.width());
+-        *visible_sample &lt;&lt; visible_layer-&gt;samples;
+-    }
+-    if (hidden_sample &amp;&amp; hidden_sample-&gt;isEmpty()) // provide sample of the hidden units
+-    {
+-        hidden_sample-&gt;resize(hidden_layer-&gt;samples.length(),
+-                              hidden_layer-&gt;samples.width());
+-        *hidden_sample &lt;&lt; hidden_layer-&gt;samples;
+-    }
++    } // END SAMPLING
+ 
++
+     // COMPUTE CONTRASTIVE DIVERGENCE CRITERION
+     if (contrastive_divergence)
+     {
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001070.html">[Plearn-commits] r7622 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001072.html">[Plearn-commits] r7624 - trunk/python_modules/plearn/analysis
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1071">[ date ]</a>
+              <a href="thread.html#1071">[ thread ]</a>
+              <a href="subject.html#1071">[ subject ]</a>
+              <a href="author.html#1071">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

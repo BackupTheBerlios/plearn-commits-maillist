@@ -1,0 +1,580 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7067 - in trunk/plearn_learners: generic online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7067%20-%20in%20trunk/plearn_learners%3A%20generic%20online&In-Reply-To=%3C200705112208.l4BM8eo7009804%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000515.html">
+   <LINK REL="Next"  HREF="000517.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7067 - in trunk/plearn_learners: generic online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7067%20-%20in%20trunk/plearn_learners%3A%20generic%20online&In-Reply-To=%3C200705112208.l4BM8eo7009804%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7067 - in trunk/plearn_learners: generic online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Sat May 12 00:08:40 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000515.html">[Plearn-commits] r7066 - trunk/plearn/sys
+</A></li>
+        <LI>Next message: <A HREF="000517.html">[Plearn-commits] r7068 - in trunk: plearn/var	plearn_learners/generic/EXPERIMENTAL python_modules/plearn/var
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#516">[ date ]</a>
+              <a href="thread.html#516">[ thread ]</a>
+              <a href="subject.html#516">[ subject ]</a>
+              <a href="author.html#516">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-05-12 00:08:39 +0200 (Sat, 12 May 2007)
+New Revision: 7067
+
+Modified:
+   trunk/plearn_learners/generic/NatGradEstimator.cc
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/RBMLayer.cc
+   trunk/plearn_learners/online/RBMLayer.h
+   trunk/plearn_learners/online/RBMMatrixConnection.cc
+   trunk/plearn_learners/online/RBMMatrixConnection.h
+   trunk/plearn_learners/online/RBMMatrixConnectionNatGrad.cc
+Log:
+Finished the implementation of the natural gradient updates in RBMs
+
+
+Modified: trunk/plearn_learners/generic/NatGradEstimator.cc
+===================================================================
+--- trunk/plearn_learners/generic/NatGradEstimator.cc	2007-05-11 20:46:10 UTC (rev 7066)
++++ trunk/plearn_learners/generic/NatGradEstimator.cc	2007-05-11 22:08:39 UTC (rev 7067)
+@@ -44,6 +44,8 @@
+ namespace PLearn {
+ using namespace std;
+ 
++// bool save_G=false;
++
+ PLEARN_IMPLEMENT_OBJECT(
+     NatGradEstimator,
+     &quot;Convert a sequence of gradients into covariance-corrected (natural gradient) directions.\n&quot;,
+@@ -125,6 +127,9 @@
+                   OptionBase::buildoption,
+                   &quot;Initial variance. The first covariance is assumed to be\n&quot;
+                   &quot;lambda times the identity. Default = 1.\n&quot;);
++    declareOption(ol, &quot;regularizer&quot;, &amp;NatGradEstimator::lambda,
++                  OptionBase::buildoption,
++                  &quot;Proxy for option lambda (different name to avoid python problems).\n&quot;);
+     declareOption(ol, &quot;n_eigen&quot;, &amp;NatGradEstimator::n_eigen,
+                   OptionBase::buildoption,
+                   &quot;Number of principal eigenvectors of the covariance matrix\n&quot;
+@@ -141,7 +146,7 @@
+                   &quot;Verbosity level\n&quot;);
+     declareOption(ol, &quot;renormalize&quot;, &amp;NatGradEstimator::renormalize,
+                   OptionBase::buildoption,
+-                  &quot;Wether to renormalize z wrt scaling that gamma produces\n&quot;);
++                  &quot;Whether to renormalize z wrt scaling that gamma produces\n&quot;);
+ 
+     declareOption(ol, &quot;n_dim&quot;, &amp;NatGradEstimator::n_dim,
+                   OptionBase::learntoption,
+@@ -186,6 +191,8 @@
+         Xt.resize(n_eigen+cov_minibatch_size, n_dim);
+         Xt.clear();
+         r.resize(n_eigen);
++        for (int j=0;j&lt;n_eigen;j++)
++            G(j,j) = lambda;
+     }
+ }
+ void NatGradEstimator::operator()(int t, const Vec&amp; g, Vec v)
+@@ -249,6 +256,8 @@
+     if (i+1==cov_minibatch_size)
+     {
+         // get eigen-decomposition, with one more eigen-x than necessary to check if coherent with lambda
++        //if (save_G)
++        //    saveAscii(&quot;G.amat&quot;,G);
+         eigenVecOfSymmMat(G,n_eigen+1,D,Vt);
+         
+         // convert eigenvectors Vt of G into eigenvectors U of C
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-11 20:46:10 UTC (rev 7066)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-11 22:08:39 UTC (rev 7067)
+@@ -750,7 +750,10 @@
+                 int sample_start = stage % nsamples;
+                 if (batch_size &gt; 1 || minibatch_hack) {
+                     train_set-&gt;getExamples(sample_start, minibatch_size,
+-                            inputs, targets, weights, NULL, true);
++                                           inputs, targets, weights, NULL, true);
++                    train_costs_m.fill(MISSING_VALUE);
++                    if (reconstruct_layerwise)
++                        train_costs_m.column(reconstruction_cost_index).clear();
+                     onlineStep( inputs, targets, train_costs_m );
+                 } else {
+                     train_set-&gt;getExample(sample_start, input, target, weight);
+@@ -1103,6 +1106,8 @@
+         }
+     }
+ 
++
++
+ }
+ 
+ void DeepBeliefNet::onlineStep(const Mat&amp; inputs, const Mat&amp; targets,
+@@ -1263,6 +1268,12 @@
+         */
+     }
+ 
++    Mat rc;
++    if (reconstruct_layerwise)
++    {
++        rc = train_costs.column(reconstruction_cost_index);
++        rc.clear();
++    }
+ 
+     // DOWNWARD PHASE (the downward phase for top layer is already done above)
+     for( int i=n_layers-3 ; i&gt;=0 ; i-- )
+@@ -1299,6 +1310,16 @@
+                                           source_exp.width());
+             save_layer_expectation &lt;&lt; source_exp;
+         }
++
++        if (reconstruct_layerwise)
++        {
++            connections[i]-&gt;setAsUpInputs(layers[i+1]-&gt;getExpectations());
++            layers[i]-&gt;getAllActivations(connections[i], 0, true);
++            layers[i]-&gt;fpropNLL(save_layer_expectations, 
++                                train_costs.column(reconstruction_cost_index+i+1));
++            rc += train_costs.column(reconstruction_cost_index+i+1);
++        }
++
+         contrastiveDivergenceStep( layers[ i ],
+                                    connections[ i ],
+                                    layers[ i+1 ] ,
+
+Modified: trunk/plearn_learners/online/RBMLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.cc	2007-05-11 20:46:10 UTC (rev 7066)
++++ trunk/plearn_learners/online/RBMLayer.cc	2007-05-11 22:08:39 UTC (rev 7067)
+@@ -55,12 +55,8 @@
+     learning_rate(the_learning_rate),
+     momentum(0.),
+     size(-1),
+-    delta_ma_param(0.1),
+-    stationarity_statistic_threshold(2),
+-    fast_mean(0), slow_mean(0),
+-    gibbs_fast_ma_coefficient(0), gibbs_fast_ma_param(0),
+-    gibbs_slow_ma_coefficient(0), gibbs_slow_ma_param(0),
+-    var_of_value(0),sum_fast2(0),sum_slow2(0),sum_slowfast(0),
++    gibbs_ma_increment(0.1),
++    gibbs_initial_ma_coefficient(0.1),
+     expectation_is_up_to_date(false),
+     expectations_are_up_to_date(false),
+     pos_count(0),
+@@ -84,14 +80,7 @@
+     bias_neg_stats.clear();
+     pos_count = 0;
+     neg_count = 0;
+-    gibbs_fast_ma_param = -1;
+-    gibbs_slow_ma_param = 0;
+-    gibbs_fast_ma_coefficient = sigmoid(gibbs_fast_ma_param);
+-    gibbs_slow_ma_coefficient = sigmoid(gibbs_slow_ma_param);
+-    var_of_value = 0.25;
+-    sum_fast2 = (1 - gibbs_fast_ma_coefficient)*(1 - gibbs_fast_ma_coefficient);
+-    sum_slow2 = (1 - gibbs_slow_ma_coefficient)*(1 - gibbs_slow_ma_coefficient);
+-    sum_slowfast = (1 - gibbs_slow_ma_coefficient)*(1 - gibbs_fast_ma_coefficient);
++    gibbs_ma_coefficient = gibbs_initial_ma_coefficient;
+ }
+ 
+ void RBMLayer::forget()
+@@ -119,24 +108,22 @@
+                   OptionBase::buildoption,
+                   &quot;Momentum.&quot;);
+ 
+-    declareOption(ol, &quot;delta_ma_param&quot;, &amp;RBMLayer::delta_ma_param,
++    declareOption(ol, &quot;gibbs_ma_schedule&quot;, &amp;RBMLayer::gibbs_ma_schedule,
+                   OptionBase::buildoption,
+-                  &quot;This option is used only when the background Gibbs is computed (i.e. update*Gibbs() is called).\n&quot;
+-                  &quot;delta_ma_param is the increment in the parameters that control the moving average coefficients\n&quot;
+-                  &quot;used to detect non-stationarity in the negative phase activity statistics.\n&quot;
+-                  &quot;The moving average coefficient are obtained by sigmoid(parameter).\n&quot;
+-                  &quot;Two moving averages are kept, a slow one and a fast one. When their\n&quot;
+-                  &quot;difference is statistically significant the moving averages are slowed down.\n&quot;);
++                  &quot;Each element of this vector is a number of updates after which\n&quot;
++                  &quot;the moving average coefficient is incremented (by incrementing\n&quot;
++                  &quot;its inverse sigmoid by gibbs_ma_increment). After the last\n&quot;
++                  &quot;increase has been made, the moving average coefficient stays constant.\n&quot;);
+ 
+-    declareOption(ol, &quot;stationarity_statistic_threshold&quot;, &amp;RBMLayer::stationarity_statistic_threshold,
++    declareOption(ol, &quot;gibbs_ma_increment&quot;, &amp;RBMLayer::gibbs_ma_increment,
+                   OptionBase::buildoption,
+-                  &quot;This option is used only when the background Gibbs is computed (i.e. update*Gibbs() is called).\n&quot;
+-                  &quot;When the absolute value of the difference of the slow mean and the fast mean\n&quot;
+-                  &quot;divided by the standard deviation of this difference is above this threshold,\n&quot;
+-                  &quot;the moving averages are slowed down by increasing their parameter by delta_ma_param.\n&quot;
+-                  &quot;When this stastitic is less than half the threshold, the moving averages are accelerated\n&quot;
+-                  &quot;by decreasing their parameter by delta_ma_param.\n&quot;);
++                  &quot;The increment in the inverse sigmoid of the moving average coefficient\n&quot;
++                  &quot;to apply after the number of updates reaches an element of the gibbs_ma_schedule.\n&quot;);
+ 
++    declareOption(ol, &quot;gibbs_initial_ma_coefficient&quot;, &amp;RBMLayer::gibbs_initial_ma_coefficient,
++                  OptionBase::buildoption,
++                  &quot;Initial moving average coefficient for the negative phase statistics in the Gibbs chain.\n&quot;);
++
+     declareOption(ol, &quot;bias&quot;, &amp;RBMLayer::bias,
+                   OptionBase::learntoption,
+                   &quot;Biases of the units.&quot;);
+@@ -476,8 +463,8 @@
+     if (neg_count==0)
+         multiply(tmp,normalize_factor,bias_neg_stats);
+     else
+-        multiplyScaledAdd(tmp,gibbs_slow_ma_coefficient,
+-                          normalize_factor*(1-gibbs_slow_ma_coefficient),
++        multiplyScaledAdd(tmp,gibbs_ma_coefficient,
++                          normalize_factor*(1-gibbs_ma_coefficient),
+                           bias_neg_stats);
+     neg_count++;
+ 
+@@ -512,50 +499,21 @@
+         multiply(tmp,normalize_factor,bias_neg_stats);
+     else // bias_neg_stats &lt;-- tmp*(1-gibbs_chain_statistics_forgetting_factor)/minibatch_size 
+         //                    +gibbs_chain_statistics_forgetting_factor*bias_neg_stats
+-        multiplyScaledAdd(tmp,gibbs_slow_ma_coefficient,
+-                          normalize_factor*(1-gibbs_slow_ma_coefficient),
++        multiplyScaledAdd(tmp,gibbs_ma_coefficient,
++                          normalize_factor*(1-gibbs_ma_coefficient),
+                           bias_neg_stats);
+     neg_count++;
+ 
+-    // update gibbs chain statistics for checking when to change the ma_coefficient
+-
+-    // this is the statistic that summarizes what is happening in one minibatch (we could use something else)
+-    real value = sum(tmp)*normalize_factor/size; 
+-    // fast moving average of the value
+-    fast_mean = gibbs_fast_ma_coefficient*fast_mean + (1-gibbs_fast_ma_coefficient)*value;
+-    // slow moving average of the value
+-    slow_mean = gibbs_slow_ma_coefficient*fast_mean + (1-gibbs_slow_ma_coefficient)*value;
+-    // moving average estimator of the variance of the value
+-    var_of_value = gibbs_slow_ma_coefficient*var_of_value + (1-gibbs_slow_ma_coefficient)*(value-slow_mean)*(value-slow_mean);
+-    // now construct moving sums in order to compute Var(fast_mean-slow_mean)
+-    sum_fast2 = gibbs_fast_ma_coefficient*gibbs_fast_ma_coefficient*sum_fast2 + 
+-        (1-gibbs_fast_ma_coefficient)*(1-gibbs_fast_ma_coefficient);
+-    sum_slow2 = gibbs_slow_ma_coefficient*gibbs_slow_ma_coefficient*sum_slow2 + 
+-        (1-gibbs_slow_ma_coefficient)*(1-gibbs_slow_ma_coefficient);
+-    sum_slowfast = gibbs_slow_ma_coefficient*gibbs_fast_ma_coefficient*sum_slowfast + 
+-        (1-gibbs_slow_ma_coefficient)*(1-gibbs_fast_ma_coefficient);
+-    // this is Var(fast_mean-slow_mean):
+-    real var_of_mean_difference = var_of_value * (sum_fast2 + sum_slow2 - 2*sum_slowfast);
+-    if (var_of_mean_difference&gt;0)
+-    {
+-        real stationarity_statistic = fabs(fast_mean - slow_mean)/sqrt(var_of_mean_difference);
+-        if (stationarity_statistic&gt;stationarity_statistic_threshold) // things are changing too fast
++    bool increase_ma=false;
++    for (int i=0;i&lt;gibbs_ma_schedule.length();i++)
++        if (gibbs_ma_schedule[i]==neg_count*minibatch_size)
+         {
+-            gibbs_fast_ma_param-=delta_ma_param;
+-            gibbs_slow_ma_param-=delta_ma_param;
+-            gibbs_fast_ma_coefficient = sigmoid(gibbs_fast_ma_param);
+-            gibbs_slow_ma_coefficient = sigmoid(gibbs_slow_ma_param);
++            increase_ma=true;
++            break;
+         }
+-        else if (stationarity_statistic&lt;0.5*stationarity_statistic_threshold // things are not changing fast enough...
+-                 &amp;&amp; gibbs_slow_ma_param &lt;10) // but there is not point in going TOO slow
+-        {
+-            gibbs_fast_ma_param+=delta_ma_param;
+-            gibbs_slow_ma_param+=delta_ma_param;
+-            gibbs_fast_ma_coefficient = sigmoid(gibbs_fast_ma_param);
+-            gibbs_slow_ma_coefficient = sigmoid(gibbs_slow_ma_param);
+-        }
+-    }
+-    else PLWARNING(&quot;non-positive variance?&quot;);
++    if (increase_ma)
++        gibbs_ma_coefficient = sigmoid(gibbs_ma_increment + inverse_sigmoid(gibbs_ma_coefficient));
++
+     
+     // delta w = -lrate * ( meanoverrows(pos_values) - neg_stats ) 
+     columnSum(pos_values,tmp);
+
+Modified: trunk/plearn_learners/online/RBMLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.h	2007-05-11 20:46:10 UTC (rev 7066)
++++ trunk/plearn_learners/online/RBMLayer.h	2007-05-11 22:08:39 UTC (rev 7067)
+@@ -73,21 +73,22 @@
+     //! Obsolete option, still here for script compatibility
+     string units_types;
+ 
+-    //! gibbs stuff options
+-    real delta_ma_param; // by how much to adapt the parameter of the moving average coefficients
+-    real stationarity_statistic_threshold; // threshold on the z-statistic for stationarity
++    //! background gibbs chain options
++    //! each element of this vector is a number of updates after which
++    //! the moving average coefficient is incremented (by incrementing
++    //! its inverse sigmoid by gibbs_ma_increment). After the last
++    //! increase has been made, the moving average coefficient stays constant.
++    Vec gibbs_ma_schedule;
++    real gibbs_ma_increment;
++    real gibbs_initial_ma_coefficient;
+ 
+     //#####  Learnt Options  ##################################################
+ 
+     // stores the bias of the unit
+     Vec bias;
+ 
+-    //! stuff used for Gibbs chain methods only
+-    real fast_mean, slow_mean;
+-    real gibbs_fast_ma_coefficient, gibbs_fast_ma_param; // fast_ma_coefficient = sigmoid(fast_ma_param)
+-    real gibbs_slow_ma_coefficient, gibbs_slow_ma_param; // slow_ma_coefficient = sigmoid(slow_ma_param)
+-    real var_of_value;
+-    real sum_fast2, sum_slow2, sum_slowfast;
++    //! used for Gibbs chain methods only
++    real gibbs_ma_coefficient; 
+ 
+     //#####  Not Options  #####################################################
+ 
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-05-11 20:46:10 UTC (rev 7066)
++++ trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-05-11 22:08:39 UTC (rev 7067)
+@@ -51,12 +51,8 @@
+ 
+ RBMMatrixConnection::RBMMatrixConnection( real the_learning_rate ) :
+     inherited(the_learning_rate),
+-    delta_ma_param(0.1),
+-    stationarity_statistic_threshold(2),
+-    fast_mean(0), slow_mean(0),
+-    gibbs_fast_ma_coefficient(0), gibbs_fast_ma_param(0),
+-    gibbs_slow_ma_coefficient(0), gibbs_slow_ma_param(0),
+-    var_of_value(0),sum_fast2(0),sum_slow2(0),sum_slowfast(0)
++    gibbs_ma_increment(0.1),
++    gibbs_initial_ma_coefficient(0.1)
+ {
+ }
+ 
+@@ -67,24 +63,22 @@
+                   &quot;Matrix containing unit-to-unit weights (up_size &#215;&quot;
+                   &quot; down_size)&quot;);
+ 
+-    declareOption(ol, &quot;delta_ma_param&quot;, &amp;RBMMatrixConnection::delta_ma_param,
++    declareOption(ol, &quot;gibbs_ma_schedule&quot;, &amp;RBMMatrixConnection::gibbs_ma_schedule,
+                   OptionBase::buildoption,
+-                  &quot;This option is used only when the background Gibbs is computed (i.e. update*Gibbs() is called).\n&quot;
+-                  &quot;delta_ma_param is the increment in the parameters that control the moving average coefficients\n&quot;
+-                  &quot;used to detect non-stationarity in the negative phase activity statistics.\n&quot;
+-                  &quot;The moving average coefficient are obtained by sigmoid(parameter).\n&quot;
+-                  &quot;Two moving averages are kept, a slow one and a fast one. When their\n&quot;
+-                  &quot;difference is statistically significant the moving averages are slowed down.\n&quot;);
++                  &quot;Each element of this vector is a number of updates after which\n&quot;
++                  &quot;the moving average coefficient is incremented (by incrementing\n&quot;
++                  &quot;its inverse sigmoid by gibbs_ma_increment). After the last\n&quot;
++                  &quot;increase has been made, the moving average coefficient stays constant.\n&quot;);
+ 
+-    declareOption(ol, &quot;stationarity_statistic_threshold&quot;, &amp;RBMMatrixConnection::stationarity_statistic_threshold,
++    declareOption(ol, &quot;gibbs_ma_increment&quot;, &amp;RBMMatrixConnection::gibbs_ma_increment,
+                   OptionBase::buildoption,
+-                  &quot;This option is used only when the background Gibbs is computed (i.e. update*Gibbs() is called).\n&quot;
+-                  &quot;When the absolute value of the difference of the slow mean and the fast mean\n&quot;
+-                  &quot;divided by the standard deviation of this difference is above this threshold,\n&quot;
+-                  &quot;the moving averages are slowed down by increasing their parameter by delta_ma_param.\n&quot;
+-                  &quot;When this stastitic is less than half the threshold, the moving averages are accelerated\n&quot;
+-                  &quot;by decreasing their parameter by delta_ma_param.\n&quot;);
++                  &quot;The increment in the inverse sigmoid of the moving average coefficient\n&quot;
++                  &quot;to apply after the number of updates reaches an element of the gibbs_ma_schedule.\n&quot;);
+ 
++    declareOption(ol, &quot;gibbs_initial_ma_coefficient&quot;, &amp;RBMMatrixConnection::gibbs_initial_ma_coefficient,
++                  OptionBase::buildoption,
++                  &quot;Initial moving average coefficient for the negative phase statistics in the Gibbs chain.\n&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -332,8 +326,8 @@
+         productScaleAcc(weights_neg_stats,
+                         gibbs_neg_up_values,true,
+                         gibbs_neg_down_values,false,
+-                        normalize_factor*(1-gibbs_slow_ma_coefficient),
+-                        gibbs_slow_ma_coefficient);
++                        normalize_factor*(1-gibbs_ma_coefficient),
++                        gibbs_ma_coefficient);
+     neg_count++;
+ 
+     // delta w = -lrate * ( pos_up_values'*pos_down_values
+@@ -356,7 +350,8 @@
+                                        const Mat&amp; gibbs_neg_down_values,
+                                        const Mat&amp; gibbs_neg_up_values)
+ {
+-    real normalize_factor = 1.0/pos_down_values.length();
++    int minibatch_size = pos_down_values.length();
++    real normalize_factor = 1.0/minibatch_size;
+     // neg_stats &lt;-- gibbs_chain_statistics_forgetting_factor * neg_stats
+     //              +(1-gibbs_chain_statistics_forgetting_factor)
+     //               * gibbs_neg_up_values'*gibbs_neg_down_values
+@@ -366,53 +361,25 @@
+     if (neg_count==0)
+         multiply(weights_neg_stats,tmp,normalize_factor);
+     else
+-        multiplyScaledAdd(tmp,gibbs_slow_ma_coefficient,
+-                          normalize_factor*(1-gibbs_slow_ma_coefficient),
++        multiplyScaledAdd(tmp,gibbs_ma_coefficient,
++                          normalize_factor*(1-gibbs_ma_coefficient),
+                           weights_neg_stats);
+ 
+     neg_count++;
+ 
+-    // update gibbs chain statistics for checking when to change the ma_coefficient
+-
+-    // this is the statistic that summarizes what is happening in one minibatch (we could use something else)
+-    real value = sum(tmp)*normalize_factor/tmp.size();
+-    // fast moving average of the value
+-    fast_mean = gibbs_fast_ma_coefficient*fast_mean + (1-gibbs_fast_ma_coefficient)*value;
+-    // slow moving average of the value
+-    slow_mean = gibbs_slow_ma_coefficient*fast_mean + (1-gibbs_slow_ma_coefficient)*value;
+-    // moving average estimator of the variance of the value
+-    var_of_value = gibbs_slow_ma_coefficient*var_of_value + (1-gibbs_slow_ma_coefficient)*(value-slow_mean)*(value-slow_mean);
+-    // now construct moving sums in order to compute Var(fast_mean-slow_mean)
+-    sum_fast2 = gibbs_fast_ma_coefficient*gibbs_fast_ma_coefficient*sum_fast2 + 
+-        (1-gibbs_fast_ma_coefficient)*(1-gibbs_fast_ma_coefficient);
+-    sum_slow2 = gibbs_slow_ma_coefficient*gibbs_slow_ma_coefficient*sum_slow2 + 
+-        (1-gibbs_slow_ma_coefficient)*(1-gibbs_slow_ma_coefficient);
+-    sum_slowfast = gibbs_slow_ma_coefficient*gibbs_fast_ma_coefficient*sum_slowfast + 
+-        (1-gibbs_slow_ma_coefficient)*(1-gibbs_fast_ma_coefficient);
+-    // this is Var(fast_mean-slow_mean):
+-    real var_of_mean_difference = var_of_value * (sum_fast2 + sum_slow2 - 2*sum_slowfast);
+-    if (var_of_mean_difference&gt;0)
+-    {
+-        real stationarity_statistic = fabs(fast_mean - slow_mean)/sqrt(var_of_mean_difference);
+-        if (stationarity_statistic&gt;stationarity_statistic_threshold) // things are changing too fast
++    bool increase_ma=false;
++    for (int i=0;i&lt;gibbs_ma_schedule.length();i++)
++        if (gibbs_ma_schedule[i]==neg_count*minibatch_size)
+         {
+-            gibbs_fast_ma_param-=delta_ma_param;
+-            gibbs_slow_ma_param-=2*delta_ma_param;
+-            gibbs_fast_ma_coefficient = sigmoid(gibbs_fast_ma_param);
+-            gibbs_slow_ma_coefficient = sigmoid(gibbs_slow_ma_param);
++            increase_ma=true;
++            break;
+         }
+-        else if (stationarity_statistic&lt;0.5*stationarity_statistic_threshold // things are not changing fast enough...
+-                 &amp;&amp; gibbs_slow_ma_param &lt;10) // but there is not point in going TOO slow
+-        {
+-            gibbs_fast_ma_param+=delta_ma_param;
+-            gibbs_slow_ma_param+=2*delta_ma_param;
+-            gibbs_fast_ma_coefficient = sigmoid(gibbs_fast_ma_param);
+-            gibbs_slow_ma_coefficient = sigmoid(gibbs_slow_ma_param);
+-        }
++    if (increase_ma)
++    {
++        gibbs_ma_coefficient = sigmoid(gibbs_ma_increment + inverse_sigmoid(gibbs_ma_coefficient));
++        cout &lt;&lt; &quot;new coefficient = &quot; &lt;&lt; gibbs_ma_coefficient &lt;&lt; &quot; at example &quot; &lt;&lt; neg_count*minibatch_size &lt;&lt; endl;
+     }
+-    else PLWARNING(&quot;non-positive variance?&quot;);
+ 
+-
+     // delta w = -lrate * ( pos_up_values'*pos_down_values/minibatch_size - neg_stats )
+     productScaleAcc(weights,
+                     pos_up_values, true,
+@@ -431,14 +398,7 @@
+     pos_count = 0;
+     neg_count = 0;
+ 
+-    gibbs_fast_ma_param = -1;
+-    gibbs_slow_ma_param = 0;
+-    gibbs_fast_ma_coefficient = sigmoid(gibbs_fast_ma_param);
+-    gibbs_slow_ma_coefficient = sigmoid(gibbs_slow_ma_param);
+-    var_of_value = 0.25;
+-    sum_fast2 = (1 - gibbs_fast_ma_coefficient)*(1 - gibbs_fast_ma_coefficient);
+-    sum_slow2 = (1 - gibbs_slow_ma_coefficient)*(1 - gibbs_slow_ma_coefficient);
+-    sum_slowfast = (1 - gibbs_slow_ma_coefficient)*(1 - gibbs_fast_ma_coefficient);
++    gibbs_ma_coefficient = gibbs_initial_ma_coefficient;
+ }
+ 
+ ////////////////////
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.h	2007-05-11 20:46:10 UTC (rev 7066)
++++ trunk/plearn_learners/online/RBMMatrixConnection.h	2007-05-11 22:08:39 UTC (rev 7067)
+@@ -57,24 +57,27 @@
+ public:
+     //#####  Public Build Options  ############################################
+ 
+-    //! gibbs stuff options
+-    real delta_ma_param; // by how much to adapt the parameter of the moving average coefficients
+-    real stationarity_statistic_threshold; // threshold on the z-statistic for stationarity
++    //! background gibbs chain options
++    //! each element of this vector is a number of updates after which
++    //! the moving average coefficient is incremented (by incrementing
++    //! its inverse sigmoid by gibbs_ma_increment). After the last
++    //! increase has been made, the moving average coefficient stays constant.
++    Vec gibbs_ma_schedule;
++    real gibbs_ma_increment;
++    real gibbs_initial_ma_coefficient;
+ 
+     //#####  Learned Options  #################################################
+ 
+     //! Matrix containing unit-to-unit weights (output_size &#215; input_size)
+     Mat weights;
+ 
+-    //! stuff used for Gibbs chain methods only
+-    real fast_mean, slow_mean;
+-    real gibbs_fast_ma_coefficient, gibbs_fast_ma_param; // fast_ma_coefficient = sigmoid(fast_ma_param)
+-    real gibbs_slow_ma_coefficient, gibbs_slow_ma_param; // slow_ma_coefficient = sigmoid(slow_ma_param)
+-    real var_of_value;
+-    real sum_fast2, sum_slow2, sum_slowfast;
++    //! used for Gibbs chain methods only
++    real gibbs_ma_coefficient; 
+ 
++
+     //#####  Not Options  #####################################################
+ 
++
+     //! Accumulates positive contribution to the weights' gradient
+     Mat weights_pos_stats;
+ 
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnectionNatGrad.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnectionNatGrad.cc	2007-05-11 20:46:10 UTC (rev 7066)
++++ trunk/plearn_learners/online/RBMMatrixConnectionNatGrad.cc	2007-05-11 22:08:39 UTC (rev 7067)
+@@ -118,7 +118,6 @@
+     {
+         // We use the average gradient over a mini-batch.
+         real mbnorm = 1. / pos_down_values.length();
+-
+         productScaleAcc(weights_gradient, pos_up_values, true, pos_down_values, false,
+                         mbnorm, 0);
+         productScaleAcc(weights_gradient, neg_up_values, true, neg_down_values, false,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000515.html">[Plearn-commits] r7066 - trunk/plearn/sys
+</A></li>
+	<LI>Next message: <A HREF="000517.html">[Plearn-commits] r7068 - in trunk: plearn/var	plearn_learners/generic/EXPERIMENTAL python_modules/plearn/var
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#516">[ date ]</a>
+              <a href="thread.html#516">[ thread ]</a>
+              <a href="subject.html#516">[ subject ]</a>
+              <a href="author.html#516">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

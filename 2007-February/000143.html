@@ -1,0 +1,204 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6694 - in trunk: commands plearn_learners/generic	plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6694%20-%20in%20trunk%3A%20commands%20plearn_learners/generic%0A%09plearn_learners/online&In-Reply-To=%3C200702272255.l1RMtaVS019116%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000142.html">
+   <LINK REL="Next"  HREF="000144.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6694 - in trunk: commands plearn_learners/generic	plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6694%20-%20in%20trunk%3A%20commands%20plearn_learners/generic%0A%09plearn_learners/online&In-Reply-To=%3C200702272255.l1RMtaVS019116%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6694 - in trunk: commands plearn_learners/generic	plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Tue Feb 27 23:55:36 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000142.html">[Plearn-commits] r6693 - in trunk/python_modules/plearn: report xp
+</A></li>
+        <LI>Next message: <A HREF="000144.html">[Plearn-commits] r6695 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#143">[ date ]</a>
+              <a href="thread.html#143">[ thread ]</a>
+              <a href="subject.html#143">[ subject ]</a>
+              <a href="author.html#143">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-02-27 23:55:35 +0100 (Tue, 27 Feb 2007)
+New Revision: 6694
+
+Modified:
+   trunk/commands/plearn_noblas_inc.h
+   trunk/plearn_learners/generic/NNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+   trunk/plearn_learners/online/ModuleStackModule.cc
+   trunk/plearn_learners/online/RBMMultinomialLayer.cc
+Log:
+
+
+Modified: trunk/commands/plearn_noblas_inc.h
+===================================================================
+--- trunk/commands/plearn_noblas_inc.h	2007-02-27 22:29:43 UTC (rev 6693)
++++ trunk/commands/plearn_noblas_inc.h	2007-02-27 22:55:35 UTC (rev 6694)
+@@ -288,6 +288,7 @@
+ #include &lt;plearn/vmat/ProcessingVMatrix.h&gt;
+ #include &lt;plearn/vmat/ProcessSymbolicSequenceVMatrix.h&gt;
+ #include &lt;plearn/vmat/RandomSamplesVMatrix.h&gt;
++#include &lt;plearn/vmat/RandomSamplesFromVMatrix.h&gt;
+ #include &lt;plearn/vmat/RankedVMatrix.h&gt;
+ #include &lt;plearn/vmat/RegularGridVMatrix.h&gt;
+ #include &lt;plearn/vmat/RemoveDuplicateVMatrix.h&gt;
+
+Modified: trunk/plearn_learners/generic/NNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/NNet.cc	2007-02-27 22:29:43 UTC (rev 6693)
++++ trunk/plearn_learners/generic/NNet.cc	2007-02-27 22:55:35 UTC (rev 6694)
+@@ -469,7 +469,7 @@
+         {
+             if (the_output-&gt;size() == 1) {
+                 // Assume sigmoid output here!
+-                costs[k] = cross_entropy(the_output, the_target);
++                costs[k] = stable_cross_entropy(before_transfer_func, the_target);
+             } else {
+                 if (output_transfer_func == &quot;log_softmax&quot;)
+                     costs[k] = -the_output[the_target];
+@@ -478,7 +478,12 @@
+             }
+         } 
+         else if(cost_funcs[k]==&quot;class_error&quot;)
+-            costs[k] = classification_loss(the_output, the_target);
++        {
++            if (the_output-&gt;size()==1)
++                costs[k] = binary_classification_loss(the_output, the_target);
++            else
++                costs[k] = classification_loss(the_output, the_target);
++        }
+         else if(cost_funcs[k]==&quot;binary_class_error&quot;)
+             costs[k] = binary_classification_loss(the_output, the_target);
+         else if(cost_funcs[k]==&quot;multiclass_error&quot;)
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-02-27 22:29:43 UTC (rev 6693)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-02-27 22:55:35 UTC (rev 6694)
+@@ -515,6 +515,15 @@
+         nll_cost_index = train_cost_names.find(classification_cost-&gt;name()[0]);
+     if ( final_cost )
+         final_cost_index = train_cost_names.find(final_cost-&gt;name()[0]);
++    if ( partial_costs )
++    {
++        partial_cost_indices.resize(partial_costs.size());
++        for (int i=0;i&lt;partial_costs.size();i++)
++            if (partial_costs[i])
++                partial_cost_indices[i] = train_cost_names.find(partial_costs[i]-&gt;name()[0] + &quot;_&quot; + tostring(i+1) );
++            else
++                partial_cost_indices[i] = -1;
++    }
+ 
+     recons_cost_index = train_cost_names.find(&quot;recons_error&quot;);
+ 
+@@ -730,8 +739,10 @@
+             // Backward pass
+             // first time we set these gradients: do not accumulate
+             partial_costs[ i ]-&gt;bpropUpdate( layers[ i+1 ]-&gt;expectation,
+-                                             target, cost,
++                                             target, cost[i],
+                                              expectation_gradients[ i+1 ] );
++
++            train_costs[partial_cost_indices[i]] = cost[i];
+         }
+         else
+             expectation_gradients[i+1].clear();
+@@ -1259,6 +1270,12 @@
+ 
+     if( final_cost )
+         cost_names.append( final_cost-&gt;name() );
++
++    if (partial_costs)
++        for (int i=0;i&lt;n_layers-1;i++)
++            if (partial_costs[i])
++                cost_names.append( partial_costs[i]-&gt;name()[0] + &quot;_&quot; + tostring(i+1) );
++            
+     return cost_names;
+ }
+ 
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2007-02-27 22:29:43 UTC (rev 6693)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2007-02-27 22:55:35 UTC (rev 6694)
+@@ -291,6 +291,9 @@
+     //! Keeps the index of the reconstruction cost in train_costs
+     int recons_cost_index;
+ 
++    //! indices of the partial costs in train_costs
++    TVec&lt;int&gt; partial_cost_indices;
++
+ protected:
+     //#####  Protected Member Functions  ######################################
+ 
+
+Modified: trunk/plearn_learners/online/ModuleStackModule.cc
+===================================================================
+--- trunk/plearn_learners/online/ModuleStackModule.cc	2007-02-27 22:29:43 UTC (rev 6693)
++++ trunk/plearn_learners/online/ModuleStackModule.cc	2007-02-27 22:55:35 UTC (rev 6694)
+@@ -113,7 +113,6 @@
+ {
+     PLASSERT( n_modules &gt; 0 );
+     PLASSERT( input.size() == input_size );
+-    PLASSERT( output.size() == output_size );
+ 
+     modules[0]-&gt;fprop( input, values[0] );
+     for( int i=1 ; i&lt;n_modules-1 ; i++ )
+
+Modified: trunk/plearn_learners/online/RBMMultinomialLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMultinomialLayer.cc	2007-02-27 22:29:43 UTC (rev 6693)
++++ trunk/plearn_learners/online/RBMMultinomialLayer.cc	2007-02-27 22:55:35 UTC (rev 6694)
+@@ -155,7 +155,7 @@
+     real* outg = output_gradient.data();
+     real* ing = input_gradient.data();
+     real* b = bias.data();
+-    real* binc = bias_inc.data();
++    real* binc = momentum==0?0:bias_inc.data();
+ 
+     for( int i=0 ; i&lt;size ; i++ )
+     {
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000142.html">[Plearn-commits] r6693 - in trunk/python_modules/plearn: report xp
+</A></li>
+	<LI>Next message: <A HREF="000144.html">[Plearn-commits] r6695 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#143">[ date ]</a>
+              <a href="thread.html#143">[ thread ]</a>
+              <a href="subject.html#143">[ subject ]</a>
+              <a href="author.html#143">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

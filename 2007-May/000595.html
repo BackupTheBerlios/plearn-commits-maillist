@@ -1,0 +1,289 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7146 - in trunk:	plearn_learners/generic/EXPERIMENTAL python_modules/plearn/var
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7146%20-%20in%20trunk%3A%0A%09plearn_learners/generic/EXPERIMENTAL%20python_modules/plearn/var&In-Reply-To=%3C200705171612.l4HGCGf6019194%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000594.html">
+   <LINK REL="Next"  HREF="000596.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7146 - in trunk:	plearn_learners/generic/EXPERIMENTAL python_modules/plearn/var</H1>
+    <B>simonl at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7146%20-%20in%20trunk%3A%0A%09plearn_learners/generic/EXPERIMENTAL%20python_modules/plearn/var&In-Reply-To=%3C200705171612.l4HGCGf6019194%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7146 - in trunk:	plearn_learners/generic/EXPERIMENTAL python_modules/plearn/var">simonl at mail.berlios.de
+       </A><BR>
+    <I>Thu May 17 18:12:16 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000594.html">[Plearn-commits] r7145 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="000596.html">[Plearn-commits] r7147 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#595">[ date ]</a>
+              <a href="thread.html#595">[ thread ]</a>
+              <a href="subject.html#595">[ subject ]</a>
+              <a href="author.html#595">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: simonl
+Date: 2007-05-17 18:12:15 +0200 (Thu, 17 May 2007)
+New Revision: 7146
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h
+   trunk/python_modules/plearn/var/Var.py
+Log:
+DeepReconstructorNet seems to be &quot;working&quot;... somewhat
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc	2007-05-17 15:52:16 UTC (rev 7145)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc	2007-05-17 16:12:15 UTC (rev 7146)
+@@ -38,7 +38,8 @@
+ 
+ 
+ #include &quot;DeepReconstructorNet.h&quot;
+-#include &lt;plearn/display/DisplayUtils.h&gt; ////////// to remove
++#include &lt;plearn/display/DisplayUtils.h&gt; 
++#include &lt;plearn/var/Var_operators.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -134,30 +135,38 @@
+         compute_layer[k] = Func(layers[k], layers[k+1]);
+     compute_output = Func(layers[0], layers[nlayers-1]);
+     nout = layers[nlayers-1]-&gt;size();
++
++    if(supervised_cost.isNull())
++        PLERROR(&quot;You must provide a supervised_cost&quot;);
++    fullcost = supervised_cost;
++    int n_rec_costs = reconstruction_costs.length();
++    for(int k=0; k&lt;n_rec_costs; k++)
++        fullcost = fullcost + reconstruction_costs[k];
++    displayVarGraph(fullcost);
++    Var input = layers[0];
++    Func f(input&amp;target, fullcost);
++    parameters = f-&gt;parameters;
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+ void DeepReconstructorNet::build()
+ {
++    if(random_gen.isNull())
++        random_gen = new PRandom();
+     inherited::build();
+     build_();
+ }
+ 
+ void DeepReconstructorNet::initializeParams(bool set_seed)
+ {
++    perr &lt;&lt; &quot;Initializing parameters...&quot; &lt;&lt; endl;
+     if (set_seed &amp;&amp; seed_ != 0)
+         random_gen-&gt;manual_seed(seed_);
+ 
+-    VarArray params = getAllParams();
+-    for(int i=0; i&lt;params.length(); i++)
+-        dynamic_cast&lt;SourceVariable*&gt;((Variable*)params[i])-&gt;randomInitialize(random_gen);
++    for(int i=0; i&lt;parameters.length(); i++)
++        dynamic_cast&lt;SourceVariable*&gt;((Variable*)parameters[i])-&gt;randomInitialize(random_gen);
+ }
+ 
+-VarArray DeepReconstructorNet::getAllParams()
+-{
+-    PLERROR(&quot;Not implemented yet&quot;);
+-    return VarArray();
+-}
+ 
+ void DeepReconstructorNet::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+@@ -194,8 +203,9 @@
+         with the 'seed' option
+       - initialize the learner's parameters, using this random generator
+       - stage = 0
+-    */
++    */    
+     inherited::forget();
++    initializeParams();    
+ }
+ 
+ void DeepReconstructorNet::train()
+@@ -213,7 +223,11 @@
+     PPath outmatfname = expdir/&quot;outmat&quot;;
+ 
+     int nreconstructions = reconstruction_costs.length();
+-    VMat dset = train_set;
++    int insize = train_set-&gt;inputsize();
++    VMat dset = train_set.subMatColumns(0,insize);
++
++    // hack...
++    dset = dset.subMatRows(0,100);
+     for(int k=0; k&lt;nreconstructions; k++)
+     {
+         trainHiddenLayer(k, dset);
+@@ -257,7 +271,7 @@
+ 
+ void DeepReconstructorNet::trainHiddenLayer(int which_input_layer, VMat inputs)
+ {
+-    int l = train_set-&gt;length();
++    int l = inputs-&gt;length();
+     int nepochs = training_schedule[which_input_layer];
+     perr &lt;&lt; &quot;\n\n*********************************************&quot; &lt;&lt; endl;
+     perr &lt;&lt; &quot;*** Training layer &quot; &lt;&lt; which_input_layer &lt;&lt; &quot; for &quot; &lt;&lt; nepochs &lt;&lt; &quot; epochs &quot; &lt;&lt; endl;
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h	2007-05-17 15:52:16 UTC (rev 7145)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h	2007-05-17 16:12:15 UTC (rev 7146)
+@@ -89,6 +89,10 @@
+     Var target;
+     Var supervised_cost;
+ 
++    Var fullcost;
++    
++    VarArray parameters;
++
+     int minibatch_size;
+ 
+ 
+@@ -152,12 +156,10 @@
+     virtual TVec&lt;std::string&gt; getTrainCostNames() const;
+ 
+ 
+-    virtual void initializeParams(bool set_seed);
+-    virtual VarArray getAllParams();
++    virtual void initializeParams(bool set_seed=true);
++   
+ 
+-    
+ 
+-
+     // *** SUBCLASS WRITING: ***
+     // While in general not necessary, in case of particular needs
+     // (efficiency concerns for ex) you may also want to overload
+
+Modified: trunk/python_modules/plearn/var/Var.py
+===================================================================
+--- trunk/python_modules/plearn/var/Var.py	2007-05-17 15:52:16 UTC (rev 7145)
++++ trunk/python_modules/plearn/var/Var.py	2007-05-17 16:12:15 UTC (rev 7146)
+@@ -33,26 +33,25 @@
+ from plearn.pyplearn import *
+ from plearn.pyplearn.plearn_repr import plearn_repr, format_list_elements
+ 
+-def Var(l, w=1, random_type='F', random_a=0., random_b=1., random_clear_first_row=False):
+-    if isinstance(l, Variable):
+-        return l;
+-    elif isinstance(l,int):
+-        return Variable(pl.SourceVariable(build_length=l,
+-                                          build_width=w,
+-                                          random_type=PLChar(random_type),
+-                                          random_a=random_a,
+-                                          random_b=random_b,
+-                                          random_clear_first_row=random_clear_first_row))
+-    else: # assume parameter l is a pl. plvar
+-        return Variable(l)
+-
+     
+-class Variable:
++class Var:
+ 
+-    def __init__(self, plvar):
+-        # parameter must be a pl. subclass of Variable
+-        self.v = plvar
++    def __init__(self, l, w=1, random_type=&quot;none&quot;, random_a=0., random_b=1., random_clear_first_row=False):
++        if isinstance(l, Var):
++            self.v = l.v
++        elif isinstance(l,int):
++            self.v = pl.SourceVariable(build_length=l,
++                                       build_width=w,
++                                       random_type=random_type,
++                                       random_a=random_a,
++                                       random_b=random_b,
++                                       random_clear_first_row=random_clear_first_row)
++        else: # assume parameter l is a pl. plvar
++            self.v = l
+ 
++    def _serial_number(self):
++        return self.v._serial_number()
++
+     def sigmoid(self):
+         return Var(pl.SigmoidVariable(input=self.v))
+ 
+@@ -92,6 +91,15 @@
+     def transposeDoubleProduct(self, W, M):
+         return Var(pl.TransposedDoubleProductVariable(varray=[W, M, self.v]))
+ 
++    def square(self):
++        return Var(pl.SquareVariable(input=self.v))
++
++    def __add__(self, other):
++        return Var(pl.PlusVariable(input1=self.v, input2=other.v))
++
++    def __sub__(self, other):
++        return Var(pl.MinusVariable(input1=self.v,input2=other.v))
++
+     def __neg__(self):
+         return Var(pl.NegateElementsVariable(input=self.v))
+     
+@@ -114,8 +122,8 @@
+     &quot;&quot;&quot;iw is the input's width
+     igs is the input's group size
+     ow and ogs analog but for output&quot;&quot;&quot;
+-    M = Var(ow/ogs, iw, 'U', -1/iw, 1/iw, False)
+-    W = Var(ogs, iw, 'U', -1/iw, 1/iw, False)
++    M = Var(ow/ogs, iw, &quot;uniform&quot;, -1/iw, 1/iw, False)
++    W = Var(ogs, iw, &quot;uniform&quot;, -1/iw, 1/iw, False)
+     hidden = input.doubleProduct(W,M).multiSoftMax(ogs)
+     cost = -hidden.transposeDoubleProduct(W,M).multiLogSoftMax(igs).dot(input)            
+     return hidden, cost, (W,M)
+@@ -162,10 +170,10 @@
+ ##             return hidden, cost, (W, Wr)
+ 
+ ##     else: # use double product
+-##        # M = Var(ing*igs, ong, 'U', -1/ing/igs, 1/ing/igs, False)
+-##        # W = Var(ing*igs, ogs, 'U', -1/ing/igs, 1/ing/igs, False)
+-##         M = Var(ong, ing*igs, 'U', -1/ing/igs, 1/ing/igs, False)
+-##         W = Var(ogs, ing*igs, 'U', -1/ing/igs, 1/ing/igs, False)
++##        # M = Var(ing*igs, ong, &quot;uniform&quot;, -1/ing/igs, 1/ing/igs, False)
++##        # W = Var(ing*igs, ogs, &quot;uniform&quot;, -1/ing/igs, 1/ing/igs, False)
++##         M = Var(ong, ing*igs, &quot;uniform&quot;, -1/ing/igs, 1/ing/igs, False)
++##         W = Var(ogs, ing*igs, &quot;uniform&quot;, -1/ing/igs, 1/ing/igs, False)
+ ##         hidden = input.doubleProduct(W,M).multiSoftMax(ogs)
+ ##         if tied:
+ ##             cost = -hidden.transposeDoubleProduct(W,M).multiLogSoftMax(igs).dot(input)            
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000594.html">[Plearn-commits] r7145 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="000596.html">[Plearn-commits] r7147 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#595">[ date ]</a>
+              <a href="thread.html#595">[ thread ]</a>
+              <a href="subject.html#595">[ subject ]</a>
+              <a href="author.html#595">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

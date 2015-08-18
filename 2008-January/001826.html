@@ -1,0 +1,1086 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8378 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8378%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200801102255.m0AMt41D005010%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001825.html">
+   <LINK REL="Next"  HREF="001827.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8378 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8378%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200801102255.m0AMt41D005010%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8378 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Thu Jan 10 23:55:04 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001825.html">[Plearn-commits] r8377 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="001827.html">[Plearn-commits] r8379 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1826">[ date ]</a>
+              <a href="thread.html#1826">[ thread ]</a>
+              <a href="subject.html#1826">[ subject ]</a>
+              <a href="author.html#1826">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-01-10 23:55:03 +0100 (Thu, 10 Jan 2008)
+New Revision: 8378
+
+Added:
+   trunk/plearn_learners_experimental/DiscriminativeRBM.cc
+   trunk/plearn_learners_experimental/DiscriminativeRBM.h
+Log:
+Classifier that uses an RBM
+
+
+Added: trunk/plearn_learners_experimental/DiscriminativeRBM.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DiscriminativeRBM.cc	2008-01-10 20:08:40 UTC (rev 8377)
++++ trunk/plearn_learners_experimental/DiscriminativeRBM.cc	2008-01-10 22:55:03 UTC (rev 8378)
+@@ -0,0 +1,713 @@
++// -*- C++ -*-
++
++// DiscriminativeRBM.cc
++//
++// Copyright (C) 2008 Hugo Larochelle
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Hugo Larochelle
++
++/*! \file DiscriminativeRBM.cc */
++
++
++#define PL_LOG_MODULE_NAME &quot;DiscriminativeRBM&quot;
++#include &quot;DiscriminativeRBM.h&quot;
++#include &lt;plearn/io/pl_log.h&gt;
++
++#define minibatch_hack 0 // Do we force the minibatch setting? (debug hack)
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    DiscriminativeRBM,
++    &quot;Discriminative Restricted Boltzmann Machine classifier.&quot;,
++    &quot;This classifier supports semi-supervised learning, as well as\n&quot;
++    &quot;hybrid generative/discriminative learning. It is based on a\n&quot;
++    &quot;Restricted Boltzmann Machine where the visible units contain the\n&quot;
++    &quot;the input and the class target.&quot;);
++
++///////////////////
++// DiscriminativeRBM //
++///////////////////
++DiscriminativeRBM::DiscriminativeRBM() :
++    disc_learning_rate( 0. ),
++    disc_decrease_ct( 0. ),
++    use_exact_disc_gradient( 0. ),
++    gen_learning_weight( 0. ),
++    use_multi_conditional_learning( false ),
++    semi_sup_learning_weight( 0. ),
++    n_classes( -1 ),
++    target_weights_L1_penalty_factor( 0. ),
++    target_weights_L2_penalty_factor( 0. )
++{
++    random_gen = new PRandom();
++}
++
++////////////////////
++// declareOptions //
++////////////////////
++void DiscriminativeRBM::declareOptions(OptionList&amp; ol)
++{
++    declareOption(ol, &quot;disc_learning_rate&quot;, &amp;DiscriminativeRBM::disc_learning_rate,
++                  OptionBase::buildoption,
++                  &quot;The learning rate used for discriminative learning.\n&quot;);
++
++    declareOption(ol, &quot;disc_decrease_ct&quot;, &amp;DiscriminativeRBM::disc_decrease_ct,
++                  OptionBase::buildoption,
++                  &quot;The decrease constant of the discriminative learning rate.\n&quot;);
++
++    declareOption(ol, &quot;use_exact_disc_gradient&quot;, 
++                  &amp;DiscriminativeRBM::use_exact_disc_gradient,
++                  OptionBase::buildoption,
++                  &quot;Indication that the exact gradient should be used for\n&quot;
++                  &quot;discriminative learning (instead of the CD gradient).\n&quot;);
++
++    declareOption(ol, &quot;gen_learning_weight&quot;, &amp;DiscriminativeRBM::gen_learning_weight,
++                  OptionBase::buildoption,
++                  &quot;The weight of the generative learning term, for\n&quot;
++                  &quot;hybrid discriminative/generative learning.\n&quot;);
++
++    declareOption(ol, &quot;use_multi_conditional_learning&quot;, 
++                  &amp;DiscriminativeRBM::use_multi_conditional_learning,
++                  OptionBase::buildoption,
++                  &quot;Indication that multi-conditional learning should\n&quot;
++                  &quot;be used instead of generative learning.\n&quot;);
++
++    declareOption(ol, &quot;semi_sup_learning_weight&quot;, 
++                  &amp;DiscriminativeRBM::semi_sup_learning_weight,
++                  OptionBase::buildoption,
++                  &quot;The weight of the semi-supervised learning term, for\n&quot;
++                  &quot;unsupervised learning on unlabeled data.\n&quot;);
++
++    declareOption(ol, &quot;n_classes&quot;, &amp;DiscriminativeRBM::n_classes,
++                  OptionBase::buildoption,
++                  &quot;Number of classes in the training set.\n&quot;
++                  );
++
++    declareOption(ol, &quot;input_layer&quot;, &amp;DiscriminativeRBM::input_layer,
++                  OptionBase::buildoption,
++                  &quot;The input layer of the RBM.\n&quot;);
++
++    declareOption(ol, &quot;hidden_layer&quot;, &amp;DiscriminativeRBM::hidden_layer,
++                  OptionBase::buildoption,
++                  &quot;The hidden layer of the RBM.\n&quot;);
++
++    declareOption(ol, &quot;connection&quot;, &amp;DiscriminativeRBM::connection,
++                  OptionBase::buildoption,
++                  &quot;The connection weights between the input and hidden layer.\n&quot;);
++
++    declareOption(ol, &quot;target_weights_L1_penalty_factor&quot;, 
++                  &amp;DiscriminativeRBM::target_weights_L1_penalty_factor,
++                  OptionBase::buildoption,
++                  &quot;Target weights' L1_penalty_factor.\n&quot;);
++
++    declareOption(ol, &quot;target_weights_L2_penalty_factor&quot;, 
++                  &amp;DiscriminativeRBM::target_weights_L2_penalty_factor,
++                  OptionBase::buildoption,
++                  &quot;Target weights' L2_penalty_factor.\n&quot;);
++
++    declareOption(ol, &quot;classification_module&quot;,
++                  &amp;DiscriminativeRBM::classification_module,
++                  OptionBase::learntoption,
++                  &quot;The module computing the class probabilities.\n&quot;
++                  );
++
++    declareOption(ol, &quot;classification_cost&quot;,
++                  &amp;DiscriminativeRBM::classification_cost,
++                  OptionBase::nosave,
++                  &quot;The module computing the classification cost function (NLL)&quot;
++                  &quot; on top\n&quot;
++                  &quot;of classification_module.\n&quot;
++                  );
++
++    declareOption(ol, &quot;joint_layer&quot;, &amp;DiscriminativeRBM::joint_layer,
++                  OptionBase::nosave,
++                  &quot;Concatenation of input_layer and the target layer\n&quot;
++                  &quot;(that is inside classification_module).\n&quot;
++                 );
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++////////////
++// build_ //
++////////////
++void DiscriminativeRBM::build_()
++{
++    MODULE_LOG &lt;&lt; &quot;build_() called&quot; &lt;&lt; endl;
++
++    if( inputsize_ &gt; 0 &amp;&amp; targetsize_ &gt; 0)
++    {
++        PLASSERT( n_classes &gt;= 2 );
++        PLASSERT( gen_learning_weight &gt;= 0 );
++        PLASSERT( semi_sup_learning_weight &gt;= 0 );
++        
++        build_layers_and_connections();
++        build_costs();
++    }
++}
++
++/////////////////
++// build_costs //
++/////////////////
++void DiscriminativeRBM::build_costs()
++{
++    cost_names.resize(0);
++    
++    // build the classification module, its cost and the joint layer
++    build_classification_cost();
++
++    int current_index = 0;
++    cost_names.append(&quot;NLL&quot;);
++    nll_cost_index = current_index;
++    current_index++;
++    
++    cost_names.append(&quot;class_error&quot;);
++    class_cost_index = current_index;
++    current_index++;
++
++    PLASSERT( current_index == cost_names.length() );
++}
++
++//////////////////////////////////
++// build_layers_and_connections //
++//////////////////////////////////
++void DiscriminativeRBM::build_layers_and_connections()
++{
++    MODULE_LOG &lt;&lt; &quot;build_layers_and_connections() called&quot; &lt;&lt; endl;
++
++    if( !input_layer )
++        PLERROR(&quot;In DiscriminativeRBM::build_layers_and_connections(): &quot;
++                &quot;input_layer must be provided&quot;);
++    if( !hidden_layer )
++        PLERROR(&quot;In DiscriminativeRBM::build_layers_and_connections(): &quot;
++                &quot;hidden_layer must be provided&quot;);
++
++    if( !connection )
++        PLERROR(&quot;DiscriminativeRBM::build_layers_and_connections(): \n&quot;
++                &quot;connection must be provided&quot;);
++
++    if( connection-&gt;up_size != hidden_layer-&gt;size ||
++        connection-&gt;down_size != input_layer-&gt;size )
++        PLERROR(&quot;DiscriminativeRBM::build_layers_and_connections(): \n&quot;
++                &quot;connection's size (%d x %d) should be %d x %d&quot;,
++                connection-&gt;up_size, connection-&gt;down_size,
++                hidden_layer-&gt;size, input_layer-&gt;size);
++
++    if( inputsize_ &gt;= 0 )
++        PLASSERT( input_layer-&gt;size == inputsize() );
++
++    input_gradient.resize( inputsize() );
++    class_output.resize( n_classes );
++    class_gradient.resize( n_classes );
++
++    target_one_hot.resize( n_classes );
++
++    disc_pos_down_val.resize( inputsize() + n_classes );
++    disc_pos_up_val.resize( hidden_layer-&gt;size );
++    disc_neg_down_val.resize( inputsize() + n_classes );
++    disc_neg_up_val.resize( hidden_layer-&gt;size );
++  
++    gen_pos_down_val.resize( inputsize() + n_classes );
++    gen_pos_up_val.resize( hidden_layer-&gt;size );
++    gen_neg_down_val.resize( inputsize() + n_classes );
++    gen_neg_up_val.resize( hidden_layer-&gt;size );
++
++    semi_sup_pos_down_val.resize( inputsize() + n_classes );
++    semi_sup_pos_up_val.resize( hidden_layer-&gt;size );
++    semi_sup_neg_down_val.resize( inputsize() + n_classes );
++    semi_sup_neg_up_val.resize( hidden_layer-&gt;size );
++
++
++
++    if( !input_layer-&gt;random_gen )
++    {
++        input_layer-&gt;random_gen = random_gen;
++        input_layer-&gt;forget();
++    }
++
++    if( !hidden_layer-&gt;random_gen )
++    {
++        hidden_layer-&gt;random_gen = random_gen;
++        hidden_layer-&gt;forget();
++    }
++
++    if( !connection-&gt;random_gen )
++    {
++        connection-&gt;random_gen = random_gen;
++        connection-&gt;forget();
++    }
++}
++
++///////////////////////////////
++// build_classification_cost //
++///////////////////////////////
++void DiscriminativeRBM::build_classification_cost()
++{
++    MODULE_LOG &lt;&lt; &quot;build_classification_cost() called&quot; &lt;&lt; endl;
++
++    if (!classification_module ||
++        classification_module-&gt;target_layer-&gt;size != n_classes ||
++        classification_module-&gt;last_layer != hidden_layer || 
++        classification_module-&gt;previous_to_last != connection )
++    {
++        // We need to (re-)create 'last_to_target', and thus the classification
++        // module too.
++        // This is not systematically done so that the learner can be
++        // saved and loaded without losing learned parameters.
++        last_to_target = new RBMMatrixConnection();
++        last_to_target-&gt;up_size = hidden_layer-&gt;size;
++        last_to_target-&gt;down_size = n_classes;
++        last_to_target-&gt;L1_penalty_factor = target_weights_L1_penalty_factor;
++        last_to_target-&gt;L2_penalty_factor = target_weights_L2_penalty_factor;
++        last_to_target-&gt;random_gen = random_gen;
++        last_to_target-&gt;build();
++
++        target_layer = new RBMMultinomialLayer();
++        target_layer-&gt;size = n_classes;
++        target_layer-&gt;random_gen = random_gen;
++        target_layer-&gt;build();
++
++        classification_module = new RBMClassificationModule();
++        classification_module-&gt;previous_to_last = connection;
++        classification_module-&gt;last_layer = hidden_layer;
++        classification_module-&gt;last_to_target = last_to_target;
++        classification_module-&gt;target_layer = target_layer;
++        classification_module-&gt;random_gen = random_gen;
++        classification_module-&gt;build();
++    }
++
++    classification_cost = new NLLCostModule();
++    classification_cost-&gt;input_size = n_classes;
++    classification_cost-&gt;target_size = 1;
++    classification_cost-&gt;build();
++
++    last_to_target = classification_module-&gt;last_to_target;
++    last_to_target_connection = 
++        (RBMMatrixConnection*) classification_module-&gt;last_to_target;
++    target_layer = classification_module-&gt;target_layer;
++    joint_connection = classification_module-&gt;joint_connection;
++
++    joint_layer = new RBMMixedLayer();
++    joint_layer-&gt;sub_layers.resize( 2 );
++    joint_layer-&gt;sub_layers[0] = input_layer;
++    joint_layer-&gt;sub_layers[1] = target_layer;
++    joint_layer-&gt;random_gen = random_gen;
++    joint_layer-&gt;build();
++}
++
++///////////
++// build //
++///////////
++void DiscriminativeRBM::build()
++{
++    inherited::build();
++    build_();
++}
++
++/////////////////////////////////
++// makeDeepCopyFromShallowCopy //
++/////////////////////////////////
++void DiscriminativeRBM::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    deepCopyField(input_layer, copies);
++    deepCopyField(hidden_layer, copies);
++    deepCopyField(connection, copies);
++    deepCopyField(classification_module, copies);
++    deepCopyField(cost_names, copies);
++    deepCopyField(classification_cost, copies);
++    deepCopyField(joint_layer, copies);
++    deepCopyField(last_to_target, copies);
++    deepCopyField(last_to_target_connection, copies);
++    deepCopyField(joint_connection, copies);
++    deepCopyField(target_layer, copies);
++    deepCopyField(target_one_hot, copies);
++    deepCopyField(disc_pos_down_val, copies);
++    deepCopyField(disc_pos_up_val, copies);
++    deepCopyField(disc_neg_down_val, copies);
++    deepCopyField(disc_neg_up_val, copies);
++    deepCopyField(gen_pos_down_val, copies);
++    deepCopyField(gen_pos_up_val, copies);
++    deepCopyField(gen_neg_down_val, copies);
++    deepCopyField(gen_neg_up_val, copies);
++    deepCopyField(semi_sup_pos_down_val, copies);
++    deepCopyField(semi_sup_pos_up_val, copies);
++    deepCopyField(semi_sup_neg_down_val, copies);
++    deepCopyField(semi_sup_neg_up_val, copies);
++    deepCopyField(input_gradient, copies);
++    deepCopyField(class_output, copies);
++    deepCopyField(class_gradient, copies);
++}
++
++
++////////////////
++// outputsize //
++////////////////
++int DiscriminativeRBM::outputsize() const
++{
++    return n_classes;
++}
++
++////////////
++// forget //
++////////////
++void DiscriminativeRBM::forget()
++{
++    inherited::forget();
++
++    input_layer-&gt;forget();
++    hidden_layer-&gt;forget();
++    connection-&gt;forget();
++    classification_cost-&gt;forget();
++    classification_module-&gt;forget();
++}
++
++///////////
++// train //
++///////////
++void DiscriminativeRBM::train()
++{
++    MODULE_LOG &lt;&lt; &quot;train() called &quot; &lt;&lt; endl;
++
++    MODULE_LOG &lt;&lt; &quot;stage = &quot; &lt;&lt; stage
++        &lt;&lt; &quot;, target nstages = &quot; &lt;&lt; nstages &lt;&lt; endl;
++
++    PLASSERT( train_set );
++
++    Vec input( inputsize() );
++    Vec target( targetsize() );
++    int target_index;
++    real weight; // unused
++
++    real nll_cost; 
++    real class_error;
++    TVec&lt;string&gt; train_cost_names = getTrainCostNames() ;
++    Vec train_costs( train_cost_names.length() );
++    train_costs.fill(MISSING_VALUE) ;
++
++    int nsamples = train_set-&gt;length();
++    int init_stage = stage;
++    if( !initTrain() )
++    {
++        MODULE_LOG &lt;&lt; &quot;train() aborted&quot; &lt;&lt; endl;
++        return;
++    }
++
++    PP&lt;ProgressBar&gt; pb;
++
++    // clear stats of previous epoch
++    train_stats-&gt;forget();
++
++    if( report_progress )
++        pb = new ProgressBar( &quot;Training &quot;
++                              + classname(),
++                              nstages - stage );
++        
++    for( ; stage&lt;nstages ; stage++ )
++    {
++        train_set-&gt;getExample(stage%nsamples, input, target, weight);
++        target_index = (int)round( target[0] );
++        if( pb )
++            pb-&gt;update( stage - init_stage + 1 );
++
++        // Get CD stats...
++        target_one_hot.clear();
++        target_one_hot[ target_index ] = 1;
++
++        // ... for discriminative learning
++        if( !use_exact_disc_gradient &amp;&amp; target_index &gt;= 0 )
++        {
++            // Positive phase
++
++            // Clamp visible units
++            target_layer-&gt;sample &lt;&lt; target_one_hot;
++            input_layer-&gt;sample &lt;&lt; input ;
++
++            // Up pass
++            joint_connection-&gt;setAsDownInput( joint_layer-&gt;sample );
++            hidden_layer-&gt;getAllActivations( joint_connection );
++            hidden_layer-&gt;computeExpectation();
++            hidden_layer-&gt;generateSample();
++
++            disc_pos_down_val &lt;&lt; joint_layer-&gt;sample;
++            disc_pos_up_val &lt;&lt; hidden_layer-&gt;expectation;
++
++            // Negative phase
++
++            // Down pass
++            last_to_target_connection-&gt;setAsUpInput( hidden_layer-&gt;sample );
++            target_layer-&gt;getAllActivations( last_to_target_connection );
++            target_layer-&gt;computeExpectation();
++            target_layer-&gt;generateSample();
++
++            // Up pass
++            joint_connection-&gt;setAsDownInput( joint_layer-&gt;sample );
++            hidden_layer-&gt;getAllActivations( joint_connection );
++            hidden_layer-&gt;computeExpectation();
++
++            disc_neg_down_val &lt;&lt; joint_layer-&gt;sample;
++            disc_neg_up_val &lt;&lt; hidden_layer-&gt;expectation;
++        }
++
++        // ... for generative learning        
++        if( target_index &gt;= 0 &amp;&amp; gen_learning_weight &gt; 0 )
++        {
++            // Positive phase
++            if( !use_exact_disc_gradient )
++            {
++                // Use previous computations
++                gen_pos_down_val &lt;&lt; disc_pos_down_val;
++                gen_pos_up_val &lt;&lt; disc_pos_up_val;
++
++                hidden_layer-&gt;setExpectation( gen_pos_up_val );
++                hidden_layer-&gt;generateSample();
++            }
++            else
++            {
++                // Clamp visible units
++                target_layer-&gt;sample &lt;&lt; target_one_hot;
++                input_layer-&gt;sample &lt;&lt; input ;
++                
++                // Up pass
++                joint_connection-&gt;setAsDownInput( joint_layer-&gt;sample );
++                hidden_layer-&gt;getAllActivations( joint_connection );
++                hidden_layer-&gt;computeExpectation();
++                hidden_layer-&gt;generateSample();
++                
++                gen_pos_down_val &lt;&lt; joint_layer-&gt;sample;
++                gen_pos_up_val &lt;&lt; hidden_layer-&gt;expectation;
++            }
++
++            // Negative phase
++
++            if( !use_multi_conditional_learning )
++            {
++                // Down pass
++                joint_connection-&gt;setAsUpInput( hidden_layer-&gt;sample );
++                joint_layer-&gt;getAllActivations( joint_connection );
++                joint_layer-&gt;computeExpectation();
++                joint_layer-&gt;generateSample();
++                
++                // Up pass
++                joint_connection-&gt;setAsDownInput( joint_layer-&gt;sample );
++                hidden_layer-&gt;getAllActivations( joint_connection );
++                hidden_layer-&gt;computeExpectation();
++            }
++            else
++            {
++                target_layer-&gt;sample &lt;&lt; target_one_hot;
++
++                // Down pass
++                connection-&gt;setAsUpInput( hidden_layer-&gt;sample );
++                input_layer-&gt;getAllActivations( connection );
++                input_layer-&gt;computeExpectation();
++                input_layer-&gt;generateSample();
++                
++                // Up pass
++                joint_connection-&gt;setAsDownInput( joint_layer-&gt;sample );
++                hidden_layer-&gt;getAllActivations( joint_connection );
++                hidden_layer-&gt;computeExpectation(); 
++            }
++
++            gen_neg_down_val &lt;&lt; joint_layer-&gt;sample;
++            gen_neg_up_val &lt;&lt; hidden_layer-&gt;expectation;
++
++        }
++
++        // ... and for semi-supervised learning        
++        if( target_index &lt; 0 &amp;&amp; semi_sup_learning_weight &gt; 0 )
++        {
++            // Positive phase
++
++            // Clamp visible units and sample from p(y|x)
++            classification_module-&gt;fprop( input,
++                                          class_output );
++            target_layer-&gt;setExpectation( class_output );
++            target_layer-&gt;generateSample();            
++            input_layer-&gt;sample &lt;&lt; input ;
++            
++            // Up pass
++            joint_connection-&gt;setAsDownInput( joint_layer-&gt;sample );
++            hidden_layer-&gt;getAllActivations( joint_connection );
++            hidden_layer-&gt;computeExpectation();
++            hidden_layer-&gt;generateSample();
++            
++            semi_sup_pos_down_val &lt;&lt; joint_layer-&gt;sample;
++            semi_sup_pos_up_val &lt;&lt; hidden_layer-&gt;expectation;
++            
++            // Negative phase
++
++            // Down pass
++            joint_connection-&gt;setAsUpInput( hidden_layer-&gt;sample );
++            joint_layer-&gt;getAllActivations( joint_connection );
++            joint_layer-&gt;computeExpectation();
++            joint_layer-&gt;generateSample();
++            
++            // Up pass
++            joint_connection-&gt;setAsDownInput( joint_layer-&gt;sample );
++            hidden_layer-&gt;getAllActivations( joint_connection );
++            hidden_layer-&gt;computeExpectation();
++
++            semi_sup_neg_down_val &lt;&lt; joint_layer-&gt;sample;
++            semi_sup_neg_up_val &lt;&lt; hidden_layer-&gt;expectation;
++        }
++
++        setLearningRate( disc_learning_rate / (1. + disc_decrease_ct * stage ));
++
++        // Get gradient and update
++
++        if( use_exact_disc_gradient &amp;&amp; target_index &gt;= 0 )
++        {
++            classification_module-&gt;fprop( input, class_output );
++            // This doesn't work. gcc bug?
++            //classification_cost-&gt;fprop( class_output, target, nll_cost );
++            classification_cost-&gt;CostModule::fprop( class_output, target,
++                                                    nll_cost );
++
++            class_error =  ( argmax(class_output) == target_index ) ? 0: 1;  
++            train_costs[nll_cost_index] = nll_cost;
++            train_costs[class_cost_index] = class_error;
++
++            classification_cost-&gt;bpropUpdate( class_output, target, nll_cost,
++                                              class_gradient );
++
++            classification_module-&gt;bpropUpdate( input,  class_output,
++                                                input_gradient, class_gradient );
++
++            train_stats-&gt;update( train_costs );
++        }
++
++        // CD Updates
++        if( !use_exact_disc_gradient &amp;&amp; target_index &gt;= 0 )
++        {
++            joint_layer-&gt;update( disc_pos_down_val, disc_neg_down_val );
++            hidden_layer-&gt;update( disc_pos_up_val, disc_neg_up_val );
++            joint_connection-&gt;update( disc_pos_down_val, disc_pos_up_val,
++                                disc_neg_down_val, disc_neg_up_val);
++        }
++
++        
++        if( target_index &gt;= 0 &amp;&amp; gen_learning_weight &gt; 0 )
++        {
++            setLearningRate( gen_learning_weight * disc_learning_rate / 
++                             (1. + disc_decrease_ct * stage ));
++            joint_layer-&gt;update( gen_pos_down_val, gen_neg_down_val );
++            hidden_layer-&gt;update( gen_pos_up_val, gen_neg_up_val );
++            joint_connection-&gt;update( gen_pos_down_val, gen_pos_up_val,
++                                gen_neg_down_val, gen_neg_up_val);
++        }
++
++        if( target_index &gt;= 0 &amp;&amp; semi_sup_learning_weight &gt; 0 )
++        {
++            setLearningRate( semi_sup_learning_weight * disc_learning_rate / 
++                             (1. + disc_decrease_ct * stage ));
++            joint_layer-&gt;update( semi_sup_pos_down_val, semi_sup_neg_down_val );
++            hidden_layer-&gt;update( semi_sup_pos_up_val, semi_sup_neg_up_val );
++            joint_connection-&gt;update( semi_sup_pos_down_val, semi_sup_pos_up_val,
++                                semi_sup_neg_down_val, semi_sup_neg_up_val);
++        }
++
++    }
++    
++    train_stats-&gt;finalize();
++}
++
++
++///////////////////
++// computeOutput //
++///////////////////
++void DiscriminativeRBM::computeOutput(const Vec&amp; input, Vec&amp; output) const
++{
++    // Compute the output from the input.
++    output.resize(0);
++    classification_module-&gt;fprop( input, output );
++}
++
++
++void DiscriminativeRBM::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                           const Vec&amp; target, Vec&amp; costs) const
++{
++
++    // Compute the costs from *already* computed output.
++    costs.resize( cost_names.length() );
++    costs.fill( MISSING_VALUE );
++    
++    //classification_cost-&gt;fprop( output, target, costs[nll_cost_index] );
++    classification_cost-&gt;CostModule::fprop( output, target, costs[nll_cost_index] );
++    costs[class_cost_index] =
++        (argmax(output) == (int) round(target[0]))? 0 : 1;
++}
++
++TVec&lt;string&gt; DiscriminativeRBM::getTestCostNames() const
++{
++    // Return the names of the costs computed by computeCostsFromOutputs
++    // (these may or may not be exactly the same as what's returned by
++    // getTrainCostNames).
++
++    return cost_names;
++}
++
++TVec&lt;string&gt; DiscriminativeRBM::getTrainCostNames() const
++{
++    return cost_names;
++}
++
++
++//#####  Helper functions  ##################################################
++
++void DiscriminativeRBM::setLearningRate( real the_learning_rate )
++{
++    input_layer-&gt;setLearningRate( the_learning_rate );
++    hidden_layer-&gt;setLearningRate( the_learning_rate );
++    connection-&gt;setLearningRate( the_learning_rate );
++    target_layer-&gt;setLearningRate( the_learning_rate );
++    last_to_target-&gt;setLearningRate( the_learning_rate );
++    classification_cost-&gt;setLearningRate( the_learning_rate );
++    //classification_module-&gt;setLearningRate( the_learning_rate );
++}
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners_experimental/DiscriminativeRBM.h
+===================================================================
+--- trunk/plearn_learners_experimental/DiscriminativeRBM.h	2008-01-10 20:08:40 UTC (rev 8377)
++++ trunk/plearn_learners_experimental/DiscriminativeRBM.h	2008-01-10 22:55:03 UTC (rev 8378)
+@@ -0,0 +1,289 @@
++// -*- C++ -*-
++
++// DiscriminativeRBM.h
++//
++// Copyright (C) 2008 Hugo Larochelle
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Hugo Larochelle
++
++/*! \file DiscriminativeRBM.h */
++
++#ifndef DiscriminativeRBM_INC
++#define DiscriminativeRBM_INC
++
++#include &lt;plearn_learners/generic/PLearner.h&gt;
++#include &lt;plearn_learners/online/OnlineLearningModule.h&gt;
++#include &lt;plearn_learners/online/CostModule.h&gt;
++#include &lt;plearn_learners/online/NLLCostModule.h&gt;
++#include &lt;plearn_learners/online/RBMClassificationModule.h&gt;
++#include &lt;plearn_learners/online/RBMLayer.h&gt;
++#include &lt;plearn_learners/online/RBMMixedLayer.h&gt;
++#include &lt;plearn_learners/online/RBMConnection.h&gt;
++#include &lt;plearn/misc/PTimer.h&gt;
++#include &lt;plearn/sys/Profiler.h&gt;
++
++namespace PLearn {
++using namespace std;
++
++/**
++ * Discriminative Restricted Boltzmann Machine classifier
++ */
++class DiscriminativeRBM : public PLearner
++{
++    typedef PLearner inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! The learning rate used for discriminative learning
++    real disc_learning_rate;
++
++    //! The decrease constant of the discriminative learning rate
++    real disc_decrease_ct;
++
++    //! Indication that the exact gradient should be used for
++    //! discriminative learning (instead of the CD gradient)
++    bool use_exact_disc_gradient;
++
++    //! The weight of the generative learning term, for
++    //! hybrid discriminative/generative learning
++    real gen_learning_weight;
++
++    //! Indication that multi-conditional learning should
++    //! be used instead of generative learning
++    bool use_multi_conditional_learning;
++
++    //! The weight of the semi-supervised learning term, for
++    //! unsupervised learning on unlabeled data
++    real semi_sup_learning_weight;
++
++    //! Number of classes in the training set
++    int n_classes;
++
++    //! The input layer of the RBM
++    PP&lt;RBMLayer&gt; input_layer;
++
++    //! The hidden layer of the RBM
++    PP&lt;RBMBinomialLayer&gt; hidden_layer;
++
++    //! The connection weights between the input and hidden layer
++    PP&lt;RBMConnection&gt; connection;
++
++    //! Target weights' L1_penalty_factor
++    real target_weights_L1_penalty_factor;
++
++    //! Target weights' L2_penalty_factor
++    real target_weights_L2_penalty_factor;
++
++    //#####  Public Learnt Options  ###########################################
++    //! The module computing the probabilities of the different classes.
++    PP&lt;RBMClassificationModule&gt; classification_module;
++
++    //! The computed cost names
++    TVec&lt;string&gt; cost_names;
++
++    //! The module computing the classification cost function (NLL) on top of
++    //! classification_module.
++    PP&lt;NLLCostModule&gt; classification_cost;
++
++    //! Concatenation of input_layer and the target layer (that is
++    //! inside classification_module)
++    PP&lt;RBMMixedLayer&gt; joint_layer;
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    DiscriminativeRBM();
++
++
++    //#####  PLearner Member Functions  #######################################
++
++    //! Returns the size of this learner's output, (which typically
++    //! may depend on its inputsize(), targetsize() and set options).
++    virtual int outputsize() const;
++
++    //! (Re-)initializes the PLearner in its fresh state (that state may depend
++    //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
++    //! a fresh learner!).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void forget();
++
++    //! The role of the train method is to bring the learner up to
++    //! stage==nstages, updating the train_stats collector with training costs
++    //! measured on-line in the process.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void train();
++
++    //! Computes the output from the input.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
++
++    //! Computes the costs from already computed output.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                         const Vec&amp; target, Vec&amp; costs) const;
++
++    //! Returns the names of the costs computed by computeCostsFromOutpus (and
++    //! thus the test method).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual TVec&lt;std::string&gt; getTestCostNames() const;
++
++    //! Returns the names of the objective costs that the train method computes
++    //! and  for which it updates the VecStatsCollector train_stats.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual TVec&lt;std::string&gt; getTrainCostNames() const;
++
++
++    // *** SUBCLASS WRITING: ***
++    // While in general not necessary, in case of particular needs
++    // (efficiency concerns for ex) you may also want to overload
++    // some of the following methods:
++    // virtual void computeOutputAndCosts(const Vec&amp; input, const Vec&amp; target,
++    //                                    Vec&amp; output, Vec&amp; costs) const;
++    // virtual void computeCostsOnly(const Vec&amp; input, const Vec&amp; target,
++    //                               Vec&amp; costs) const;
++    // virtual void test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
++    //                   VMat testoutputs=0, VMat testcosts=0) const;
++    // virtual int nTestCosts() const;
++    // virtual int nTrainCosts() const;
++    // virtual void resetInternalState();
++    // virtual bool isStatefulLearner() const;
++
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    // ### If your class is not instantiatable (it has pure virtual methods)
++    // ### you should replace this by PLEARN_DECLARE_ABSTRACT_OBJECT_METHODS
++    PLEARN_DECLARE_OBJECT(DiscriminativeRBM);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++
++    //#####  Not Options  #####################################################
++
++    //! Matrix connection weights between the hidden layer and the target layer
++    //! (pointer to classification_module-&gt;last_to_target)
++    PP&lt;RBMMatrixConnection&gt; last_to_target;
++
++    //! Connection weights between the hidden layer and the target layer
++    //! (pointer to classification_module-&gt;last_to_target)
++    PP&lt;RBMConnection&gt; last_to_target_connection;
++
++    //! Connection weights between the hidden layer and the visible layer
++    //! (pointer to classification_module-&gt;joint_connection)
++    PP&lt;RBMConnection&gt; joint_connection;
++
++    //! Part of the RBM visible layer corresponding to the target
++    //! (pointer to classification_module-&gt;target_layer)
++    PP&lt;RBMMultinomialLayer&gt; target_layer;
++
++    //! Temporary variables for Contrastive Divergence
++    mutable Vec target_one_hot;
++
++    mutable Vec disc_pos_down_val;
++    mutable Vec disc_pos_up_val;
++    mutable Vec disc_neg_down_val;
++    mutable Vec disc_neg_up_val;
++
++    mutable Vec gen_pos_down_val;
++    mutable Vec gen_pos_up_val;
++    mutable Vec gen_neg_down_val;
++    mutable Vec gen_neg_up_val;
++
++    mutable Vec semi_sup_pos_down_val;
++    mutable Vec semi_sup_pos_up_val;
++    mutable Vec semi_sup_neg_down_val;
++    mutable Vec semi_sup_neg_up_val;  
++
++    //! Temporary variables for gradient descent
++    mutable Vec input_gradient;
++    mutable Vec class_output;
++    mutable Vec class_gradient;
++
++    //! Keeps the index of the NLL cost in train_costs
++    int nll_cost_index;
++
++    //! Keeps the index of the class_error cost in train_costs
++    int class_cost_index;
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++
++    void build_layers_and_connections();
++
++    void build_costs();
++
++    void build_classification_cost();
++
++    void setLearningRate( real the_learning_rate );
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(DiscriminativeRBM);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001825.html">[Plearn-commits] r8377 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="001827.html">[Plearn-commits] r8379 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1826">[ date ]</a>
+              <a href="thread.html#1826">[ thread ]</a>
+              <a href="subject.html#1826">[ subject ]</a>
+              <a href="author.html#1826">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,274 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8960 - trunk/plearn_learners/generic
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8960%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200805082031.m48KVXic009298%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002407.html">
+   <LINK REL="Next"  HREF="002409.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8960 - trunk/plearn_learners/generic</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8960%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200805082031.m48KVXic009298%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8960 - trunk/plearn_learners/generic">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Thu May  8 22:31:33 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002407.html">[Plearn-commits] r8959 -	trunk/plearn_learners/distributions/test/.pytest/PL_GaussMix_Generate/expected_results
+</A></li>
+        <LI>Next message: <A HREF="002409.html">[Plearn-commits] r8961 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2408">[ date ]</a>
+              <a href="thread.html#2408">[ thread ]</a>
+              <a href="subject.html#2408">[ subject ]</a>
+              <a href="author.html#2408">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-05-08 22:31:32 +0200 (Thu, 08 May 2008)
+New Revision: 8960
+
+Modified:
+   trunk/plearn_learners/generic/NNet.cc
+   trunk/plearn_learners/generic/NNet.h
+Log:
+Added new 'ratio' transfer function for hidden units
+
+Modified: trunk/plearn_learners/generic/NNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/NNet.cc	2008-05-08 19:47:48 UTC (rev 8959)
++++ trunk/plearn_learners/generic/NNet.cc	2008-05-08 20:31:32 UTC (rev 8960)
+@@ -45,6 +45,7 @@
+ #include &lt;plearn/var/ClassificationLossVariable.h&gt;
+ #include &lt;plearn/var/ConcatColumnsVariable.h&gt;
+ #include &lt;plearn/var/CrossEntropyVariable.h&gt;
++#include &lt;plearn/var/DivVariable.h&gt;
+ #include &lt;plearn/var/ExpVariable.h&gt;
+ #include &lt;plearn/var/LiftOutputVariable.h&gt;
+ #include &lt;plearn/var/LogSoftmaxVariable.h&gt;
+@@ -56,11 +57,15 @@
+ #include &lt;plearn/var/NegCrossEntropySigmoidVariable.h&gt;
+ #include &lt;plearn/var/NegLogPoissonVariable.h&gt;
+ #include &lt;plearn/var/OneHotSquaredLoss.h&gt;
++#include &lt;plearn/var/PlusConstantVariable.h&gt;
++#include &lt;plearn/var/PlusVariable.h&gt;
+ #include &lt;plearn/var/ProductVariable.h&gt;
+-// #include &quot;RBFLayerVariable.h&quot; //TODO Put it back when the file exists.
++#include &lt;plearn/var/RowSumSquareVariable.h&gt;
+ #include &lt;plearn/var/SigmoidVariable.h&gt;
+ #include &lt;plearn/var/SoftmaxVariable.h&gt;
+ #include &lt;plearn/var/SoftplusVariable.h&gt;
++#include &lt;plearn/var/SquareVariable.h&gt;
++#include &lt;plearn/var/SquareRootVariable.h&gt;
+ #include &lt;plearn/var/SumVariable.h&gt;
+ #include &lt;plearn/var/SumAbsVariable.h&gt;
+ #include &lt;plearn/var/SumOfVariable.h&gt;
+@@ -124,7 +129,8 @@
+ transpose_first_hidden_layer(false),
+ n_non_params_in_first_hidden_layer(0),
+ batch_size(1),
+-initialization_method(&quot;uniform_linear&quot;)
++initialization_method(&quot;uniform_linear&quot;),
++ratio_rank(0)
+ {
+     // Use the generic PLearner random number generator.
+     random_gen = new PRandom();
+@@ -262,7 +268,9 @@
+         &quot;  - \&quot;softmax\&quot; \n&quot;
+         &quot;  - \&quot;log_softmax\&quot; \n&quot;
+         &quot;  - \&quot;hard_slope\&quot; \n&quot;
+-        &quot;  - \&quot;symm_hard_slope\&quot; \n&quot;);
++        &quot;  - \&quot;symm_hard_slope\&quot; \n&quot;
++        &quot;  - \&quot;ratio\&quot;: e/(1+e) with e=sqrt(x'V'Vx + softplus(a)^2)\n&quot;
++        &quot;               with a=b+W'x and V a matrix of rank 'ratio_rank'&quot;);
+ 
+     declareOption(
+         ol, &quot;cost_funcs&quot;, &amp;NNet::cost_funcs, OptionBase::buildoption, 
+@@ -373,7 +381,14 @@
+         ol, &quot;max_bag_size&quot;, &amp;NNet::max_bag_size, OptionBase::buildoption,
+         &quot;Maximum number of samples in a bag (used with 'operate_on_bags').&quot;,
+         OptionBase::advanced_level);
++    
++    declareOption(
++        ol, &quot;ratio_rank&quot;, &amp;NNet::ratio_rank, OptionBase::buildoption,
++        &quot;Rank of matrix V when using the 'ratio' hidden transfer function.\n&quot;
++        &quot;Use -1 for full rank, and 0 to have no quadratic term.&quot;,
++        OptionBase::advanced_level);
+ 
++
+     // Learnt options.
+     
+     declareOption(
+@@ -758,7 +773,15 @@
+     {
+         w1 = Var(1 + the_input-&gt;width(), nhidden, &quot;w1&quot;);      
+         params.append(w1);
+-        hidden_layer = hiddenLayer(output, w1);
++        if (hidden_transfer_func == &quot;ratio&quot;) {
++            v1.resize(ratio_rank != 0 ? nhidden : 0);
++            for (int i = 0; i &lt; v1.length(); i++) {
++                int rank = ratio_rank &lt; 0 ? the_input-&gt;width() : ratio_rank;
++                v1[i] = Var(the_input-&gt;width(), rank, &quot;v1[&quot; + tostring(i) + &quot;]&quot;);
++                params.append(v1[i]);
++            }
++        }
++        hidden_layer = hiddenLayer(output, w1, &quot;default&quot;, &amp;v1);
+         output = hidden_layer;
+         // TODO BEWARE! This is not the same 'hidden_layer' as before.
+     }
+@@ -769,7 +792,15 @@
+         PLASSERT( !first_hidden_layer_is_output );
+         w2 = Var(1 + output.width(), nhidden2, &quot;w2&quot;);
+         params.append(w2);
+-        output = hiddenLayer(output, w2);
++        if (hidden_transfer_func == &quot;ratio&quot;) {
++            v2.resize(ratio_rank != 0 ? nhidden2 : 0);
++            for (int i = 0; i &lt; v2.length(); i++) {
++                int rank = ratio_rank &lt; 0 ? output-&gt;width() : ratio_rank;
++                v2[i] = Var(output-&gt;width(), rank, &quot;v2[&quot; + tostring(i) + &quot;]&quot;);
++                params.append(v2[i]);
++            }
++        }
++        output = hiddenLayer(output, w2, &quot;default&quot;, &amp;v2);
+     }
+ 
+     if (nhidden2&gt;0 &amp;&amp; nhidden==0 &amp;&amp; !first_hidden_layer)
+@@ -1039,7 +1070,8 @@
+ /////////////////
+ // hiddenLayer //
+ /////////////////
+-Var NNet::hiddenLayer(const Var&amp; input, const Var&amp; weights, string transfer_func) {
++Var NNet::hiddenLayer(const Var&amp; input, const Var&amp; weights, string transfer_func,
++                      VarArray* ratio_quad_weights) {
+     Var hidden = affine_transform(input, weights, true);
+     hidden-&gt;setName(&quot;hidden_layer_activations&quot;);
+     Var result;
+@@ -1063,6 +1095,28 @@
+         result = unary_hard_slope(hidden,0,1);
+     else if(transfer_func==&quot;symm_hard_slope&quot;)
+         result = unary_hard_slope(hidden,-1,1);
++    else if (transfer_func == &quot;ratio&quot;) {
++        PLASSERT( ratio_quad_weights );
++        Var softp = new SoftplusVariable(hidden);
++        Var before_ratio = softp;
++        if (ratio_rank != 0) {
++            // Compute quadratic term for each hidden neuron.
++            VarArray quad_terms(ratio_quad_weights-&gt;length());
++            for (int i = 0; i &lt; ratio_quad_weights-&gt;length(); i++) {
++                Var X_V = product(input, (*ratio_quad_weights)[i]);
++                quad_terms[i] = new RowSumSquareVariable(X_V);
++            }
++            // Concatenate quadratic terms into a single Var.
++            Var quad = new ConcatColumnsVariable(quad_terms);
++            // Add the softplus term.
++            Var softp_square = new SquareVariable(softp);
++            Var total = new PlusVariable(quad, softp_square);
++            // Take the square root and perform the ratio.
++            before_ratio = new SquareRootVariable(total);
++        }
++        result = new DivVariable(before_ratio,
++                                 new PlusConstantVariable(before_ratio, 1.0));
++    }
+     else
+         PLERROR(&quot;In NNet::hiddenLayer - Unknown value for transfer_func: %s&quot;,transfer_func.c_str());
+     return result;
+@@ -1077,14 +1131,19 @@
+         random_gen-&gt;manual_seed(seed_);
+ 
+     if (nhidden&gt;0) {
+-        if (!first_hidden_layer)
++        if (!first_hidden_layer) {
+             fillWeights(w1, true);
++            for (int i = 0; i &lt; v1.length(); i++)
++                fillWeights(v1[i], true);
++        }
+         if (direct_in_to_out)
+             fillWeights(wdirect, false);
+     }
+ 
+     if(nhidden2&gt;0) {
+         fillWeights(w2, true);
++        for (int i = 0; i &lt; v2.length(); i++)
++            fillWeights(v2[i], true);
+     }
+ 
+     if (fixed_output_weights) {
+@@ -1147,6 +1206,8 @@
+     varDeepCopyField(sampleweight, copies);
+     varDeepCopyField(w1, copies);
+     varDeepCopyField(w2, copies);
++    deepCopyField(v1, copies);
++    deepCopyField(v2, copies);
+     varDeepCopyField(wout, copies);
+     varDeepCopyField(outbias, copies);
+     varDeepCopyField(wdirect, copies);
+
+Modified: trunk/plearn_learners/generic/NNet.h
+===================================================================
+--- trunk/plearn_learners/generic/NNet.h	2008-05-08 19:47:48 UTC (rev 8959)
++++ trunk/plearn_learners/generic/NNet.h	2008-05-08 20:31:32 UTC (rev 8960)
+@@ -100,6 +100,10 @@
+     Var wdirect; // bias and weights for direct in-to-out connection
+     Var wrec; // input reconstruction weights (optional), from hidden layer to predicted input
+ 
++    //! Matrices used for the quadratic term in the 'ratio' transfer function.
++    //! There is one matrix for each hidden neuron.
++    VarArray v1, v2;
++
+     // first hidden layer
+     Var hidden_layer;
+ 
+@@ -185,6 +189,7 @@
+     // 0 means the whole training set (default: 1)
+ 
+     string initialization_method;
++    int ratio_rank;
+ 
+ 
+ private:
+@@ -239,7 +244,8 @@
+     //! Return a variable that is the hidden layer corresponding to given
+     //! input and weights. If the 'default' transfer_func is used, we use the
+     //! hidden_transfer_func option.
+-    Var hiddenLayer(const Var&amp; input, const Var&amp; weights, string transfer_func = &quot;default&quot;);
++    Var hiddenLayer(const Var&amp; input, const Var&amp; weights, string transfer_func = &quot;default&quot;,
++                    VarArray* ratio_quad_weights = NULL);
+ 
+     //! Build the output of the neural network, from the given input.
+     //! The hidden layer is also made available in the 'hidden_layer' parameter.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002407.html">[Plearn-commits] r8959 -	trunk/plearn_learners/distributions/test/.pytest/PL_GaussMix_Generate/expected_results
+</A></li>
+	<LI>Next message: <A HREF="002409.html">[Plearn-commits] r8961 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2408">[ date ]</a>
+              <a href="thread.html#2408">[ thread ]</a>
+              <a href="subject.html#2408">[ subject ]</a>
+              <a href="author.html#2408">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

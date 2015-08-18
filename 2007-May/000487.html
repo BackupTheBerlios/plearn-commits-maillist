@@ -1,0 +1,336 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7038 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7038%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200705091616.l49GGDiS009003%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000486.html">
+   <LINK REL="Next"  HREF="000488.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7038 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>plearner at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7038%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200705091616.l49GGDiS009003%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7038 - trunk/plearn_learners/generic/EXPERIMENTAL">plearner at mail.berlios.de
+       </A><BR>
+    <I>Wed May  9 18:16:13 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000486.html">[Plearn-commits] r7037 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000488.html">[Plearn-commits] r7039 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#487">[ date ]</a>
+              <a href="thread.html#487">[ thread ]</a>
+              <a href="subject.html#487">[ subject ]</a>
+              <a href="author.html#487">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: plearner
+Date: 2007-05-09 18:16:13 +0200 (Wed, 09 May 2007)
+New Revision: 7038
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+Log:
+Initial version of Pascal's hacked gradient technique (pv_grad).
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-05-09 15:01:24 UTC (rev 7037)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-05-09 16:16:13 UTC (rev 7038)
+@@ -38,6 +38,7 @@
+ 
+ 
+ #include &quot;NatGradNNet.h&quot;
++#include &lt;plearn/math/pl_erf.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -73,6 +74,12 @@
+       verbosity(0),
+       //corr_profiling_start(0), 
+       //corr_profiling_end(0),
++      use_pvgrad(false),
++      pv_initial_stepsize(1e-6),
++      pv_acceleration(2),
++      pv_min_samples(2),
++      pv_required_confidence(0.80),
++      pv_random_sample_step(false),
+       n_layers(-1),
+       cumulative_training_time(0)
+ {
+@@ -267,6 +274,42 @@
+     //              &quot;Stage to end the profiling of the gradients' and the\n&quot;
+     //              &quot;natural gradients' correlations.\n&quot;);
+ 
++    declareOption(ol, &quot;use_pvgrad&quot;,
++                  &amp;NatGradNNet::use_pvgrad,
++                  OptionBase::buildoption,
++                  &quot;Use Pascal Vincent's gradient technique.\n&quot;
++                  &quot;All options specific to this technique start with pv_...\n&quot;
++                  &quot;This is currently very experimental. Current code is \n&quot;
++                  &quot;NOT YET optimised for speed (nor supports minibatch).&quot;);
++
++    declareOption(ol, &quot;pv_initial_stepsize&quot;,
++                  &amp;NatGradNNet::pv_initial_stepsize,
++                  OptionBase::buildoption,
++                  &quot;Initial size of steps in parameter space&quot;);
++
++    declareOption(ol, &quot;pv_acceleration&quot;,
++                  &amp;NatGradNNet::pv_acceleration,
++                  OptionBase::buildoption,
++                  &quot;Coefficient by which to multiply/divide the step sizes&quot;);
++
++    declareOption(ol, &quot;pv_min_samples&quot;,
++                  &amp;NatGradNNet::pv_min_samples,
++                  OptionBase::buildoption,
++                  &quot;PV's minimum number of samples to estimate gradient sign.\n&quot;
++                  &quot;This should at least be 2.&quot;);
++
++    declareOption(ol, &quot;pv_required_confidence&quot;,
++                  &amp;NatGradNNet::pv_required_confidence,
++                  OptionBase::buildoption,
++                  &quot;Minimum required confidence (probability of being positive or negative) for taking a step.&quot;);
++
++    declareOption(ol, &quot;pv_random_sample_step&quot;,
++                  &amp;NatGradNNet::pv_random_sample_step,
++                  OptionBase::buildoption,
++                  &quot;If this is set to true, then we will randomly choose the step sign\n&quot;
++                  &quot;for each parameter based on the estimated probability of it being\n&quot;
++                  &quot;positive or negative.&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -290,6 +333,9 @@
+     }
+     else PLERROR(&quot;NatGradNNet: output_type should be NLL or MSE\n&quot;);
+ 
++
++    if(use_pvgrad &amp;&amp; minibatch_size!=1)
++        PLERROR(&quot;PV's gradient technique (triggered by use_pvgrad): support for minibatch not yet implemented (must have minibatch_size=1)&quot;);
+     
+     while (hidden_layer_sizes[hidden_layer_sizes.length()-1]==0)
+         hidden_layer_sizes.resize(hidden_layer_sizes.length()-1);
+@@ -479,6 +525,12 @@
+     deepCopyField(group_params_gradient, copies);
+     deepCopyField(group_params_delta, copies);
+     deepCopyField(layer_params_delta, copies);
++
++    deepCopyField(pv_gradstats, copies);
++    deepCopyField(pv_stepsizes, copies);
++    deepCopyField(pv_stepsigns, copies);
++
++
+ /*
+     deepCopyField(, copies);
+ */
+@@ -509,6 +561,17 @@
+     cumulative_training_time=0;
+     if (params_averaging_coeff!=1.0)
+         all_mparams &lt;&lt; all_params;
++    
++    if(use_pvgrad)
++    {
++        pv_gradstats.forget();
++        int n = all_params.length();
++        pv_stepsizes.resize(n);
++        pv_stepsizes.fill(pv_initial_stepsize);
++        pv_stepsigns.resize(n);
++        pv_stepsigns.fill(true);
++    }
++
+ }
+ 
+ void NatGradNNet::train()
+@@ -654,14 +717,19 @@
+             }
+         }
+         // compute gradient on parameters, possibly update them
+-        if (full_natgrad || params_natgrad_template || params_natgrad_per_input_template) 
++        if (use_pvgrad)
+         {
++            productScaleAcc(layer_params_gradient[i-1],next_neurons_gradient,true,
++                            neuron_extended_outputs_per_layer[i-1],false,1,0);
++        }
++        else if (full_natgrad || params_natgrad_template || params_natgrad_per_input_template) 
++        {
+ //alternate
+             if( params_natgrad_per_input_template &amp;&amp; i==1 ) // parameters are transposed
+                 productScaleAcc(layer_params_gradient[i-1],
+                             neuron_extended_outputs_per_layer[i-1], true,
+                             next_neurons_gradient, false, 
+-                            1, 0);                          
++                            1, 0);
+             else
+                 productScaleAcc(layer_params_gradient[i-1],next_neurons_gradient,true,
+                             neuron_extended_outputs_per_layer[i-1],false,1,0);
+@@ -673,8 +741,12 @@
+                             neuron_extended_outputs_per_layer[i-1],false,
+                             -layer_lrate_factor*lrate/minibatch_size,1);
+     }
+-    if (full_natgrad)
++    if (use_pvgrad)
+     {
++        pvGradUpdate();
++    }
++    else if (full_natgrad)
++    {
+         (*full_natgrad)(t/minibatch_size,all_params_gradient,all_params_delta); // compute update direction by natural gradient
+         if (output_layer_lrate_scale!=1.0)
+             layer_params_delta[n_layers-2] *= output_layer_lrate_scale; // scale output layer's learning rate
+@@ -706,6 +778,60 @@
+ 
+ }
+ 
++void NatGradNNet::pvGradUpdate()
++{
++    int n = all_params_gradient.length();
++    if(pv_stepsizes.length()==0)
++    {
++        pv_stepsizes.resize(n);
++        pv_stepsizes.fill(pv_initial_stepsize);
++        pv_stepsigns.resize(n);
++        pv_stepsigns.fill(true);
++    }
++    pv_gradstats.update(all_params_gradient);
++    real pv_deceleration = 1.0/pv_acceleration;
++    for(int k=0; k&lt;n; k++)
++    {
++        StatsCollector&amp; st = pv_gradstats.getStats(k);
++        int n = (int)st.nnonmissing();
++        if(n&gt;pv_min_samples)
++        {
++            real m = st.mean();
++            real e = st.stderror();
++            real prob_pos = gauss_01_cum(m/e);
++            real prob_neg = 1.-prob_pos;
++            if(!pv_random_sample_step)
++            {
++                if(prob_pos&gt;=pv_required_confidence)
++                {
++                    all_params[k] += pv_stepsizes[k];
++                    pv_stepsizes[k] *= (pv_stepsigns[k]?pv_acceleration:pv_deceleration);
++                    pv_stepsigns[k] = true;
++                    st.forget();
++                }
++                else if(prob_neg&gt;=pv_required_confidence)
++                {
++                    all_params[k] -= pv_stepsizes[k];
++                    pv_stepsizes[k] *= ((!pv_stepsigns[k])?pv_acceleration:pv_deceleration);
++                    pv_stepsigns[k] = false;
++                    st.forget();
++                }
++            }
++            else  // random sample update direction (sign)
++            {
++                bool ispos = (random_gen-&gt;binomial_sample(prob_pos)&gt;0);
++                if(ispos) // picked positive
++                    all_params[k] += pv_stepsizes[k];
++                else  // picked negative
++                    all_params[k] -= pv_stepsizes[k];
++                pv_stepsizes[k] *= (pv_stepsigns[k]==ispos) ?pv_acceleration :pv_deceleration;
++                pv_stepsigns[k] = ispos;
++                st.forget();
++            }
++        }
++    }
++}
++
+ void NatGradNNet::computeOutput(const Vec&amp; input, Vec&amp; output) const
+ {
+     neuron_outputs_per_layer[0](0) &lt;&lt; input;
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-05-09 15:01:24 UTC (rev 7037)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-05-09 16:16:13 UTC (rev 7038)
+@@ -143,6 +143,41 @@
+     //int corr_profiling_start, corr_profiling_end;
+ 
+ public:
++    //*************************************************************
++    //*** Members used for Pascal Vincent's gradient technique  ***
++
++    //! Use Pascal's gradient 
++    bool use_pvgrad;
++
++    //! Initial size of steps in parameter space
++    real pv_initial_stepsize;
++
++    //! Coefficient by which to multiply/divide the step sizes  
++    real pv_acceleration;
++
++    //! PV's gradient minimum number of samples to estimate confidence
++    int pv_min_samples;
++
++    //! Minimum required confidence (probability of being positive or negative) for taking a step. 
++    real pv_required_confidence;
++
++    //! If this is set to true, then we will randomly choose the step sign for
++    // each parameter based on the estimated probability of it being positive or
++    // negative.
++    bool pv_random_sample_step;
++    
++
++protected:
++    //! accumulated statistics of gradients on each parameter.
++    VecStatsCollector pv_gradstats;
++
++    //! The step size (absolute value) to be taken for each parameter.
++    Vec pv_stepsizes;
++
++    //! Indicates whether the previous step was positive (true) or negative (false)
++    TVec&lt;bool&gt; pv_stepsigns;
++
++public:
+     //#####  Public Member Functions  #########################################
+ 
+     NatGradNNet();
+@@ -254,6 +289,9 @@
+     //! and write into neuron_gradients_per_layer[n_layers-2], gradient on pre-non-linearity activation
+     void fbpropLoss(const Mat&amp; output, const Mat&amp; target, const Vec&amp; example_weights, Mat&amp; train_costs) const;
+ 
++    //! gradient computation and weight update in Pascal Vincent's gradient technique
++    void pvGradUpdate();
++
+ private:
+     //#####  Private Member Functions  ########################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000486.html">[Plearn-commits] r7037 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000488.html">[Plearn-commits] r7039 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#487">[ date ]</a>
+              <a href="thread.html#487">[ thread ]</a>
+              <a href="subject.html#487">[ subject ]</a>
+              <a href="author.html#487">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

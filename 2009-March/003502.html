@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10062 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10062%20-%20trunk/plearn/vmat&In-Reply-To=%3C200903261738.n2QHcsAt011164%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003501.html">
+   <LINK REL="Next"  HREF="003503.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10062 - trunk/plearn/vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10062%20-%20trunk/plearn/vmat&In-Reply-To=%3C200903261738.n2QHcsAt011164%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10062 - trunk/plearn/vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Thu Mar 26 18:38:54 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003501.html">[Plearn-commits] r10061 - trunk/plearn_learners/cgi
+</A></li>
+        <LI>Next message: <A HREF="003503.html">[Plearn-commits] r10063 - trunk/python_modules/plearn/pytest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3502">[ date ]</a>
+              <a href="thread.html#3502">[ thread ]</a>
+              <a href="subject.html#3502">[ subject ]</a>
+              <a href="author.html#3502">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-03-26 18:38:47 +0100 (Thu, 26 Mar 2009)
+New Revision: 10062
+
+Modified:
+   trunk/plearn/vmat/TextFilesVMatrix.cc
+Log:
+if their is multiple delimiter, we select one of them based on the two first line.
+
+
+Modified: trunk/plearn/vmat/TextFilesVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/TextFilesVMatrix.cc	2009-03-26 17:37:44 UTC (rev 10061)
++++ trunk/plearn/vmat/TextFilesVMatrix.cc	2009-03-26 17:38:47 UTC (rev 10062)
+@@ -43,6 +43,7 @@
+ #include &lt;plearn/base/stringutils.h&gt;
+ #include &lt;plearn/io/load_and_save.h&gt;
+ #include &lt;plearn/io/fileutils.h&gt;
++#define PL_LOG_MODULE_NAME &quot;TextFilesVMatrix&quot;
+ #include &lt;plearn/io/pl_log.h&gt;
+ 
+ namespace PLearn {
+@@ -131,8 +132,8 @@
+     int lineno = 0;
+     for(unsigned char fileno=0; fileno&lt;txtfiles.length(); fileno++)
+     {
+-        FILE* f = txtfiles[(int)fileno];
+-        fseek(f,0,SEEK_SET);
++        FILE* fi = txtfiles[(int)fileno];
++        fseek(fi,0,SEEK_SET);
+ 
+         int nskip = 0; // number of header lines to skip
+         if(!skipheader.isEmpty())
+@@ -141,18 +142,18 @@
+         // read the data rows and build the index
+         for(;;)
+         {
+-            long pos_long = ftell(f);
++            long pos_long = ftell(fi);
+             if (pos_long &gt; INT_MAX)
+                 PLERROR(&quot;In TextFilesVMatrix::buildIdx - 'pos_long' cannot be &quot;
+                         &quot;more than %d&quot;, INT_MAX);
+             int pos = int(pos_long);
+-            if(!fgets(buf, sizeof(buf), f))
++            if(!fgets(buf, sizeof(buf), fi))
+                 break;
+ 
+ #ifdef CYGWIN_FGETS_BUGFIX
+             // Bugfix for CYGWIN carriage return bug.
+             // Should be safe to enable in all case, but need to be tester more widely.
+-            long new_pos = ftell(f);
++            long new_pos = ftell(fi);
+             long lbuf = long(strlen(buf));
+             if (lbuf+pos != new_pos)
+                 if(lbuf+1+pos==new_pos &amp;&amp; buf[lbuf-1]=='\n' &amp;&amp; buf[lbuf-2]!='\r')
+@@ -162,15 +163,15 @@
+                     //So if their is only a \n, we are a caractere too far.
+                     //if dos end of lines, return \n as end of lines in the strings and put the pos correctly.
+                     
+-                    fseek(f,-1,SEEK_CUR);
++                    fseek(fi,-1,SEEK_CUR);
+                     
+ 		    //if unix end of lines
+-                    if(fgetc(f)!='\n')
++                    if(fgetc(fi)!='\n')
+                     	fseek(f,-1,SEEK_CUR);
+                 }
+                 //in the eof case?
+                 else if(lbuf-1+pos==new_pos &amp;&amp; buf[lbuf-1]=='\n' &amp;&amp; buf[lbuf-2]!='\r')
+-                    fseek(f,+1,SEEK_CUR);
++                    fseek(fi,+1,SEEK_CUR);
+                 else
+                     PLERROR(&quot;In TextFilesVMatrix::buildId - The number of characters read &quot;
+                             &quot;does not match the position in the file.&quot;);
+@@ -226,6 +227,50 @@
+     TVec&lt;string&gt; fnames_header;//field names take in the header of source file
+     char buf[50000];
+ 
++
++    //select witch delimiter we will use for all the files.
++    if(delimiter.size()&gt;1){
++        FILE* f = txtfiles[0];
++        fseek(f,0,SEEK_SET);
++        if(!fgets(buf, sizeof(buf), f))
++            PLERROR(&quot;In TextFilesVMatrix::setColumnNamesAndWidth() - &quot;
++                    &quot;Couldn't read the fields names from file '%s'&quot;,
++                    txtfilenames[0].c_str());
++
++        string s1 = string(buf);
++        if(!fgets(buf, sizeof(buf), f))
++            PLERROR(&quot;In TextFilesVMatrix::setColumnNamesAndWidth() - &quot;
++                    &quot;Couldn't read the fields names from file '%s'&quot;,
++                    txtfilenames[0].c_str());
++        string s2 = string(buf);
++        TVec&lt;int&gt; nbs1(delimiter.size());
++        TVec&lt;int&gt; nbs2(delimiter.size());
++        
++        string old_delimiter = delimiter;
++        for(uint i=0;i&lt;old_delimiter.size();i++){
++            delimiter = old_delimiter[i];
++            TVec&lt;string&gt; fields1 = splitIntoFields(s1);
++            TVec&lt;string&gt; fields2 = splitIntoFields(s2);
++            nbs1[i]=fields1.size();
++            nbs2[i]=fields2.size();
++        }
++        delimiter=old_delimiter;
++        for(uint i=0;i&lt;old_delimiter.size();i++){
++            if(nbs1[i]==nbs2[i]&amp;&amp; nbs1[i]&gt;0){
++                delimiter = old_delimiter[i];
++            }
++        }
++        MODULE_LOG &lt;&lt; &quot;Selected delimiter: &lt;&quot; &lt;&lt; delimiter &lt;&lt; &quot;&gt;&quot; &lt;&lt; endl;
++        if(delimiter.size()!=1){
++            PLERROR(&quot;In TextFilesVMatrix::setColumnNamesAndWidth() - We can't&quot;
++                    &quot; automatically determine the delimiter to use as the two&quot;
++                    &quot; first row don't have a common delimiter with the same&quot;
++                    &quot; number of occurence. nbs1=%s, nbs2=%s&quot;,
++                    tostring(nbs1).c_str(),tostring(nbs2).c_str());
++        }
++    }
++    PLCHECK(delimiter.size()==1);
++
+     //read the fieldnames from the files.
+     for(int i=0; i&lt;txtfiles.size(); i++){
+         FILE* f = txtfiles[i];
+@@ -921,7 +966,9 @@
+                   &quot;Delimiter to use to split the fields.  Common delimiters are:\n&quot;
+                   &quot;- \&quot;\\t\&quot; : used for SAS files (the default)\n&quot;
+                   &quot;- \&quot;,\&quot;  : used for CSV files\n&quot;
+-                  &quot;- \&quot;;\&quot;  : used for a variant of CSV files&quot;);
++                  &quot;- \&quot;;\&quot;  : used for a variant of CSV files\n&quot;
++                  &quot;If more then 1 delimiter, we will select one based on the&quot;
++                  &quot; first two line\n&quot;);
+ 
+     declareOption(ol, &quot;quote_delimiter&quot;, &amp;TextFilesVMatrix::quote_delimiter, OptionBase::buildoption,
+         &quot;The escape character to indicate the delimiter is not considered.\n&quot;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003501.html">[Plearn-commits] r10061 - trunk/plearn_learners/cgi
+</A></li>
+	<LI>Next message: <A HREF="003503.html">[Plearn-commits] r10063 - trunk/python_modules/plearn/pytest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3502">[ date ]</a>
+              <a href="thread.html#3502">[ thread ]</a>
+              <a href="subject.html#3502">[ subject ]</a>
+              <a href="author.html#3502">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

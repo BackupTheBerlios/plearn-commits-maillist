@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8487 - trunk/python_modules/plearn/pytest
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8487%20-%20trunk/python_modules/plearn/pytest&In-Reply-To=%3C200802071635.m17GZFMu028183%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001934.html">
+   <LINK REL="Next"  HREF="001936.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8487 - trunk/python_modules/plearn/pytest</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8487%20-%20trunk/python_modules/plearn/pytest&In-Reply-To=%3C200802071635.m17GZFMu028183%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8487 - trunk/python_modules/plearn/pytest">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Thu Feb  7 17:35:15 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001934.html">[Plearn-commits] r8486 - trunk/python_modules/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="001936.html">[Plearn-commits] r8488 - trunk/commands/PLearnCommands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1935">[ date ]</a>
+              <a href="thread.html#1935">[ thread ]</a>
+              <a href="subject.html#1935">[ subject ]</a>
+              <a href="author.html#1935">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-02-07 17:35:14 +0100 (Thu, 07 Feb 2008)
+New Revision: 8487
+
+Modified:
+   trunk/python_modules/plearn/pytest/modes.py
+   trunk/python_modules/plearn/pytest/tests.py
+Log:
+-added the diff time.
+-now print run and diff time with option --showtime 
+
+
+Modified: trunk/python_modules/plearn/pytest/modes.py
+===================================================================
+--- trunk/python_modules/plearn/pytest/modes.py	2008-02-07 16:33:26 UTC (rev 8486)
++++ trunk/python_modules/plearn/pytest/modes.py	2008-02-07 16:35:14 UTC (rev 8487)
+@@ -759,6 +759,9 @@
+         ogroups[1].add_option( '--no-compile', default=False,
+                                action=&quot;store_true&quot;,
+                                help='Any program compilation is bypassed.' )
++        ogroups[1].add_option( '--showtime', default=False,
++                               action = &quot;store_true&quot;,
++                               help=&quot;If true, print the run time and diff time&quot; )
+ 
+         return ogroups        
+     option_groups = classmethod(option_groups)
+@@ -766,6 +769,8 @@
+     def __init__(self, targets, options):
+         logging.debug(&quot;--no-compile (=%s) option forwarded to Program.&quot;%options.no_compile)
+         Program.compilation_disabled = options.no_compile        
++        logging.debug(&quot;--showtime (=%s) option forwarded to Program.&quot;%options.showtime)
++        Program.showtime = options.showtime
+         super(ResultsBasedMode, self).__init__(targets, options)
+     
+ class results(ResultsBasedMode):
+@@ -795,7 +800,19 @@
+ class run(ResultsBasedMode):    
+     RoutineType = RunTestRoutine
+ 
++class rundiff(ResultsBasedMode):
++    &quot;&quot;&quot;Redo the diff of last execution.
++    
++    Usage: pytest rundiff &lt;test_name&gt;
++    &quot;&quot;&quot;
++    RoutineType = DiffTestRoutine
+ 
++    def empty(self):
++        pass
++
++    def __init__(self, targets, options):
++        super(rundiff, self).__init__(targets, options)
++
+ #######  Builtin Unit Tests  ##################################################
+ 
+ def testAllModes():
+@@ -843,16 +860,3 @@
+     print os.listdir(os.getcwd())
+ 
+ 
+-class rundiff(ResultsBasedMode):
+-    &quot;&quot;&quot;Redo the diff of last execution.
+-    
+-    Usage: pytest rundiff &lt;test_name&gt;
+-    &quot;&quot;&quot;
+-    RoutineType = DiffTestRoutine
+-    def empty(self):
+-        pass
+-
+-    def __init__(self, targets, options):
+-        super(rundiff, self).__init__(targets, options)
+-
+-
+
+Modified: trunk/python_modules/plearn/pytest/tests.py
+===================================================================
+--- trunk/python_modules/plearn/pytest/tests.py	2008-02-07 16:33:26 UTC (rev 8486)
++++ trunk/python_modules/plearn/pytest/tests.py	2008-02-07 16:35:14 UTC (rev 8487)
+@@ -346,6 +346,7 @@
+     ignored_files_re = PLOption([])
+     disabled         = PLOption(False)
+     runtime          = PLOption(None)
++    difftime         = PLOption(None)
+ 
+     #######  Class Variables and Methods  #########################################
+     # NB: Class variables could now all be 'public', laziness is why it isn't so...
+@@ -571,21 +572,25 @@
+         statsHeader = TestStatus.summaryHeader()
+ 
+         # Hackish hardcoded display summing to 80...
+-        C = 6; S = len(&quot;** FAILED **&quot;)+2; H = len(statsHeader)+3; T = 11
++        C = 6; S = len(&quot;** FAILED **&quot;)+2; H = len(statsHeader)+3; T = 0
++        if Program.showtime:
++            T = 16
+         N = 80 - (C+S+H+T); 
+-        def vpformat(c, n, s, h, t):
++        def vpformat(c, n, s, h, t, d):
+             if len(n) &lt; N:
+-                logging.info( c.ljust(C)+n.ljust(N)+s.center(S)+h.center(H)
+-                              +t.ljust(T))
++                str=c.ljust(C)+n.ljust(N)+s.center(S)+h.center(H)
+             else:
+                 logging.info( c.ljust(C)+n.ljust(N) )
+-                logging.info( ((C+N)*&quot; &quot;)+s.center(S)+h.center(H)+t.ljust(T))
++                str=((C+N)*&quot; &quot;)+s.center(S)+h.center(H)
++            if Program.showtime:
++                str+=t.rjust(T/2)+d.ljust(T/2)
++            logging.info(str)
+         
+         if self._status.isCompleted():
+             if not self._logged_header:
+                 logging.info(TestStatus.headerLegend(C+N+S+H+T)+'\n')
+                 vpformat(&quot;N/%d&quot;%self._test_count, &quot;Test Name&quot;, &quot;Status&quot;,
+-                         statsHeader,&quot;Run time(s)&quot;)
++                         statsHeader,&quot;Run/Diff&quot;,&quot; time(s)&quot;)
+                 self.__class__._logged_header = True
+ 
+             if self._log_count%5 == 0:
+@@ -594,7 +599,7 @@
+             self.__class__._log_count += 1
+             vpformat(str(self._log_count), self.getName(),
+                      str(self._status), TestStatus.summary(),
+-                     &quot;%10.4s&quot;%self.runtime)
++                     &quot;%.6s/&quot;%self.runtime,&quot;%.6s&quot;%self.difftime)
+ 
+     def toBeNeglected(self):
+         neglect = False
+@@ -834,6 +839,8 @@
+ 
+         diffs = []
+         plearn_exec = None
++
++        starttime = time()
+         if self.test.pfileprg is not None:
+             if self.test.pfileprg.compile():
+                 plearn_exec = self.test.pfileprg.getInternalExecPath()
+@@ -843,8 +850,11 @@
+         diffs.extend(
+             pldiff.pldiff(self.expected_results, self.run_results,
+                           self.test.precision, plearn_exec, self.test.ignored_files_re))
++        endtime = time()
+         popd()
+ 
++        self.test.difftime = endtime - starttime
++
+         # Set status
+         logging.debug(&quot;diffs: %s&quot;%str(diffs))
+         if diffs == []:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001934.html">[Plearn-commits] r8486 - trunk/python_modules/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="001936.html">[Plearn-commits] r8488 - trunk/commands/PLearnCommands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1935">[ date ]</a>
+              <a href="thread.html#1935">[ thread ]</a>
+              <a href="subject.html#1935">[ subject ]</a>
+              <a href="author.html#1935">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

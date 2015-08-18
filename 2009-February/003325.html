@@ -1,0 +1,151 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9885 - trunk/python_modules/plearn/parallel
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9885%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200902021611.n12GBAov000196%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003324.html">
+   <LINK REL="Next"  HREF="003326.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9885 - trunk/python_modules/plearn/parallel</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9885%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200902021611.n12GBAov000196%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9885 - trunk/python_modules/plearn/parallel">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Feb  2 17:11:10 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003324.html">[Plearn-commits] r9884 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="003326.html">[Plearn-commits] r9886 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3325">[ date ]</a>
+              <a href="thread.html#3325">[ thread ]</a>
+              <a href="subject.html#3325">[ subject ]</a>
+              <a href="author.html#3325">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-02-02 17:11:09 +0100 (Mon, 02 Feb 2009)
+New Revision: 9885
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+detect if the logfile (stdout, stderr) gis too long. If yes, we raise an error. We suppose the filesystem can support 255 caractere, that is not true for old file system.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2009-02-02 15:43:16 UTC (rev 9884)
++++ trunk/python_modules/plearn/parallel/dbi.py	2009-02-02 16:11:09 UTC (rev 9885)
+@@ -635,6 +635,10 @@
+         logfiles_file = open( 'logfiles', 'w' )
+         if self.base_tasks_log_file:
+             for task,base in zip(self.tasks,self.base_tasks_log_file):
++                if len(base) &gt; 255-4:
++                    raise DBIError(&quot;WARNING: the filename for the stdout and&quot;+
++                                   &quot; stderr file will be too long, so the jobs will fail.&quot;+
++                                   &quot; Use the --tasks_filename option to change those name.&quot;)
+                 tasks_file.write( ';'.join(task.commands) + '\n' )
+                 logfiles_file.write( os.path.join(self.log_dir,base) + '\n' )
+         else:
+@@ -1128,24 +1132,27 @@
+         condor_dag_file = self.condor_submit_file+&quot;.dag&quot;
+         condor_dag_fd = open( condor_dag_file, 'w' )
+ 
++        def print_task(id, task, stdout_file, stderr_file):
++            argstring =condor_dag_escape_argument(' ; '.join(task.commands))
++            condor_dag_fd.write(&quot;JOB %d %s\n&quot;%(id,self.condor_submit_file))
++            if len(stdout_file)&lt;255 or len(stderr_file)&gt;255:
++                raise DBIError(&quot;WARNING: the filename for the stdout and stderr&quot;+
++                               &quot; file will be too long, so the jobs will fail.&quot;+
++                               &quot; Use the --tasks_filename option to change those name.&quot;)
++                
++            condor_dag_fd.write('VARS %d args=&quot;%s&quot;\n'%(id,argstring))
++            condor_dag_fd.write('VARS %d stdout=&quot;%s&quot;\n'%(id,stdout_file))
++            condor_dag_fd.write('VARS %d stderr=&quot;%s&quot;\n\n'%(id,stderr_file))
++
+         if self.base_tasks_log_file:
+             for i in range(len(self.tasks)):
+                 task=self.tasks[i]
+-                argstring =condor_dag_escape_argument(' ; '.join(task.commands))
+-                condor_dag_fd.write(&quot;JOB %d %s\n&quot;%(i,self.condor_submit_file))
+-                condor_dag_fd.write('VARS %d args=&quot;%s&quot;\n'%(i,argstring))
+-                s=os.path.join(self.log_dir,
+-                               &quot;condor.&quot;+self.base_tasks_log_file[i])
+-                condor_dag_fd.write('VARS %d stdout=&quot;%s&quot;\n'%(i,s+&quot;.out&quot;))
+-                condor_dag_fd.write('VARS %d stderr=&quot;%s&quot;\n\n'%(i,s+&quot;.err&quot;))
++                s=os.path.join(self.log_dir,&quot;condor.&quot;+self.base_tasks_log_file[i])
++                print_task(i,task,s+&quot;.out&quot;,s+&quot;.err&quot;)
+         elif self.stdouts and self.stderrs:
+             assert len(self.stdouts)==len(self.stderrs)==len(self.tasks)
+-            for (task,stdout_file,stderr_file) in zip(self.tasks,self.stdouts,self.stderrs):
+-                argstring =condor_dag_escape_argument(' ; '.join(task.commands))
+-                condor_dag_fd.write(&quot;JOB %d %s\n&quot;%(i,self.condor_submit_file))
+-                condor_dag_fd.write('VARS %d args=&quot;%s&quot;\n'%(i,argstring))
+-                condor_dag_fd.write('VARS %d stdout=&quot;%s&quot;\n'%(i,stdout_file))
+-                condor_dag_fd.write('VARS %d stderr=&quot;%s&quot;\n\n'%(i,stderr_file))
++            for (i,task,stdout_file,stderr_file) in zip(range(len(self.tasks)),self.tasks,self.stdouts,self.stderrs):
++                print_task(i,task,stdout_file,stderr_file)
+         else:
+             #should not happen
+             raise NotImplementedError()
+@@ -1224,6 +1231,10 @@
+             def print_task(task, stdout_file, stderr_file,req=&quot;&quot;):
+                 argstring = condor_escape_argument(' ; '.join(task.commands))
+                 condor_submit_fd.write(&quot;arguments    = %s \n&quot; %argstring)
++                if len(stdout_file) &gt; 255 or len(stderr_file) &gt; 255:
++                    raise DBIError(&quot;WARNING: the filename for the stdout and stderr file&quot;+
++                                   &quot; will be too long, so the jobs will fail.&quot;+
++                                   &quot; Use the --tasks_filename option to change those name.&quot;)
+                 if stdout_file:
+                     condor_submit_fd.write(&quot;output       = %s \n&quot; %stdout_file)
+                 if stderr_file:
+@@ -1233,9 +1244,8 @@
+             if self.base_tasks_log_file:
+                 for (task,task_log,req) in zip(self.tasks,self.base_tasks_log_file,
+                                                self.tasks_req):
+-                    stdout_file=self.log_dir+&quot;/condor&quot;+task_log+&quot;.out&quot;
+-                    stderr_file=self.log_dir+&quot;/condor&quot;+task_log+&quot;.err&quot;
+-                    print_task(task,stdout_file,stderr_file,req)
++                    s=os.path.join(self.log_dir,&quot;condor.&quot;+task_log)
++                    print_task(task,s+&quot;.out&quot;,s+&quot;.err&quot;,req)
+             elif self.stdouts and self.stderrs:
+                 assert len(self.stdouts)==len(self.stderrs)==len(self.tasks)
+                 for (task,stdout_file,stderr_file,req) in zip(self.tasks,self.stdouts,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003324.html">[Plearn-commits] r9884 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="003326.html">[Plearn-commits] r9886 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3325">[ date ]</a>
+              <a href="thread.html#3325">[ thread ]</a>
+              <a href="subject.html#3325">[ subject ]</a>
+              <a href="author.html#3325">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

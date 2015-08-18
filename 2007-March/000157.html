@@ -1,0 +1,265 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6708 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6708%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200703010322.l213MWQW000403%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000156.html">
+   <LINK REL="Next"  HREF="000158.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6708 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6708%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200703010322.l213MWQW000403%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6708 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Thu Mar  1 04:22:32 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000156.html">[Plearn-commits] r6707 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000158.html">[Plearn-commits] r6709 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#157">[ date ]</a>
+              <a href="thread.html#157">[ thread ]</a>
+              <a href="subject.html#157">[ subject ]</a>
+              <a href="author.html#157">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-03-01 04:22:31 +0100 (Thu, 01 Mar 2007)
+New Revision: 6708
+
+Modified:
+   trunk/plearn_learners/online/CostModule.cc
+   trunk/plearn_learners/online/CostModule.h
+   trunk/plearn_learners/online/OnlineLearningModule.cc
+   trunk/plearn_learners/online/OnlineLearningModule.h
+Log:
+Try to avoid memory allocations
+
+
+Modified: trunk/plearn_learners/online/CostModule.cc
+===================================================================
+--- trunk/plearn_learners/online/CostModule.cc	2007-03-01 02:13:50 UTC (rev 6707)
++++ trunk/plearn_learners/online/CostModule.cc	2007-03-01 03:22:31 UTC (rev 6708)
+@@ -99,10 +99,9 @@
+ //! keeps only the first cost
+ void CostModule::fprop(const Vec&amp; input, const Vec&amp; target, real&amp; cost) const
+ {
+-    Vec costs;
+-    fprop( input, target, costs );
++    fprop( input, target, tmp_costs );
+ 
+-    cost = costs[0];
++    cost = tmp_costs[0];
+ }
+ 
+ //! for compatibility with OnlineLearningModule interface
+@@ -119,29 +118,33 @@
+                              Vec&amp; input_gradient, bool accumulate)
+ {
+     // default version, calling the bpropUpdate with inherited prototype
+-    Vec input_and_target( input_size + target_size );
+-    input_and_target.subVec( 0, input_size ) &lt;&lt; input;
+-    input_and_target.subVec( input_size, target_size ) &lt;&lt; target;
+-    Vec input_and_target_gradient( input_size + target_size );
+-    Vec the_cost( 1, cost );
+-    Vec one( 1, 1 );
++    tmp_input_and_target.resize( input_size + target_size );
++    tmp_input_and_target.subVec( 0, input_size ) &lt;&lt; input;
++    tmp_input_and_target.subVec( input_size, target_size ) &lt;&lt; target;
++    tmp_input_and_target_gradient.resize( input_size + target_size );
++    tmp_costs.resize(1);
++    tmp_costs[0] = cost;
++    static const Vec one(1,1);
+ 
+-    bpropUpdate( input_and_target, the_cost, input_and_target_gradient, one );
++    bpropUpdate( tmp_input_and_target, tmp_costs,
++                 tmp_input_and_target_gradient, one );
+ 
+     if( accumulate )
+     {
+         PLASSERT_MSG( input_gradient.size() == input_size,
+                       &quot;Cannot resize input_gradient AND accumulate into it&quot; );
+-        input_gradient += input_and_target_gradient.subVec( 0, input_size );
++        input_gradient += tmp_input_and_target_gradient.subVec( 0, input_size );
+     }
+     else
+-        input_gradient = input_and_target_gradient.subVec( 0, input_size );
++    {
++        input_gradient.resize( input_size );
++        input_gradient &lt;&lt; tmp_input_and_target_gradient.subVec( 0, input_size );
++    }
+ }
+ 
+ void CostModule::bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost)
+ {
+-    Vec input_gradient;
+-    bpropUpdate( input, target, cost, input_gradient );
++    bpropUpdate( input, target, cost, tmp_input_gradient );
+ }
+ 
+ void CostModule::bpropUpdate(const Vec&amp; input_and_target, const Vec&amp; output,
+@@ -160,18 +163,19 @@
+                               bool accumulate)
+ {
+     // default version, calling the bpropUpdate with inherited prototype
+-    Vec input_and_target( input_size + target_size );
+-    input_and_target.subVec( 0, input_size ) &lt;&lt; input;
+-    input_and_target.subVec( input_size, target_size ) &lt;&lt; target;
+-    Vec input_and_target_gradient( input_size + target_size );
+-    Vec input_and_target_diag_hessian( input_size + target_size );
+-    Vec the_cost( 1, cost );
+-    Vec one( 1, 1 );
+-    Vec zero( 1 );
++    tmp_input_and_target.resize( input_size + target_size );
++    tmp_input_and_target.subVec( 0, input_size ) &lt;&lt; input;
++    tmp_input_and_target.subVec( input_size, target_size ) &lt;&lt; target;
++    tmp_input_and_target_gradient.resize( input_size + target_size );
++    tmp_input_and_target_diag_hessian.resize( input_size + target_size );
++    tmp_costs.resize(1);
++    tmp_costs[0] = cost;
++    static const Vec one(1,1);
++    static const Vec zero(1);
+ 
+-    bbpropUpdate( input_and_target, the_cost,
+-                  input_and_target_gradient, one,
+-                  input_and_target_diag_hessian, zero,
++    bbpropUpdate( tmp_input_and_target, tmp_costs,
++                  tmp_input_and_target_gradient, one,
++                  tmp_input_and_target_diag_hessian, zero,
+                   accumulate );
+ 
+     if( accumulate )
+@@ -182,23 +186,24 @@
+                       &quot;Cannot resize input_diag_hessian AND accumulate into it&quot;
+                     );
+ 
+-        input_gradient += input_and_target_gradient.subVec( 0, input_size );
++        input_gradient += tmp_input_and_target_gradient.subVec( 0, input_size );
+         input_diag_hessian +=
+-            input_and_target_diag_hessian.subVec( 0, input_size );
++            tmp_input_and_target_diag_hessian.subVec( 0, input_size );
+     }
+     else
+     {
+-        input_gradient = input_and_target_gradient.subVec( 0, input_size );
+-        input_diag_hessian =
+-            input_and_target_diag_hessian.subVec( 0, input_size );
++        input_gradient.resize( input_size );
++        input_diag_hessian.resize( input_size );
++        input_gradient &lt;&lt; tmp_input_and_target_gradient.subVec( 0, input_size );
++        input_diag_hessian &lt;&lt;
++            tmp_input_and_target_diag_hessian.subVec( 0, input_size );
+     }
+ }
+ 
+ void CostModule::bbpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost)
+ {
+-    Vec input_gradient;
+-    Vec input_diag_hessian;
+-    bbpropUpdate( input, target, cost, input_gradient, input_diag_hessian );
++    bbpropUpdate( input, target, cost,
++                  tmp_input_gradient, tmp_input_diag_hessian );
+ }
+ 
+ void CostModule::bbpropUpdate(const Vec&amp; input_and_target, const Vec&amp; output,
+
+Modified: trunk/plearn_learners/online/CostModule.h
+===================================================================
+--- trunk/plearn_learners/online/CostModule.h	2007-03-01 02:13:50 UTC (rev 6707)
++++ trunk/plearn_learners/online/CostModule.h	2007-03-01 03:22:31 UTC (rev 6708)
+@@ -129,6 +129,12 @@
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+ 
++protected:
++    mutable Vec tmp_costs;
++    mutable Vec tmp_input_and_target;
++    mutable Vec tmp_input_and_target_gradient;
++    mutable Vec tmp_input_and_target_diag_hessian;
++
+ private:
+     //#####  Private Member Functions  ########################################
+ 
+
+Modified: trunk/plearn_learners/online/OnlineLearningModule.cc
+===================================================================
+--- trunk/plearn_learners/online/OnlineLearningModule.cc	2007-03-01 02:13:50 UTC (rev 6707)
++++ trunk/plearn_learners/online/OnlineLearningModule.cc	2007-03-01 03:22:31 UTC (rev 6708)
+@@ -78,8 +78,7 @@
+ void OnlineLearningModule::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+                                        const Vec&amp; output_gradient)
+ {
+-    Vec input_gradient(input.length());
+-    bpropUpdate(input, output, input_gradient, output_gradient);
++    bpropUpdate(input, output, tmp_input_gradient, output_gradient);
+ }
+ 
+ //! Default method for bbpropUpdate functions, so that it compiles but crashes
+@@ -88,10 +87,8 @@
+                                         const Vec&amp; output_gradient,
+                                         const Vec&amp; output_diag_hessian)
+ {
+-    Vec input_gradient(input.length());
+-    Vec input_diag_hessian(input.length());
+-    bbpropUpdate(input, output, input_gradient, output_gradient,
+-                 input_diag_hessian, output_diag_hessian);
++    bbpropUpdate(input, output, tmp_input_gradient, output_gradient,
++                 tmp_input_diag_hessian, output_diag_hessian);
+ }
+ 
+ void OnlineLearningModule::bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
+
+Modified: trunk/plearn_learners/online/OnlineLearningModule.h
+===================================================================
+--- trunk/plearn_learners/online/OnlineLearningModule.h	2007-03-01 02:13:50 UTC (rev 6707)
++++ trunk/plearn_learners/online/OnlineLearningModule.h	2007-03-01 03:22:31 UTC (rev 6708)
+@@ -184,6 +184,12 @@
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+ 
++protected:
++    // Also used in CostModule for instance
++    mutable Vec tmp_input_gradient;
++    mutable Vec tmp_input_diag_hessian;
++
++
+ private:
+     //#####  Private Member Functions  ########################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000156.html">[Plearn-commits] r6707 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000158.html">[Plearn-commits] r6709 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#157">[ date ]</a>
+              <a href="thread.html#157">[ thread ]</a>
+              <a href="subject.html#157">[ subject ]</a>
+              <a href="author.html#157">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

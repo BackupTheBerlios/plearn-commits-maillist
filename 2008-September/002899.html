@@ -1,0 +1,268 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9459 - trunk/plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-September/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9459%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200809181623.m8IGNJ1Q021806%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002898.html">
+   <LINK REL="Next"  HREF="002900.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9459 - trunk/plearn_learners/regressors</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9459%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200809181623.m8IGNJ1Q021806%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9459 - trunk/plearn_learners/regressors">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Thu Sep 18 18:23:19 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002898.html">[Plearn-commits] r9458 - trunk/python_modules/plearn/pymake
+</A></li>
+        <LI>Next message: <A HREF="002900.html">[Plearn-commits] r9460 - trunk/plearn/base
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2899">[ date ]</a>
+              <a href="thread.html#2899">[ thread ]</a>
+              <a href="subject.html#2899">[ subject ]</a>
+              <a href="author.html#2899">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-09-18 18:23:15 +0200 (Thu, 18 Sep 2008)
+New Revision: 9459
+
+Modified:
+   trunk/plearn_learners/regressors/RegressionTree.cc
+   trunk/plearn_learners/regressors/RegressionTreeLeave.cc
+   trunk/plearn_learners/regressors/RegressionTreeLeave.h
+   trunk/plearn_learners/regressors/RegressionTreeNode.cc
+   trunk/plearn_learners/regressors/RegressionTreeNode.h
+   trunk/plearn_learners/regressors/RegressionTreeQueue.cc
+   trunk/plearn_learners/regressors/RegressionTreeQueue.h
+Log:
+code refactoring and cleanup to remove call to tostring. We need this as we can't call tostring in parallel! This cause a bug in MultiClassAdaBoost when compiled with openmp.This don't fix the bug, but lower the change of it happening...
+
+
+Modified: trunk/plearn_learners/regressors/RegressionTree.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTree.cc	2008-09-16 20:46:22 UTC (rev 9458)
++++ trunk/plearn_learners/regressors/RegressionTree.cc	2008-09-18 16:23:15 UTC (rev 9459)
+@@ -295,13 +295,13 @@
+     }
+     //Set value common value of all leave
+     // for optimisation, by default they aren't missing leave
+-    leave_template-&gt;setOption(&quot;missing_leave&quot;, &quot;0&quot;);
+-    leave_template-&gt;setOption(&quot;loss_function_weight&quot;, tostring(loss_function_weight));
+-    leave_template-&gt;setOption(&quot;verbosity&quot;, tostring(verbosity));
++    leave_template-&gt;missing_leave = 0;
++    leave_template-&gt;loss_function_weight = loss_function_weight;
++    leave_template-&gt;verbosity = verbosity;
+     leave_template-&gt;initStats();
+ 
+     first_leave = ::PLearn::deepCopy(leave_template);
+-    first_leave-&gt;setOption(&quot;id&quot;, tostring(sorted_train_set-&gt;getNextId()));
++    first_leave-&gt;id=sorted_train_set-&gt;getNextId();
+     first_leave-&gt;initLeave(sorted_train_set);
+ 
+     for (int train_sample_index = 0; train_sample_index &lt; length;
+@@ -310,17 +310,13 @@
+         first_leave-&gt;addRow(train_sample_index);
+         first_leave-&gt;registerRow(train_sample_index);
+     }
+-    root = new RegressionTreeNode();
+-    root-&gt;setOption(&quot;missing_is_valid&quot;, tostring(missing_is_valid));
+-    root-&gt;setOption(&quot;loss_function_weight&quot;, tostring(loss_function_weight));
+-    root-&gt;setOption(&quot;verbosity&quot;, tostring(verbosity));
++    root = new RegressionTreeNode(missing_is_valid,loss_function_weight,
++                                  verbosity);
+     root-&gt;initNode(sorted_train_set, first_leave, leave_template);
+     root-&gt;lookForBestSplit();
++
+     if (maximum_number_of_nodes &lt; nstages) maximum_number_of_nodes = nstages;
+-    priority_queue = new RegressionTreeQueue();
+-    priority_queue-&gt;setOption(&quot;verbosity&quot;, tostring(verbosity));
+-    priority_queue-&gt;setOption(&quot;maximum_number_of_nodes&quot;, tostring(maximum_number_of_nodes));
+-    priority_queue-&gt;initHeap();
++    priority_queue = new RegressionTreeQueue(verbosity,maximum_number_of_nodes);
+     priority_queue-&gt;addHeap(root);
+ }
+ 
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeLeave.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeLeave.cc	2008-09-16 20:46:22 UTC (rev 9458)
++++ trunk/plearn_learners/regressors/RegressionTreeLeave.cc	2008-09-18 16:23:15 UTC (rev 9459)
+@@ -54,9 +54,9 @@
+ int RegressionTreeLeave::verbosity = 0;
+ 
+ RegressionTreeLeave::RegressionTreeLeave():
+-    id(-1),
+     missing_leave(false),
+     loss_function_weight(0),
++    id(-1),
+     length(0),
+     weights_sum(0),
+     targets_sum(0),
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeLeave.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeLeave.h	2008-09-16 20:46:22 UTC (rev 9458)
++++ trunk/plearn_learners/regressors/RegressionTreeLeave.h	2008-09-18 16:23:15 UTC (rev 9459)
+@@ -52,9 +52,15 @@
+     typedef Object inherited;
+  
+     friend class RegressionTreeNode;
++    friend class RegressionTree;
+ 
+     Vec dummy_vec;
+ 
++public:
++    bool missing_leave;
++    real loss_function_weight;
++    static int  verbosity;
++
+ protected:
+ 
+ /*
+@@ -62,9 +68,6 @@
+ */
+ 
+     int  id;
+-    bool  missing_leave;
+-    real loss_function_weight;
+-    static int  verbosity;
+     PP&lt;RegressionTreeRegisters&gt; train_set;
+  
+ /*
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.cc	2008-09-16 20:46:22 UTC (rev 9458)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.cc	2008-09-18 16:23:15 UTC (rev 9459)
+@@ -65,6 +65,19 @@
+ {
+     build();
+ }
++RegressionTreeNode::RegressionTreeNode(int missing_is_valid_,
++                                       real loss_function_weight_,
++                                       int verbosity_):
++    missing_is_valid(missing_is_valid_),
++    loss_function_weight(loss_function_weight_),
++    verbosity(verbosity_),
++    split_col(-1),
++    split_balance(INT_MAX),
++    split_feature_value(REAL_MAX),
++    after_split_error(REAL_MAX)
++{
++    build();
++}
+ 
+ RegressionTreeNode::~RegressionTreeNode()
+ {
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.h	2008-09-16 20:46:22 UTC (rev 9458)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.h	2008-09-18 16:23:15 UTC (rev 9459)
+@@ -67,6 +67,7 @@
+     int  missing_is_valid;
+     real loss_function_weight;
+     int verbosity; 
++
+     PP&lt;RegressionTreeLeave&gt; leave_template; 
+     PP&lt;RegressionTreeRegisters&gt; train_set;
+     PP&lt;RegressionTreeLeave&gt; leave;
+@@ -92,6 +93,8 @@
+     Vec tmp_vec;
+ public:  
+     RegressionTreeNode();
++    RegressionTreeNode(int missing_is_valid, real loss_function_weight,
++                       int verbosity);
+     virtual              ~RegressionTreeNode();
+     
+     PLEARN_DECLARE_OBJECT(RegressionTreeNode);
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeQueue.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeQueue.cc	2008-09-16 20:46:22 UTC (rev 9458)
++++ trunk/plearn_learners/regressors/RegressionTreeQueue.cc	2008-09-18 16:23:15 UTC (rev 9459)
+@@ -57,7 +57,13 @@
+ {
+     build();
+ }
+-
++RegressionTreeQueue::RegressionTreeQueue(int verbosity_,
++                                         int maximum_number_of_nodes_)
++    : verbosity(verbosity_),
++      maximum_number_of_nodes(maximum_number_of_nodes_)
++{
++    build();
++}
+ RegressionTreeQueue::~RegressionTreeQueue()
+ {
+ }
+@@ -93,10 +99,6 @@
+ 
+ void RegressionTreeQueue::build_()
+ {
+-}
+-
+-void RegressionTreeQueue::initHeap()
+-{
+     next_available_node = 0;
+     nodes.resize(maximum_number_of_nodes);
+ }
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeQueue.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeQueue.h	2008-09-16 20:46:22 UTC (rev 9458)
++++ trunk/plearn_learners/regressors/RegressionTreeQueue.h	2008-09-18 16:23:15 UTC (rev 9459)
+@@ -71,13 +71,14 @@
+ public:
+   
+     RegressionTreeQueue();
++    RegressionTreeQueue(int verbosity, int maximum_number_of_nodes);
++
+     virtual              ~RegressionTreeQueue();
+     PLEARN_DECLARE_OBJECT(RegressionTreeQueue);
+ 
+     static  void         declareOptions(OptionList&amp; ol);
+     virtual void         makeDeepCopyFromShallowCopy(CopiesMap &amp;copies);
+     virtual void         build();
+-    void         initHeap();
+     void         addHeap(PP&lt;RegressionTreeNode&gt; new_node);
+     PP&lt;RegressionTreeNode&gt;   popHeap();
+     PP&lt;RegressionTreeNode&gt;   upHeap(PP&lt;RegressionTreeNode&gt; new_node, int node_ind);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002898.html">[Plearn-commits] r9458 - trunk/python_modules/plearn/pymake
+</A></li>
+	<LI>Next message: <A HREF="002900.html">[Plearn-commits] r9460 - trunk/plearn/base
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2899">[ date ]</a>
+              <a href="thread.html#2899">[ thread ]</a>
+              <a href="subject.html#2899">[ subject ]</a>
+              <a href="author.html#2899">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,296 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7298 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7298%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705241629.l4OGTxPp007327%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000746.html">
+   <LINK REL="Next"  HREF="000748.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7298 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7298%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705241629.l4OGTxPp007327%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7298 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Thu May 24 18:29:59 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000746.html">[Plearn-commits] r7297 - trunk/plearn/base
+</A></li>
+        <LI>Next message: <A HREF="000748.html">[Plearn-commits] r7299 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#747">[ date ]</a>
+              <a href="thread.html#747">[ thread ]</a>
+              <a href="subject.html#747">[ subject ]</a>
+              <a href="author.html#747">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-05-24 18:29:59 +0200 (Thu, 24 May 2007)
+New Revision: 7298
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+   trunk/plearn_learners/online/RBMModule.h
+Log:
+
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-05-24 16:12:08 UTC (rev 7297)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-05-24 16:29:59 UTC (rev 7298)
+@@ -271,6 +271,9 @@
+ void RBMModule::fprop(const TVec&lt;Mat*&gt;&amp; ports_value)
+ {
+     PLASSERT( ports_value.length() == nPorts() );
++    PLASSERT( visible_layer );
++    PLASSERT( hidden_layer );
++    PLASSERT( connection );
+     int port = 0;
+     Mat* visible = ports_value[port++]; 
+     Mat* hidden = ports_value[port++];
+@@ -309,56 +312,63 @@
+         visible_layer-&gt;setExpectations(*visible);
+     }
+ 
+-    // compute the energy if asked
++    // COMPUTE ENERGY
+     if (energy) 
+     {
+         PLASSERT_MSG( energy-&gt;isEmpty(), 
+                       &quot;RBMModule: the energy port can only be an output port\n&quot; );
+-        if (visible &amp;&amp; !visible-&gt;isEmpty() &amp;&amp;
+-            hidden &amp;&amp; !hidden-&gt;isEmpty()) 
+-            // we know x and h: energy(h,x) = b'x + c'h + h'Wx
+-            //  = visible_layer-&gt;energy(x) + hidden_layer-&gt;energy(h) + dot(h,hidden_layer-&gt;activation)
++        if (visible &amp;&amp; !visible-&gt;isEmpty())
+         {
+-            energy-&gt;resize(visible-&gt;length(),1);
+-            energy-&gt;clear();
+-            for (int i=0;i&lt;visible-&gt;length();i++)
++            int mbs = visible-&gt;length();
++            if (hidden &amp;&amp; !hidden-&gt;isEmpty()) 
++                // FULLY OBSERVED CASE
++                // we know x and h: energy(h,x) = b'x + c'h + h'Wx
++                //  = visible_layer-&gt;energy(x) + hidden_layer-&gt;energy(h) + dot(h,hidden_layer-&gt;activation)
+             {
+-                connection-&gt;setAsDownInputs(*visible);
+-                hidden_layer-&gt;getAllActivations(connection, 0, true);
+-                hidden_activations_are_computed=true;
+-                (*energy)(i,0) = visible_layer-&gt;energy((*visible)(i)) + 
+-                    hidden_layer-&gt;energy((*hidden)(i)) + 
+-                    dot((*hidden)(i),hidden_layer-&gt;activations(i));
+-            }
+-        } else if (visible &amp;&amp; !visible-&gt;isEmpty()) 
+-            // we know x: free energy = -log sum_h e^{-energy(h,x)}
+-            //                        = b'x + sum_i log sigmoid(-c_i - W_i'x) .... FOR BINOMIAL HIDDEN LAYER
+-            //                        = visible_layer-&gt;energy(x) + sum_i log hidden_layer-&gt;expectation[i]
+-            // or more robustly,      = visible_layer-&gt;energy(x) - sum_i softplus(-hidden_layer-&gt;activation[i])
+-        {
+-            PLASSERT(hidden_layer-&gt;classname()==&quot;RBMBinomialLayer&quot;);
+-            energy-&gt;resize(visible-&gt;length(),1);
+-            energy-&gt;clear();
+-            for (int i=0;i&lt;visible-&gt;length();i++)
++                energy-&gt;resize(mbs,1);
++                energy-&gt;clear();
++                for (int i=0;i&lt;mbs;i++)
++                {
++                    connection-&gt;setAsDownInputs(*visible);
++                    hidden_layer-&gt;getAllActivations(connection, 0, true);
++                    hidden_activations_are_computed=true;
++                    (*energy)(i,0) = visible_layer-&gt;energy((*visible)(i)) + 
++                        hidden_layer-&gt;energy((*hidden)(i)) + 
++                        dot((*hidden)(i),hidden_layer-&gt;activations(i));
++                }
++            } else 
++                // FREE-ENERGY(visible) CASE
++                // we know x: free energy = -log sum_h e^{-energy(h,x)}
++                //                        = b'x + sum_i log sigmoid(-c_i - W_i'x) .... FOR BINOMIAL HIDDEN LAYER
++                //                        = visible_layer-&gt;energy(x) + sum_i log hidden_layer-&gt;expectation[i]
++                // or more robustly,      = visible_layer-&gt;energy(x) - sum_i softplus(-hidden_layer-&gt;activation[i])
+             {
+-                connection-&gt;setAsDownInputs(*visible);
+-                hidden_layer-&gt;getAllActivations(connection, 0, true);
+-                hidden_activations_are_computed=true;
+-                (*energy)(i,0) = visible_layer-&gt;energy((*visible)(i));
+-                for (int j=0;j&lt;hidden_layer-&gt;size;j++)
+-                    (*energy)(i,0) += softplus(hidden_layer-&gt;activations(i,j));
++                PLASSERT(hidden_layer-&gt;classname()==&quot;RBMBinomialLayer&quot;);
++                energy-&gt;resize(mbs,1);
++                energy-&gt;clear();
++                for (int i=0;i&lt;mbs;i++)
++                {
++                    connection-&gt;setAsDownInputs(*visible);
++                    hidden_layer-&gt;getAllActivations(connection, 0, true);
++                    hidden_activations_are_computed=true;
++                    (*energy)(i,0) = visible_layer-&gt;energy((*visible)(i));
++                    for (int j=0;j&lt;hidden_layer-&gt;size;j++)
++                        (*energy)(i,0) += softplus(hidden_layer-&gt;activations(i,j));
++                }
+             }
+         }
+         else if (hidden &amp;&amp; !hidden-&gt;isEmpty())
++            // FREE-ENERGY(hidden) CASE
+             // we know h: free energy = -log sum_x e^{-energy(h,x)}
+             //                        = c'h + sum_i log sigmoid(-b_i - W_{.i}'h) .... FOR BINOMIAL INPUT LAYER
+             //                        = hidden_layer-&gt;energy(h) + sum_i log visible_layer-&gt;expectation[i]
+             // or more robustly,      = hidden_layer-&gt;energy(h) - sum_i softplus(-visible_layer-&gt;activation[i])
+         {
+             PLASSERT(visible_layer-&gt;classname()==&quot;RBMBinomialLayer&quot;);
+-            energy-&gt;resize(visible-&gt;length(),1);
++            int mbs = hidden-&gt;length();
++            energy-&gt;resize(mbs,1);
+             energy-&gt;clear();
+-            for (int i=0;i&lt;hidden-&gt;length();i++)
++            for (int i=0;i&lt;mbs;i++)
+             {
+                 connection-&gt;setAsUpInputs(*hidden);
+                 visible_layer-&gt;getAllActivations(connection, 0, true);
+@@ -373,6 +383,7 @@
+                     &quot;only possible if at least visible or hidden are provided).\n&quot;);
+         found_a_valid_configuration = true;
+     }
++    // REGULAR FPROP
+     // we are given the visible units and we want to compute the hidden
+     // activation and/or the hidden expectation
+     if ( visible &amp;&amp; !visible-&gt;isEmpty() &amp;&amp;
+@@ -404,6 +415,7 @@
+         //PLASSERT( !visible_sample &amp;&amp; !hidden_sample );
+         found_a_valid_configuration = true;
+     } 
++    // SAMPLING
+     if ((visible_sample &amp;&amp; visible_sample-&gt;isEmpty()) // it is asked to sample the visible units
+         || (hidden_sample &amp;&amp; hidden_sample-&gt;isEmpty())) // or to sample the hidden units
+     {
+@@ -454,23 +466,35 @@
+         }
+         found_a_valid_configuration = true;
+     }
++    // COMPUTE CONTRASTIVE DIVERGENCE CRITERION
+     if (contrastive_divergence)
+     {
+         PLASSERT_MSG( contrastive_divergence-&gt;isEmpty(), 
+                       &quot;RBMModule: the contrastive_divergence port can only be an output port\n&quot; );
+-        if (visible &amp;&amp; !visible-&gt;isEmpty() &amp;&amp; (!hidden || hidden-&gt;isEmpty()))
++        if (visible &amp;&amp; !visible-&gt;isEmpty())
+         {
+             int mbs = visible-&gt;length();
++            Mat&amp; hidden_expectations = hidden_layer-&gt;getExpectations();
+             if (!hidden_activations_are_computed) // it must be because neither hidden nor hidden_act were asked
+             {
++                PLASSERT(!hidden_act);
+                 connection-&gt;setAsDownInputs(*visible); 
+                 hidden_layer-&gt;getAllActivations(connection, 0, true);
+                 hidden_activations_are_computed=true;
++                // we need to save the hidden activations somewhere
++                hidden_act_store.resize(mbs,hidden_layer-&gt;size);
++                hidden_act_store &lt;&lt; hidden_layer-&gt;activations;
++                hidden_act = &amp;hidden_act_store;
+             }
+             if (!hidden_expectations_are_computed) // it must be because hidden outputs were not asked
+             {
++                PLASSERT(!hidden);
+                 hidden_layer-&gt;computeExpectations();
+                 hidden_expectations_are_computed=true;
++                // we need to save the hidden expectations somewhere
++                hidden_exp_store.resize(mbs,hidden_layer-&gt;size);
++                hidden_exp_store &lt;&lt; hidden_expectations;
++                hidden = &amp;hidden_exp_store;
+             }
+             // perform negative phase
+             for( int i=0; i&lt;n_Gibbs_steps_CD; i++)
+@@ -487,22 +511,40 @@
+             }
+             negative_phase_visible_samples-&gt;resize(mbs,visible_layer-&gt;size);
+             *negative_phase_visible_samples &lt;&lt; visible_layer-&gt;samples;
+-            Mat&amp; hidden_expectations = hidden_layer-&gt;getExpectations();
+             negative_phase_hidden_expectations-&gt;resize(hidden_expectations.length(),
+                                                        hidden_expectations.width());
+             *negative_phase_hidden_expectations &lt;&lt; hidden_expectations;
++
+             // compute the energy (again for now only in the binomial case)
+             PLASSERT(hidden_layer-&gt;classname()==&quot;RBMBinomialLayer&quot;);
++
++            // note that hidden_act and hidden may point to hidden_act_store and hidden_exp_store
++            PLASSERT(!hidden_act-&gt;isEmpty()); 
++            PLASSERT(!hidden-&gt;isEmpty());
++
+             contrastive_divergence-&gt;resize(hidden_expectations.length(),1);
+             // compute contrastive divergence itself
+-            //for (int i=0;i&lt;mbs;i++)
+-            //    (*contrastive_divergence)(i,0) = visible_layer-&gt;energy(
++            for (int i=0;i&lt;mbs;i++)
++            {
++                (*contrastive_divergence)(i,0) = 
++                    // positive phase energy
++                    visible_layer-&gt;energy((*visible)(i))
++                    + hidden_layer-&gt;energy((*hidden)(i))
++                    + dot((*hidden)(i),(*hidden_act)(i))
++                    // minus
++                    - 
++                    // negative phase energy
++                    (visible_layer-&gt;energy(visible_layer-&gt;samples(i))
++                     + hidden_layer-&gt;energy(hidden_expectations(i))
++                     + dot(hidden_expectations(i),hidden_layer-&gt;activations(i)));
++            }
+         }
+         else
+             PLERROR(&quot;RBMModule: unknown configuration to compute contrastive_divergence (currently\n&quot;
+                     &quot;only possible if only visible are provided in input).\n&quot;);
+         found_a_valid_configuration = true;
+     }
++    // COMPUTE AUTO-ASSOCIATOR RECONSTRUCTION ERROR
+     if ( visible &amp;&amp; !visible-&gt;isEmpty() &amp;&amp; 
+          ( ( visible_reconstruction &amp;&amp; visible_reconstruction-&gt;isEmpty() ) || 
+            ( visible_reconstruction_activations &amp;&amp; 
+
+Modified: trunk/plearn_learners/online/RBMModule.h
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.h	2007-05-24 16:12:08 UTC (rev 7297)
++++ trunk/plearn_learners/online/RBMModule.h	2007-05-24 16:29:59 UTC (rev 7298)
+@@ -219,6 +219,10 @@
+     //! Used to store gradient w.r.t. bias of visible layer
+     Vec visible_bias_grad;
+ 
++    //! Used to cache the hidden layer expectations and activations
++    Mat hidden_exp_store;
++    Mat hidden_act_store;
++
+     //! names of the ports
+     TVec&lt;string&gt; ports;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000746.html">[Plearn-commits] r7297 - trunk/plearn/base
+</A></li>
+	<LI>Next message: <A HREF="000748.html">[Plearn-commits] r7299 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#747">[ date ]</a>
+              <a href="thread.html#747">[ thread ]</a>
+              <a href="subject.html#747">[ subject ]</a>
+              <a href="author.html#747">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

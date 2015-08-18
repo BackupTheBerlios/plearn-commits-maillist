@@ -1,0 +1,262 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7800 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7800%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200707191720.l6JHKUfc031696%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001247.html">
+   <LINK REL="Next"  HREF="001249.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7800 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7800%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200707191720.l6JHKUfc031696%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7800 - trunk/plearn_learners/generic/EXPERIMENTAL">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Thu Jul 19 19:20:30 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001247.html">[Plearn-commits] r7799 -	trunk/plearn_learners/distributions/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="001249.html">[Plearn-commits] r7801 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1248">[ date ]</a>
+              <a href="thread.html#1248">[ thread ]</a>
+              <a href="subject.html#1248">[ subject ]</a>
+              <a href="author.html#1248">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-07-19 19:20:30 +0200 (Thu, 19 Jul 2007)
+New Revision: 7800
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h
+Log:
+Added option 'delayed_update' to control when updates are performed
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc	2007-07-19 15:15:44 UTC (rev 7799)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc	2007-07-19 17:20:30 UTC (rev 7800)
+@@ -66,8 +66,9 @@
+     &quot;parameters gradients (separately for each neuron).\n&quot;
+     );
+ 
+-NatGradSMPNNet::NatGradSMPNNet()
+-    : noutputs(-1),
++NatGradSMPNNet::NatGradSMPNNet():
++      delayed_update(true),
++      noutputs(-1),
+       params_averaging_coeff(1.0),
+       params_averaging_freq(5),
+       init_lrate(0.01),
+@@ -105,6 +106,12 @@
+ 
+ void NatGradSMPNNet::declareOptions(OptionList&amp; ol)
+ {
++    declareOption(ol, &quot;delayed_update&quot;, &amp;NatGradSMPNNet::delayed_update,
++                  OptionBase::buildoption,
++        &quot;If true, then each CPU's update will be delayed until it is its own\n&quot;
++        &quot;turn to update. This ensures no two CPUs are modifying parameters\n&quot;
++        &quot;at the same time.&quot;);
++
+     declareOption(ol, &quot;noutputs&quot;, &amp;NatGradSMPNNet::noutputs,
+                   OptionBase::buildoption,
+                   &quot;Number of outputs of the neural network, which can be derived from  output_type and targetsize_\n&quot;);
+@@ -379,6 +386,7 @@
+     layer_mparams.resize(n_layers-1);
+     layer_params_delta.resize(n_layers-1);
+     layer_params_gradient.resize(n_layers-1);
++    layer_params_update.resize(n_layers - 1);
+     biases.resize(n_layers-1);
+     activations_scaling.resize(n_layers-1);
+     weights.resize(n_layers-1);
+@@ -412,6 +420,7 @@
+     all_mparams.resize(n_params);
+     all_params_gradient.resize(n_params);
+     all_params_delta.resize(n_params);
++    params_update.resize(n_params);
+ 
+     // depending on how parameters are grouped on the first layer
+     int n_groups = params_natgrad_per_input_template ? (n_neurons-layer_sizes[1]+layer_sizes[0]+1) : n_neurons;
+@@ -427,6 +436,8 @@
+         if( i==0 &amp;&amp; params_natgrad_per_input_template ) {
+             PLERROR(&quot;This should not be executed&quot;);
+             layer_params[i]=all_params.subVec(p,np).toMat(layer_sizes[i]+1,layer_sizes[i+1]);
++            layer_params_update[i] = params_update.subVec(p,np).toMat(
++                    layer_sizes[i] + 1, layer_sizes[i+1]);
+             layer_mparams[i]=all_mparams.subVec(p,np).toMat(layer_sizes[i]+1,layer_sizes[i+1]);
+             biases[i]=layer_params[i].subMatRows(0,1);
+             weights[i]=layer_params[i].subMatRows(1,layer_sizes[i]); //weights[0] from layer 0 to layer 1
+@@ -443,6 +454,8 @@
+         // Usual parameter storage
+         }   else    {
+             layer_params[i]=all_params.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
++            layer_params_update[i] = params_update.subVec(p, np).toMat(
++                    layer_sizes[i+1], layer_sizes[i] + 1);
+             layer_mparams[i]=all_mparams.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
+             biases[i]=layer_params[i].subMatColumns(0,1);
+             weights[i]=layer_params[i].subMatColumns(1,layer_sizes[i]); // weights[0] from layer 0 to layer 1
+@@ -578,6 +591,8 @@
+     deepCopyField(pv_stepsizes, copies);
+     deepCopyField(pv_stepsigns, copies);
+ 
++    PLCHECK_MSG(false, &quot;Not fully implemented&quot;);
++
+     if (params_ptr)
+         PLERROR(&quot;In NatGradSMPNNet::makeDeepCopyFromShallowCopy - Deep copy of&quot;
+                 &quot; 'params_ptr' not implemented&quot;);
+@@ -625,6 +640,7 @@
+     }
+ 
+     nsteps = 0;
++    params_update.fill(0);
+ }
+ 
+ void NatGradSMPNNet::train()
+@@ -740,7 +756,11 @@
+             // Update weights if it is this cpu's turn.
+             int sem_value = semctl(semaphore_id, 0, GETVAL);
+             if (sem_value == iam) {
+-                printf(&quot;CPU %d updating (nsteps =%d)\n&quot;, iam, nsteps);
++                //printf(&quot;CPU %d updating (nsteps =%d)\n&quot;, iam, nsteps);
++                if (delayed_update) {
++                    all_params += params_update;
++                    params_update.clear();
++                }
+                 sem_value = (sem_value + 1) % ncpus;
+                 semun_v.val = sem_value;
+                 semctl(semaphore_id, 0, SETVAL, semun_v);
+@@ -775,8 +795,11 @@
+         if (sem_value == iam || iam == 0) {
+             if (sem_value == iam) {
+                 if (nsteps &gt;  0) {
+-                    // TODO Update weights at the end of training.
+-                    printf(&quot;CPU %d final updating (nsteps =%d)\n&quot;, iam, nsteps);
++                    //printf(&quot;CPU %d final updating (nsteps =%d)\n&quot;, iam, nsteps);
++                    if (delayed_update) {
++                        all_params += params_update;
++                        params_update.clear();
++                    }
+                     nsteps = 0;
+                 }
+                 // Indicate this CPU is done.
+@@ -784,12 +807,10 @@
+                 semctl(semaphore_id, iam + 1, SETVAL, semun_v);
+                 if (iam != 0) {
+                     // Exit additional processes after training.
+-                    printf(&quot;CPU %d exiting\n&quot;, iam);
++                    //printf(&quot;CPU %d exiting\n&quot;, iam);
+                     exit(0);
+                 }
+             }
+-            // The master process is controlling the counter, to ensure all
+-            // processes will correctly exit.
+             if (semctl(semaphore_id, sem_value + 1, GETVAL) == 0) {
+                 // The next process is not done yet: we need to wait.
+ #if 0
+@@ -803,14 +824,16 @@
+             bool finished = true;
+             for (int i = 0; i &lt; ncpus; i++) {
+                 if (semctl(semaphore_id, i + 1, GETVAL) == 0) {
++                    /*
+                     printf(&quot;Main CPU still waiting on CPU %d (GETVAL =&gt; %d)\n&quot;,
+                             i, semctl(semaphore_id, i + 1, GETVAL));
++                            */
+                     finished = false;
+                     break;
+                 }
+             }
+             if (finished) {
+-                printf(&quot;Main CPU ready to finish (all ready!)\n&quot;);
++                //printf(&quot;Main CPU ready to finish (all ready!)\n&quot;);
+                 break;
+             }
+ 
+@@ -956,9 +979,18 @@
+             // compute gradient on weights and update them in one go (more efficient)
+             // mean gradient has less variance, can afford larger learning rate
+             //Profiler::pl_profile_start(&quot;ProducScaleAccOnlineStep&quot;);
+-            productScaleAcc(layer_params[i-1],next_neurons_gradient,true,
+-                            neuron_extended_outputs_per_layer[i-1],false,
+-                            -layer_lrate_factor*lrate /* /minibatch_size */, 1);
++            if (delayed_update) {
++                // Store updates in 'layer_params_update'.
++                productScaleAcc(layer_params_update[i - 1],
++                        next_neurons_gradient, true,
++                        neuron_extended_outputs_per_layer[i-1], false,
++                        -layer_lrate_factor*lrate /* /minibatch_size */, 1);
++            } else {
++                // Directly update the parameters.
++                productScaleAcc(layer_params[i-1],next_neurons_gradient,true,
++                        neuron_extended_outputs_per_layer[i-1],false,
++                        -layer_lrate_factor*lrate /* /minibatch_size */, 1);
++            }
+             //Profiler::pl_profile_end(&quot;ProducScaleAccOnlineStep&quot;);
+         }
+     }
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h	2007-07-19 15:15:44 UTC (rev 7799)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h	2007-07-19 17:20:30 UTC (rev 7800)
+@@ -57,6 +57,8 @@
+ public:
+     //#####  Public Build Options  ############################################
+ 
++    bool delayed_update;
++
+     int noutputs;
+ 
+     //! sizes of hidden layers, provided by the user.
+@@ -335,6 +337,14 @@
+     //! Semaphore used to control which CPU must perform an update.
+     int semaphore_id;
+ 
++    //! Used to store the cumulative updates to the parameters, when the
++    //! 'delayed_update' option is set.
++    Vec params_update;
++
++    //! Used to store updates to the parameters of each layer (points into the
++    //! 'params_update' vector).
++    TVec&lt;Mat&gt; layer_params_update;
++
+     //PP&lt;CorrelationProfiler&gt; g_corrprof, ng_corrprof;    // for optional gradient correlation profiling
+ };
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001247.html">[Plearn-commits] r7799 -	trunk/plearn_learners/distributions/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="001249.html">[Plearn-commits] r7801 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1248">[ date ]</a>
+              <a href="thread.html#1248">[ thread ]</a>
+              <a href="subject.html#1248">[ subject ]</a>
+              <a href="author.html#1248">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,175 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9163 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9163%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200806231936.m5NJa9om032207%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002610.html">
+   <LINK REL="Next"  HREF="002612.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9163 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9163%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200806231936.m5NJa9om032207%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9163 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Mon Jun 23 21:36:09 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002610.html">[Plearn-commits] r9162 - trunk/python_modules/plearn/learners
+</A></li>
+        <LI>Next message: <A HREF="002612.html">[Plearn-commits] r9164 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2611">[ date ]</a>
+              <a href="thread.html#2611">[ thread ]</a>
+              <a href="subject.html#2611">[ subject ]</a>
+              <a href="author.html#2611">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-06-23 21:36:09 +0200 (Mon, 23 Jun 2008)
+New Revision: 9163
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+Log:
+Added another experimental port: weights_stats
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2008-06-23 18:56:29 UTC (rev 9162)
++++ trunk/plearn_learners/online/RBMModule.cc	2008-06-23 19:36:09 UTC (rev 9163)
+@@ -108,6 +108,11 @@
+     &quot;     gradient updates agree on the sign.\n&quot;
+     &quot;   - 'bound_cd_nll': bound on the difference between the CD and NLL\n&quot;
+     &quot;     gradient updates, as computed in (Bengio &amp; Delalleau, 2008)\n&quot;
++    &quot;   - 'weights_stats': first element is the median of the absolute value\n&quot;
++    &quot;     of all weights and biases, second element is the mean, third\n&quot;
++    &quot;     element is the maximum sum of weights and biases (in absolute\n&quot;
++    &quot;     values) over columns of the weight matrix, and third element is\n&quot;
++    &quot;     the same over rows.\n&quot;
+     &quot;    \n&quot;
+     &quot;\n&quot;
+     &quot;The RBM can be trained by gradient descent (wrt to gradients provided on\n&quot;
+@@ -394,6 +399,7 @@
+     addPortName(&quot;mean_diff_cd_nll&quot;);
+     addPortName(&quot;agreement_cd_nll&quot;);
+     addPortName(&quot;bound_cd_nll&quot;);
++    addPortName(&quot;weights_stats&quot;);
+     if(reconstruction_connection)
+     {
+         addPortName(&quot;visible_reconstruction.state&quot;);
+@@ -874,6 +880,8 @@
+     bool agreement_cd_nll_is_output = agreement_cd_nll &amp;&amp; agreement_cd_nll-&gt;isEmpty();
+     Mat* bound_cd_nll = ports_value[getPortIndex(&quot;bound_cd_nll&quot;)];
+     bool bound_cd_nll_is_output = bound_cd_nll &amp;&amp; bound_cd_nll-&gt;isEmpty();
++    Mat* weights_stats = ports_value[getPortIndex(&quot;weights_stats&quot;)];
++    bool weights_stats_is_output = weights_stats &amp;&amp; weights_stats-&gt;isEmpty();
+     hidden_bias = ports_value[getPortIndex(&quot;hidden_bias&quot;)];
+     //bool hidden_bias_is_output = hidden_bias &amp;&amp; hidden_bias-&gt;isEmpty();
+     weights = ports_value[getPortIndex(&quot;weights&quot;)];
+@@ -1471,19 +1479,27 @@
+         if (agreement_cd_nll_is_output)
+             agreement_cd_nll-&gt;resize(visible-&gt;length(), n_steps_compare);
+         real bound_coeff = MISSING_VALUE;
+-        if (bound_cd_nll_is_output) {
+-            bound_cd_nll-&gt;resize(visible-&gt;length(), n_steps_compare);
++        if (bound_cd_nll_is_output || weights_stats_is_output) {
++            if (bound_cd_nll_is_output)
++                bound_cd_nll-&gt;resize(visible-&gt;length(), n_steps_compare);
++            if (weights_stats_is_output)
++                weights_stats-&gt;resize(visible-&gt;length(), 4);
+             // Compute main bound coefficient:
+             // (1 - N_x N_h sigm(-alpha)^d_x sigm(-beta)^d_h).
+             PP&lt;RBMMatrixConnection&gt; matrix_conn =
+                 (RBMMatrixConnection*) get_pointer(connection);
+             PLCHECK(matrix_conn);
++            Vec all_abs_weights_and_biases;
+             // Compute alpha.
+             real alpha = 0;
+             for (int j = 0; j &lt; hidden_layer-&gt;size; j++) {
+                 real alpha_j = abs(hidden_layer-&gt;bias[j]);
+-                for (int i = 0; i &lt; visible_layer-&gt;size; i++)
+-                    alpha_j += abs(matrix_conn-&gt;weights(j, i));
++                all_abs_weights_and_biases.append(alpha_j);
++                for (int i = 0; i &lt; visible_layer-&gt;size; i++) {
++                    real abs_w_ij = abs(matrix_conn-&gt;weights(j, i));
++                    alpha_j += abs_w_ij;
++                    all_abs_weights_and_biases.append(abs_w_ij);
++                }
+                 if (alpha_j &gt; alpha)
+                     alpha = alpha_j;
+             }
+@@ -1491,6 +1507,7 @@
+             real beta = 0;
+             for (int i = 0; i &lt; visible_layer-&gt;size; i++) {
+                 real beta_i = abs(visible_layer-&gt;bias[i]);
++                all_abs_weights_and_biases.append(beta_i);
+                 for (int j = 0; j &lt; hidden_layer-&gt;size; j++)
+                     beta_i += abs(matrix_conn-&gt;weights(j, i));
+                 if (beta_i &gt; beta)
+@@ -1501,7 +1518,17 @@
+                     ipow(sigmoid(-alpha), visible_layer-&gt;size)) *
+                 (hidden_layer-&gt;getConfigurationCount() *
+                     ipow(sigmoid(-beta), hidden_layer-&gt;size));
+-            pout &lt;&lt; &quot;bound_coeff = &quot; &lt;&lt; bound_coeff &lt;&lt; endl;
++            //pout &lt;&lt; &quot;bound_coeff = &quot; &lt;&lt; bound_coeff &lt;&lt; endl;
++            if (weights_stats_is_output) {
++                real med_weight = median(all_abs_weights_and_biases);
++                real mean_weight = mean(all_abs_weights_and_biases);
++                for (int i = 0; i &lt; visible-&gt;length(); i++) {
++                    (*weights_stats)(i, 0) = med_weight;
++                    (*weights_stats)(i, 1) = mean_weight;
++                    (*weights_stats)(i, 2) = alpha;
++                    (*weights_stats)(i, 3) = beta;
++                }
++            }
+         }
+         for (int i = 0; i &lt; visible-&gt;length(); i++) {
+             // Compute dF(visible)/dWij.
+@@ -1630,6 +1657,11 @@
+         bound_cd_nll-&gt;resize(visible-&gt;length(), n_steps_compare);
+         bound_cd_nll-&gt;fill(MISSING_VALUE);
+     }
++    if (weights_stats_is_output &amp;&amp; weights_stats-&gt;isEmpty()) {
++        PLASSERT( during_training );
++        weights_stats-&gt;resize(visible-&gt;length(), 4);
++        weights_stats-&gt;fill(MISSING_VALUE);
++    }
+ 
+     // UGLY HACK TO DEAL WITH THE PROBLEM THAT XXX.state MAY NOT BE NEEDED
+     // BUT IS ALWAYS EXPECTED BECAUSE IT IS A STATE (!@#$%!!!)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002610.html">[Plearn-commits] r9162 - trunk/python_modules/plearn/learners
+</A></li>
+	<LI>Next message: <A HREF="002612.html">[Plearn-commits] r9164 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2611">[ date ]</a>
+              <a href="thread.html#2611">[ thread ]</a>
+              <a href="subject.html#2611">[ subject ]</a>
+              <a href="author.html#2611">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

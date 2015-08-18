@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8370 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-December/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8370%20-%20trunk/plearn/vmat&In-Reply-To=%3C200712282051.lBSKpefb021100%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001817.html">
+   <LINK REL="Next"  HREF="001819.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8370 - trunk/plearn/vmat</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8370%20-%20trunk/plearn/vmat&In-Reply-To=%3C200712282051.lBSKpefb021100%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8370 - trunk/plearn/vmat">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Fri Dec 28 21:51:40 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001817.html">[Plearn-commits] r8369 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="001819.html">[Plearn-commits] r8371 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1818">[ date ]</a>
+              <a href="thread.html#1818">[ thread ]</a>
+              <a href="subject.html#1818">[ subject ]</a>
+              <a href="author.html#1818">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-12-28 21:51:40 +0100 (Fri, 28 Dec 2007)
+New Revision: 8370
+
+Modified:
+   trunk/plearn/vmat/BootstrapVMatrix.cc
+   trunk/plearn/vmat/BootstrapVMatrix.h
+Log:
+Added an option to operate on bags
+
+Modified: trunk/plearn/vmat/BootstrapVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/BootstrapVMatrix.cc	2007-12-27 12:29:21 UTC (rev 8369)
++++ trunk/plearn/vmat/BootstrapVMatrix.cc	2007-12-28 20:51:40 UTC (rev 8370)
+@@ -49,7 +49,7 @@
+         &quot;A VMatrix that sees a bootstrap subset of its parent VMatrix.&quot;,
+         &quot;It means that a random sample of the source will be taken. Samples\n&quot;
+         &quot;may or may not be repeated depending on the value of the option\n&quot;
+-        &quot;'allow_repetitions'&quot;
++        &quot;'allow_repetitions' (the default behavior is not to repeat samples).&quot;
+ );
+ 
+ //////////////////////
+@@ -59,6 +59,7 @@
+     rgen(new PRandom()),
+     frac(0.6667),
+     n_elems(-1),
++    operate_on_bags(false),
+     own_seed(-3), // Temporary hack value to detect use of deprecated option.
+     seed(1827),   // Default fixed seed value (safer than time-dependent).
+     shuffle(false),
+@@ -70,6 +71,7 @@
+     rgen(new PRandom()),
+     frac(the_frac),
+     n_elems(-1),
++    operate_on_bags(false),
+     own_seed(-3),
+     seed(the_seed),
+     shuffle(the_shuffle),
+@@ -86,6 +88,7 @@
+     rgen(the_rgen),
+     frac(the_frac),
+     n_elems(-1),
++    operate_on_bags(false),
+     own_seed(-3),
+     shuffle(the_shuffle),
+     allow_repetitions(allow_rep)
+@@ -121,6 +124,12 @@
+                   &quot;Wether examples should be allowed to appear each more than once.&quot;,
+                   OptionBase::advanced_level);
+ 
++    declareOption(ol, &quot;operate_on_bags&quot;, &amp;BootstrapVMatrix::operate_on_bags, 
++                  OptionBase::buildoption,
++        &quot;Wether to operate on bags rather than individual samples (see help\n&quot;
++        &quot;of SumOverBagsVariable for details on bags).&quot;,
++        OptionBase::advanced_level);
++
+     declareOption(ol, &quot;own_seed&quot;, &amp;BootstrapVMatrix::own_seed,
+                   (OptionBase::learntoption | OptionBase::nosave),
+                   &quot;DEPRECATED: old random generator seed&quot;,
+@@ -163,7 +172,31 @@
+ 
+         // Create bootstrap sample.
+         int l= source.length();
++
++        TVec&lt; TVec&lt;int&gt; &gt; bag_to_indices;
++        if (operate_on_bags) {
++            // Analyze bags in the source.
++            Vec input, target;
++            real weight;
++            for (int i = 0; i &lt; l; i++) {
++                source-&gt;getExample(i, input, target, weight);
++#ifdef BOUNDCHECK
++                // Safety checks on bag information.
++                real bi = target.lastElement();
++                PLASSERT( is_equal(round(bi), bi) );
++                int bii = int(round(bi));
++                PLASSERT( bii &gt;= 0 &amp;&amp; bii &lt;= 3 );
++#endif
++                int bag_info = int(round(target.lastElement()));
++                if (bag_info % 2 == 1)
++                    bag_to_indices.append(TVec&lt;int&gt;());
++                bag_to_indices.lastElement().append(i);
++            }
++            l = bag_to_indices.length();
++        }
++
+         int nsamp= (n_elems &gt;= 0) ? n_elems : int(round(frac*l));
++
+         if(allow_repetitions)
+         {
+             indices.resize(nsamp);
+@@ -179,6 +212,14 @@
+         if (!shuffle)
+             sortElements(indices);
+ 
++        if (operate_on_bags) {
++            // Convert bag indices back to sample indices.
++            TVec&lt;int&gt; bag_indices = indices.copy();
++            indices.resize(0);
++            for (int i = 0; i &lt; bag_indices.length(); i++)
++                indices.append(bag_to_indices[bag_indices[i]]);
++        }
++
+         // Because we changed the indices, a rebuild may be needed.
+         inherited::build();
+     }
+
+Modified: trunk/plearn/vmat/BootstrapVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/BootstrapVMatrix.h	2007-12-27 12:29:21 UTC (rev 8369)
++++ trunk/plearn/vmat/BootstrapVMatrix.h	2007-12-28 20:51:40 UTC (rev 8370)
+@@ -61,6 +61,7 @@
+ 
+     real frac;
+     int n_elems;
++    bool operate_on_bags;
+     int32_t own_seed;
+     int32_t seed;
+     bool shuffle;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001817.html">[Plearn-commits] r8369 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="001819.html">[Plearn-commits] r8371 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1818">[ date ]</a>
+              <a href="thread.html#1818">[ thread ]</a>
+              <a href="subject.html#1818">[ subject ]</a>
+              <a href="author.html#1818">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

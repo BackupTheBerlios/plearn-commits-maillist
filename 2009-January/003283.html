@@ -1,0 +1,533 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9843 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9843%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200901162142.n0GLgKWC003406%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003282.html">
+   <LINK REL="Next"  HREF="003284.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9843 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9843%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200901162142.n0GLgKWC003406%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9843 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Fri Jan 16 22:42:20 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003282.html">[Plearn-commits] r9842 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+        <LI>Next message: <A HREF="003284.html">[Plearn-commits] r9844 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3283">[ date ]</a>
+              <a href="thread.html#3283">[ thread ]</a>
+              <a href="subject.html#3283">[ subject ]</a>
+              <a href="author.html#3283">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2009-01-16 22:42:19 +0100 (Fri, 16 Jan 2009)
+New Revision: 9843
+
+Modified:
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+Log:
+Added an option to have connections between the target and 
+the hidden layer, during greedy training. This allows to do 
+joint (denoising) autoencoding on the input (or hidden layer 
+representation) and the target.
+
+This should work in the non-minibatch setting, either in greedy 2-phase or online learning.
+
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2009-01-16 21:32:14 UTC (rev 9842)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2009-01-16 21:42:19 UTC (rev 9843)
+@@ -68,6 +68,7 @@
+     noise_type( &quot;masking_noise&quot; ),
+     fraction_of_masked_inputs( 0 ),
+     probability_of_masked_inputs( 0 ),
++    probability_of_masked_target( 0 ),
+     mask_with_mean( false ),
+     gaussian_std( 1. ),
+     binary_sampling_noise_parameter( 1. ),
+@@ -211,6 +212,16 @@
+                   &quot;weights of 1 will be assumed for all partial costs.\n&quot;
+         );
+ 
++    declareOption(ol, &quot;greedy_target_connections&quot;,
++                  &amp;StackedAutoassociatorsNet::greedy_target_connections,
++                  OptionBase::buildoption,
++                  &quot;Optional target connections during greedy training..\n&quot;
++                  &quot;They connect the target with the hidden layer from which\n&quot;
++                  &quot;the autoassociator's cost (including partial cost) is computed\n&quot;
++                  &quot;(only during training).\n&quot;
++                  &quot;Currently works only if target is a class index.\n&quot;
++        );
++
+     declareOption(ol, &quot;compute_all_test_costs&quot;,
+                   &amp;StackedAutoassociatorsNet::compute_all_test_costs,
+                   OptionBase::buildoption,
+@@ -251,6 +262,12 @@
+                   &quot;or fraction_of_masked_inputs should be &gt; 0.\n&quot;
+         );
+ 
++    declareOption(ol, &quot;probability_of_masked_target&quot;,
++                  &amp;StackedAutoassociatorsNet::probability_of_masked_target,
++                  OptionBase::buildoption,
++                  &quot;Probability of masking the target, when using greedy_target_connections.\n&quot;
++        );
++
+     declareOption(ol, &quot;mask_with_mean&quot;,
+                   &amp;StackedAutoassociatorsNet::mask_with_mean,
+                   OptionBase::buildoption,
+@@ -413,6 +430,11 @@
+                     &quot; - \n&quot;
+                     &quot;probability_of_masked_inputs should be &gt; or equal to 0.\n&quot;);
+ 
++        if( probability_of_masked_target &lt; 0 )
++            PLERROR(&quot;StackedAutoassociatorsNet::build_()&quot;
++                    &quot; - \n&quot;
++                    &quot;probability_of_masked_target should be &gt; or equal to 0.\n&quot;);
++
+         if( online &amp;&amp; fraction_of_masked_inputs &gt; 0)
+             PLERROR(&quot;StackedAutoassociatorsNet::build_()&quot;
+                     &quot; - \n&quot;
+@@ -605,6 +627,25 @@
+             }
+         }
+ 
++        if(greedy_target_connections.length() != 0)
++        {
++            if(reconstruct_hidden)
++                PLERROR(&quot;StackedAutoassociatorsNet::build_layers_and_connections()&quot;
++                        &quot; - \n&quot;
++                        &quot;greedy_target_connections not implemented with reconstruct_hidden=true.\n&quot;);
++
++            if( greedy_target_connections[i]-&gt;up_size != layers[i+1]-&gt;size )
++                PLERROR(&quot;StackedAutoassociatorsNet::build_layers_and_connections()&quot;
++                        &quot; - \n&quot;
++                        &quot;greedy_target_connections[%i] should have a up_size of %d.\n&quot;,
++                        i, layers[i+1]-&gt;size);
++            if( !(greedy_target_connections[i]-&gt;random_gen) )
++            {
++                greedy_target_connections[i]-&gt;random_gen = random_gen;
++                greedy_target_connections[i]-&gt;forget();
++            }
++        }
++
+         if( !(layers[i]-&gt;random_gen) )
+         {
+             layers[i]-&gt;random_gen = random_gen;
+@@ -640,19 +681,32 @@
+ 
+     // For denoising autoencoders
+     corrupted_autoassociator_expectations.resize( n_layers-1 );
+-    if( noise_type == &quot;masking_noise&quot; &amp;&amp; fraction_of_masked_inputs &gt; 0 )
++    if( noise_type == &quot;masking_noise&quot; )
+         autoassociator_expectation_indices.resize( n_layers-1 );
+     
+     for( int i=0 ; i&lt;n_layers-1 ; i++ )
+     {
+         corrupted_autoassociator_expectations[i].resize( layers[i]-&gt;size );
+-        if( noise_type == &quot;masking_noise&quot; &amp;&amp; fraction_of_masked_inputs &gt; 0 )
++        if( noise_type == &quot;masking_noise&quot; )
+         {
+             autoassociator_expectation_indices[i].resize( layers[i]-&gt;size );
+             for( int j=0 ; j &lt; autoassociator_expectation_indices[i].length() ; j++ )
+                 autoassociator_expectation_indices[i][j] = j;
+         }
+     }
++
++    if(greedy_target_connections.length() != 0)
++    {
++        target_vec.resize(greedy_target_connections[0]-&gt;down_size);
++        target_vec_gradient.resize(greedy_target_connections[0]-&gt;down_size);
++        targets_vec.resize(n_layers-1);
++        targets_vec_gradient.resize(n_layers-1);
++        for( int i=0; i&lt;n_layers-1; i++ )
++        {
++            targets_vec[i].resize(greedy_target_connections[0]-&gt;down_size);
++            targets_vec_gradient[i].resize(greedy_target_connections[0]-&gt;down_size);
++        }
++    }
+ }
+ 
+ void StackedAutoassociatorsNet::build_costs()
+@@ -757,6 +811,7 @@
+     deepCopyField(final_cost, copies);
+     deepCopyField(partial_costs, copies);
+     deepCopyField(partial_costs_weights, copies);
++    deepCopyField(greedy_target_connections, copies);
+ 
+     // Protected options
+     deepCopyField(activations, copies);
+@@ -807,6 +862,10 @@
+     deepCopyField(corrupted_autoassociator_expectations, copies);
+     deepCopyField(autoassociator_expectation_indices, copies);
+     deepCopyField(expectation_means, copies);
++    deepCopyField(target_vec, copies);
++    deepCopyField(target_vec_gradient, copies);
++    deepCopyField(targets_vec, copies);
++    deepCopyField(targets_vec_gradient, copies);
+     deepCopyField(greedy_stages, copies);
+ }
+ 
+@@ -1299,10 +1358,24 @@
+             }
+             else
+                 connections[i]-&gt;fprop( expectations[i], correlation_activations[i] );
++
++            if( i == index &amp;&amp; greedy_target_connections.length() &amp;&amp; greedy_target_connections[i] )
++            {
++                target_vec.clear();
++                if( probability_of_masked_target == 0 ||
++                    random_gen-&gt;uniform_sample() &gt;= probability_of_masked_target )
++                    target_vec[(int)target[0]] = 1;
++
++                greedy_target_connections[i]-&gt;setAsDownInput(target_vec);
++                greedy_target_connections[i]-&gt;computeProduct(0, correlation_activations[i].length(),
++                                                             correlation_activations[i], true);
++            }
++
+             layers[i+1]-&gt;fprop( correlation_activations[i],
+                                 correlation_expectations[i] );
+             correlation_connections[i]-&gt;fprop( correlation_expectations[i],
+                                                activations[i+1] );
++
+             correlation_layers[i]-&gt;fprop( activations[i+1],
+                                           expectations[i+1] );
+         }
+@@ -1318,6 +1391,19 @@
+             }
+             else
+                 connections[i]-&gt;fprop( expectations[i], activations[i+1] );
++            
++            if( i == index &amp;&amp; greedy_target_connections.length() &amp;&amp; greedy_target_connections[i] )
++            {
++                target_vec.clear();
++                if( probability_of_masked_target == 0 ||
++                    random_gen-&gt;uniform_sample() &gt;= probability_of_masked_target )
++                    target_vec[(int)target[0]] = 1;
++
++                greedy_target_connections[i]-&gt;setAsDownInput(target_vec);
++                greedy_target_connections[i]-&gt;computeProduct(0, activations[i+1].length(),
++                                                             activations[i+1], true);
++            }
++
+             layers[i+1]-&gt;fprop(activations[i+1],expectations[i+1]);
+         }
+     }
+@@ -1496,6 +1582,15 @@
+             correlation_activations[ index ],
+             reconstruction_expectation_gradients, //reused
+             correlation_activation_gradients [ index ]);
++
++        if( greedy_target_connections.length() &amp;&amp; greedy_target_connections[index] )
++        {
++            greedy_target_connections[index]-&gt;bpropUpdate(
++                target_vec, 
++                correlation_activations[index],
++                target_vec_gradient,
++                correlation_activation_gradients [ index ]);
++        }
+     }
+     else
+     {
+@@ -1510,6 +1605,14 @@
+             activations[ index + 1 ],
+             reconstruction_expectation_gradients, //reused
+             reconstruction_activation_gradients);
++        if( greedy_target_connections.length() &amp;&amp; greedy_target_connections[index] )
++        {
++            greedy_target_connections[index]-&gt;bpropUpdate(
++                target_vec, 
++                activations[ index + 1 ],
++                target_vec_gradient,
++                reconstruction_activation_gradients);
++        }
+     }
+ 
+ }
+@@ -1776,12 +1879,26 @@
+         for( int i=0 ; i&lt;n_layers-1; i++ )
+         {
+             connections[i]-&gt;fprop( expectations[i], correlation_activations[i] );
++
++            if( greedy_target_connections.length() &amp;&amp; greedy_target_connections[i] )
++            {
++                targets_vec[i].clear();
++                if( probability_of_masked_target == 0 ||
++                    random_gen-&gt;uniform_sample() &gt;= probability_of_masked_target )
++                    targets_vec[i][(int)target[0]] = 1;
++
++                greedy_target_connections[i]-&gt;setAsDownInput(targets_vec[i]);
++                greedy_target_connections[i]-&gt;computeProduct(0, correlation_activations[i].length(),
++                                                             correlation_activations[i], true);
++            }
++
+             layers[i+1]-&gt;fprop( correlation_activations[i],
+                                 correlation_expectations[i] );
+             correlation_connections[i]-&gt;fprop( correlation_expectations[i],
+                                                activations[i+1] );
+             correlation_layers[i]-&gt;fprop( activations[i+1],
+                                           expectations[i+1] );
++
+         }
+     }
+     else
+@@ -1789,63 +1906,20 @@
+         for( int i=0 ; i&lt;n_layers-1; i++ )
+         {
+             connections[i]-&gt;fprop( expectations[i], activations[i+1] );
+-            layers[i+1]-&gt;fprop(activations[i+1],expectations[i+1]);
+ 
+-            if( partial_costs.length() != 0 &amp;&amp; partial_costs[ i ] )
++            if( greedy_target_connections.length() &amp;&amp; greedy_target_connections[i] )
+             {
+-                // Set learning rates
+-                if( !fast_exact_is_equal(fine_tuning_decrease_ct , 0 ) )
+-                    lr = fine_tuning_learning_rate /
+-                        (1 + fine_tuning_decrease_ct * stage);
+-                else
+-                    lr = fine_tuning_learning_rate;
++                targets_vec[i].clear();
++                if( probability_of_masked_target == 0 ||
++                    random_gen-&gt;uniform_sample() &gt;= probability_of_masked_target )
++                    targets_vec[i][(int)target[0]] = 1;
+ 
+-                partial_costs[ i ]-&gt;setLearningRate( lr );
+-                /* No, learning rate should already be OK in layers and
+-                 * connections
+-                layers[ i+1 ]-&gt;setLearningRate( lr );
+-                connections[ i ]-&gt;setLearningRate( lr );
+-                */
++                greedy_target_connections[i]-&gt;setAsDownInput(targets_vec[i]);
++                greedy_target_connections[i]-&gt;computeProduct(0, activations[i+1].length(),
++                                                             activations[i+1], true);
++            }
+ 
+-                partial_costs[ i ]-&gt;fprop( expectations[ i + 1],
+-                                           target, partial_cost_value );
+-
+-                // Update partial cost (might contain some weights for example)
+-                partial_costs[ i ]-&gt;bpropUpdate(
+-                    expectations[ i + 1 ],
+-                    target, partial_cost_value[0],
+-                    expectation_gradients[ i + 1 ]
+-                    );
+-
+-                train_costs.subVec(partial_costs_positions[i]+1,
+-                                   partial_cost_value.length())
+-                    &lt;&lt; partial_cost_value;
+-
+-                if( !fast_exact_is_equal( partial_costs_weights.length(), 0 ) )
+-                    expectation_gradients[ i + 1 ] *= partial_costs_weights[i];
+-
+-                // Update hidden layer bias and weights
+-                layers[ i+1 ]-&gt;bpropUpdate( activations[ i + 1 ],
+-                                            expectations[ i + 1 ],
+-                                            activation_gradients[ i + 1 ],
+-                                            expectation_gradients[ i + 1 ] );
+-
+-                connections[ i ]-&gt;bpropUpdate( expectations[ i ],
+-                                               activations[ i + 1 ],
+-                                               expectation_gradients[ i ],
+-                                               activation_gradients[ i + 1 ] );
+-
+-                /* no need
+-                if( !fast_exact_is_equal( fine_tuning_decrease_ct , 0 ) )
+-                    lr = fine_tuning_learning_rate /
+-                        (1 + fine_tuning_decrease_ct * stage);
+-                else
+-                    lr = fine_tuning_learning_rate;
+-
+-                layers[ i+1 ]-&gt;setLearningRate( lr );
+-                connections[ i ]-&gt;setLearningRate( lr );
+-                */
+-            }
++            layers[i+1]-&gt;fprop(activations[i+1],expectations[i+1]);
+         }
+     }
+ 
+@@ -1883,6 +1957,10 @@
+             correlation_layers[i]-&gt;setLearningRate( lr );
+             correlation_connections[i]-&gt;setLearningRate( lr );
+         }
++        if( partial_costs.length() != 0 &amp;&amp; partial_costs[ i ] )
++        {
++            partial_costs[ i ]-&gt;setLearningRate( lr );
++        }
+     }
+     layers[n_layers-1]-&gt;setLearningRate( lr );
+ 
+@@ -1913,6 +1991,28 @@
+             reconstruction_expectation_gradients,
+             reconstruction_activation_gradients);
+ 
++        if( partial_costs.length() != 0 &amp;&amp; partial_costs[ i-1 ] )
++        {
++            
++            partial_costs[ i-1 ]-&gt;fprop( expectations[ i],
++                                       target, partial_cost_value );
++            
++            // Update partial cost (might contain some weights for example)
++            partial_costs[ i-1 ]-&gt;bpropUpdate(
++                expectations[ i ],
++                target, partial_cost_value[0],
++                expectation_gradients[ i ]
++                );
++
++            train_costs.subVec(partial_costs_positions[i-1]+1,
++                               partial_cost_value.length())
++                &lt;&lt; partial_cost_value;
++            
++            if( !fast_exact_is_equal( partial_costs_weights.length(), 0 ) )
++                expectation_gradients[ i ] *= partial_costs_weights[i-1];
++            reconstruction_expectation_gradients += expectation_gradients[ i ];
++        }
++
+         if(!fast_exact_is_equal(l1_neuron_decay,0))
+         {
+             // Compute L1 penalty gradient on neurons
+@@ -1953,6 +2053,15 @@
+                                            correlation_activations[i-1],
+                                            reconstruction_expectation_gradients,
+                                            correlation_activation_gradients[i-1] );
++
++            if( greedy_target_connections.length() &amp;&amp; greedy_target_connections[i-1] )
++            {
++                greedy_target_connections[i-1]-&gt;bpropUpdate(
++                    targets_vec[i-1], 
++                    correlation_activations[i-1],
++                    targets_vec_gradient[i-1],
++                    correlation_activation_gradients [ i-1 ]);
++            }
+         }
+         else
+         {
+@@ -1967,6 +2076,15 @@
+                 activations[i],
+                 reconstruction_expectation_gradients,
+                 reconstruction_activation_gradients);
++
++            if( greedy_target_connections.length() &amp;&amp; greedy_target_connections[i-1] )
++            {
++                greedy_target_connections[i-1]-&gt;bpropUpdate(
++                    targets_vec[i-1], 
++                    activations[ i ],
++                    targets_vec_gradient[i-1],
++                    reconstruction_activation_gradients);
++            }
+         }
+     }
+ 
+@@ -2051,10 +2169,19 @@
+     expectations_m[0].resize(mbatch_size, inputsize());
+     expectations_m[0] &lt;&lt; inputs;
+ 
++    if( greedy_target_connections.length() != 0 )
++        PLERROR(&quot;In StackedAutoassociatorsNet::onlineStep(): greedy_target_connections not &quot;
++                &quot;implemented yet in mini-batch online setting.\n&quot;);
++    
+     if(correlation_connections.length() != 0)
+     {
+         for( int i=0 ; i&lt;n_layers-1; i++ )
+         {
++            if( partial_costs.length() != 0 &amp;&amp; partial_costs[ i ] )
++                PLERROR(&quot;In StackedAutoassociatorsNet::onlineStep(): partial costs not &quot;
++                        &quot;implemented yet for correlation_connections, in mini-batch online &quot;
++                        &quot;setting.\n&quot;);
++
+             connections[i]-&gt;fprop(expectations_m[i],
+                                   correlation_activations_m[i]);
+             layers[i+1]-&gt;fprop(correlation_activations_m[i],
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2009-01-16 21:32:14 UTC (rev 9842)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2009-01-16 21:42:19 UTC (rev 9843)
+@@ -65,7 +65,7 @@
+     //#####  Public Build Options  ############################################
+ 
+     //! The learning rate used during the autoassociator gradient descent
+-    //! training
++    //! training. It is also used for the partial costs.
+     real greedy_learning_rate;
+ 
+     //! The decrease constant of the learning rate used during the
+@@ -139,6 +139,13 @@
+     //! weights of 1 will be assumed for all partial costs.
+     Vec partial_costs_weights;
+ 
++    //! Optional target connections during greedy training.
++    //! They connect the target with the hidden layer from which
++    //! the autoassociator's cost (including partial cost) is computed
++    //! (only during training).
++    //! Currently works only if target is a class index.
++    TVec&lt; PP&lt;RBMConnection&gt; &gt; greedy_target_connections;
++
+     //! Indication that, at test time, all costs for all
+     //! layers (up to the currently trained layer) should be computed.
+     bool compute_all_test_costs;
+@@ -158,6 +165,9 @@
+     //! or fraction_of_masked_inputs should be &gt; 0.
+     real probability_of_masked_inputs;
+ 
++    //! Probability of masking the target, when using greedy_target_connections
++    real probability_of_masked_target;
++
+     //! Indication that inputs should be masked with the 
+     //! training set mean of that component
+     bool mask_with_mean;
+@@ -404,6 +414,13 @@
+     //! Mean of layers on the training set for each layer
+     TVec&lt;Vec&gt; expectation_means;
+ 
++    //! Vectorial representation of the target
++    Vec target_vec;
++    Vec target_vec_gradient;
++    //! For online case
++    TVec&lt; Vec &gt; targets_vec;
++    TVec&lt; Vec &gt; targets_vec_gradient;
++
+     //! Stages of the different greedy phases
+     TVec&lt;int&gt; greedy_stages;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003282.html">[Plearn-commits] r9842 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+	<LI>Next message: <A HREF="003284.html">[Plearn-commits] r9844 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3283">[ date ]</a>
+              <a href="thread.html#3283">[ thread ]</a>
+              <a href="subject.html#3283">[ subject ]</a>
+              <a href="author.html#3283">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

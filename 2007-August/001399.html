@@ -1,0 +1,808 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7951 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7951%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708081456.l78EuS8H012874%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001398.html">
+   <LINK REL="Next"  HREF="001400.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7951 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7951%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708081456.l78EuS8H012874%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7951 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Wed Aug  8 16:56:28 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001398.html">[Plearn-commits] r7950 - in tags: . finlearn3-august2007	finlearn3-august2007/python_modules/plearn/plide	finlearn3-august2007/python_modules/plearn/pyplearn
+</A></li>
+        <LI>Next message: <A HREF="001400.html">[Plearn-commits] r7952 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1399">[ date ]</a>
+              <a href="thread.html#1399">[ thread ]</a>
+              <a href="subject.html#1399">[ subject ]</a>
+              <a href="author.html#1399">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-08-08 16:56:28 +0200 (Wed, 08 Aug 2007)
+New Revision: 7951
+
+Added:
+   trunk/plearn_learners/online/VBoundDBN2.cc
+   trunk/plearn_learners/online/VBoundDBN2.h
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+   trunk/plearn_learners/online/RBMModule.h
+Log:
+Adding a new OnlineLearningModule VBoundDBN2 (in construction)
+and changes to RBMModule to make it easier to use its workings.
+
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-08-07 20:33:03 UTC (rev 7950)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-08-08 14:56:28 UTC (rev 7951)
+@@ -968,29 +968,7 @@
+                      &quot;If neg_log_phidden is provided, it must have the same length as hidden.state&quot;);
+             PLASSERT_MSG(neg_log_phidden-&gt;width()==1,&quot;neg_log_phidden must have width 1 (single column)&quot;);
+         }
+-        computeVisibleActivations(*hidden,true);
+-        int n_h = hidden-&gt;length();
+-        int T = visible-&gt;length();
+-        real default_neg_log_ph = safelog(real(n_h)); // default P(h)=1/Nh: -log(1/Nh) = log(Nh)
+-        Vec old_act = visible_layer-&gt;activation;
+-        neg_log_pvisible_given_phidden-&gt;resize(T,1);
+-        for (int t=0;t&lt;T;t++)
+-        {
+-            Vec x_t = (*visible)(t);
+-            real log_p_xt=0;
+-            for (int i=0;i&lt;n_h;i++)
+-            {
+-                visible_layer-&gt;activation = visible_layer-&gt;activations(i);
+-                real neg_log_p_xt_given_hi = visible_layer-&gt;fpropNLL(x_t);
+-                real neg_log_p_hi = neg_log_phidden?(*neg_log_phidden)(i,0):default_neg_log_ph;
+-                if (i==0)
+-                    log_p_xt = -(neg_log_p_xt_given_hi + neg_log_p_hi);
+-                else
+-                    log_p_xt = logadd(log_p_xt, -(neg_log_p_xt_given_hi + neg_log_p_hi));
+-            }
+-            (*neg_log_pvisible_given_phidden)(t,0) = -log_p_xt;
+-        }
+-        visible_layer-&gt;activation = old_act;
++        computeNegLogPVisibleGivenPHidden(*visible,*hidden,neg_log_phidden,*neg_log_pvisible_given_phidden);
+         found_a_valid_configuration = true;
+     }
+ 
+@@ -1219,6 +1197,33 @@
+ 
+ }
+ 
++void RBMModule::computeNegLogPVisibleGivenPHidden(Mat visible, Mat hidden, Mat* neg_log_phidden, Mat neg_log_pvisible_given_phidden)
++{
++    computeVisibleActivations(hidden,true);
++    int n_h = hidden-&gt;length();
++    int T = visible-&gt;length();
++    real default_neg_log_ph = safelog(real(n_h)); // default P(h)=1/Nh: -log(1/Nh) = log(Nh)
++    Vec old_act = visible_layer-&gt;activation;
++    neg_log_pvisible_given_phidden.resize(T,1);
++    for (int t=0;t&lt;T;t++)
++    {
++        Vec x_t = visible(t);
++        real log_p_xt=0;
++        for (int i=0;i&lt;n_h;i++)
++        {
++            visible_layer-&gt;activation = visible_layer-&gt;activations(i);
++            real neg_log_p_xt_given_hi = visible_layer-&gt;fpropNLL(x_t);
++            real neg_log_p_hi = neg_log_phidden?(*neg_log_phidden)(i,0):default_neg_log_ph;
++            if (i==0)
++                log_p_xt = -(neg_log_p_xt_given_hi + neg_log_p_hi);
++            else
++                log_p_xt = logadd(log_p_xt, -(neg_log_p_xt_given_hi + neg_log_p_hi));
++        }
++        neg_log_pvisible_given_phidden(t,0) = -log_p_xt;
++    }
++    visible_layer-&gt;activation = old_act;
++}
++
+ ////////////////////
+ // bpropAccUpdate //
+ ////////////////////
+
+Modified: trunk/plearn_learners/online/RBMModule.h
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.h	2007-08-07 20:33:03 UTC (rev 7950)
++++ trunk/plearn_learners/online/RBMModule.h	2007-08-08 14:56:28 UTC (rev 7951)
+@@ -277,6 +277,7 @@
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+ 
++public:
+     //! Compute activations on the hidden layer based on the provided
+     //! visible input.
+     //! If 'hidden_bias' is not null nor empty, then it is used as an
+@@ -324,6 +325,8 @@
+ 
+     void computePartitionFunction();
+ 
++    void computeNegLogPVisibleGivenPHidden(Mat visible, Mat hidden, Mat* neg_log_phidden, Mat neg_log_pvisible_given_phidden);
++
+ private:
+     //#####  Private Member Functions  ########################################
+ 
+
+Added: trunk/plearn_learners/online/VBoundDBN2.cc
+===================================================================
+--- trunk/plearn_learners/online/VBoundDBN2.cc	2007-08-07 20:33:03 UTC (rev 7950)
++++ trunk/plearn_learners/online/VBoundDBN2.cc	2007-08-08 14:56:28 UTC (rev 7951)
+@@ -0,0 +1,316 @@
++// -*- C++ -*-
++
++// VBoundDBN2.cc
++//
++// Copyright (C) 2007 yoshua Bengio
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: yoshua Bengio
++
++/*! \file VBoundDBN2.cc */
++
++
++
++#include &quot;VBoundDBN2.h&quot;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    VBoundDBN2,
++    &quot;2-RBM DBN trained using Hinton's new variational bound of global likelihood&quot;,
++    &quot;The bound that is maximized is the following:\n&quot;
++    &quot; log P(x) &gt;= -FE1(x) + E_{P1(h|x)}[ FE1(h) - FE2(h) ] - log Z2\n&quot;
++    &quot;where P1 and P2 are RBMs with Pi(x) = exp(-FEi(x))/Zi.\n&quot;
++);
++
++//////////////////
++// VBoundDBN2 //
++//////////////////
++VBoundDBN2::VBoundDBN2()
++{
++}
++
++////////////////////
++// declareOptions //
++////////////////////
++void VBoundDBN2::declareOptions(OptionList&amp; ol)
++{
++    declareOption(ol, &quot;rbm1&quot;, &amp;VBoundDBN2::rbm1,
++                  OptionBase::buildoption,
++                  &quot;First RBM, taking the DBN's input in its visible layer&quot;);
++    declareOption(ol, &quot;rbm2&quot;, &amp;VBoundDBN2::rbm1,
++                  OptionBase::buildoption,
++                  &quot;Second RBM, producing the DBN's output and generating internal representations.&quot;);
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++////////////
++// build_ //
++////////////
++void VBoundDBN2::build_()
++{
++    if (random_gen)
++    {
++        if (rbm1 &amp;&amp; !rbm1-&gt;random_gen)
++        {
++            rbm1-&gt;random_gen = random_gen;
++            rbm1-&gt;build();
++            rbm1-&gt;forget();
++        }
++        if (rbm2 &amp;&amp; !rbm2-&gt;random_gen)
++        {
++            rbm2-&gt;random_gen = random_gen;
++            rbm2-&gt;build();
++            rbm2-&gt;forget();
++        }
++    }
++    ports.append(&quot;input&quot;); // 0
++    ports.append(&quot;bound&quot;); // 1
++    ports.append(&quot;nll&quot;); // 2
++    ports.append(&quot;sampled_h&quot;); // 3
++    ports.append(&quot;global_improvement&quot;); // 4
++    ports.append(&quot;ph_given_v&quot;); // 5
++}
++
++///////////
++// build //
++///////////
++void VBoundDBN2::build()
++{
++    inherited::build();
++    build_();
++}
++
++////////////////////
++// bpropAccUpdate //
++////////////////////
++void VBoundDBN2::bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                const TVec&lt;Mat*&gt;&amp; ports_gradient)
++{
++    PLASSERT( ports_value.length() == nPorts() &amp;&amp; ports_gradient.length() == nPorts());
++    PLASSERT( rbm1 &amp;&amp; rbm2);
++
++    Mat* input = ports_value[0];
++    Mat* sampled_h_ = ports_value[3]; // a state if input is given
++    Mat* global_improvement_ = ports_value[4]; // a state if input is given
++    Mat* ph_given_v_ = ports_value[5]; // a state if input is given
++
++
++    // Ensure all required gradients have been computed.
++    checkProp(ports_gradient);
++}
++
++//////////////////////
++// bpropDoesNothing //
++//////////////////////
++/* THIS METHOD IS OPTIONAL
++// the default implementation returns false
++bool VBoundDBN2::bpropDoesNothing()
++{
++}
++*/
++
++//////////////
++// finalize //
++//////////////
++/* THIS METHOD IS OPTIONAL
++void VBoundDBN2::finalize()
++{
++}
++*/
++
++////////////
++// forget //
++////////////
++void VBoundDBN2::forget()
++{
++    PLASSERT(rbm1 &amp;&amp; rbm2);
++    rbm1-&gt;forget();
++    rbm2-&gt;forget();
++}
++
++///////////
++// fprop //
++///////////
++void VBoundDBN2::fprop(const TVec&lt;Mat*&gt;&amp; ports_value)
++{
++    PLASSERT( ports_value.length() == nPorts() );
++    PLASSERT( rbm1 &amp;&amp; rbm2);
++
++    Mat* input = ports_value[0];
++    Mat* bound = ports_value[1];
++    Mat* nll = ports_value[2];
++    Mat* sampled_h_ = ports_value[3]; // a state if input is given
++    Mat* global_improvement_ = ports_value[4]; // a state if input is given
++    Mat* ph_given_v_ = ports_value[5]; // a state if input is given
++
++    // fprop has two modes:
++    //  1) input is given (presumably for learning, or measuring bound or nll)
++    //  2) input is not given and we want to generate one
++    //
++
++    // for learning or testing
++    if (input &amp;&amp; !input-&gt;isEmpty()) 
++    {
++        int mbs=input-&gt;length();
++        FE1v.resize(mbs,1);
++        FE1h.resize(mbs,1);
++        FE2h.resize(mbs,1);
++        Mat* sampled_h = sampled_h_?sampled_h_:&amp;sampled_h_state;
++        Mat* global_improvement = global_improvement_?global_improvement_:&amp;global_improvement_state;
++        Mat* ph_given_v = ph_given_v_?ph_given_v_:&amp;ph_given_v_state;
++        sampled_h-&gt;resize(mbs,rbm1-&gt;hidden_layer-&gt;size);
++        global_improvement-&gt;resize(mbs,1);
++        ph_given_v-&gt;resize(mbs,rbm1-&gt;hidden_layer-&gt;size);
++
++        // compute things needed for everything else 
++    
++        rbm1-&gt;sampleHiddenGivenVisible(*input);
++        *ph_given_v &lt;&lt; rbm1-&gt;hidden_layer-&gt;getExpectations();
++        *sampled_h &lt;&lt; rbm1-&gt;hidden_layer-&gt;samples;
++        rbm1-&gt;visible_layer-&gt;fpropNLL(*sampled_h,neglogphsample_given_v);
++        rbm1-&gt;computeFreeEnergyOfVisible(*input,FE1v);
++        rbm1-&gt;computeFreeEnergyOfHidden(*sampled_h,FE1h);
++        rbm2-&gt;computeFreeEnergyOfVisible(*sampled_h,FE2h);
++        substract(FE1h,FE2h,*global_improvement);
++
++        if (bound) // actually minus the bound, to be in same units as nll, only computed exactly during test
++        {
++            PLASSERT(bound-&gt;isEmpty());
++            bound-&gt;resize(mbs,1);
++
++            if (rbm2-&gt;partition_function_is_stale &amp;&amp; !during_training)
++                rbm2-&gt;computePartitionFunction();
++            *bound &lt;&lt; FE1v;
++            *bound -= *global_improvement;
++            *bound += rbm2-&gt;log_partition_function;
++        }
++        if (nll) // exact -log P(input) = - log sum_h P2(h) P1(input|h)
++        {
++            int n_h_configurations = 1 &lt;&lt; rbm1-&gt;hidden_layer-&gt;size;
++            if (all_h.length()!=n_h_configurations || all_h.width()!=rbm1-&gt;hidden_layer-&gt;size)
++            {
++                all_h.resize(n_h_configurations,rbm1-&gt;hidden_layer-&gt;size);
++                for (int c=0;c&lt;n_h_configurations;c++)
++                {
++                    int N=c;
++                    for (int i=0;i&lt;rbm1-&gt;hidden_layer-&gt;size;i++)
++                    {
++                        all_h(c,i) = N&amp;1;
++                        N &gt;&gt;= 1;
++                    }
++                }
++            }
++            // compute -log P2(h) for each possible h configuration
++            if (rbm2-&gt;partition_function_is_stale &amp;&amp; !during_training)
++                rbm2-&gt;computePartitionFunction();
++            neglogP2h.resize(n_h_configurations,1);
++            rbm2-&gt;computeFreeEnergyOfVisible(all_h,neglogP2h,false);
++            rbm1-&gt;computeNegLogPVisibleGivenPHidden(*input,all_h,&amp;neglogP2h,*nll);
++        }
++    }
++    // Ensure all required ports have been computed.
++    checkProp(ports_value);
++}
++
++//////////////////
++// getPortIndex //
++//////////////////
++/* Optional
++int VBoundDBN2::getPortIndex(const string&amp; port)
++{}
++*/
++
++//////////////
++// getPorts //
++//////////////
++const TVec&lt;string&gt;&amp; VBoundDBN2::getPorts() {
++    return ports;
++}
++
++//////////////////
++// getPortSizes //
++//////////////////
++const TMat&lt;int&gt;&amp; VBoundDBN2::getPortSizes() {
++    TMat&lt;int&gt; sizes(nPorts(),2);
++    sizes.fill(-1);
++    return sizes;
++}
++
++/////////////////////////////////
++// makeDeepCopyFromShallowCopy //
++/////////////////////////////////
++void VBoundDBN2::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++    deepCopyField(rbm1, copies);
++    deepCopyField(rbm2, copies);
++    deepCopyField(FE1v, copies);
++    deepCopyField(FE1h, copies);
++    deepCopyField(FE2h, copies);
++    deepCopyField(sampled_h_state, copies);
++    deepCopyField(global_improvement_state, copies);
++    deepCopyField(ph_given_v_state, copies);
++    deepCopyField(neglogphsample_given_h, copies);
++    deepCopyField(all_h, copies);
++    deepCopyField(all_h, copies);
++    deepCopyField(neglogP2h, copies);
++    deepCopyField(ports, copies);
++}
++
++/////////////////////
++// setLearningRate //
++/////////////////////
++/* OPTIONAL
++// The default implementation raises a warning and does not do anything.
++void VBoundDBN2::setLearningRate(real dynamic_learning_rate)
++{
++}
++*/
++
++
++}
++// end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/online/VBoundDBN2.h
+===================================================================
+--- trunk/plearn_learners/online/VBoundDBN2.h	2007-08-07 20:33:03 UTC (rev 7950)
++++ trunk/plearn_learners/online/VBoundDBN2.h	2007-08-08 14:56:28 UTC (rev 7951)
+@@ -0,0 +1,312 @@
++// -*- C++ -*-
++
++// VBoundDBN2.h
++//
++// Copyright (C) 2007 yoshua Bengio
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: yoshua Bengio
++
++/*! \file VBoundDBN2.h */
++
++
++#ifndef VBoundDBN2_INC
++#define VBoundDBN2_INC
++
++#include &lt;plearn_learners/online/OnlineLearningModule.h&gt;
++#include &lt;plearn_learners/online/RBMModule.h&gt;
++
++namespace PLearn {
++
++/**
++ * 2-RBM DBN trained using Hinton's new variational bound of global likelihood:
++ * 
++ * log P(x) &gt;= -FE1(x) + E_{P1(h|x)}[ FE1(h) - FE2(h) ] - log Z2
++ *
++ * where P1 and P2 are RBMs with Pi(x) = exp(-FEi(x))/Zi.
++ *
++ */
++class VBoundDBN2 : public OnlineLearningModule
++{
++    typedef OnlineLearningModule inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! ### declare public option fields (such as build options) here
++    //! Start your comments with Doxygen-compatible comments such as //!
++
++    PP&lt;RBMModule&gt; rbm1;
++    PP&lt;RBMModule&gt; rbm2;
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    // ### Make sure the implementation in the .cc
++    // ### initializes all fields to reasonable default values.
++    VBoundDBN2();
++
++    // Your other public member functions go here
++
++    //! Perform a fprop step.
++    //! Each Mat* pointer in the 'ports_value' vector can be one of:
++    //! - a full matrix: this is data that is provided to the module, and can
++    //!                  be used to compute other ports' values
++    //! - an empty matrix: this is what we want to compute
++    //! - a NULL pointer: this is data that is not available, but whose value
++    //!                   does not need to be returned (or even computed)
++    //! The default version will either:
++    //! - call the mini-batch versions of standard fprop if 'ports_value' has
++    //!   size 2, with the first value being provided (and the second being
++    //!   the desired output)
++    //! - crash otherwise
++    void fprop(const TVec&lt;Mat*&gt;&amp; ports_value);
++
++    //! Perform a back propagation step (also updating parameters according to
++    //! the provided gradient).
++    //! The matrices in 'ports_value' must be the same as the ones given in a
++    //! previous call to 'fprop' (and thus they should in particular contain
++    //! the result of the fprop computation). However, they are not necessarily
++    //! the same as the ones given in the LAST call to 'fprop': if there is a
++    //! need to store an internal module state, this should be done using a
++    //! specific port to store this state.
++    //! Each Mat* pointer in the 'ports_gradient' vector can be one of:
++    //! - a full matrix  : this is the gradient that is provided to the module,
++    //!                    and can be used to compute other ports' gradient.
++    //! - an empty matrix: this is a gradient we want to compute and accumulate
++    //!                    into. This matrix must have length 0 and a width
++    //!                    equal to the width of the corresponding matrix in
++    //!                    the 'ports_value' vector (we can thus accumulate
++    //!                    gradients using PLearn's ability to keep intact
++    //!                    stored values when resizing a matrix' length).
++    //! - a NULL pointer : this is a gradient that is not available, but does
++    //!                    not need to be returned (or even computed).
++    //! The default version tries to use the standard mini-batch bpropUpdate
++    //! method, when possible.
++    virtual void bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                const TVec&lt;Mat*&gt;&amp; ports_gradient);
++
++    /* Optional
++
++    //! Given the input, compute the output (possibly resize it appropriately)
++    //! SOON TO BE DEPRECATED, USE fprop(const TVec&lt;Mat*&gt;&amp; ports_value)
++    virtual void fprop(const Vec&amp; input, Vec&amp; output) const;
++
++    //! Given a batch of inputs, compute the outputs
++    //! SOON TO BE DEPRECATED, USE fprop(const TVec&lt;Mat*&gt;&amp; ports_value)
++    virtual void fprop(const Mat&amp; inputs, Mat&amp; outputs);
++    */
++
++    /* Optional
++    //! SOON TO BE DEPRECATED, USE bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++    //!                                           const TVec&lt;Mat*&gt;&amp; ports_gradient)
++    //! Adapt based on the output gradient, and obtain the input gradient.
++    //! The flag indicates wether the input_gradient is accumulated or set.
++    //! This method should only be called just after a corresponding
++    //! fprop; it should be called with the same arguments as fprop
++    //! for the first two arguments (and output should not have been
++    //! modified since then).
++    //! Since sub-classes are supposed to learn ONLINE, the object
++    //! is 'ready-to-be-used' just after any bpropUpdate.
++    virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                             Vec&amp; input_gradient,
++                             const Vec&amp; output_gradient,
++                             bool accumulate=false);
++
++    //! Batch version
++    //! SOON TO BE DEPRECATED, USE bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++    //!                                           const TVec&lt;Mat*&gt;&amp; ports_gradient)
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             Mat&amp; input_gradients,
++                             const Mat&amp; output_gradients,
++                             bool accumulate=false);
++    */
++
++    /* Optional
++    //! SOON TO BE DEPRECATED, USE bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++    //!                                           const TVec&lt;Mat*&gt;&amp; ports_gradient)
++       A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS, WHICH
++       JUST CALLS
++            bpropUpdate(input, output, input_gradient, output_gradient)
++       AND IGNORES INPUT GRADIENT.
++    //! This version does not obtain the input gradient.
++    virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                             const Vec&amp; output_gradient);
++
++    //! Batch version
++    //! SOON TO BE DEPRECATED, USE bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++    //!                                           const TVec&lt;Mat*&gt;&amp; ports_gradient)
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             const Mat&amp; output_gradients);
++    */
++
++    /* Optional
++       N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS, WHICH
++       RAISES A PLERROR.
++    //! Similar to bpropUpdate, but adapt based also on the estimation
++    //! of the diagonal of the Hessian matrix, and propagates this
++    //! back. If these methods are defined, you can use them INSTEAD of
++    //! bpropUpdate(...)
++    virtual void bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                              Vec&amp; input_gradient,
++                              const Vec&amp; output_gradient,
++                              Vec&amp; input_diag_hessian,
++                              const Vec&amp; output_diag_hessian,
++                              bool accumulate=false);
++    */
++
++    /* Optional
++       N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS,
++       WHICH JUST CALLS
++            bbpropUpdate(input, output, input_gradient, output_gradient,
++                         out_hess, in_hess)
++       AND IGNORES INPUT HESSIAN AND INPUT GRADIENT.
++    //! This version does not obtain the input gradient and diag_hessian.
++    virtual void bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                              const Vec&amp; output_gradient,
++                              const Vec&amp; output_diag_hessian);
++    */
++
++
++    //! Reset the parameters to the state they would be BEFORE starting
++    //! training.  Note that this method is necessarily called from
++    //! build().
++    virtual void forget();
++
++
++    /* Optional
++       THE DEFAULT IMPLEMENTATION PROVIDED IN THE SUPER-CLASS DOES NOT
++       DO ANYTHING.
++    //! Perform some processing after training, or after a series of
++    //! fprop/bpropUpdate calls to prepare the model for truly out-of-sample
++    //! operation.
++    virtual void finalize();
++    */
++
++    /* Optional
++       THE DEFAULT IMPLEMENTATION PROVIDED IN THE SUPER-CLASS RETURNS false
++    //! In case bpropUpdate does not do anything, make it known
++    virtual bool bpropDoesNothing();
++    */
++
++    /* Optional
++       Default implementation prints a warning and does nothing
++    //! If this class has a learning rate (or something close to it), set it.
++    //! If not, you can redefine this method to get rid of the warning.
++    virtual void setLearningRate(real dynamic_learning_rate);
++    */
++
++    //! Return the list of ports in the module.
++    //! The default implementation returns a pair (&quot;input&quot;, &quot;output&quot;) to handle
++    //! the most common case.
++    virtual const TVec&lt;string&gt;&amp; getPorts();
++
++    /* Optional
++    //! Return the size of all ports, in the form of a two-column matrix, where
++    //! each row represents a port, and the two numbers on a row are
++    //! respectively its length and its width (with -1 representing an
++    //! undefined or variable value).
++    //! The default value fills this matrix with:
++    //!     - in the first column (lengths): -1
++    //!     - in the second column (widths):
++    //!         - -1 if nPorts() &lt; 2
++    //!         - 'input_size' for the first row and 'output_size' for the
++    //!           second row if nPorts() &gt;= 2
++    virtual const TMat&lt;int&gt;&amp; getPortSizes();
++
++    //! Return the index (as in the list of ports returned by getPorts()) of
++    //! a given port.
++    //! If 'port' does not exist, -1 is returned.
++    //  ### Default implementation performs a simple linear search in
++    //  ### getPorts().
++    virtual int getPortIndex(const string&amp; port);
++    */
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    // ### If your class is not instantiatable (it has pure virtual methods)
++    // ### you should replace this by PLEARN_DECLARE_ABSTRACT_OBJECT
++    PLEARN_DECLARE_OBJECT(VBoundDBN2);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++
++    Mat FE1v, FE1h, FE2h;
++    Mat sampled_h_state;
++    Mat global_improvement_state;
++    Mat ph_given_v_state;
++    Mat neglogphsample_given_v;
++    Mat all_h; // for computing exact likelihood
++    Mat neglogP2h;
++    TVec&lt;string&gt; ports;
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(VBoundDBN2);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001398.html">[Plearn-commits] r7950 - in tags: . finlearn3-august2007	finlearn3-august2007/python_modules/plearn/plide	finlearn3-august2007/python_modules/plearn/pyplearn
+</A></li>
+	<LI>Next message: <A HREF="001400.html">[Plearn-commits] r7952 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1399">[ date ]</a>
+              <a href="thread.html#1399">[ thread ]</a>
+              <a href="subject.html#1399">[ subject ]</a>
+              <a href="author.html#1399">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

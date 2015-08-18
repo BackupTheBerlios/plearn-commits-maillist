@@ -1,0 +1,290 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10082 - trunk/plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10082%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200904032050.n33KoZqX002332%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003521.html">
+   <LINK REL="Next"  HREF="003523.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10082 - trunk/plearn_learners/regressors</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10082%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200904032050.n33KoZqX002332%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10082 - trunk/plearn_learners/regressors">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Apr  3 22:50:35 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003521.html">[Plearn-commits] r10081 - trunk/commands/PLearnCommands
+</A></li>
+        <LI>Next message: <A HREF="003523.html">[Plearn-commits] r10083 - trunk/plearn/ker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3522">[ date ]</a>
+              <a href="thread.html#3522">[ thread ]</a>
+              <a href="subject.html#3522">[ subject ]</a>
+              <a href="author.html#3522">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-04-03 22:50:29 +0200 (Fri, 03 Apr 2009)
+New Revision: 10082
+
+Modified:
+   trunk/plearn_learners/regressors/RegressionTreeNode.cc
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+Log:
+optimisation that interleave memory access with computation with prefetch
+
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.cc	2009-04-03 17:43:08 UTC (rev 10081)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.cc	2009-04-03 20:50:29 UTC (rev 10082)
+@@ -267,12 +267,19 @@
+     row_split_balance.clear();
+ #endif
+     int leave_id = leave-&gt;getId();
++   
+     for (int col = 0; col &lt; inputsize; col++)
+     {
+         missing_leave-&gt;initStats();
+         left_leave-&gt;initStats();
+         right_leave-&gt;initStats();
+         
++        PLASSERT(registered_row.size()==leave-&gt;length());
++        PLASSERT(candidate.size()==0);
++
++#ifdef NPREFETCH
++        //The ifdef is in case we don't want to use the optimized version with
++        //prefetch of memory. Maybe the optimization is hurtfull for some computer.
+         train_set-&gt;getAllRegisteredRow(leave_id, col, registered_row,
+                                        registered_target_weight,
+                                        registered_value);
+@@ -314,6 +321,18 @@
+             }
+         }
+ 
++#else
++        train_set-&gt;getAllRegisteredRowLeave(leave_id, col, registered_row,
++                                            registered_target_weight,
++                                            registered_value,
++                                            missing_leave,
++                                            left_leave,
++                                            right_leave, candidate);
++        PLASSERT(registered_row.size()==leave-&gt;length());
++        PLASSERT(candidate.size()&gt;0);
++
++#endif
++
+         missing_leave-&gt;getOutputAndError(tmp_vec, missing_error);
+         tuple&lt;real,real,int&gt; ret=bestSplitInRow(col, candidate, left_error,
+                                                 right_error, missing_error,
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2009-04-03 17:43:08 UTC (rev 10081)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2009-04-03 20:50:29 UTC (rev 10082)
+@@ -40,6 +40,7 @@
+  ********************************************************************************** */
+ 
+ #include &quot;RegressionTreeRegisters.h&quot;
++#include &quot;RegressionTreeLeave.h&quot;
+ #define PL_LOG_MODULE_NAME RegressionTreeRegisters
+ #include &lt;plearn/io/pl_log.h&gt;
+ #include &lt;plearn/vmat/TransposeVMatrix.h&gt;
+@@ -219,6 +220,99 @@
+     //in case we don't save the sorted data
+     sortRows();
+ }
++
++void RegressionTreeRegisters::getAllRegisteredRowLeave(
++    RTR_type_id leave_id, int col,
++    TVec&lt;RTR_type&gt; &amp;reg,
++    TVec&lt;pair&lt;RTR_target_t,RTR_weight_t&gt; &gt; &amp;t_w,
++    Vec &amp;value,
++    PP&lt;RegressionTreeLeave&gt; missing_leave,
++    PP&lt;RegressionTreeLeave&gt; left_leave,
++    PP&lt;RegressionTreeLeave&gt; right_leave,
++    TVec&lt;RTR_type&gt; &amp;candidate) const
++{
++    PLASSERT(tsource_mat.length()==tsource.length());
++
++    getAllRegisteredRow(leave_id,col,reg);
++    t_w.resize(reg.length());
++    value.resize(reg.length());
++    real * p = tsource_mat[col];
++    pair&lt;RTR_target_t,RTR_weight_t&gt; * ptw = target_weight.data();
++    pair&lt;RTR_target_t,RTR_weight_t&gt;* ptwd = t_w.data();
++    real * pv = value.data();
++    RTR_type * preg = reg.data();
++
++    //It is better to do multiple pass for memory access.
++
++    //we do this optimization in case their is many row with the same value
++    //at the end as with binary variable.
++    //we do it here to overlap computation and memory access
++    int row_idx_end = reg.size() - 1;
++    int prev_row=preg[row_idx_end];
++    real prev_val=p[prev_row];
++    PLASSERT(reg.size()&gt;row_idx_end &amp;&amp; row_idx_end&gt;=0);
++    PLASSERT(p[prev_row]==tsource(col,prev_row));
++
++    for( ;row_idx_end&gt;0;row_idx_end--)
++    {
++        int futur_row = preg[row_idx_end-8];
++        __builtin_prefetch(&amp;ptw[futur_row],1,2);
++        __builtin_prefetch(&amp;p[futur_row],1,2);
++
++        int row=prev_row;
++        real val=prev_val;
++        prev_row = preg[row_idx_end-1];
++        prev_val = p[prev_row];
++
++        PLASSERT(reg.size()&gt;row_idx_end &amp;&amp; row_idx_end&gt;0);
++        PLASSERT(target_weight.size()&gt;row &amp;&amp; row&gt;=0);
++        PLASSERT(p[row]==tsource(col,row));
++        RTR_target_t target = ptw[row].first;
++        RTR_weight_t weight = ptw[row].second;
++
++        if (is_missing(val))
++            missing_leave-&gt;addRow(row, target, weight);
++        else if(val==prev_val)
++            right_leave-&gt;addRow(row, target, weight);
++        else
++            break;
++    }
++
++    //We need the last data for an optimization in RTN
++    {
++        int idx=reg.size()-1;
++        PLASSERT(reg.size()&gt;idx &amp;&amp; idx&gt;=0);
++        int row=int(preg[idx]);
++        PLASSERT(target_weight.size()&gt;row &amp;&amp; row&gt;=0);
++        PLASSERT(p[row]==tsource(col,row));
++        pv[idx]=p[row];
++    }
++        for(int row_idx = 0;row_idx&lt;=row_idx_end;row_idx++)
++        {
++            int futur_row = preg[row_idx+8];
++            __builtin_prefetch(&amp;ptw[futur_row],1,2);
++            __builtin_prefetch(&amp;p[futur_row],1,2);
++            
++            PLASSERT(reg.size()&gt;row_idx &amp;&amp; row_idx&gt;=0);
++            int row=int(preg[row_idx]);
++            real val=p[row];
++            PLASSERT(target_weight.size()&gt;row &amp;&amp; row&gt;=0);
++            PLASSERT(p[row]==tsource(col,row));
++            ptwd[row_idx].first=ptw[row].first;
++            ptwd[row_idx].second=ptw[row].second;
++            pv[row_idx]=val;
++            
++            RTR_target_t target = ptw[row].first;
++            RTR_weight_t weight = ptw[row].second;
++            if (is_missing(val)){
++                missing_leave-&gt;addRow(row, target, weight);
++            }else {
++                left_leave-&gt;addRow(row, target, weight);
++                candidate.append(row);
++            }
++        }
++}
++
+ void RegressionTreeRegisters::getAllRegisteredRow(RTR_type_id leave_id, int col,
+                                                   TVec&lt;RTR_type&gt; &amp;reg,
+                                                   TVec&lt;pair&lt;RTR_target_t,RTR_weight_t&gt; &gt; &amp;t_w,
+@@ -368,9 +462,8 @@
+         PLearn::save(f,tsorted_row);
+     }else{
+     }
+-
+ }
+-  
++                                                  
+ void RegressionTreeRegisters::sortEachDim(int dim)
+ {
+     PLCHECK_MSG(tsource-&gt;classname()==&quot;MemoryVMatrixNoSave&quot;,tsource-&gt;classname().c_str());
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2009-04-03 17:43:08 UTC (rev 10081)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2009-04-03 20:50:29 UTC (rev 10082)
+@@ -68,10 +68,11 @@
+ namespace PLearn {
+ using namespace std;
+ 
++class RegressionTreeLeave;
+ class RegressionTreeRegisters: public VMatrix
+ {
+     typedef VMatrix inherited;
+-  
++    
+ private:
+ 
+ /*
+@@ -98,6 +99,7 @@
+ 
+     bool do_sort_rows;
+     bool mem_tsource;
++
+     mutable vector&lt;bool&gt; compact_reg;
+     mutable int compact_reg_leave;
+ 
+@@ -141,6 +143,13 @@
+     void         getAllRegisteredRow(RTR_type_id leave_id, int col, TVec&lt;RTR_type&gt; &amp;reg)const;
+     void         getAllRegisteredRow(RTR_type_id leave_id, int col, TVec&lt;RTR_type&gt; &amp;reg,
+                                      TVec&lt;pair&lt;RTR_target_t,RTR_weight_t&gt; &gt; &amp;t_w, Vec &amp;value)const;
++    void         getAllRegisteredRowLeave(
++        RTR_type_id leave_id, int col, TVec&lt;RTR_type&gt; &amp;reg,
++        TVec&lt;pair&lt;RTR_target_t,RTR_weight_t&gt; &gt; &amp;t_w, Vec &amp;value,
++        PP&lt;RegressionTreeLeave&gt; missing_leave,
++        PP&lt;RegressionTreeLeave&gt; left_leave,
++        PP&lt;RegressionTreeLeave&gt; right_leave,
++        TVec&lt;RTR_type&gt; &amp;candidate)const;
+     void         printRegisters();
+     void         getExample(int i, Vec&amp; input, Vec&amp; target, real&amp; weight);
+     inline virtual void put(int i, int j, real value)
+@@ -154,7 +163,7 @@
+     
+     //! usefull in MultiClassAdaBoost to save memory
+     inline TMat&lt;RTR_type&gt; getTSortedRow(){return tsorted_row;}
+-    inline VMat   getTSource(){return tsource;}
++    inline VMat  getTSource(){return tsource;}
+     virtual void finalize(){tsorted_row = TMat&lt;RTR_type&gt;();}
+ 
+ private:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003521.html">[Plearn-commits] r10081 - trunk/commands/PLearnCommands
+</A></li>
+	<LI>Next message: <A HREF="003523.html">[Plearn-commits] r10083 - trunk/plearn/ker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3522">[ date ]</a>
+              <a href="thread.html#3522">[ thread ]</a>
+              <a href="subject.html#3522">[ subject ]</a>
+              <a href="author.html#3522">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

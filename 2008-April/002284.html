@@ -1,0 +1,536 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8836 - trunk/plearn_learners/online/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8836%20-%20trunk/plearn_learners/online/EXPERIMENTAL&In-Reply-To=%3C200804182158.m3ILwh4o030300%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002283.html">
+   <LINK REL="Next"  HREF="002285.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8836 - trunk/plearn_learners/online/EXPERIMENTAL</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8836%20-%20trunk/plearn_learners/online/EXPERIMENTAL&In-Reply-To=%3C200804182158.m3ILwh4o030300%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8836 - trunk/plearn_learners/online/EXPERIMENTAL">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Fri Apr 18 23:58:43 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002283.html">[Plearn-commits] r8835 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="002285.html">[Plearn-commits] r8837 - trunk/plearn/io
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2284">[ date ]</a>
+              <a href="thread.html#2284">[ thread ]</a>
+              <a href="subject.html#2284">[ subject ]</a>
+              <a href="author.html#2284">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2008-04-18 23:58:43 +0200 (Fri, 18 Apr 2008)
+New Revision: 8836
+
+Added:
+   trunk/plearn_learners/online/EXPERIMENTAL/SemiSupervisedDBN.cc
+   trunk/plearn_learners/online/EXPERIMENTAL/SemiSupervisedDBN.h
+Log:
+Experimental DBN with semi-supervised learning at each layer.
+
+
+Added: trunk/plearn_learners/online/EXPERIMENTAL/SemiSupervisedDBN.cc
+===================================================================
+--- trunk/plearn_learners/online/EXPERIMENTAL/SemiSupervisedDBN.cc	2008-04-18 21:13:57 UTC (rev 8835)
++++ trunk/plearn_learners/online/EXPERIMENTAL/SemiSupervisedDBN.cc	2008-04-18 21:58:43 UTC (rev 8836)
+@@ -0,0 +1,265 @@
++// -*- C++ -*-
++
++// SemiSupervisedDBN.cc
++//
++// Copyright (C) 2008 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file SemiSupervisedDBN.cc */
++
++
++#include &quot;SemiSupervisedDBN.h&quot;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    SemiSupervisedDBN,
++    &quot;Deep Belief Net, possibly supervised, trained only with CD&quot;,
++    &quot;&quot;);
++
++SemiSupervisedDBN::SemiSupervisedDBN():
++    learning_rate(0),
++    n_classes(0),
++    share_layers(false),
++    n_layers(0)
++{
++    random_gen = new PRandom();
++}
++
++void SemiSupervisedDBN::declareOptions(OptionList&amp; ol)
++{
++    // declareOption(ol, &quot;myoption&quot;, &amp;SemiSupervisedDBN::myoption,
++    //               OptionBase::buildoption,
++    //               &quot;Help text describing this option&quot;);
++
++    declareOption(ol, &quot;&quot;, &amp;SemiSupervisedDBN::,
++                  OptionBase::buildoption,
++                  &quot;&quot;);
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++void SemiSupervisedDBN::build_()
++{
++    bool rbms_need_build = false;
++    if (layer_sizes.length() != rbms.size()+1)
++        rbms_need_build = true;
++    else
++    {
++        n_rbms = rbms.size();
++        for (int i=0; i&lt;n_rbms; i++)
++        {
++            if (layer_sizes[i] != rbms[i]-&gt;input_size)
++            {
++                rbms_need_build = true;
++                break;
++            }
++            if (layer_is_supervised[i] &amp;&amp; (rbms[i]-&gt;target_size != n_target))
++            {
++                rbms_need_build = true;
++                break;
++            }
++            if (!layer_is_supervised[i] &amp;&amp; (rbms[i]-&gt;target_size != 0))
++            {
++                rbms_need_build = true;
++                break;
++            }
++            if (layer_sizes[i+1] != rbms[i]-&gt;hidden_size)
++            {
++                rbms_need_build = true;
++                break;
++            }
++        }
++    }
++
++    if (rbms_need_build)
++        build_rbms();
++}
++
++void SemiSupervisedDBN::build_rbms()
++{
++    n_layers = layer_sizes.length();
++    n_rbms = n_layers - 1;
++    rbms.resize(n_rbms);
++    for (int i=0; i&lt;n_rbms; i++)
++    {
++        if (rbms[i].isNull())
++            rbms[i] = new InferenceRBM;
++
++        if (i==0 &amp;&amp; first_layer_type == &quot;gaussian&quot;)
++            rbms[i]-&gt;input_layer = new RBMGaussianLayer(layer_sizes[0]);
++        else if (i&gt;0 &amp;&amp; share_layers)
++            rbms[i]-&gt;input_layer = rbms[i-1]-&gt;hidden_layer;
++        else
++            rbms[i]-&gt;input_layer = new RBMGaussianLayer(layer_sizes[i]);
++
++
++        if (layer_is_supervised[i])
++            rbms[i]-&gt;target = new RBMMultinomialLayer(n_classes);
++
++        rbms[i]-&gt;hidden = new RBMBinomialLayer(layer_sizes[i+1]);
++
++        rbms[i]-&gt;random_gen = random_gen;
++        rbms[i]-&gt;build();
++        rbms[i]-&gt;setLearningRate(learning_rate);
++    }
++}
++
++
++void SemiSupervisedDBN::build()
++{
++    inherited::build();
++    build_();
++}
++
++
++void SemiSupervisedDBN::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    // ### Call deepCopyField on all &quot;pointer-like&quot; fields
++    // ### that you wish to be deepCopied rather than
++    // ### shallow-copied.
++    // ### ex:
++    // deepCopyField(trainvec, copies);
++
++    // ### Remove this line when you have fully implemented this method.
++    PLERROR(&quot;SemiSupervisedDBN::makeDeepCopyFromShallowCopy not fully (correctly) implemented yet!&quot;);
++}
++
++
++int SemiSupervisedDBN::outputsize() const
++{
++    // Compute and return the size of this learner's output (which typically
++    // may depend on its inputsize(), targetsize() and set options).
++}
++
++void SemiSupervisedDBN::forget()
++{
++    //! (Re-)initialize the PLearner in its fresh state (that state may depend
++    //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
++    //! a fresh learner!)
++    /*!
++      A typical forget() method should do the following:
++      - call inherited::forget() to initialize its random number generator
++        with the 'seed' option
++      - initialize the learner's parameters, using this random generator
++      - stage = 0
++    */
++    inherited::forget();
++}
++
++void SemiSupervisedDBN::train()
++{
++    // The role of the train method is to bring the learner up to
++    // stage==nstages, updating train_stats with training costs measured
++    // on-line in the process.
++
++    /* TYPICAL CODE:
++
++    static Vec input;  // static so we don't reallocate memory each time...
++    static Vec target; // (but be careful that static means shared!)
++    input.resize(inputsize());    // the train_set's inputsize()
++    target.resize(targetsize());  // the train_set's targetsize()
++    real weight;
++
++    // This generic PLearner method does a number of standard stuff useful for
++    // (almost) any learner, and return 'false' if no training should take
++    // place. See PLearner.h for more details.
++    if (!initTrain())
++        return;
++
++    while(stage&lt;nstages)
++    {
++        // clear statistics of previous epoch
++        train_stats-&gt;forget();
++
++        //... train for 1 stage, and update train_stats,
++        // using train_set-&gt;getExample(input, target, weight)
++        // and train_stats-&gt;update(train_costs)
++
++        ++stage;
++        train_stats-&gt;finalize(); // finalize statistics for this epoch
++    }
++    */
++}
++
++
++void SemiSupervisedDBN::computeOutput(const Vec&amp; input, Vec&amp; output) const
++{
++    // Compute the output from the input.
++    // int nout = outputsize();
++    // output.resize(nout);
++    // ...
++}
++
++void SemiSupervisedDBN::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                           const Vec&amp; target, Vec&amp; costs) const
++{
++// Compute the costs from *already* computed output.
++// ...
++}
++
++TVec&lt;string&gt; SemiSupervisedDBN::getTestCostNames() const
++{
++    // Return the names of the costs computed by computeCostsFromOutputs
++    // (these may or may not be exactly the same as what's returned by
++    // getTrainCostNames).
++    // ...
++}
++
++TVec&lt;string&gt; SemiSupervisedDBN::getTrainCostNames() const
++{
++    // Return the names of the objective costs that the train method computes
++    // and for which it updates the VecStatsCollector train_stats
++    // (these may or may not be exactly the same as what's returned by
++    // getTestCostNames).
++    // ...
++}
++
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/online/EXPERIMENTAL/SemiSupervisedDBN.h
+===================================================================
+--- trunk/plearn_learners/online/EXPERIMENTAL/SemiSupervisedDBN.h	2008-04-18 21:13:57 UTC (rev 8835)
++++ trunk/plearn_learners/online/EXPERIMENTAL/SemiSupervisedDBN.h	2008-04-18 21:58:43 UTC (rev 8836)
+@@ -0,0 +1,187 @@
++// -*- C++ -*-
++
++// SemiSupervisedDBN.h
++//
++// Copyright (C) 2008 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file SemiSupervisedDBN.h */
++
++
++#ifndef SemiSupervisedDBN_INC
++#define SemiSupervisedDBN_INC
++
++#include &lt;plearn_learners/generic/PLearner.h&gt;
++
++namespace PLearn {
++
++/**
++ * Deep Belief Net, possibly supervised, trained only with CD.
++ *
++ * @todo Write class to-do's here if there are any.
++ *
++ * @deprecated Write deprecated stuff here if there is any.  Indicate what else
++ * should be used instead.
++ */
++class SemiSupervisedDBN : public PLearner
++{
++    typedef PLearner inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! ### declare public option fields (such as build options) here
++    //! Start your comments with Doxygen-compatible comments such as //!
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    // ### Make sure the implementation in the .cc
++    // ### initializes all fields to reasonable default values.
++    SemiSupervisedDBN();
++
++
++    //#####  PLearner Member Functions  #######################################
++
++    //! Returns the size of this learner's output, (which typically
++    //! may depend on its inputsize(), targetsize() and set options).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual int outputsize() const;
++
++    //! (Re-)initializes the PLearner in its fresh state (that state may depend
++    //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
++    //! a fresh learner!).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void forget();
++
++    //! The role of the train method is to bring the learner up to
++    //! stage==nstages, updating the train_stats collector with training costs
++    //! measured on-line in the process.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void train();
++
++    //! Computes the output from the input.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
++
++    //! Computes the costs from already computed output.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                         const Vec&amp; target, Vec&amp; costs) const;
++
++    //! Returns the names of the costs computed by computeCostsFromOutpus (and
++    //! thus the test method).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual TVec&lt;std::string&gt; getTestCostNames() const;
++
++    //! Returns the names of the objective costs that the train method computes
++    //! and for which it updates the VecStatsCollector train_stats.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual TVec&lt;std::string&gt; getTrainCostNames() const;
++
++
++    // *** SUBCLASS WRITING: ***
++    // While in general not necessary, in case of particular needs
++    // (efficiency concerns for ex) you may also want to overload
++    // some of the following methods:
++    // virtual void computeOutputAndCosts(const Vec&amp; input, const Vec&amp; target,
++    //                                    Vec&amp; output, Vec&amp; costs) const;
++    // virtual void computeCostsOnly(const Vec&amp; input, const Vec&amp; target,
++    //                               Vec&amp; costs) const;
++    // virtual void test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
++    //                   VMat testoutputs=0, VMat testcosts=0) const;
++    // virtual int nTestCosts() const;
++    // virtual int nTrainCosts() const;
++    // virtual void resetInternalState();
++    // virtual bool isStatefulLearner() const;
++
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    // ### If your class is not instantiatable (it has pure virtual methods)
++    // ### you should replace this by PLEARN_DECLARE_ABSTRACT_OBJECT_METHODS
++    PLEARN_DECLARE_OBJECT(SemiSupervisedDBN);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++    //#####  Protected Options  ###############################################
++
++    // ### Declare protected option fields (such as learned parameters) here
++    // ...
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    // (PLEASE IMPLEMENT IN .cc)
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    // (PLEASE IMPLEMENT IN .cc)
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(SemiSupervisedDBN);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002283.html">[Plearn-commits] r8835 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="002285.html">[Plearn-commits] r8837 - trunk/plearn/io
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2284">[ date ]</a>
+              <a href="thread.html#2284">[ thread ]</a>
+              <a href="subject.html#2284">[ subject ]</a>
+              <a href="author.html#2284">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

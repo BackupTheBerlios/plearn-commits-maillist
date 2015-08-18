@@ -1,0 +1,728 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8444 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8444%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200802011601.m11G17tf018092%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001891.html">
+   <LINK REL="Next"  HREF="001893.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8444 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8444%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200802011601.m11G17tf018092%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8444 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Fri Feb  1 17:01:07 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001891.html">[Plearn-commits] r8443 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001893.html">[Plearn-commits] r8445 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1892">[ date ]</a>
+              <a href="thread.html#1892">[ thread ]</a>
+              <a href="subject.html#1892">[ subject ]</a>
+              <a href="author.html#1892">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-02-01 17:01:07 +0100 (Fri, 01 Feb 2008)
+New Revision: 8444
+
+Added:
+   trunk/plearn_learners/online/RBMMultitaskClassificationModule.cc
+   trunk/plearn_learners/online/RBMMultitaskClassificationModule.h
+Log:
+RBM module to compute an approximate mean-field posterior p(y|x) in an RBM.
+
+
+Added: trunk/plearn_learners/online/RBMMultitaskClassificationModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMultitaskClassificationModule.cc	2008-02-01 15:59:56 UTC (rev 8443)
++++ trunk/plearn_learners/online/RBMMultitaskClassificationModule.cc	2008-02-01 16:01:07 UTC (rev 8444)
+@@ -0,0 +1,426 @@
++// -*- C++ -*-
++
++// RBMMultitaskClassificationModule.cc
++//
++// Copyright (C) 2006 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file RBMMultitaskClassificationModule.cc */
++
++
++#define PL_LOG_MODULE_NAME &quot;RBMMultitaskClassificationModule&quot;
++
++#include &quot;RBMMultitaskClassificationModule.h&quot;
++#include &lt;plearn/io/pl_log.h&gt;
++#include &lt;plearn/math/TMat_maths.h&gt;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    RBMMultitaskClassificationModule,
++    &quot;Computes a mean-field approximate of p(y|x), with y a binary vector.&quot;,
++    &quot;This module contains, from bottom to top:\n&quot;
++    &quot;  - an RBMConnection - previous_to_last,\n&quot;
++    &quot;  - an RBMBinomialLayer - last_layer,\n&quot;
++    &quot;  - an RBMMatrixConnection (transposed) - last_to_target,\n&quot;
++    &quot;  - and an RBMBinomialLayer - target_layer.\n&quot;
++    &quot;The two RBMConnections are combined in joint_connection.\n&quot;);
++
++RBMMultitaskClassificationModule::RBMMultitaskClassificationModule():
++    n_mean_field_iterations( 1 ),
++    fprop_outputs_activation( false )
++{
++}
++
++void RBMMultitaskClassificationModule::declareOptions(OptionList&amp; ol)
++{
++    declareOption(ol, &quot;previous_to_last&quot;,
++                  &amp;RBMMultitaskClassificationModule::previous_to_last,
++                  OptionBase::buildoption,
++                  &quot;Connection between the previous layer, and last_layer.\n&quot;);
++
++    declareOption(ol, &quot;last_layer&quot;, &amp;RBMMultitaskClassificationModule::last_layer,
++                  OptionBase::buildoption,
++                  &quot;Top-level layer (the one in the middle if we unfold).\n&quot;);
++
++    declareOption(ol, &quot;last_to_target&quot;,
++                  &amp;RBMMultitaskClassificationModule::last_to_target,
++                  OptionBase::buildoption,
++                  &quot;Connection between last_layer and target_layer.\n&quot;);
++
++    declareOption(ol, &quot;target_layer&quot;, &amp;RBMMultitaskClassificationModule::target_layer,
++                  OptionBase::buildoption,
++                  &quot;Layer containing the one-hot vector containing the target\n&quot;
++                  &quot;(or its prediction).\n&quot;);
++
++    declareOption(ol, &quot;joint_connection&quot;,
++                  &amp;RBMMultitaskClassificationModule::joint_connection,
++                  OptionBase::learntoption,
++                  &quot;Connection grouping previous_to_last and last_to_target.\n&quot;);
++
++    declareOption(ol, &quot;n_mean_field_iterations&quot;,
++                  &amp;RBMMultitaskClassificationModule::n_mean_field_iterations,
++                  OptionBase::buildoption,
++                  &quot;Number of mean-field iterations.\n&quot;);
++
++    declareOption(ol, &quot;fprop_outputs_activation&quot;,
++                  &amp;RBMMultitaskClassificationModule::fprop_outputs_activation,
++                  OptionBase::buildoption,
++                  &quot;Indication that fprop should output the value of the &quot;
++                  &quot;activation\n&quot;
++                  &quot;before the squashing function and the application of the bias,\n&quot;
++                  &quot;instead of the mean-field approximation.\n&quot;);
++
++    declareOption(ol, &quot;last_size&quot;, &amp;RBMMultitaskClassificationModule::last_size,
++                  OptionBase::learntoption,
++                  &quot;Size of last_layer.\n&quot;);
++    /*
++    declareOption(ol, &quot;&quot;, &amp;RBMMultitaskClassificationModule::,
++                  OptionBase::buildoption,
++                  &quot;&quot;);
++     */
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++void RBMMultitaskClassificationModule::build_()
++{
++    MODULE_LOG &lt;&lt; &quot;build_() called&quot; &lt;&lt; endl;
++
++    if( !previous_to_last || !last_layer || !last_to_target || !target_layer )
++    {
++        MODULE_LOG &lt;&lt; &quot;build_() aborted because layers and connections were&quot;
++           &quot; not set&quot; &lt;&lt; endl;
++        return;
++    }
++
++    //! Check (and set) sizes
++    input_size = previous_to_last-&gt;down_size;
++    last_size = last_layer-&gt;size;
++    output_size = target_layer-&gt;size;
++
++    PLASSERT( previous_to_last-&gt;up_size == last_size );
++    PLASSERT( last_to_target-&gt;up_size == last_size );
++    PLASSERT( last_to_target-&gt;down_size == output_size );
++
++    //! build joint_connection
++    if( !joint_connection )
++        joint_connection = new RBMMixedConnection();
++
++    joint_connection-&gt;sub_connections.resize(1,2);
++    joint_connection-&gt;sub_connections(0,0) = previous_to_last;
++    joint_connection-&gt;sub_connections(0,1) = last_to_target;
++    joint_connection-&gt;build();
++
++    if( n_mean_field_iterations &gt; 0 )
++    {
++        mean_field_activations_target.resize( n_mean_field_iterations );
++        mean_field_approximations_target.resize( n_mean_field_iterations );
++        mean_field_activations_hidden.resize( n_mean_field_iterations );
++        mean_field_approximations_hidden.resize( n_mean_field_iterations );
++        for( int i=0; i&lt;n_mean_field_iterations; i++ )
++        {
++            mean_field_activations_target[i].resize( output_size );
++            mean_field_approximations_target[i].resize( output_size );
++            mean_field_activations_hidden[i].resize( last_size );
++            mean_field_approximations_hidden[i].resize( last_size );
++        }
++        mean_field_activations_gradient_target.resize( output_size );
++        mean_field_approximations_gradient_target.resize( output_size );
++        mean_field_activations_gradient_hidden.resize( last_size );
++        mean_field_approximations_gradient_hidden.resize( last_size );
++    }
++    else
++        PLERROR(&quot;In RBMMultitaskClassificationModule::build_(): &quot;
++                &quot;n_mean_field_iterations should be &gt; 0\n&quot;);
++
++    last_to_target_gradient.resize( last_to_target-&gt;up_size, 
++                                    last_to_target-&gt;down_size );
++
++    // If we have a random_gen, share it with the ones who do not
++    if( random_gen )
++    {
++        if( !(previous_to_last-&gt;random_gen) )
++        {
++            previous_to_last-&gt;random_gen = random_gen;
++            previous_to_last-&gt;forget();
++        }
++        if( !(last_layer-&gt;random_gen) )
++        {
++            last_layer-&gt;random_gen = random_gen;
++            last_layer-&gt;forget();
++        }
++        if( !(last_to_target-&gt;random_gen) )
++        {
++            last_to_target-&gt;random_gen = random_gen;
++            last_to_target-&gt;forget();
++        }
++        if( !(target_layer-&gt;random_gen) )
++        {
++            target_layer-&gt;random_gen = random_gen;
++            target_layer-&gt;forget();
++        }
++        if( !(joint_connection-&gt;random_gen) )
++        {
++            joint_connection-&gt;random_gen = random_gen;
++            joint_connection-&gt;forget();
++        }
++    }
++}
++
++// ### Nothing to add here, simply calls build_
++void RBMMultitaskClassificationModule::build()
++{
++    inherited::build();
++    build_();
++}
++
++
++void RBMMultitaskClassificationModule::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    deepCopyField(previous_to_last, copies);
++    deepCopyField(last_layer, copies);
++    deepCopyField(last_to_target, copies);
++    deepCopyField(target_layer, copies);
++    deepCopyField(joint_connection, copies);
++    deepCopyField(mean_field_activations_target, copies);
++    deepCopyField(mean_field_approximations_target, copies);
++    deepCopyField(mean_field_activations_hidden, copies);
++    deepCopyField(mean_field_approximations_hidden, copies);
++    deepCopyField(last_to_target_gradient, copies);
++    deepCopyField(mean_field_activations_gradient_target, copies);
++    deepCopyField(mean_field_approximations_gradient_target, copies);
++    deepCopyField(mean_field_activations_gradient_hidden, copies);
++    deepCopyField(mean_field_approximations_gradient_hidden, copies);
++}
++
++void RBMMultitaskClassificationModule::fprop(const Vec&amp; input, Vec&amp; output) const
++{
++    PLASSERT( input.size() == input_size );
++    output.resize( output_size );
++
++    previous_to_last-&gt;fprop( input, mean_field_activations_hidden[0] );
++    last_layer-&gt;fprop( mean_field_activations_hidden[0], 
++                       mean_field_approximations_hidden[0] );
++
++    Mat weights = last_to_target-&gt;weights;
++    for( int t=0; t&lt;n_mean_field_iterations; t++ )
++    {
++        transposeProduct( mean_field_activations_target[t], weights, 
++                          mean_field_approximations_hidden[t] );
++        target_layer-&gt;fprop( mean_field_activations_target[t],
++                             mean_field_approximations_target[t] );
++        
++        if( t != n_mean_field_iterations -1 )
++        {
++            product( mean_field_activations_hidden[t+1], weights, 
++                     mean_field_approximations_target[t] );
++            mean_field_activations_hidden[t+1] += mean_field_activations_hidden[0];
++            last_layer-&gt;fprop( mean_field_activations_hidden[t+1],
++                               mean_field_approximations_hidden[t+1] );
++        }
++    }
++    
++    if( fprop_outputs_activation )
++    {
++        output &lt;&lt; mean_field_activations_target.last();
++        //output += target_layer-&gt;bias;
++    }
++    else
++        output &lt;&lt; mean_field_approximations_target.last();
++}
++
++/* THIS METHOD IS OPTIONAL
++//! Adapt based on the output gradient: this method should only
++//! be called just after a corresponding fprop; it should be
++//! called with the same arguments as fprop for the first two arguments
++//! (and output should not have been modified since then).
++//! Since sub-classes are supposed to learn ONLINE, the object
++//! is 'ready-to-be-used' just after any bpropUpdate.
++//! N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS, WHICH
++//! JUST CALLS
++//!     bpropUpdate(input, output, input_gradient, output_gradient)
++//! AND IGNORES INPUT GRADIENT.
++void RBMMultitaskClassificationModule::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                               const Vec&amp; output_gradient)
++{
++}
++*/
++
++//! this version allows to obtain the input gradient as well
++void RBMMultitaskClassificationModule::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                                          Vec&amp; input_gradient,
++                                          const Vec&amp; output_gradient,
++                                          bool accumulate)
++{
++    // size checks
++    PLASSERT( input.size() == input_size );
++    PLASSERT( output.size() == output_size );
++    PLASSERT( output_gradient.size() == output_size );
++
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradient.size() == input_size,
++                      &quot;Cannot resize input_gradient AND accumulate into it&quot; );
++    }
++
++    last_to_target_gradient.clear();
++    Mat weights = last_to_target-&gt;weights;
++    if( fprop_outputs_activation )
++        mean_field_activations_gradient_target &lt;&lt; output_gradient;
++    else
++        mean_field_approximations_gradient_target &lt;&lt; output_gradient;
++
++    for( int t=n_mean_field_iterations-1; t&gt;=0; t-- )
++    {
++        if( t != n_mean_field_iterations-1 || !fprop_outputs_activation )
++            target_layer-&gt;bpropUpdate( mean_field_activations_target[t],
++                                       mean_field_approximations_target[t],
++                                       mean_field_activations_gradient_target,
++                                       mean_field_approximations_gradient_target
++                );
++
++        externalProductAcc( last_to_target_gradient,
++                            mean_field_approximations_hidden[t],
++                            mean_field_activations_gradient_target);
++
++        product( mean_field_approximations_gradient_hidden, weights, 
++                          mean_field_activations_gradient_target);
++        
++        if( t != 0 )
++        {
++            last_layer-&gt;bpropUpdate( mean_field_activations_hidden[t],
++                                       mean_field_approximations_hidden[t],
++                                       mean_field_activations_gradient_hidden,
++                                       mean_field_approximations_gradient_hidden
++                );
++
++            externalProductAcc( last_to_target_gradient,
++                                mean_field_activations_gradient_hidden,
++                                mean_field_approximations_target[t-1]
++                                );
++
++            transposeProduct( mean_field_approximations_gradient_target, weights, 
++                              mean_field_activations_gradient_hidden);
++        }
++    }
++
++    last_layer-&gt;bpropUpdate( mean_field_activations_hidden[0],
++                             mean_field_approximations_hidden[0],
++                             mean_field_activations_gradient_hidden,
++                             mean_field_approximations_gradient_hidden
++        );
++
++    previous_to_last-&gt;bpropUpdate( input, mean_field_activations_hidden[0],
++                                   input_gradient, 
++                                   mean_field_activations_gradient_hidden,
++                                   accumulate);
++
++    multiplyAcc( weights, last_to_target_gradient, 
++                 - (last_to_target-&gt;learning_rate) );
++}
++
++//! reset the parameters to the state they would be BEFORE starting training.
++//! Note that this method is necessarily called from build().
++void RBMMultitaskClassificationModule::forget()
++{
++    if( !random_gen )
++    {
++        PLWARNING(&quot;RBMMultitaskClassificationModule: cannot forget() without&quot;
++                  &quot; random_gen&quot;);
++        return;
++    }
++
++    if( !(previous_to_last-&gt;random_gen) )
++        previous_to_last-&gt;random_gen = random_gen;
++    previous_to_last-&gt;forget();
++    if( !(last_to_target-&gt;random_gen) )
++        last_to_target-&gt;random_gen = random_gen;
++    last_to_target-&gt;forget();
++    if( !(joint_connection-&gt;random_gen) )
++        joint_connection-&gt;random_gen = random_gen;
++    joint_connection-&gt;forget();
++}
++
++/* THIS METHOD IS OPTIONAL
++//! Similar to bpropUpdate, but adapt based also on the estimation
++//! of the diagonal of the Hessian matrix, and propagates this
++//! back. If these methods are defined, you can use them INSTEAD of
++//! bpropUpdate(...)
++//! N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS, WHICH
++//! JUST CALLS
++//!     bbpropUpdate(input, output, input_gradient, output_gradient,
++//!                  in_hess, out_hess)
++//! AND IGNORES INPUT HESSIAN AND INPUT GRADIENT.
++void RBMMultitaskClassificationModule::bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                                           const Vec&amp; output_gradient,
++                                           const Vec&amp; output_diag_hessian)
++{
++}
++*/
++
++/* THIS METHOD IS OPTIONAL
++//! Similar to bpropUpdate, but adapt based also on the estimation
++//! of the diagonal of the Hessian matrix, and propagates this
++//! back. If these methods are defined, you can use them INSTEAD of
++//! bpropUpdate(...)
++//! N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS, WHICH
++//! RAISES A PLERROR.
++void RBMMultitaskClassificationModule::bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                                           Vec&amp; input_gradient,
++                                           const Vec&amp; output_gradient,
++                                           Vec&amp; input_diag_hessian,
++                                           const Vec&amp; output_diag_hessian,
++                                           bool accumulate)
++{
++}
++*/
++
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/online/RBMMultitaskClassificationModule.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMultitaskClassificationModule.h	2008-02-01 15:59:56 UTC (rev 8443)
++++ trunk/plearn_learners/online/RBMMultitaskClassificationModule.h	2008-02-01 16:01:07 UTC (rev 8444)
+@@ -0,0 +1,218 @@
++// -*- C++ -*-
++
++// RBMMultitaskClassificationModule.h
++//
++// Copyright (C) 2006 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file RBMMultitaskClassificationModule.h */
++
++
++#ifndef RBMMultitaskClassificationModule_INC
++#define RBMMultitaskClassificationModule_INC
++
++#include &lt;plearn_learners/online/OnlineLearningModule.h&gt;
++#include &quot;RBMConnection.h&quot;
++#include &quot;RBMMatrixConnection.h&quot;
++#include &quot;RBMMixedConnection.h&quot;
++#include &quot;RBMLayer.h&quot;
++#include &quot;RBMBinomialLayer.h&quot;
++#include &quot;RBMMultinomialLayer.h&quot;
++
++namespace PLearn {
++
++/**
++ * Computes a mean-field approximate of p(y|x), with y a binary vector.
++ * This module contains an RBMConnection, an RBMBinomialLayer (hidden),
++ * an RBMMatrixConnection (transposed) and an RBMBinomialLayer (target).
++ * The two RBMConnections are combined in joint_connection.
++ */
++class RBMMultitaskClassificationModule : public OnlineLearningModule
++{
++    typedef OnlineLearningModule inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++    //! Connection between the previous layer, and last_layer
++    PP&lt;RBMConnection&gt; previous_to_last;
++
++    //! Top-level layer (the one in the middle if we unfold)
++    PP&lt;RBMBinomialLayer&gt; last_layer;
++
++    //! Connection between last_layer and target_layer
++    PP&lt;RBMMatrixConnection&gt; last_to_target;
++
++    //! Layer containing the one-hot vector containing the target (or its
++    //! prediction)
++    PP&lt;RBMBinomialLayer&gt; target_layer;
++
++    //! Number of mean-field iterations
++    int n_mean_field_iterations;
++
++    //! Indication that fprop should output the value of the activation
++    //! before the squashing function and the application of the bias, 
++    //! instead of the mean-field approximation.
++    bool fprop_outputs_activation;
++
++    //#####  Public Learnt Options  ###########################################
++    //! Connection grouping previous_to_last and last_to_target
++    PP&lt;RBMMixedConnection&gt; joint_connection;
++
++    //! Size of last_layer
++    int last_size;
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    // ### Make sure the implementation in the .cc
++    // ### initializes all fields to reasonable default values.
++    RBMMultitaskClassificationModule();
++
++    // Your other public member functions go here
++
++    //! given the input, compute the output (possibly resize it appropriately)
++    virtual void fprop(const Vec&amp; input, Vec&amp; output) const;
++
++    //! Adapt based on the output gradient: this method should only
++    //! be called just after a corresponding fprop; it should be
++    //! called with the same arguments as fprop for the first two arguments
++    //! (and output should not have been modified since then).
++    //! Since sub-classes are supposed to learn ONLINE, the object
++    //! is 'ready-to-be-used' just after any bpropUpdate.
++    //! N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS, WHICH
++    //! JUST CALLS
++    //!     bpropUpdate(input, output, input_gradient, output_gradient)
++    //! AND IGNORES INPUT GRADIENT.
++    // virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++    //                          const Vec&amp; output_gradient);
++
++    //! this version allows to obtain the input gradient as well
++    virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                             Vec&amp; input_gradient,
++                             const Vec&amp; output_gradient,
++                             bool accumulate=false);
++
++    //! Similar to bpropUpdate, but adapt based also on the estimation
++    //! of the diagonal of the Hessian matrix, and propagates this
++    //! back. If these methods are defined, you can use them INSTEAD of
++    //! bpropUpdate(...)
++    //! N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS,
++    //! WHICH JUST CALLS
++    //!     bbpropUpdate(input, output, input_gradient, output_gradient,
++    //!                  out_hess, in_hess)
++    //! AND IGNORES INPUT HESSIAN AND INPUT GRADIENT.
++    // virtual void bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++    //                           const Vec&amp; output_gradient,
++    //                           const Vec&amp; output_diag_hessian);
++
++    //! this version allows to obtain the input gradient and diag_hessian
++    //! N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS, WHICH
++    //! RAISES A PLERROR.
++    // virtual void bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++    //                           Vec&amp; input_gradient,
++    //                           const Vec&amp; output_gradient,
++    //                           Vec&amp; input_diag_hessian,
++    //                           const Vec&amp; output_diag_hessian
++    //                           bool accumulate=false);
++
++    //! reset the parameters to the state they would be BEFORE starting
++    //! training.  Note that this method is necessarily called from
++    //! build().
++    virtual void forget();
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    // ### If your class is not instantiatable (it has pure virtual methods)
++    // ### you should replace this by PLEARN_DECLARE_ABSTRACT_OBJECT
++    PLEARN_DECLARE_OBJECT(RBMMultitaskClassificationModule);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++    //#####  Not Options  #####################################################
++
++    mutable TVec&lt; Vec &gt; mean_field_activations_target;
++    mutable TVec&lt; Vec &gt; mean_field_approximations_target;
++    mutable TVec&lt; Vec &gt; mean_field_activations_hidden;
++    mutable TVec&lt; Vec &gt; mean_field_approximations_hidden;
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    //! Stores the gradient of the weights between the target and the hidden layer
++    mutable Mat last_to_target_gradient;
++
++    //! Mean gradient propagation
++    mutable Vec mean_field_activations_gradient_target;
++    mutable Vec mean_field_approximations_gradient_target;
++    mutable Vec mean_field_activations_gradient_hidden;
++    mutable Vec mean_field_approximations_gradient_hidden;
++    
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(RBMMultitaskClassificationModule);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001891.html">[Plearn-commits] r8443 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001893.html">[Plearn-commits] r8445 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1892">[ date ]</a>
+              <a href="thread.html#1892">[ thread ]</a>
+              <a href="subject.html#1892">[ subject ]</a>
+              <a href="author.html#1892">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

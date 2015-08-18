@@ -1,0 +1,887 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7923 - trunk/plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7923%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200708031930.l73JUOx6003179%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001370.html">
+   <LINK REL="Next"  HREF="001372.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7923 - trunk/plearn_learners/regressors</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7923%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200708031930.l73JUOx6003179%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7923 - trunk/plearn_learners/regressors">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Aug  3 21:30:24 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001370.html">[Plearn-commits] r7922 - trunk/scripts
+</A></li>
+        <LI>Next message: <A HREF="001372.html">[Plearn-commits] r7924 - in trunk: python_modules/plearn/plotting	python_modules/plearn/var scripts/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1371">[ date ]</a>
+              <a href="thread.html#1371">[ thread ]</a>
+              <a href="subject.html#1371">[ subject ]</a>
+              <a href="author.html#1371">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-08-03 21:30:22 +0200 (Fri, 03 Aug 2007)
+New Revision: 7923
+
+Modified:
+   trunk/plearn_learners/regressors/RegressionTree.cc
+   trunk/plearn_learners/regressors/RegressionTree.h
+   trunk/plearn_learners/regressors/RegressionTreeLeave.cc
+   trunk/plearn_learners/regressors/RegressionTreeLeave.h
+   trunk/plearn_learners/regressors/RegressionTreeMulticlassLeave.cc
+   trunk/plearn_learners/regressors/RegressionTreeNode.cc
+   trunk/plearn_learners/regressors/RegressionTreeNode.h
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+Log:
+Many modification for optimisation
+
+-RegressionTreeRegisters now herit from VMatrix
+-RegressionTree now need only a train_set or a sorted_train_set
+-Many opt:- affect directly some option
+          - some global var are now local
+          - fusion of some function used together
+          - add parameter to the template instead of setting them each time
+          - remove unusued variable
+          - ...
+
+
+Modified: trunk/plearn_learners/regressors/RegressionTree.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTree.cc	2007-08-03 19:26:11 UTC (rev 7922)
++++ trunk/plearn_learners/regressors/RegressionTree.cc	2007-08-03 19:30:22 UTC (rev 7923)
+@@ -58,7 +58,7 @@
+     );
+ 
+ RegressionTree::RegressionTree()     
+-    : missing_is_valid(0),
++    : missing_is_valid(false),
+       loss_function_weight(1.0),
+       maximum_number_of_nodes(400),
+       compute_train_stats(1),
+@@ -134,7 +134,21 @@
+ 
+ void RegressionTree::build_()
+ {
+-    if (train_set)
++    if(sorted_train_set)
++    {
++        length = sorted_train_set-&gt;length();
++        
++        if (length &lt; 1) PLERROR(&quot;RegressionTree: the training set must contain at least one sample, got %d&quot;, length);
++        inputsize = sorted_train_set-&gt;inputsize();
++        targetsize = sorted_train_set-&gt;targetsize();
++        weightsize = sorted_train_set-&gt;weightsize();
++        if (inputsize &lt; 1) PLERROR(&quot;RegressionTree: expected  inputsize greater than 0, got %d&quot;, inputsize);
++        if (targetsize != 1) PLERROR(&quot;RegressionTree: expected targetsize to be 1, got %d&quot;, targetsize);
++        if (weightsize != 1 &amp;&amp; weightsize != 0)  PLERROR(&quot;RegressionTree: expected weightsize to be 1 or 0, got %d&quot;, weightsize);
++        sample_input.resize(inputsize);
++        sample_target.resize(targetsize);
++    }
++    else if (train_set)
+     { 
+         length = train_set-&gt;length();
+         if (length &lt; 1) PLERROR(&quot;RegressionTree: the training set must contain at least one sample, got %d&quot;, length);
+@@ -143,22 +157,23 @@
+         weightsize = train_set-&gt;weightsize();
+         if (inputsize &lt; 1) PLERROR(&quot;RegressionTree: expected  inputsize greater than 0, got %d&quot;, inputsize);
+         if (targetsize != 1) PLERROR(&quot;RegressionTree: expected targetsize to be 1, got %d&quot;, targetsize);
+-        if (weightsize != 1 &amp;&amp; weightsize != 0)  PLERROR(&quot;RegressionTree: expected weightsize to be 1 or 0, got %d&quot;, weightsize_);
+-        if (loss_function_weight != 0.0)
+-        {
+-            l2_loss_function_factor = 2.0 / pow(loss_function_weight, 2);
+-            l1_loss_function_factor = 2.0 / loss_function_weight;
+-        }
+-        else
+-        {
+-            l2_loss_function_factor = 1.0;
+-            l1_loss_function_factor = 1.0;
+-        }
++        if (weightsize != 1 &amp;&amp; weightsize != 0)  PLERROR(&quot;RegressionTree: expected weightsize to be 1 or 0, got %d&quot;, weightsize);
+         sample_input.resize(inputsize);
+         sample_target.resize(targetsize);
+-        sample_output.resize(2);
+-        sample_costs.resize(4);
+     }
++
++    sample_output.resize(2);
++    sample_costs.resize(4);
++    if (loss_function_weight != 0.0)
++    {
++        l2_loss_function_factor = 2.0 / pow(loss_function_weight, 2);
++        l1_loss_function_factor = 2.0 / loss_function_weight;
++    }
++    else
++    {
++        l2_loss_function_factor = 1.0;
++        l1_loss_function_factor = 1.0;
++    }
+ }
+ 
+ void RegressionTree::train()
+@@ -185,7 +200,7 @@
+     train_stats-&gt;forget();
+     for (each_train_sample_index = 0; each_train_sample_index &lt; length; each_train_sample_index++)
+     {  
+-        train_set-&gt;getExample(each_train_sample_index, sample_input, sample_target, sample_weight);
++        sorted_train_set-&gt;getExample(each_train_sample_index, sample_input, sample_target, sample_weight);
+         computeOutput(sample_input, sample_output);
+         computeCostsFromOutputs(sample_input, sample_output, sample_target, sample_costs); 
+         train_stats-&gt;update(sample_costs);
+@@ -218,13 +233,16 @@
+     {
+         sorted_train_set-&gt;reinitRegisters();
+     }
++    //Set value common value of all leave
++    // for optimisation, by default they aren't missing leave
++    leave_template-&gt;setOption(&quot;missing_leave&quot;, &quot;0&quot;);
++    leave_template-&gt;setOption(&quot;loss_function_weight&quot;, tostring(loss_function_weight));
++    leave_template-&gt;setOption(&quot;verbosity&quot;, tostring(verbosity));
++
+     first_leave_output.resize(2);
+     first_leave_error.resize(3);
+     first_leave = ::PLearn::deepCopy(leave_template);
+     first_leave-&gt;setOption(&quot;id&quot;, tostring(sorted_train_set-&gt;getNextId()));
+-    first_leave-&gt;setOption(&quot;missing_leave&quot;, &quot;0&quot;);
+-    first_leave-&gt;setOption(&quot;loss_function_weight&quot;, tostring(loss_function_weight));
+-    first_leave-&gt;setOption(&quot;verbosity&quot;, tostring(verbosity));
+     first_leave-&gt;initLeave(sorted_train_set);
+     first_leave-&gt;initStats();
+     for (each_train_sample_index = 0; each_train_sample_index &lt; length; each_train_sample_index++)
+@@ -266,15 +284,17 @@
+         verbose(&quot;RegressionTree: expand is negative?&quot;, 3);
+         return -1;
+     }
+-    priority_queue-&gt;addHeap(node-&gt;getNodes()[0]); 
+-    priority_queue-&gt;addHeap(node-&gt;getNodes()[1]);
+-    if (missing_is_valid &gt; 0) priority_queue-&gt;addHeap(node-&gt;getNodes()[2]);
++    TVec&lt; PP&lt;RegressionTreeNode&gt; &gt; subnode = node-&gt;getNodes();
++    priority_queue-&gt;addHeap(subnode[0]); 
++    priority_queue-&gt;addHeap(subnode[1]);
++    if (missing_is_valid) priority_queue-&gt;addHeap(subnode[2]);
+     return 1; 
+ }
+ 
+ void RegressionTree::setSortedTrainSet(PP&lt;RegressionTreeRegisters&gt; the_sorted_train_set)
+ {
+     sorted_train_set = the_sorted_train_set;
++    build();
+ }
+ 
+ int RegressionTree::outputsize() const
+
+Modified: trunk/plearn_learners/regressors/RegressionTree.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTree.h	2007-08-03 19:26:11 UTC (rev 7922)
++++ trunk/plearn_learners/regressors/RegressionTree.h	2007-08-03 19:30:22 UTC (rev 7923)
+@@ -60,7 +60,7 @@
+   Build options: they have to be set before training
+ */
+ 
+-    int  missing_is_valid;
++    bool  missing_is_valid;
+     real loss_function_weight;
+     int maximum_number_of_nodes;
+     int compute_train_stats;   
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeLeave.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeLeave.cc	2007-08-03 19:26:11 UTC (rev 7922)
++++ trunk/plearn_learners/regressors/RegressionTreeLeave.cc	2007-08-03 19:30:22 UTC (rev 7923)
+@@ -82,8 +82,6 @@
+                   &quot;The sum of weights for the samples in this leave\n&quot;);
+     declareOption(ol, &quot;targets_sum&quot;, &amp;RegressionTreeLeave::targets_sum, OptionBase::learntoption,
+                   &quot;The sum of targets for the samples in this leave\n&quot;);
+-    declareOption(ol, &quot;squared_targets_sum&quot;, &amp;RegressionTreeLeave::squared_targets_sum, OptionBase::learntoption,
+-                  &quot;The sum of squared target values for the sample in this leave\n&quot;);
+     declareOption(ol, &quot;weighted_targets_sum&quot;, &amp;RegressionTreeLeave::weighted_targets_sum, OptionBase::learntoption,
+                   &quot;The sum of weighted targets for the samples in this leave\n&quot;);
+     declareOption(ol, &quot;weighted_squared_targets_sum&quot;, &amp;RegressionTreeLeave::weighted_squared_targets_sum, OptionBase::learntoption,
+@@ -96,20 +94,9 @@
+ void RegressionTreeLeave::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+-    deepCopyField(id, copies);
+-    deepCopyField(missing_leave, copies);
+-    deepCopyField(loss_function_weight, copies);
+-    deepCopyField(verbosity, copies);
+     deepCopyField(train_set, copies);
+-    deepCopyField(length, copies);
+     deepCopyField(output, copies);
+     deepCopyField(error, copies);
+-    deepCopyField(weights_sum, copies);
+-    deepCopyField(targets_sum, copies);
+-    deepCopyField(squared_targets_sum, copies);
+-    deepCopyField(weighted_targets_sum, copies);
+-    deepCopyField(weighted_squared_targets_sum, copies);
+-    deepCopyField(loss_function_factor, copies);
+ }
+ 
+ void RegressionTreeLeave::build()
+@@ -139,7 +126,6 @@
+     error[2] = 0.0;
+     weights_sum= 0.0;
+     targets_sum = 0.0;
+-    squared_targets_sum = 0.0;
+     weighted_targets_sum = 0.0;
+     weighted_squared_targets_sum = 0.0; 
+     if (loss_function_weight != 0.0) loss_function_factor = 2.0 / pow(loss_function_weight, 2);
+@@ -148,41 +134,37 @@
+ 
+ void RegressionTreeLeave::addRow(int row, Vec outputv, Vec errorv)
+ {
+-    weight = train_set-&gt;getWeight(row);
+-    target = train_set-&gt;getTarget(row);
++    real weight = train_set-&gt;getWeight(row);
++    real target = train_set-&gt;getTarget(row);
+     length += 1;
+     weights_sum += weight;
+     targets_sum += target;
+-    squared_target = pow(target, 2);
+-    squared_targets_sum += squared_target;
++    real squared_target = pow(target, 2);
+     weighted_targets_sum += weight * target;
+     weighted_squared_targets_sum += weight * squared_target;  
+     computeOutputAndError();
+-    getOutput(outputv);
+-    getError(errorv);
++    getOutputAndError(outputv,errorv);
+     train_set-&gt;applyForRow(id, row);
+ }
+ 
+ void RegressionTreeLeave::removeRow(int row, Vec outputv, Vec errorv)
+ {
+-    weight = train_set-&gt;getWeight(row);
+-    target = train_set-&gt;getTarget(row);
++    real weight = train_set-&gt;getWeight(row);
++    real target = train_set-&gt;getTarget(row);
+     length -= 1;
+     weights_sum -= weight;
+     targets_sum -= target;
+-    squared_target = pow(target, 2);
+-    squared_targets_sum -= squared_target;
++    real squared_target = pow(target, 2);
+     weighted_targets_sum -= weight * target;
+     weighted_squared_targets_sum -= weight * squared_target; 
+     computeOutputAndError();
+-    getOutput(outputv);
+-    getError(errorv); 
++    getOutputAndError(outputv,errorv);
+ }
+ 
+ void RegressionTreeLeave::computeOutputAndError()
+ {
+     output[0] = weighted_targets_sum / weights_sum;
+-    if (missing_leave &gt;= 1)
++    if (missing_leave == true)
+     {
+         output[1] = 0.0;
+         error[0] = 0.0;
+@@ -195,7 +177,8 @@
+         error[0] = ((weights_sum * output[0] * output[0]) - (2.0 * weighted_targets_sum * output[0]) + weighted_squared_targets_sum) * loss_function_factor;
+         if (error[0] &lt; 1E-10) error[0] = 0.0;
+         error[1] = 0.0;
+-        if (error[0] &gt; weights_sum * loss_function_factor) error[2] = weights_sum * loss_function_factor; else error[2] = error[0];
++        if (error[0] &gt; weights_sum * loss_function_factor) error[2] = weights_sum * loss_function_factor;
++        else error[2] = error[0];
+     }
+ }
+ 
+@@ -214,19 +197,15 @@
+     return length;
+ }
+ 
+-void RegressionTreeLeave::getError(Vec errorv)
++void RegressionTreeLeave::getOutputAndError(Vec outputv, Vec errorv)
+ {
++    outputv[0] = output[0];
++    outputv[1] = output[1];
+     errorv[0] = error[0];
+     errorv[1] = error[1];  
+     errorv[2] = error[2]; 
+ }
+ 
+-void RegressionTreeLeave::getOutput(Vec outputv)
+-{
+-    outputv[0] = output[0];
+-    outputv[1] = output[1];
+-}
+-
+ void RegressionTreeLeave::printStats()
+ {
+     cout &lt;&lt; &quot; l &quot; &lt;&lt; length;
+@@ -236,7 +215,6 @@
+     cout &lt;&lt; &quot; e1 &quot; &lt;&lt; error[1];
+     cout &lt;&lt; &quot; ws &quot; &lt;&lt; weights_sum;
+     cout &lt;&lt; &quot; ts &quot; &lt;&lt; targets_sum;
+-    cout &lt;&lt; &quot; sts &quot; &lt;&lt; squared_targets_sum;
+     cout &lt;&lt; &quot; wts &quot; &lt;&lt; weighted_targets_sum;
+     cout &lt;&lt; &quot; wsts &quot; &lt;&lt; weighted_squared_targets_sum; 
+     cout &lt;&lt; endl;
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeLeave.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeLeave.h	2007-08-03 19:26:11 UTC (rev 7922)
++++ trunk/plearn_learners/regressors/RegressionTreeLeave.h	2007-08-03 19:30:22 UTC (rev 7923)
+@@ -50,7 +50,8 @@
+ class RegressionTreeLeave: public Object
+ {
+     typedef Object inherited;
+-  
++ 
++    friend class RegressionTreeNode;
+ protected:
+ 
+ /*
+@@ -58,7 +59,7 @@
+ */
+ 
+     int  id;
+-    int  missing_leave;
++    bool  missing_leave;
+     real loss_function_weight;
+     int  verbosity;
+     PP&lt;RegressionTreeRegisters&gt; train_set;
+@@ -72,20 +73,11 @@
+     Vec  error;
+     real weights_sum;
+     real targets_sum;
+-    real squared_targets_sum;
+     real weighted_targets_sum;
+     real weighted_squared_targets_sum;
+     real loss_function_factor;
+  
+-/*
+-  Work fields: they are sized and initialized if need be, at buid time
+-*/  
+- 
+-    real weight;
+-    real target;
+-    real squared_target;
+-  
+-  
++
+ public:
+     RegressionTreeLeave();
+     virtual              ~RegressionTreeLeave();
+@@ -102,8 +94,7 @@
+     void         registerRow(int row);
+     int          getId();
+     int          getLength();
+-    void         getError(Vec errorv);
+-    void         getOutput(Vec outputv);
++    void         getOutputAndError(Vec outputv, Vec errorv);
+     virtual void         printStats();
+   
+ private:
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeMulticlassLeave.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeMulticlassLeave.cc	2007-08-03 19:26:11 UTC (rev 7922)
++++ trunk/plearn_learners/regressors/RegressionTreeMulticlassLeave.cc	2007-08-03 19:30:22 UTC (rev 7923)
+@@ -125,8 +125,8 @@
+ 
+ void RegressionTreeMulticlassLeave::addRow(int row, Vec outputv, Vec errorv)
+ {
+-    weight = train_set-&gt;getWeight(row);
+-    target = train_set-&gt;getTarget(row);
++    real weight = train_set-&gt;getWeight(row);
++    real target = train_set-&gt;getTarget(row);
+     length += 1;
+     weights_sum += weight;
+     int multiclass_found = 0;
+@@ -142,15 +142,14 @@
+     if (multiclass_found &lt; 1) 
+         PLERROR(&quot;RegressionTreeMultilassLeave: Unknown target: %d row: %d\n&quot;, target,row);
+     computeOutputAndError();
+-    getOutput(outputv);
+-    getError(errorv);
++    getOutputAndError(outputv,errorv);
+     train_set-&gt;applyForRow(id, row);
+ }
+ 
+ void RegressionTreeMulticlassLeave::removeRow(int row, Vec outputv, Vec errorv)
+ {
+-    weight = train_set-&gt;getWeight(row);
+-    target = train_set-&gt;getTarget(row);
++    real weight = train_set-&gt;getWeight(row);
++    real target = train_set-&gt;getTarget(row);
+     length -= 1;
+     weights_sum -= weight;
+     for (int multiclass_ind = 0; multiclass_ind &lt; multiclass_outputs.length(); multiclass_ind++)
+@@ -162,8 +161,7 @@
+         }
+     }
+     computeOutputAndError();
+-    getOutput(outputv);
+-    getError(errorv); 
++    getOutputAndError(outputv,errorv);
+ }
+ 
+ void RegressionTreeMulticlassLeave::computeOutputAndError()
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.cc	2007-08-03 19:26:11 UTC (rev 7922)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.cc	2007-08-03 19:30:22 UTC (rev 7923)
+@@ -184,25 +184,20 @@
+     right_leave_id =  train_set-&gt;getNextId();
+     length = train_set-&gt;length();
+     inputsize = train_set-&gt;inputsize();
++
+     missing_leave = ::PLearn::deepCopy(leave_template);
+-    missing_leave-&gt;setOption(&quot;id&quot;, tostring(missing_leave_id));
+-    if (missing_is_valid &gt; 0) missing_leave-&gt;setOption(&quot;missing_leave&quot;, &quot;0&quot;);
+-    else missing_leave-&gt;setOption(&quot;missing_leave&quot;, &quot;1&quot;);
+-    missing_leave-&gt;setOption(&quot;loss_function_weight&quot;, tostring(loss_function_weight));
+-    missing_leave-&gt;setOption(&quot;verbosity&quot;, tostring(verbosity));
++    missing_leave-&gt;id=missing_leave_id;
++    missing_leave-&gt;missing_leave=missing_is_valid;
+     missing_leave-&gt;initLeave(train_set);
++
+     left_leave = ::PLearn::deepCopy(leave_template);
+-    left_leave-&gt;setOption(&quot;id&quot;, tostring(left_leave_id));
+-    left_leave-&gt;setOption(&quot;missing_leave&quot;, &quot;0&quot;);
+-    left_leave-&gt;setOption(&quot;loss_function_weight&quot;, tostring(loss_function_weight));
+-    left_leave-&gt;setOption(&quot;verbosity&quot;, tostring(verbosity));
++    left_leave-&gt;id=left_leave_id;
+     left_leave-&gt;initLeave(train_set);
++
+     right_leave = ::PLearn::deepCopy(leave_template);
+-    right_leave-&gt;setOption(&quot;id&quot;, tostring(right_leave_id));
+-    right_leave-&gt;setOption(&quot;missing_leave&quot;, &quot;0&quot;);
+-    right_leave-&gt;setOption(&quot;loss_function_weight&quot;, tostring(loss_function_weight));
+-    right_leave-&gt;setOption(&quot;verbosity&quot;, tostring(verbosity));
++    right_leave-&gt;id=right_leave_id;
+     right_leave-&gt;initLeave(train_set);
++
+     leave_output.resize(2);
+     leave_error.resize(3);
+     missing_output.resize(2);
+@@ -211,30 +206,31 @@
+     left_error.resize(3);
+     right_output.resize(2);
+     right_error.resize(3);
+-    leave-&gt;getOutput(leave_output);
+-    leave-&gt;getError(leave_error);
++
++    leave-&gt;getOutputAndError(leave_output,leave_error);
+ }
+ 
+ void RegressionTreeNode::lookForBestSplit()
+ {
+-    for (col = 0; col &lt; inputsize; col++)
++    for (int col = 0; col &lt; inputsize; col++)
+     {
+         missing_leave-&gt;initStats();
+         left_leave-&gt;initStats();
+         right_leave-&gt;initStats();
+-        for (row = train_set-&gt;getNextRegisteredRow(leave_id, col, -1); row &lt; length; row = train_set-&gt;getNextRegisteredRow(leave_id, col, row))
++        for (int row = train_set-&gt;getNextRegisteredRow(leave_id, col, -1); row &lt; length; row = train_set-&gt;getNextRegisteredRow(leave_id, col, row))
+         {
+-            if (is_missing(train_set-&gt;getFeature(row, col))) missing_leave-&gt;addRow(row, missing_output, missing_error);
++            if (is_missing(train_set-&gt;get(row, col))) missing_leave-&gt;addRow(row, missing_output, missing_error);
+             else right_leave-&gt;addRow(row, right_output, right_error);
+         }
+-        row = train_set-&gt;getNextCandidateRow(right_leave_id, col, -1);
+-        next_row = train_set-&gt;getNextCandidateRow(right_leave_id, col, row);
++        int row = train_set-&gt;getNextCandidateRow(right_leave_id, col, -1);
++        int next_row = train_set-&gt;getNextCandidateRow(right_leave_id, col, row);
++
+         while (true)
+         {
+             if (next_row &gt;= length) break;
+             right_leave-&gt;removeRow(row, right_output, right_error);
+             left_leave-&gt;addRow(row, left_output, left_error);
+-            compareSplit(col, train_set-&gt;getFeature(row, col), train_set-&gt;getFeature(next_row, col));
++            compareSplit(col, train_set-&gt;get(row, col), train_set-&gt;get(next_row, col));
+             row = next_row;
+             next_row = train_set-&gt;getNextCandidateRow(right_leave_id, col, row);
+         }
+@@ -244,18 +240,11 @@
+ void RegressionTreeNode::compareSplit(int col, real left_leave_last_feature, real right_leave_first_feature)
+ {
+     if (left_leave_last_feature &gt;= right_leave_first_feature) return;
+-    work_error = missing_error[0] + missing_error[1] + left_error[0] + left_error[1] + right_error[0] + right_error[1];
+-    work_balance = abs(left_leave-&gt;getLength() - right_leave-&gt;getLength());
+-    if (split_col &lt; 0)
+-    {
+-        split_col = col;
+-        split_feature_value = 0.5 * (right_leave_first_feature + left_leave_last_feature);
+-        after_split_error = work_error;
+-        split_balance = work_balance;
+-        return;
+-    }
+-    if (work_error &gt; after_split_error) return;
+-    if (work_error == after_split_error &amp;&amp; work_balance &gt; split_balance) return;
++    real work_error = missing_error[0] + missing_error[1] + left_error[0] + left_error[1] + right_error[0] + right_error[1];
++    int work_balance = abs(left_leave-&gt;getLength() - right_leave-&gt;getLength());
++    if(split_col&lt;0);
++    else if (work_error &gt; after_split_error) return;
++    else if (work_error == after_split_error &amp;&amp; work_balance &gt; split_balance) return;
+     split_col = col;
+     split_feature_value = 0.5 * (right_leave_first_feature + left_leave_last_feature);
+     after_split_error = work_error;
+@@ -264,8 +253,7 @@
+ 
+ int RegressionTreeNode::expandNode()
+ {
+-    col = split_col;
+-    if (col &lt; 0)
++    if (split_col &lt; 0)
+     {
+         verbose(&quot;RegressionTreeNode: there is no more split candidate&quot;, 3);
+         return -1;
+@@ -273,16 +261,16 @@
+     missing_leave-&gt;initStats();
+     left_leave-&gt;initStats();
+     right_leave-&gt;initStats();
+-    for (row = train_set-&gt;getNextRegisteredRow(leave_id, col, -1); row &lt; length; row = train_set-&gt;getNextRegisteredRow(leave_id, col, row))
++    for (int row = train_set-&gt;getNextRegisteredRow(leave_id, split_col, -1); row &lt; length; row = train_set-&gt;getNextRegisteredRow(leave_id, split_col, row))
+     {
+-        if (is_missing(train_set-&gt;getFeature(row, col)))
++        if (is_missing(train_set-&gt;get(row, split_col)))
+         {
+             missing_leave-&gt;addRow(row, missing_output, missing_error);
+             missing_leave-&gt;registerRow(row);
+         }
+         else
+         {
+-            if (train_set-&gt;getFeature(row, col) &lt; split_feature_value)
++            if (train_set-&gt;get(row, split_col) &lt; split_feature_value)
+             {
+                 left_leave-&gt;addRow(row, left_output, left_error);
+                 left_leave-&gt;registerRow(row);    
+@@ -300,22 +288,22 @@
+     if (missing_is_valid &gt; 0)
+     {
+         missing_node = new RegressionTreeNode();
+-        missing_node-&gt;setOption(&quot;missing_is_valid&quot;, tostring(missing_is_valid));
+-        missing_node-&gt;setOption(&quot;loss_function_weight&quot;, tostring(loss_function_weight));
+-        missing_node-&gt;setOption(&quot;verbosity&quot;, tostring(verbosity));
++        missing_node-&gt;missing_is_valid=missing_is_valid;
++        missing_node-&gt;loss_function_weight=loss_function_weight;
++        missing_node-&gt;verbosity=verbosity;
+         missing_node-&gt;initNode(train_set, missing_leave, leave_template);
+         missing_node-&gt;lookForBestSplit();
+     }
+     left_node = new RegressionTreeNode();
+-    left_node-&gt;setOption(&quot;missing_is_valid&quot;, tostring(missing_is_valid));
+-    left_node-&gt;setOption(&quot;loss_function_weight&quot;, tostring(loss_function_weight));
+-    left_node-&gt;setOption(&quot;verbosity&quot;, tostring(verbosity));
++    left_node-&gt;missing_is_valid=missing_is_valid;
++    left_node-&gt;loss_function_weight=loss_function_weight;
++    left_node-&gt;verbosity=verbosity;
+     left_node-&gt;initNode(train_set, left_leave, leave_template);
+     left_node-&gt;lookForBestSplit();
+     right_node = new RegressionTreeNode();
+-    right_node-&gt;setOption(&quot;missing_is_valid&quot;, tostring(missing_is_valid));
+-    right_node-&gt;setOption(&quot;loss_function_weight&quot;, tostring(loss_function_weight));
+-    right_node-&gt;setOption(&quot;verbosity&quot;, tostring(verbosity));
++    right_node-&gt;missing_is_valid=missing_is_valid;
++    right_node-&gt;loss_function_weight=loss_function_weight;
++    right_node-&gt;verbosity=verbosity;
+     right_node-&gt;initNode(train_set, right_leave, leave_template);
+     right_node-&gt;lookForBestSplit();
+     return +1;
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.h	2007-08-03 19:26:11 UTC (rev 7922)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.h	2007-08-03 19:30:22 UTC (rev 7923)
+@@ -94,16 +94,6 @@
+     Vec right_output;
+     Vec right_error;
+  
+-/*
+-  Work fields: they are sized and initialized if need be, at buid time
+-*/  
+-
+-    int row;
+-    int next_row;
+-    int col;  
+-    int work_balance;
+-    real work_error;    
+-
+ public:  
+     RegressionTreeNode();
+     virtual              ~RegressionTreeNode();
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2007-08-03 19:26:11 UTC (rev 7922)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2007-08-03 19:30:22 UTC (rev 7923)
+@@ -68,9 +68,9 @@
+                   &quot;The indicator to report progress through a progress bar\n&quot;);
+     declareOption(ol, &quot;verbosity&quot;, &amp;RegressionTreeRegisters::verbosity, OptionBase::buildoption,
+                   &quot;The desired level of verbosity\n&quot;);
+-    declareOption(ol, &quot;train_set&quot;, &amp;RegressionTreeRegisters::train_set, OptionBase::buildoption,
+-                  &quot;The original train set VMatrix to be sorted in each dimensions\n&quot;);
+-      
++    declareOption(ol, &quot;source&quot;, &amp;RegressionTreeRegisters::source, OptionBase::buildoption,
++                  &quot;The source VMatrix&quot;);
++
+     declareOption(ol, &quot;next_id&quot;, &amp;RegressionTreeRegisters::next_id, OptionBase::learntoption,
+                   &quot;The next id for creating a new leave\n&quot;);
+     declareOption(ol, &quot;length&quot;, &amp;RegressionTreeRegisters::length_, OptionBase::learntoption,
+@@ -97,7 +97,6 @@
+ void RegressionTreeRegisters::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+-    deepCopyField(train_set, copies);
+     deepCopyField(sorted_row, copies);
+     deepCopyField(inverted_sorted_row, copies);
+     deepCopyField(leave_register, copies);
+@@ -116,12 +115,12 @@
+ 
+ void RegressionTreeRegisters::initRegisters(VMat the_train_set)
+ {
+-    train_set = the_train_set;
+-    length_ = train_set-&gt;length();
+-    width_ = train_set-&gt;width();
+-    inputsize_ = train_set-&gt;inputsize();
+-    targetsize_ = train_set-&gt;targetsize();
+-    weightsize_ = train_set-&gt;weightsize();
++    source = the_train_set;
++    length_ = source-&gt;length();
++    width_ = source-&gt;width();
++    inputsize_ = source-&gt;inputsize();
++    targetsize_ = source-&gt;targetsize();
++    weightsize_ = source-&gt;weightsize();
+     leave_register.resize(length());
+     leave_candidate.resize(length());
+     sortRows();
+@@ -142,26 +141,26 @@
+     leave_register[row] = leave_id;
+ }
+ 
+-real RegressionTreeRegisters::getFeature(int row, int col)
++real RegressionTreeRegisters::get(int i, int j) const
+ {
+-    return train_set-&gt;get(row, col);
++    return source-&gt;get(i,j);
+ }
+ 
+ real RegressionTreeRegisters::getTarget(int row)
+ {
+-    return train_set-&gt;get(row, inputsize());
++    return source-&gt;get(row, inputsize());
+ }
+ 
+ real RegressionTreeRegisters::getWeight(int row)
+ {
+     if (weightsize() &lt;= 0) return 1.0 / length();
+-    else return train_set-&gt;get(row, inputsize() + targetsize() );
++    else return source-&gt;get(row, inputsize() + targetsize() );
+ }
+ 
+ void RegressionTreeRegisters::setWeight(int row, real val)
+ {
+     PLASSERT(weightsize() &gt; 0);
+-    train_set-&gt;put(row, inputsize() + targetsize(), val );
++    source-&gt;put(row, inputsize() + targetsize(), val );
+ }
+ 
+ int RegressionTreeRegisters::getNextId()
+@@ -217,10 +216,7 @@
+     }
+     for (int each_train_sample_index = 0; each_train_sample_index &lt; length(); each_train_sample_index++)
+     {
+-        for (int sample_dim = 0; sample_dim &lt; inputsize(); sample_dim++)
+-        {
+-            sorted_row(each_train_sample_index, sample_dim) = each_train_sample_index;
+-        }
++        sorted_row(each_train_sample_index).fill(each_train_sample_index);
+     }
+     for (int sample_dim = 0; sample_dim &lt; inputsize(); sample_dim++)
+     {
+@@ -263,22 +259,22 @@
+         else
+         {
+             swapIndex(start_index + 1, (start_index + end_index) / 2, dim);
+-            if (compare(train_set-&gt;get(sorted_row(start_index, dim), dim),
+-                        train_set-&gt;get(sorted_row(end_index, dim), dim)) &gt; 0.0)
++            if (compare(source-&gt;get(sorted_row(start_index, dim), dim),
++                        source-&gt;get(sorted_row(end_index, dim), dim)) &gt; 0.0)
+                 swapIndex(start_index, end_index, dim);
+-            if (compare(train_set-&gt;get(sorted_row(start_index + 1, dim), dim),
+-                        train_set-&gt;get(sorted_row(end_index, dim), dim)) &gt; 0.0)
++            if (compare(source-&gt;get(sorted_row(start_index + 1, dim), dim),
++                        source-&gt;get(sorted_row(end_index, dim), dim)) &gt; 0.0)
+                 swapIndex(start_index + 1, end_index, dim);
+-            if (compare(train_set-&gt;get(sorted_row(start_index, dim), dim),
+-                        train_set-&gt;get(sorted_row(start_index + 1, dim), dim)) &gt; 0.0)
++            if (compare(source-&gt;get(sorted_row(start_index, dim), dim),
++                        source-&gt;get(sorted_row(start_index + 1, dim), dim)) &gt; 0.0)
+                 swapIndex(start_index, start_index + 1, dim);
+             forward_index = start_index + 1;
+             backward_index = end_index;
+-            real sample_feature = train_set-&gt;get(sorted_row(start_index + 1, dim), dim);
++            real sample_feature = source-&gt;get(sorted_row(start_index + 1, dim), dim);
+             for (;;)
+             {
+-                do forward_index++; while (compare(train_set-&gt;get(sorted_row(forward_index, dim), dim), sample_feature) &lt; 0.0);
+-                do backward_index--; while (compare(train_set-&gt;get(sorted_row(backward_index, dim), dim), sample_feature) &gt; 0.0);
++                do forward_index++; while (compare(source-&gt;get(sorted_row(forward_index, dim), dim), sample_feature) &lt; 0.0);
++                do backward_index--; while (compare(source-&gt;get(sorted_row(backward_index, dim), dim), sample_feature) &gt; 0.0);
+                 if (backward_index &lt; forward_index)
+                 {
+                     break;
+@@ -312,13 +308,13 @@
+          next_train_sample_index++)
+     {
+         int saved_index = sorted_row(next_train_sample_index, dim);
+-        real sample_feature = train_set-&gt;get(saved_index, dim);
++        real sample_feature = source-&gt;get(saved_index, dim);
+         int each_train_sample_index;
+         for (each_train_sample_index = next_train_sample_index - 1;
+              each_train_sample_index &gt;= the_start_index;
+              each_train_sample_index--)
+         {
+-            if (compare(train_set-&gt;get(sorted_row(each_train_sample_index, dim), dim), sample_feature) &lt;= 0.0)
++            if (compare(source-&gt;get(sorted_row(each_train_sample_index, dim), dim), sample_feature) &lt;= 0.0)
+             {
+                 break;
+             }
+@@ -363,12 +359,12 @@
+     if(inputsize_&lt;0)
+         PLERROR(&quot;In VMatrix::getExample, inputsize_ not defined for this vmat&quot;);
+     input.resize(inputsize_);
+-    train_set-&gt;getSubRow(i,0,input);
++    source-&gt;getSubRow(i,0,input);
+     if(targetsize_&lt;0)
+         PLERROR(&quot;In VMatrix::getExample, targetsize_ not defined for this vmat&quot;);
+     target.resize(targetsize_);
+     if (targetsize_ &gt; 0) {
+-        train_set-&gt;getSubRow(i,inputsize_,target);
++        source-&gt;getSubRow(i,inputsize_,target);
+     }
+ 
+     if(weightsize()==0)
+@@ -378,7 +374,7 @@
+     else if(weightsize()&gt;1)
+         PLERROR(&quot;In VMatrix::getExample, weightsize_ &gt;1 not supported by this call&quot;);
+     else
+-        weight = train_set-&gt;get(i,inputsize()+targetsize());
++        weight = source-&gt;get(i,inputsize()+targetsize());
+ }
+ 
+ 
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2007-08-03 19:26:11 UTC (rev 7922)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2007-08-03 19:30:22 UTC (rev 7923)
+@@ -42,7 +42,7 @@
+ #ifndef RegressionTreeRegisters_INC
+ #define RegressionTreeRegisters_INC
+ 
+-#include &lt;plearn/base/Object.h&gt;
++#include &lt;plearn/vmat/SourceVMatrix.h&gt;
+ #include &lt;plearn/base/stringutils.h&gt;
+ #include &lt;plearn/math/TMat.h&gt;
+ #include &lt;plearn/vmat/VMat.h&gt;
+@@ -50,9 +50,9 @@
+ namespace PLearn {
+ using namespace std;
+ 
+-class RegressionTreeRegisters: public Object
++class RegressionTreeRegisters: public VMatrix
+ {
+-    typedef Object inherited;
++    typedef VMatrix inherited;
+   
+ private:
+ 
+@@ -62,24 +62,21 @@
+ 
+     int  report_progress;
+     int  verbosity;
+-    VMat train_set;
++//    VMat train_set;
+   
+ /*
+   Learnt options: they are sized and initialized if need be, at initRegisters(...) or reinitRegisters()
+ */
+ 
+     int       next_id;
+-    int       length_;
+-    int       width_;
+-    int       inputsize_;
+-    int       targetsize_;
+-    int       weightsize_;  
+     TMat&lt;int&gt; sorted_row;
+     TMat&lt;int&gt; inverted_sorted_row;
+     TVec&lt;int&gt; leave_register;
+     TVec&lt;int&gt; leave_candidate;
+  
+ public:
++
++    VMat source;
+     RegressionTreeRegisters();
+     virtual              ~RegressionTreeRegisters();
+     
+@@ -92,20 +89,17 @@
+     void         reinitRegisters();
+     void         applyForRow(int leave_id, int row);
+     void         registerLeave(int leave_id, int row);
+-    real         getFeature(int row, int col);
++    virtual real get(int row, int col) const;
+     real         getTarget(int row);
+     real         getWeight(int row);
+     void         setWeight(int row,real val);
+-    int          length(){return length_;}
+     int          getNextId();
+-    int          inputsize(){return inputsize_;}
+-    int          targetsize(){return targetsize_;}
+-    int          weightsize(){return weightsize_;}
+     int          getNextRegisteredRow(int leave_id, int col, int previous_row);
+     int          getNextCandidateRow(int leave_id, int col, int previous_row);
+     void         sortRows();
+     void         printRegisters();
+     void         getExample(int i, Vec&amp; input, Vec&amp; target, real&amp; weight);
++//    virtual void getNewRow(int i, const Vec&amp; v) const;
+ 
+ private:
+     void         build_();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001370.html">[Plearn-commits] r7922 - trunk/scripts
+</A></li>
+	<LI>Next message: <A HREF="001372.html">[Plearn-commits] r7924 - in trunk: python_modules/plearn/plotting	python_modules/plearn/var scripts/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1371">[ date ]</a>
+              <a href="thread.html#1371">[ thread ]</a>
+              <a href="subject.html#1371">[ subject ]</a>
+              <a href="author.html#1371">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,294 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9047 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9047%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200805231906.m4NJ6Jai016335%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002494.html">
+   <LINK REL="Next"  HREF="002496.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9047 - trunk/plearn_learners/online</H1>
+    <B>laulysta at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9047%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200805231906.m4NJ6Jai016335%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9047 - trunk/plearn_learners/online">laulysta at mail.berlios.de
+       </A><BR>
+    <I>Fri May 23 21:06:19 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002494.html">[Plearn-commits] r9046 - trunk/python_modules/plearn/pymake
+</A></li>
+        <LI>Next message: <A HREF="002496.html">[Plearn-commits] r9048 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2495">[ date ]</a>
+              <a href="thread.html#2495">[ thread ]</a>
+              <a href="subject.html#2495">[ subject ]</a>
+              <a href="author.html#2495">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: laulysta
+Date: 2008-05-23 21:06:19 +0200 (Fri, 23 May 2008)
+New Revision: 9047
+
+Modified:
+   trunk/plearn_learners/online/RBMGaussianLayer.cc
+   trunk/plearn_learners/online/RBMGaussianLayer.h
+Log:
+good gradiant for the MSE
+
+
+
+Modified: trunk/plearn_learners/online/RBMGaussianLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMGaussianLayer.cc	2008-05-23 18:23:13 UTC (rev 9046)
++++ trunk/plearn_learners/online/RBMGaussianLayer.cc	2008-05-23 19:06:19 UTC (rev 9047)
+@@ -56,6 +56,7 @@
+     share_quad_coeff( false ),
+     size_quad_coeff( 0 ),
+     fixed_std_deviation( -1 ),
++    compute_mse_instead_of_nll( false ),
+     sigma_is_up_to_date( false )
+ {
+ }
+@@ -66,6 +67,7 @@
+     share_quad_coeff( false ),
+     size_quad_coeff( 0 ),
+     fixed_std_deviation( -1 ),
++    compute_mse_instead_of_nll( false ),
+     quad_coeff( the_size, 1. ), // or 1./M_SQRT2 ?
+     quad_coeff_pos_stats( the_size ),
+     quad_coeff_neg_stats( the_size ),
+@@ -86,6 +88,7 @@
+     inherited( the_learning_rate ),
+     min_quad_coeff( 0. ),
+     fixed_std_deviation( -1 ),
++    compute_mse_instead_of_nll( false ),
+     quad_coeff_pos_stats( the_size ),
+     quad_coeff_neg_stats( the_size ),
+     sigma_is_up_to_date( false )
+@@ -347,6 +350,10 @@
+                   OptionBase::learntoption,
+                   &quot;Quadratic coefficients of the units.&quot;);
+ 
++    declareOption(ol, &quot;sigma&quot;, &amp;RBMGaussianLayer::sigma,
++                  OptionBase::learntoption,
++                  &quot;comments...&quot;);
++
+     declareOption(ol, &quot;share_quad_coeff&quot;, &amp;RBMGaussianLayer::share_quad_coeff,
+                   OptionBase::buildoption,
+                   &quot;Should all the units share the same quadratic coefficients?\n&quot;
+@@ -361,7 +368,13 @@
+                   &quot;appropriate value.\n&quot;
+                   &quot;If &lt; 0, then this option is ignored.\n&quot;);
+ 
++    declareOption(ol, &quot;compute_mse_instead_of_nll&quot;, &amp;RBMGaussianLayer::compute_mse_instead_of_nll,
++                  OptionBase::buildoption,
++                  &quot;Indication that fpropNLL should compute the MSE instead of the NLL..\n&quot;
++                  &quot;bpropNLL will also give the appropriate gradient. Might want to\n&quot;
++                  &quot;set fixed_std_deviation to 1 in this case.\n&quot;);
+ 
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -710,25 +723,37 @@
+     computeStdDeviation();
+ 
+     real ret = 0;
+-    if(share_quad_coeff)
++    if( compute_mse_instead_of_nll )
++    {
++        real r;
+         for( int i=0 ; i&lt;size ; i++ )
+         {
+-            real r = (target[i] - expectation[i]) * quad_coeff[0];
+-            ret += r * r + pl_log(sigma[0]);
++            r = (target[i] - expectation[i]);
++            ret += r * r;
+         }
++    } 
+     else
+-        for( int i=0 ; i&lt;size ; i++ )
+-        {
+-            // ret += (target[i]-expectation[i])^2/(2 sigma[i]^2)
+-            //      + log(sqrt(2*Pi) * sigma[i])
+-            real r = (target[i] - expectation[i]) * quad_coeff[i];
+-            ret += r * r + pl_log(sigma[i]);
+-        }
+-    ret += 0.5*size*Log2Pi;
++    {
++        if(share_quad_coeff)
++            for( int i=0 ; i&lt;size ; i++ )
++            {
++                real r = (target[i] - expectation[i]) * quad_coeff[0];
++                ret += r * r + pl_log(sigma[0]);
++            }
++        else
++            for( int i=0 ; i&lt;size ; i++ )
++            {
++                // ret += (target[i]-expectation[i])^2/(2 sigma[i]^2)
++                //      + log(sqrt(2*Pi) * sigma[i])
++                real r = (target[i] - expectation[i]) * quad_coeff[i];
++                ret += r * r + pl_log(sigma[i]);
++                
++            }
++        ret += 0.5*size*Log2Pi;
++    }
+     return ret;
+ }
+ 
+-
+ void RBMGaussianLayer::fpropNLL(const Mat&amp; targets, const Mat&amp; costs_column)
+ {
+ 
+@@ -743,38 +768,57 @@
+     real nll;
+     real *expectation, *target;
+ 
+-    if(share_quad_coeff)
++    if( compute_mse_instead_of_nll )
++    {
+         for (int k=0;k&lt;batch_size;k++) // loop over minibatch
+         {
+             nll = 0;
+             expectation = expectations[k];
+             target = targets[k];
++            real r;
+             for( register int i=0 ; i&lt;size ; i++ ) // loop over outputs
+             {
+-                real r = (target[i] - expectation[i]) * quad_coeff[0];
+-                nll += r * r + pl_log(sigma[0]);
++                r = (target[i] - expectation[i]);
++                nll += r * r;
+             }
+-            nll += 0.5*size*Log2Pi;
+             costs_column(k,0) = nll;
+         }
++    }
+     else
+-        for (int k=0;k&lt;batch_size;k++) // loop over minibatch
+-        {
+-            nll = 0;
+-            expectation = expectations[k];
+-            target = targets[k];
+-            for( register int i=0 ; i&lt;size ; i++ ) // loop over outputs
++    {
++        if(share_quad_coeff)
++            for (int k=0;k&lt;batch_size;k++) // loop over minibatch
+             {
+-                // nll += (target[i]-expectation[i])^2/(2 sigma[i]^2)
+-                //      + log(sqrt(2*Pi) * sigma[i])
+-                real r = (target[i] - expectation[i]) * quad_coeff[i];
+-                nll += r * r + pl_log(sigma[i]);
++                nll = 0;
++                expectation = expectations[k];
++                target = targets[k];
++                for( register int i=0 ; i&lt;size ; i++ ) // loop over outputs
++                {
++                    real r = (target[i] - expectation[i]) * quad_coeff[0];
++                    nll += r * r + pl_log(sigma[0]);
++                }
++                nll += 0.5*size*Log2Pi;
++                costs_column(k,0) = nll;
+             }
+-            nll += 0.5*size*Log2Pi;
+-            costs_column(k,0) = nll;
+-        }
++        else
++            for (int k=0;k&lt;batch_size;k++) // loop over minibatch
++            {
++                nll = 0;
++                expectation = expectations[k];
++                target = targets[k];
++                for( register int i=0 ; i&lt;size ; i++ ) // loop over outputs
++                {
++                    // nll += (target[i]-expectation[i])^2/(2 sigma[i]^2)
++                    //      + log(sqrt(2*Pi) * sigma[i])
++                    real r = (target[i] - expectation[i]) * quad_coeff[i];
++                    nll += r * r + pl_log(sigma[i]);
++                }
++                nll += 0.5*size*Log2Pi;
++                costs_column(k,0) = nll;
++            }
++    }
+ }
+-
++    
+ void RBMGaussianLayer::bpropNLL(const Vec&amp; target, real nll, Vec&amp; bias_gradient)
+ {
+     computeExpectation();
+@@ -784,6 +828,11 @@
+ 
+     // bias_gradient = expectation - target
+     substract(expectation, target, bias_gradient);
++
++    if( compute_mse_instead_of_nll )
++        bias_gradient *= 2;
++    addBiasDecay(bias_gradient);
++
+ }
+ 
+ void RBMGaussianLayer::bpropNLL(const Mat&amp; targets, const Mat&amp; costs_column,
+@@ -799,6 +848,11 @@
+ 
+     // bias_gradients = expectations - targets
+     substract(expectations, targets, bias_gradients);
++
++    if( compute_mse_instead_of_nll )
++        bias_gradients *= 2;
++    addBiasDecay(bias_gradients);
++
+ }
+ 
+ 
+
+Modified: trunk/plearn_learners/online/RBMGaussianLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMGaussianLayer.h	2008-05-23 18:23:13 UTC (rev 9046)
++++ trunk/plearn_learners/online/RBMGaussianLayer.h	2008-05-23 19:06:19 UTC (rev 9047)
+@@ -69,6 +69,11 @@
+     //! If &lt; 0, then this option is ignored.
+     real fixed_std_deviation;
+ 
++    //! Indication that fpropNLL should compute the MSE instead of the NLL.
++    //! bpropNLL will also give the appropriate gradient. Might want to
++    //! set fixed_std_deviation to 1 in this case.
++    bool compute_mse_instead_of_nll;
++
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002494.html">[Plearn-commits] r9046 - trunk/python_modules/plearn/pymake
+</A></li>
+	<LI>Next message: <A HREF="002496.html">[Plearn-commits] r9048 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2495">[ date ]</a>
+              <a href="thread.html#2495">[ thread ]</a>
+              <a href="subject.html#2495">[ subject ]</a>
+              <a href="author.html#2495">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

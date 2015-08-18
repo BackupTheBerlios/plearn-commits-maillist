@@ -1,0 +1,931 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6680 - trunk/plearn/ker
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6680%20-%20trunk/plearn/ker&In-Reply-To=%3C200702240552.l1O5qCTS011951%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000128.html">
+   <LINK REL="Next"  HREF="000130.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6680 - trunk/plearn/ker</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6680%20-%20trunk/plearn/ker&In-Reply-To=%3C200702240552.l1O5qCTS011951%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6680 - trunk/plearn/ker">chapados at mail.berlios.de
+       </A><BR>
+    <I>Sat Feb 24 06:52:12 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000128.html">[Plearn-commits] r6679 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000130.html">[Plearn-commits] r6681 - trunk/commands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#129">[ date ]</a>
+              <a href="thread.html#129">[ thread ]</a>
+              <a href="subject.html#129">[ subject ]</a>
+              <a href="author.html#129">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2007-02-24 06:52:11 +0100 (Sat, 24 Feb 2007)
+New Revision: 6680
+
+Modified:
+   trunk/plearn/ker/ARDBaseKernel.cc
+   trunk/plearn/ker/ARDBaseKernel.h
+   trunk/plearn/ker/IIDNoiseKernel.cc
+   trunk/plearn/ker/IIDNoiseKernel.h
+   trunk/plearn/ker/RationalQuadraticARDKernel.cc
+   trunk/plearn/ker/RationalQuadraticARDKernel.h
+Log:
+All parameters for RationalQuadratic kernel are now specified in the inverse-softplus domain, which is more stable than the log-domain for numerical optimization; not converted SquaredExponential yet -- a test will fail (soon to be corrected)
+
+Modified: trunk/plearn/ker/ARDBaseKernel.cc
+===================================================================
+--- trunk/plearn/ker/ARDBaseKernel.cc	2007-02-23 21:47:48 UTC (rev 6679)
++++ trunk/plearn/ker/ARDBaseKernel.cc	2007-02-24 05:52:11 UTC (rev 6680)
+@@ -53,12 +53,13 @@
+     &quot;\n&quot;
+     &quot;Note that to make its operations more robust when used with unconstrained\n&quot;
+     &quot;optimization of hyperparameters, all hyperparameters of this kernel are\n&quot;
+-    &quot;specified in the log-domain.\n&quot;
++    &quot;specified in the inverse softplus domain.  See IIDNoiseKernel for more\n&quot;
++    &quot;explanations.\n&quot;
+     );
+ 
+ ARDBaseKernel::ARDBaseKernel()
+-    : m_log_signal_sigma(0.0),
+-      m_log_global_sigma(0.0)
++    : m_isp_signal_sigma(0.0),
++      m_isp_global_sigma(0.0)
+ { }
+ 
+ 
+@@ -67,22 +68,23 @@
+ void ARDBaseKernel::declareOptions(OptionList&amp; ol)
+ {
+     declareOption(
+-        ol, &quot;log_signal_sigma&quot;,
+-        &amp;ARDBaseKernel::m_log_signal_sigma,
++        ol, &quot;isp_signal_sigma&quot;,
++        &amp;ARDBaseKernel::m_isp_signal_sigma,
+         OptionBase::buildoption,
+-        &quot;Log of the global signal variance.  Default value=0.0&quot;);
++        &quot;Inverse softplus of the global signal variance.  Default value=0.0&quot;);
+ 
+     declareOption(
+-        ol, &quot;log_global_sigma&quot;,
+-        &amp;ARDBaseKernel::m_log_global_sigma,
++        ol, &quot;isp_global_sigma&quot;,
++        &amp;ARDBaseKernel::m_isp_global_sigma,
+         OptionBase::buildoption,
+-        &quot;Log of the global length-scale.  Note that if ARD is performed on\n&quot;
+-        &quot;input-specific sigmas, this hyperparameter should have a fixed value\n&quot;
+-        &quot;(and not be varied during the optimization).  Default value=0.0.\n&quot;);
++        &quot;Inverse softplus of the global length-scale.  Note that if ARD is\n&quot;
++        &quot;performed on input-specific sigmas, this hyperparameter should have a\n&quot;
++        &quot;fixed value (and not be varied during the optimization).  Default\n&quot;
++        &quot;value=0.0.\n&quot;);
+ 
+     declareOption(
+-        ol, &quot;log_input_sigma&quot;,
+-        &amp;ARDBaseKernel::m_log_input_sigma,
++        ol, &quot;isp_input_sigma&quot;,
++        &amp;ARDBaseKernel::m_isp_input_sigma,
+         OptionBase::buildoption,
+         &quot;If specified, contain input-specific length-scales that can be\n&quot;
+         &quot;individually optimized for (these are the ARD hyperparameters).\n&quot;);
+@@ -108,7 +110,7 @@
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+-    deepCopyField(m_log_input_sigma, copies);
++    deepCopyField(m_isp_input_sigma, copies);
+     deepCopyField(m_input_sigma,     copies);
+ }
+ 
+
+Modified: trunk/plearn/ker/ARDBaseKernel.h
+===================================================================
+--- trunk/plearn/ker/ARDBaseKernel.h	2007-02-23 21:47:48 UTC (rev 6679)
++++ trunk/plearn/ker/ARDBaseKernel.h	2007-02-24 05:52:11 UTC (rev 6680)
+@@ -55,7 +55,8 @@
+  *
+  *  Note that to make its operations more robust when used with unconstrained
+  *  optimization of hyperparameters, all hyperparameters of this kernel are
+- *  specified in the log-domain.
++ *  specified in the inverse softplus domain.  See IIDNoiseKernel for more
++ *  explanations.
+  */
+ class ARDBaseKernel : public IIDNoiseKernel
+ {
+@@ -64,21 +65,22 @@
+ public:
+     //#####  Public Build Options  ############################################
+ 
+-    //! Log of the global signal variance.  Default value=0.0
+-    real m_log_signal_sigma;
++    //! Inverse softplus of the global signal variance.  Default value=0.0
++    real m_isp_signal_sigma;
+ 
+     /**
+-     *  Log of the global length-scale.  Note that if ARD is performed on
+-     *  input-specific sigmas, this hyperparameter should have a fixed value
+-     *  (and not be varied during the optimization).  Default value=0.0.
++     *  Inverse softplus of the global length-scale.  Note that if ARD is
++     *  performed on input-specific sigmas, this hyperparameter should have a
++     *  fixed value (and not be varied during the optimization).  Default
++     *  value=0.0.
+      */
+-    real m_log_global_sigma;
++    real m_isp_global_sigma;
+ 
+     /**
+      *  If specified, contain input-specific length-scales that can be
+      *  individually optimized for (these are the ARD hyperparameters).
+      */
+-    Vec m_log_input_sigma;
++    Vec m_isp_input_sigma;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+
+Modified: trunk/plearn/ker/IIDNoiseKernel.cc
+===================================================================
+--- trunk/plearn/ker/IIDNoiseKernel.cc	2007-02-23 21:47:48 UTC (rev 6679)
++++ trunk/plearn/ker/IIDNoiseKernel.cc	2007-02-24 05:52:11 UTC (rev 6680)
+@@ -50,10 +50,10 @@
+     &quot;in gaussian processes (see GaussianProcessRegressor).  It represents simple\n&quot;
+     &quot;i.i.d. additive noise:\n&quot;
+     &quot;\n&quot;
+-    &quot;  k(x,y) = delta_x,y * sn2\n&quot;
++    &quot;  k(x,y) = delta_x,y * sn\n&quot;
+     &quot;\n&quot;
+-    &quot;where delta_x,y is the Kronecker delta function, and sn2 is the exp of\n&quot;
+-    &quot;twice the 'log_noise_sigma' option.\n&quot;
++    &quot;where delta_x,y is the Kronecker delta function, and sn is\n&quot;
++    &quot;softplus(isp_noise_sigma), with softplus(x) = log(1+exp(x)).\n&quot;
+     &quot;\n&quot;
+     &quot;In addition to comparing the complete x and y vectors, this kernel allows\n&quot;
+     &quot;adding a Kronecker delta when there is a match in only ONE DIMENSION.  This\n&quot;
+@@ -61,20 +61,23 @@
+     &quot;the input variables (but is not currently done for performance reasons).\n&quot;
+     &quot;With these terms, the kernel function takes the form:\n&quot;
+     &quot;\n&quot;
+-    &quot;  k(x,y) = delta_x,y * sn2 + \\sum_i delta_x[kr(i)],y[kr(i)] * ks2[i]\n&quot;
++    &quot;  k(x,y) = delta_x,y * sn + \\sum_i delta_x[kr(i)],y[kr(i)] * ks[i]\n&quot;
+     &quot;\n&quot;
+     &quot;where kr(i) is the i-th element of 'kronecker_indexes' (representing an\n&quot;
+-    &quot;index into the input vectors), and ks2[i] is the exp of twice the value of\n&quot;
+-    &quot;the i-th element of the 'log_kronecker_sigma' option.\n&quot;
++    &quot;index into the input vectors), and ks[i]=softplus(isp_kronecker_sigma[i]).\n&quot;
+     &quot;\n&quot;
+     &quot;Note that to make its operations more robust when used with unconstrained\n&quot;
+     &quot;optimization of hyperparameters, all hyperparameters of this kernel are\n&quot;
+-    &quot;specified in the log-domain.\n&quot;
++    &quot;specified in the inverse softplus domain, hence the 'isp' prefix.  This is\n&quot;
++    &quot;used in preference to the log-domain used by Rasmussen and Williams in\n&quot;
++    &quot;their implementation of gaussian processes, due to numerical stability.\n&quot;
++    &quot;(It may happen that the optimizer jumps 'too far' along one hyperparameter\n&quot;
++    &quot;and this causes the Gram matrix to become extremely ill-conditioned.)\n&quot;
+     );
+ 
+ 
+ IIDNoiseKernel::IIDNoiseKernel()
+-    : m_log_noise_sigma(0.0)
++    : m_isp_noise_sigma(0.0)
+ { }
+ 
+ 
+@@ -83,9 +86,9 @@
+ void IIDNoiseKernel::declareOptions(OptionList&amp; ol)
+ {
+     declareOption(
+-        ol, &quot;log_noise_sigma&quot;, &amp;IIDNoiseKernel::m_log_noise_sigma,
++        ol, &quot;isp_noise_sigma&quot;, &amp;IIDNoiseKernel::m_isp_noise_sigma,
+         OptionBase::buildoption,
+-        &quot;Log of the global noise variance.  Default value=0.0&quot;);
++        &quot;Inverse softplus of the global noise variance.  Default value=0.0&quot;);
+ 
+     declareOption(
+         ol, &quot;kronecker_indexes&quot;, &amp;IIDNoiseKernel::m_kronecker_indexes,
+@@ -94,10 +97,10 @@
+         &quot;Kronecker delta terms&quot;);
+ 
+     declareOption(
+-        ol, &quot;log_kronecker_sigma&quot;, &amp;IIDNoiseKernel::m_log_kronecker_sigma,
++        ol, &quot;isp_kronecker_sigma&quot;, &amp;IIDNoiseKernel::m_isp_kronecker_sigma,
+         OptionBase::buildoption,
+-        &quot;Log of the noise variance terms for the Kronecker deltas associated\n&quot;
+-        &quot;with kronecker_indexes&quot;);
++        &quot;Inverse softplus of the noise variance terms for the Kronecker deltas\n&quot;
++        &quot;associated with kronecker_indexes&quot;);
+     
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+@@ -118,10 +121,10 @@
+ 
+ void IIDNoiseKernel::build_()
+ {
+-    if (m_kronecker_indexes.size() != m_log_kronecker_sigma.size())
++    if (m_kronecker_indexes.size() != m_isp_kronecker_sigma.size())
+         PLERROR(&quot;IIDNoiseKernel::build_: size of 'kronecker_indexes' (%d) &quot;
+-                &quot;does not match that of 'log_kronecker_sigma' (%d)&quot;,
+-                m_kronecker_indexes.size(), m_log_kronecker_sigma.size());
++                &quot;does not match that of 'iso_kronecker_sigma' (%d)&quot;,
++                m_kronecker_indexes.size(), m_isp_kronecker_sigma.size());
+ }
+ 
+ 
+@@ -129,23 +132,18 @@
+ 
+ real IIDNoiseKernel::evaluate(const Vec&amp; x1, const Vec&amp; x2) const
+ {
+-    // if (fast_is_equal(powdistance(x1,x2,2), 0.0))
+-    //     return exp(2*m_log_noise_sigma);
+-    // else
+-    //     return 0.0;
+-
+     real value = 0.0;
+     if (x1 == x2)
+-        value += exp(2*m_log_noise_sigma);
++        value += softplus(m_isp_noise_sigma);
+ 
+     const int n = m_kronecker_indexes.size();
+     if (n &gt; 0) {
+         int*  cur_index = m_kronecker_indexes.data();
+-        real* cur_sigma = m_log_kronecker_sigma.data();
++        real* cur_sigma = m_isp_kronecker_sigma.data();
+ 
+         for (int i=0 ; i&lt;n ; ++i, ++cur_index, ++cur_sigma)
+             if (fast_is_equal(x1[*cur_index], x2[*cur_index]))
+-                value += exp(2 * *cur_sigma);
++                value += softplus(*cur_sigma);
+     }
+     return value;
+ }
+@@ -167,11 +165,10 @@
+     PLASSERT( K.size() == 0 || m_data_cache.size() &gt; 0 );  // Ensure data cached OK
+ 
+     // Precompute some terms
+-    real noise_sigma  = exp(2 * m_log_noise_sigma);
+-    m_kronecker_sigma.resize(m_log_kronecker_sigma.size());
+-    m_kronecker_sigma &lt;&lt; m_log_kronecker_sigma;
+-    m_kronecker_sigma *= 2.0;
+-    exp(m_kronecker_sigma, m_kronecker_sigma);
++    real noise_sigma  = softplus(m_isp_noise_sigma);
++    m_kronecker_sigma.resize(m_isp_kronecker_sigma.size());
++    for (int i=0, n=m_isp_kronecker_sigma.size() ; i&lt;n ; ++i)
++        m_kronecker_sigma[i] = softplus(m_isp_kronecker_sigma[i]);
+ 
+     // Prepare kronecker iteration
+     int   kronecker_num     = m_kronecker_indexes.size();
+@@ -212,10 +209,7 @@
+                         Kij += *cur_sigma;
+             }
+             
+-            // Fill upper triangle if not on diagonal
+             *Ki++ = Kij;
+-            // if (j &lt; i)
+-            //     *Kji = Kij;
+         }
+     }
+ }
+@@ -228,7 +222,7 @@
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+     deepCopyField(m_kronecker_indexes,   copies);
+-    deepCopyField(m_log_kronecker_sigma, copies);
++    deepCopyField(m_isp_kronecker_sigma, copies);
+     deepCopyField(m_kronecker_sigma,     copies);
+ }
+ 
+@@ -238,9 +232,10 @@
+ void IIDNoiseKernel::computeGramMatrixDerivative(Mat&amp; KD, const string&amp; kernel_param,
+                                                  real epsilon) const
+ {
+-    static const string LNS(&quot;log_noise_sigma&quot;);
+-    static const string LKS(&quot;log_kronecker_sigma[&quot;);
+-    if (kernel_param == LNS) {
++    static const string INS(&quot;isp_noise_sigma&quot;);
++    static const string IKS(&quot;isp_kronecker_sigma[&quot;);
++
++    if (kernel_param == INS) {
+         if (!data)
+             PLERROR(&quot;Kernel::computeGramMatrixDerivative should be called only after &quot;
+                     &quot;setDataForKernelMatrix&quot;);
+@@ -252,50 +247,18 @@
+         int W = nExamples();
+         KD.resize(W,W);
+         KD.fill(0.0);
+-        real deriv = 2*exp(2*m_log_noise_sigma);
++        real deriv = sigmoid(m_isp_noise_sigma);
+         for (int i=0 ; i&lt;W ; ++i)
+             KD(i,i) = deriv;
+     }
+-    else if (string_begins_with(kernel_param, LKS) &amp;&amp;
++    else if (string_begins_with(kernel_param, IKS) &amp;&amp;
+              kernel_param[kernel_param.size()-1] == ']')
+     {
+         int arg = tolong(kernel_param.substr(
+-                             LKS.size(), kernel_param.size() - LKS.size() - 1));
++                             IKS.size(), kernel_param.size() - IKS.size() - 1));
+         PLASSERT( arg &lt; m_kronecker_indexes.size() );
+ 
+         computeGramMatrixDerivKronecker(KD, arg);
+-        
+-        // computeGramMatrixDerivNV&lt;
+-        //     IIDNoiseKernel, &amp;IIDNoiseKernel::derivKronecker&gt;(KD, this, arg);
+-        
+-        // int W = nExamples();
+-        // KD.resize(W,W);
+-        // real deriv = 2*exp(2*m_log_kronecker_sigma[arg]);
+-        // int index  = m_kronecker_indexes[arg];
+-        // 
+-        // Vec row_i;
+-        // Vec row_j;
+-        // int m = KD.mod();
+-        // real* KDi;                           // Start of row i
+-        // real* KDji;                          // Start of column i
+-        // for (int i=0 ; i&lt;W ; ++i) {
+-        //     KDi = KD[i];
+-        //     KDji = &amp;KD[0][i];
+-        //     dataRow(i, row_i);
+-        //     real row_i_index = row_i[index];
+-        //     for (int j=0 ; j&lt;=i ; ++j, KDji += m) {
+-        //         dataRow(j, row_j);
+-        //         real KDij;
+-        //         if (fast_is_equal(row_i_index, row_j[index]))
+-        //             KDij = deriv;
+-        //         else
+-        //             KDij = 0.0;
+-        // 
+-        //         *KDi++ = KDij;
+-        //         if (j &lt; i)
+-        //             *KDji = KDij;
+-        //     }
+-        // }
+     }
+     else
+         inherited::computeGramMatrixDerivative(KD, kernel_param, epsilon);
+@@ -310,7 +273,7 @@
+     Vec&amp; row_i = *dataRow(i);
+     Vec&amp; row_j = *dataRow(j);
+     if (fast_is_equal(row_i[index], row_j[index]))
+-        return 2*exp(2*m_log_kronecker_sigma[arg]);
++        return sigmoid(m_isp_kronecker_sigma[arg]);
+     else
+         return 0.0;
+ }
+@@ -321,10 +284,10 @@
+ void IIDNoiseKernel::computeGramMatrixDerivKronecker(Mat&amp; KD, int arg) const
+ {
+     // Precompute some terms
+-    real kronecker_sigma_arg = 2. * exp(2. * m_log_kronecker_sigma[arg]);
++    real kronecker_sigma_arg = sigmoid(m_isp_kronecker_sigma[arg]);
+     int index = m_kronecker_indexes[arg];
+     
+-    // Compute Gram Matrix derivative w.r.t. log_kronecker_sigma[arg]
++    // Compute Gram Matrix derivative w.r.t. isp_kronecker_sigma[arg]
+     int  l = data-&gt;length();
+ 
+     // Variables that walk over the data matrix
+
+Modified: trunk/plearn/ker/IIDNoiseKernel.h
+===================================================================
+--- trunk/plearn/ker/IIDNoiseKernel.h	2007-02-23 21:47:48 UTC (rev 6679)
++++ trunk/plearn/ker/IIDNoiseKernel.h	2007-02-24 05:52:11 UTC (rev 6680)
+@@ -51,10 +51,10 @@
+  *  in gaussian processes (see GaussianProcessRegressor).  It represents simple
+  *  i.i.d. additive noise:
+  *
+- *    k(x,y) = delta_x,y * sn2
++ *    k(x,y) = delta_x,y * sn
+  *
+- *  where delta_x,y is the Kronecker delta function, and sn2 is the exp of
+- *  twice the 'log_noise_sigma' option.
++ *  where delta_x,y is the Kronecker delta function, and sn is
++ *  softplus(isp_noise_sigma), with softplus(x) = log(1+exp(x)).
+  *
+  *  In addition to comparing the complete x and y vectors, this kernel allows
+  *  adding a Kronecker delta when there is a match in only ONE DIMENSION.  This
+@@ -62,15 +62,18 @@
+  *  the input variables (but is not currently done for performance reasons).
+  *  With these terms, the kernel function takes the form:
+  *
+- *    k(x,y) = delta_x,y * sn2 + \sum_i delta_x[kr(i)],y[kr(i)] * ks2[i]
++ *    k(x,y) = delta_x,y * sn + \sum_i delta_x[kr(i)],y[kr(i)] * ks[i]
+  *
+  *  where kr(i) is the i-th element of 'kronecker_indexes' (representing an
+- *  index into the input vectors), and ks2[i] is the exp of twice the value of
+- *  the i-th element of the 'log_kronecker_sigma' option.
++ *  index into the input vectors), and ks[i]=softplus(isp_kronecker_sigma[i]).
+  *
+  *  Note that to make its operations more robust when used with unconstrained
+  *  optimization of hyperparameters, all hyperparameters of this kernel are
+- *  specified in the log-domain.
++ *  specified in the inverse softplus domain, hence the 'isp' prefix.  This is
++ *  used in preference to the log-domain used by Rasmussen and Williams in
++ *  their implementation of gaussian processes, due to numerical stability.
++ *  (It may happen that the optimizer jumps 'too far' along one hyperparameter
++ *  and this causes the Gram matrix to become extremely ill-conditioned.)
+  */
+ class IIDNoiseKernel : public MemoryCachedKernel
+ {
+@@ -79,16 +82,16 @@
+ public:
+     //#####  Public Build Options  ############################################
+ 
+-    //! Log of the global noise variance.  Default value=0.0
+-    real m_log_noise_sigma;
++    //! Inverse softplus of the global noise variance.  Default value=0.0
++    real m_isp_noise_sigma;
+ 
+     //! Element index in the input vectors that should be subject to additional
+     //! Kronecker delta terms
+     TVec&lt;int&gt; m_kronecker_indexes;
+ 
+-    //! Log of the noise variance terms for the Kronecker deltas associated
+-    //! with kronecker_indexes
+-    Vec m_log_kronecker_sigma;
++    //! Inverse softplus of the noise variance terms for the Kronecker deltas
++    //! associated with kronecker_indexes
++    Vec m_isp_kronecker_sigma;
+     
+ public:
+     //#####  Public Member Functions  #########################################
+@@ -133,7 +136,7 @@
+     void computeGramMatrixDerivKronecker(Mat&amp; KD, int arg) const;
+     
+ protected:
+-    //! Buffer for exponential of m_log_kronecker_sigma
++    //! Buffer for softplus of m_isp_kronecker_sigma
+     mutable Vec m_kronecker_sigma;
+     
+ private:
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.cc
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-02-23 21:47:48 UTC (rev 6679)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-02-24 05:52:11 UTC (rev 6680)
+@@ -51,20 +51,21 @@
+     &quot;Similar to C.E. Rasmussen's GPML code (see <A HREF="http://www.gaussianprocess.org">http://www.gaussianprocess.org</A>),\n&quot;
+     &quot;this kernel is specified as:\n&quot;
+     &quot;\n&quot;
+-    &quot;  k(x,y) = sf2 * [1 + (sum_i (x_i - y_i)^2 / w_i)/(2*alpha)]^(-alpha) + k_iid(x,y)\n&quot;
++    &quot;  k(x,y) = sf * [1 + (sum_i (x_i - y_i)^2 / w_i)/(2*alpha)]^(-alpha) + k_iid(x,y)\n&quot;
+     &quot;\n&quot;
+-    &quot;where sf2 is the exp of twice the 'log_signal_sigma' option, w_i is\n&quot;
+-    &quot;exp(2*log_global_sigma + 2*log_input_sigma[i]), and k_iid(x,y) is the\n&quot;
+-    &quot;result of IIDNoiseKernel kernel evaluation.\n&quot;
++    &quot;where sf is softplus(isp_signal_sigma), w_i is softplus(isp_global_sigma +\n&quot;
++    &quot;isp_input_sigma[i]), and k_iid(x,y) is the result of IIDNoiseKernel kernel\n&quot;
++    &quot;evaluation.\n&quot;
+     &quot;\n&quot;
+     &quot;Note that to make its operations more robust when used with unconstrained\n&quot;
+-    &quot;optimizaiton of hyperparameters, all hyperparameters of this kernel are\n&quot;
+-    &quot;specified in the log-domain.\n&quot;
++    &quot;optimization of hyperparameters, all hyperparameters of this kernel are\n&quot;
++    &quot;specified in the inverse softplus domain.  See IIDNoiseKernel for more\n&quot;
++    &quot;explanations.\n&quot;
+     );
+ 
+ 
+ RationalQuadraticARDKernel::RationalQuadraticARDKernel()
+-    : m_log_alpha(0.0)
++    : m_isp_alpha(0.0)
+ { }
+ 
+ 
+@@ -73,10 +74,10 @@
+ void RationalQuadraticARDKernel::declareOptions(OptionList&amp; ol)
+ {
+     declareOption(
+-        ol, &quot;log_alpha&quot;,
+-        &amp;RationalQuadraticARDKernel::m_log_alpha,
++        ol, &quot;isp_alpha&quot;,
++        &amp;RationalQuadraticARDKernel::m_isp_alpha,
+         OptionBase::buildoption,
+-        &quot;Log of the alpha parameter in the rational-quadratic kernel.\n&quot;
++        &quot;Inverse softplus of the alpha parameter in the rational-quadratic kernel.\n&quot;
+         &quot;Default value=0.0&quot;);
+ 
+     // Now call the parent class' declareOptions
+@@ -116,29 +117,29 @@
+ real RationalQuadraticARDKernel::evaluate(const Vec&amp; x1, const Vec&amp; x2) const
+ {
+     PLASSERT( x1.size() == x2.size() );
+-    PLASSERT( !m_log_input_sigma.size() || x1.size() == m_log_input_sigma.size() );
++    PLASSERT( !m_isp_input_sigma.size() || x1.size() == m_isp_input_sigma.size() );
+ 
+     if (x1.size() == 0)
+-        return exp(2*m_log_signal_sigma) + inherited::evaluate(x1,x2);
++        return softplus(m_isp_signal_sigma) + inherited::evaluate(x1,x2);
+     
+     const real* px1 = x1.data();
+     const real* px2 = x2.data();
+-    real sf2        = exp(2*m_log_signal_sigma);
+-    real alpha      = exp(m_log_alpha);
++    real sf         = softplus(m_isp_signal_sigma);
++    real alpha      = softplus(m_isp_alpha);
+     real sum_wt     = 0.0;
+     real sum_sqdiff = 0.0;
+     
+-    if (m_log_input_sigma.size() &gt; 0) {
+-        const real* pinpsig = m_log_input_sigma.data();
++    if (m_isp_input_sigma.size() &gt; 0) {
++        const real* pinpsig = m_isp_input_sigma.data();
+         for (int i=0, n=x1.size() ; i&lt;n ; ++i) {
+             real diff   = *px1++ - *px2++;
+             real sqdiff = diff * diff;
+             sum_sqdiff += sqdiff;
+-            sum_wt     += sqdiff / exp(2*(m_log_global_sigma + *pinpsig++));
++            sum_wt     += sqdiff / softplus(m_isp_global_sigma + *pinpsig++);
+         }
+     }
+     else {
+-        real global_sigma = exp(2*m_log_global_sigma);
++        real global_sigma = softplus(m_isp_global_sigma);
+         for (int i=0, n=x1.size() ; i&lt;n ; ++i) {
+             real diff   = *px1++ - *px2++;
+             real sqdiff = diff * diff;
+@@ -149,7 +150,7 @@
+ 
+     // We add the noise covariance as well
+     real noise_cov = inherited::evaluate(x1,x2);
+-    return sf2 * pow(1 + sum_wt / (2.*alpha), -alpha) + noise_cov;
++    return sf * pow(1 + sum_wt / (2.*alpha), -alpha) + noise_cov;
+ }
+ 
+ 
+@@ -157,7 +158,7 @@
+ 
+ void RationalQuadraticARDKernel::computeGramMatrix(Mat K) const
+ {
+-    PLASSERT( !m_log_input_sigma.size() || dataInputsize() == m_log_input_sigma.size() );
++    PLASSERT( !m_isp_input_sigma.size() || dataInputsize() == m_isp_input_sigma.size() );
+     PLASSERT( K.size() == 0 || m_data_cache.size() &gt; 0 );  // Ensure data cached OK
+ 
+     // Compute IID noise gram matrix and save it
+@@ -166,14 +167,14 @@
+     m_noise_gram_cache &lt;&lt; K;
+ 
+     // Precompute some terms
+-    real sf2   = exp(2*m_log_signal_sigma);
+-    real alpha = exp(m_log_alpha);
++    real sf    = softplus(m_isp_signal_sigma);
++    real alpha = softplus(m_isp_alpha);
+     m_input_sigma.resize(dataInputsize());
+-    m_input_sigma.fill(m_log_global_sigma);
+-    if (m_log_input_sigma.size() &gt; 0)
+-        m_input_sigma += m_log_input_sigma;
+-    m_input_sigma *= 2.0;
+-    exp(m_input_sigma, m_input_sigma);
++    m_input_sigma.fill(m_isp_global_sigma);
++    if (m_isp_input_sigma.size() &gt; 0)
++        m_input_sigma += m_isp_input_sigma;
++    for (int i=0, n=m_input_sigma.size() ; i&lt;n ; ++i)
++        m_input_sigma[i] = softplus(m_input_sigma[i]);
+ 
+     // Prepare the cache for the pow terms
+     m_pow_minus_alpha_minus_1.resize(K.length(), K.width());
+@@ -227,7 +228,7 @@
+ 
+             real inner_pow   = 1 + sum_wt / (2.*alpha);
+             real pow_alpha   = pow(inner_pow, -alpha);
+-            real Kij_cur     = sf2 * pow_alpha;
++            real Kij_cur     = sf * pow_alpha;
+             *pow_cache_cur++ = Kij_cur / inner_pow;
+             
+             // Update kernel matrix (already pre-filled with IID noise terms)
+@@ -247,36 +248,40 @@
+ void RationalQuadraticARDKernel::computeGramMatrixDerivative(
+     Mat&amp; KD, const string&amp; kernel_param, real epsilon) const
+ {
+-    static const string LSS(&quot;log_signal_sigma&quot;);
+-    static const string LGS(&quot;log_global_sigma&quot;);
+-    static const string LIS(&quot;log_input_sigma[&quot;);
+-    static const string LAL(&quot;log_alpha&quot;);
++    static const string ISS(&quot;isp_signal_sigma&quot;);
++    static const string IGS(&quot;isp_global_sigma&quot;);
++    static const string IIS(&quot;isp_input_sigma[&quot;);
++    static const string IAL(&quot;isp_alpha&quot;);
+ 
+-    if (kernel_param == LSS) {
++    if (kernel_param == ISS) {
+         computeGramMatrixDerivNV&lt;
+             RationalQuadraticARDKernel,
+-            &amp;RationalQuadraticARDKernel::derivLogSignalSigma&gt;(KD, this, -1);
++            &amp;RationalQuadraticARDKernel::derivIspSignalSigma&gt;(KD, this, -1);
+     }
+-    else if (kernel_param == LGS) {
++    else if (kernel_param == IGS) {
+         computeGramMatrixDerivNV&lt;
+             RationalQuadraticARDKernel,
+-            &amp;RationalQuadraticARDKernel::derivLogGlobalSigma&gt;(KD, this, -1);
++            &amp;RationalQuadraticARDKernel::derivIspGlobalSigma&gt;(KD, this, -1);
+     }
+-    else if (string_begins_with(kernel_param, LIS) &amp;&amp;
++    else if (string_begins_with(kernel_param, IIS) &amp;&amp;
+              kernel_param[kernel_param.size()-1] == ']')
+     {
+         int arg = tolong(kernel_param.substr(
+-                             LIS.size(), kernel_param.size() - LIS.size() - 1));
+-        PLASSERT( arg &lt; m_log_input_sigma.size() );
++                             IIS.size(), kernel_param.size() - IIS.size() - 1));
++        PLASSERT( arg &lt; m_isp_input_sigma.size() );
+ 
+-        computeGramMatrixDerivLogInputSigma(KD, arg);
++        computeGramMatrixDerivIspInputSigma(KD, arg);
+ 
+         // computeGramMatrixDerivNV&lt;
+         //     RationalQuadraticARDKernel,
+-        //     &amp;RationalQuadraticARDKernel::derivLogInputSigma&gt;(KD, this, arg);
++        //     &amp;RationalQuadraticARDKernel::derivIspInputSigma&gt;(KD, this, arg);
+     }
+-    else if (kernel_param == LAL) {
+-        computeGramMatrixDerivLogAlpha(KD);
++    else if (kernel_param == IAL) {
++        computeGramMatrixDerivIspAlpha(KD);
++
++        // computeGramMatrixDerivNV&lt;
++        //     RationalQuadraticARDKernel,
++        //     &amp;RationalQuadraticARDKernel::derivIspAlpha&gt;(KD, this, -1);
+     }
+     else
+         inherited::computeGramMatrixDerivative(KD, kernel_param, epsilon);
+@@ -285,81 +290,86 @@
+     // Mat KD1;
+     // Kernel::computeGramMatrixDerivative(KD1, kernel_param, epsilon);
+     // cerr &lt;&lt; &quot;Kernel hyperparameter: &quot; &lt;&lt; kernel_param &lt;&lt; endl;
+-    // cerr &lt;&lt; &quot;Analytic derivative (1st row):&quot; &lt;&lt; endl
+-    //      &lt;&lt; KD(0) &lt;&lt; endl
++    // cerr &lt;&lt; &quot;Analytic derivative (200th row):&quot; &lt;&lt; endl
++    //      &lt;&lt; KD(200) &lt;&lt; endl
+     //      &lt;&lt; &quot;Finite differences:&quot; &lt;&lt; endl
+-    //      &lt;&lt; KD1(0) &lt;&lt; endl;
++    //      &lt;&lt; KD1(200) &lt;&lt; endl;
+ }
+ 
+ 
+-//#####  derivLogSignalSigma  #################################################
++//#####  derivIspSignalSigma  #################################################
+ 
+-real RationalQuadraticARDKernel::derivLogSignalSigma(int i, int j, int arg, real K) const
++real RationalQuadraticARDKernel::derivIspSignalSigma(int i, int j, int arg, real K) const
+ {
+     real noise = m_noise_gram_cache(i,j);
+-    return 2*(K-noise);
++    return (K-noise)*sigmoid(m_isp_signal_sigma)/softplus(m_isp_signal_sigma);
+ }
+ 
+ 
+-//#####  derivLogGlobalSigma  #################################################
++//#####  derivIspGlobalSigma  #################################################
+ 
+-real RationalQuadraticARDKernel::derivLogGlobalSigma(int i, int j, int arg, real K) const
++real RationalQuadraticARDKernel::derivIspGlobalSigma(int i, int j, int arg, real K) const
+ {
+     // The rational quadratic gives us:
+-    //     K = exp(2*s)*k^(-alpha).
+-    // Rederive the value of k
+-    real alpha = exp(m_log_alpha);
++    //     K = s*k^(-alpha).
++    // Rederive the value of k == (K/s)^(-1/alpha)
++    real alpha = softplus(m_isp_alpha);
+     real noise = m_noise_gram_cache(i,j);
+     K -= noise;
+-    real k     = exp(- (pl_log(K) - 2*m_log_signal_sigma) / alpha);
+-    real inner = - (k - 1) * alpha;
+-    return -0.5 * (K / k) * inner;
++    real k     = pow(K / softplus(m_isp_signal_sigma), -1. / alpha);
++    real inner = (k - 1) * alpha * sigmoid(m_isp_global_sigma) / softplus(m_isp_global_sigma);
++    return (K / k) * inner;
+ }
+ 
+ 
+-//#####  derivLogInputSigma  ##################################################
++//#####  derivIspInputSigma  ##################################################
+ 
+ // This function computes the derivative element-wise.  The function actually
+-// used now is computeGramMatrixDerivLogInputSigma, which computes the whole
++// used now is computeGramMatrixDerivIspInputSigma, which computes the whole
+ // matrix much faster.
+-real RationalQuadraticARDKernel::derivLogInputSigma(int i, int j, int arg, real K) const
++real RationalQuadraticARDKernel::derivIspInputSigma(int i, int j, int arg, real K) const
+ {
+     // The rational quadratic gives us:
+-    //     K = exp(2*s)*k^(-alpha).
+-    // Rederive the value of k
++    //     K = s*k^(-alpha).
++    // Rederive the value of k == (K/s)^(-1/alpha)
++    real alpha   = softplus(m_isp_alpha);
+     Vec&amp; row_i   = *dataRow(i);
+     Vec&amp; row_j   = *dataRow(j);
+-    real K_over_k= m_pow_minus_alpha_minus_1(i,j);
++    real noise   = m_noise_gram_cache(i,j);
++    K -= noise;
++    real k       = pow(K / softplus(m_isp_signal_sigma), -1. / alpha);
+     real diff    = row_i[arg] - row_j[arg];
+     real sq_diff = diff * diff;
+-    return K_over_k * exp(-2 * (m_log_global_sigma + m_log_input_sigma[arg])) * sq_diff;
++    real inner   = m_isp_global_sigma + m_isp_input_sigma[arg];
++    real sig_inn = sigmoid(inner);
++    real spl_inn = softplus(inner);
++    return 0.5 * (K / k) * sig_inn * sq_diff / (spl_inn * spl_inn);
+ }
+ 
+ 
+-//#####  derivLogAlpha  #######################################################
++//#####  derivIspAlpha  #######################################################
+ 
+-real RationalQuadraticARDKernel::derivLogAlpha(int i, int j, int arg, real K) const
++real RationalQuadraticARDKernel::derivIspAlpha(int i, int j, int arg, real K) const
+ {
+-    real alpha = exp(m_log_alpha);
++    real alpha = softplus(m_isp_alpha);
+     real noise = m_noise_gram_cache(i,j);
+-    K -= noise;
+-    real k     = exp(- (pl_log(K) - 2*m_log_signal_sigma) / alpha);
+-    real left  = - alpha * pl_log(k);
+-    real num   = (k - 1) * 2 * alpha;
+-    real denum = 2 * k;
+-    return K * (left + num / denum);
++    K         -= noise;
++    real k     = pow(K / softplus(m_isp_signal_sigma), -1. / alpha);
++    return sigmoid(m_isp_alpha) * K * (1 - pl_log(k) - 1 / k);
+ }
+ 
+ 
+-//#####  computeGramMatrixDerivLogInputSigma  #################################
++//#####  computeGramMatrixDerivIspInputSigma  #################################
+ 
+-void RationalQuadraticARDKernel::computeGramMatrixDerivLogInputSigma(Mat&amp; KD,
++void RationalQuadraticARDKernel::computeGramMatrixDerivIspInputSigma(Mat&amp; KD,
+                                                                      int arg) const
+ {
+     // Precompute some terms
+     real input_sigma_arg = m_input_sigma[arg];
++    real input_sigma_sq  = input_sigma_arg * input_sigma_arg;
++    real input_sigmoid   = sigmoid(m_isp_global_sigma + m_isp_input_sigma[arg]);
+     
+-    // Compute Gram Matrix derivative w.r.t. log_input_sigma[arg]
++    // Compute Gram Matrix derivative w.r.t. isp_input_sigma[arg]
+     int  l = data-&gt;length();
+ 
+     // Variables that walk over the data matrix
+@@ -392,7 +402,8 @@
+         {
+             real diff    = *xi - *xj;
+             real sq_diff = diff * diff;
+-            real KD_cur  = *pow_cache_cur * sq_diff / input_sigma_arg;
++            real KD_cur  = 0.5 * *pow_cache_cur *
++                           input_sigmoid * sq_diff / input_sigma_sq;
+ 
+             // Set into derivative matrix
+             *KDij++ = KD_cur;
+@@ -401,16 +412,16 @@
+ }
+ 
+ 
+-//#####  computeGramMatrixDerivLogAlpha  ######################################
++//#####  computeGramMatrixDerivIspAlpha  ######################################
+ 
+-void RationalQuadraticARDKernel::computeGramMatrixDerivLogAlpha(Mat&amp; KD) const
++void RationalQuadraticARDKernel::computeGramMatrixDerivIspAlpha(Mat&amp; KD) const
+ {
+     // Precompute some terms
+-    real alpha = exp(m_log_alpha);
++    real alpha_sigmoid = sigmoid(m_isp_alpha);
+     
+-    // Compute Gram Matrix derivative w.r.t. log_alpha
+-    int  l = data-&gt;length();
+-    int  k_mod     = gram_matrix.mod();
++    // Compute Gram Matrix derivative w.r.t. isp_alpha
++    int  l     = data-&gt;length();
++    int  k_mod = gram_matrix.mod();
+ 
+     // Variables that walk over the pre-computed kernel matrix (K) 
+     real *Ki = &amp;gram_matrix(0,0);            // Current row of kernel matrix
+@@ -448,10 +459,7 @@
+         {
+             real K      = *Kij - *noise_cache_cur;
+             real k      = K / *pow_cache_cur;
+-            real left   = -alpha * pl_log(k);
+-            real num    = (k - 1) * 2. * alpha;
+-            real denum  = 2. * k;
+-            real KD_cur = K * (left + num / denum);
++            real KD_cur = alpha_sigmoid * K * (1 - pl_log(k) - 1/k);
+             
+             // Set into derivative matrix
+             *KDij++ = KD_cur;
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.h
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-02-23 21:47:48 UTC (rev 6679)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-02-24 05:52:11 UTC (rev 6680)
+@@ -54,15 +54,16 @@
+  *  Similar to C.E. Rasmussen's GPML code (see <A HREF="http://www.gaussianprocess.org">http://www.gaussianprocess.org</A>),
+  *  this kernel is specified as:
+  *
+- *    k(x,y) = sf2 * [1 + (sum_i (x_i - y_i)^2 / w_i)/(2*alpha)]^(-alpha) + k_iid(x,y)
++ *    k(x,y) = sf * [1 + (sum_i (x_i - y_i)^2 / w_i)/(2*alpha)]^(-alpha) + k_iid(x,y)
+  *
+- *  where sf2 is the exp of twice the 'log_signal_sigma' option, w_i is
+- *  exp(2*log_global_sigma + 2*log_input_sigma[i]), and k_iid(x,y) is the
+- *  result of IIDNoiseKernel kernel evaluation.
++ *  where sf is softplus(isp_signal_sigma), w_i is softplus(isp_global_sigma +
++ *  isp_input_sigma[i]), and k_iid(x,y) is the result of IIDNoiseKernel kernel
++ *  evaluation.
+  *
+  *  Note that to make its operations more robust when used with unconstrained
+- *  optimizaiton of hyperparameters, all hyperparameters of this kernel are
+- *  specified in the log-domain.
++ *  optimization of hyperparameters, all hyperparameters of this kernel are
++ *  specified in the inverse softplus domain.  See IIDNoiseKernel for more
++ *  explanations.
+  */
+ class RationalQuadraticARDKernel : public ARDBaseKernel
+ {
+@@ -71,9 +72,9 @@
+ public:
+     //#####  Public Build Options  ############################################
+ 
+-    //! Log of the alpha parameter in the rational-quadratic kernel.
++    //! Inverse softplus of the alpha parameter in the rational-quadratic kernel.
+     //! Default value=0.0
+-    real m_log_alpha;
++    real m_isp_alpha;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+@@ -112,23 +113,23 @@
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+ 
+-    //! Derivative function with respect to log_signal_sigma
+-    real derivLogSignalSigma(int i, int j, int arg, real K) const;
++    //! Derivative function with respect to isp_signal_sigma
++    real derivIspSignalSigma(int i, int j, int arg, real K) const;
+ 
+-    //! Derivative function with respect to log_global_sigma
+-    real derivLogGlobalSigma(int i, int j, int arg, real K) const;
++    //! Derivative function with respect to isp_global_sigma
++    real derivIspGlobalSigma(int i, int j, int arg, real K) const;
+     
+-    //! Derivative function with respect to log_input_sigma[arg]
+-    real derivLogInputSigma(int i, int j, int arg, real K) const;
++    //! Derivative function with respect to isp_input_sigma[arg]
++    real derivIspInputSigma(int i, int j, int arg, real K) const;
+     
+-    //! Derivative function with respect to log_alpha
+-    real derivLogAlpha(int i, int j, int arg, real K) const;
++    //! Derivative function with respect to isp_alpha
++    real derivIspAlpha(int i, int j, int arg, real K) const;
+ 
+-    // Compute derivative w.r.t. log_input_sigma[arg] for WHOLE MATRIX
+-    void computeGramMatrixDerivLogInputSigma(Mat&amp; KD, int arg) const;
++    // Compute derivative w.r.t. isp_input_sigma[arg] for WHOLE MATRIX
++    void computeGramMatrixDerivIspInputSigma(Mat&amp; KD, int arg) const;
+     
+-    // Compute derivative w.r.t. log_alpha for WHOLE MATRIX
+-    void computeGramMatrixDerivLogAlpha(Mat&amp; KD) const;
++    // Compute derivative w.r.t. isp_alpha for WHOLE MATRIX
++    void computeGramMatrixDerivIspAlpha(Mat&amp; KD) const;
+     
+ protected:
+     //! Cached version of IID noise gram matrix
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000128.html">[Plearn-commits] r6679 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000130.html">[Plearn-commits] r6681 - trunk/commands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#129">[ date ]</a>
+              <a href="thread.html#129">[ thread ]</a>
+              <a href="subject.html#129">[ subject ]</a>
+              <a href="author.html#129">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

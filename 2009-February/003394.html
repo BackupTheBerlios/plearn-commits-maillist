@@ -1,0 +1,258 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9954 - trunk/plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9954%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200902241911.n1OJB35m000679%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003393.html">
+   <LINK REL="Next"  HREF="003395.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9954 - trunk/plearn_learners/regressors</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9954%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200902241911.n1OJB35m000679%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9954 - trunk/plearn_learners/regressors">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Feb 24 20:11:03 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003393.html">[Plearn-commits] r9953 - trunk/plearn/math
+</A></li>
+        <LI>Next message: <A HREF="003395.html">[Plearn-commits] r9955 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3394">[ date ]</a>
+              <a href="thread.html#3394">[ thread ]</a>
+              <a href="subject.html#3394">[ subject ]</a>
+              <a href="author.html#3394">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-02-24 20:11:03 +0100 (Tue, 24 Feb 2009)
+New Revision: 9954
+
+Modified:
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+Log:
+use a stable sort for the index. This give a 5% speed up in my test.
+
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2009-02-24 16:59:23 UTC (rev 9953)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2009-02-24 19:11:03 UTC (rev 9954)
+@@ -219,10 +219,10 @@
+     getAllRegisteredRow(leave_id,col,reg);
+     target.resize(reg.length());
+     weight.resize(reg.length());
+-    value.resize(reg.length());    
++    value.resize(reg.length());
+     if(weightsize() &lt;= 0){
+         weight.fill(1.0 / length());
+-        for(int i=0;i&lt;reg.length();i++){            
++        for(int i=0;i&lt;reg.length();i++){
+             target[i] = target_weight[int(reg[i])].first;
+             value[i]  = tsource-&gt;get(col, reg[i]);
+         }
+@@ -274,7 +274,7 @@
+     string f=source-&gt;getMetaDataDir()+&quot;RTR_tsorted_row.psave&quot;;
+ 
+     if(isUpToDate(f)){
+-        DBG_LOG&lt;&lt;&quot;RegressionTreeRegisters:: Reloading the sorted source VMatrix&quot;&lt;&lt;endl;
++        DBG_LOG&lt;&lt;&quot;RegressionTreeRegisters:: Reloading the sorted source VMatrix: &quot;&lt;&lt;f&lt;&lt;endl;
+         PLearn::load(f,tsorted_row);
+         return;
+     }
+@@ -300,8 +300,9 @@
+         sortEachDim(sample_dim);
+         if (report_progress) pb-&gt;update(sample_dim+1);
+     }
++    if (report_progress) pb-&gt;close();//in case of parallel sort.
+     if(source-&gt;hasMetaDataDir()){
+-        DBG_LOG&lt;&lt;&quot;RegressionTreeRegisters:: Saving the sorted source VMatrix&quot;&lt;&lt;endl;
++        DBG_LOG&lt;&lt;&quot;RegressionTreeRegisters:: Saving the sorted source VMatrix: &quot;&lt;&lt;f&lt;&lt;endl;
+         PLearn::save(f,tsorted_row);
+     }else{
+         DBG_LOG&lt;&lt;&quot;RegressionTreeRegisters:: can't save the sorted source VMatrix as we don't have a metadatadir&quot;&lt;&lt;endl;
+@@ -311,110 +312,32 @@
+   
+ void RegressionTreeRegisters::sortEachDim(int dim)
+ {
+-    int start_index = 0;
+-    int end_index = length() - 1;
+-    int forward_index;
+-    int backward_index;
+-    int stack_index = -1;
+-    TVec&lt;int&gt; stack(50);
+-    for (;;)
+-    {
+-        if ((end_index - start_index) &lt; 7)
+-        {
+-            if (end_index &gt; start_index)
+-            {
+-                sortSmallSubArray(start_index, end_index, dim);
+-            }
+-            if (stack_index &lt; 0)
+-            {
+-                break;
+-            }
+-            end_index = stack[stack_index--];
+-            start_index = stack[stack_index--];
+-        }
+-        else
+-        {
+-            swapIndex(start_index + 1, (start_index + end_index) / 2, dim);
+-            if (compare(tsource-&gt;get(dim, tsorted_row(dim, start_index)),
+-                        tsource-&gt;get(dim, tsorted_row(dim, end_index))) &gt; 0.0)
+-                swapIndex(start_index, end_index, dim);
+-            if (compare(tsource-&gt;get(dim, tsorted_row(dim, start_index + 1)),
+-                        tsource-&gt;get(dim, tsorted_row(dim, end_index))) &gt; 0.0)
+-                swapIndex(start_index + 1, end_index, dim);
+-            if (compare(tsource-&gt;get(dim, tsorted_row(dim, start_index)),
+-                        tsource-&gt;get(dim, tsorted_row(dim, start_index + 1))) &gt; 0.0)
+-                swapIndex(start_index, start_index + 1, dim);
+-            forward_index = start_index + 1;
+-            backward_index = end_index;
+-            real sample_feature = tsource-&gt;get(dim, tsorted_row(dim, start_index + 1));
+-            for (;;)
+-            {
+-                do forward_index++; while (compare(tsource-&gt;get(dim, tsorted_row(dim, forward_index)), sample_feature) &lt; 0.0);
+-                do backward_index--; while (compare(tsource-&gt;get(dim, tsorted_row(dim, backward_index)), sample_feature) &gt; 0.0);
+-                if (backward_index &lt; forward_index)
+-                {
+-                    break;
+-                }
+-                swapIndex(forward_index, backward_index, dim);
+-            }
+-            swapIndex(start_index + 1, backward_index, dim);
+-            stack_index += 2;
+-            if (stack_index &gt; 50)
+-                PLERROR(&quot;RegressionTreeRegistersVMatrix: the stack for sorting the rows is too small&quot;);
+-            if ((end_index - forward_index + 1) &gt;= (backward_index - start_index))
+-            {
+-                stack[stack_index] = end_index;
+-                stack[stack_index - 1] = forward_index;
+-                end_index = backward_index - 1;
+-            }
+-            else
+-            {
+-                stack[stack_index] = backward_index - 1;
+-                stack[stack_index - 1] = start_index;
+-                start_index = forward_index;
+-            }
+-        }
++    PLCHECK(tsource-&gt;classname()==&quot;MemoryVMatrixNoSave&quot;);
++    Mat m = tsource.toMat();
++    Vec v = m(dim);
++    TVec&lt;int&gt; order = v.sortingPermutation(true, true);
++    tsorted_row(dim)&lt;&lt;order;
++
++#ifndef NDEBUG
++    for(int i=0;i&lt;length()-1;i++){
++        int reg1 = tsorted_row(dim,i);
++        int reg2 = tsorted_row(dim,i+1);
++        real v1 = tsource(dim,reg1);
++        real v2 = tsource(dim,reg2);
++//check that the sort is valid.
++        PLASSERT(v1&lt;=v2);
++//check that the sort is stable
++        if(v1==v2 &amp;&amp; reg1&gt;reg2)
++            PLWARNING(&quot;In RegressionTreeRegisters::sortEachDim(%d) - &quot;
++                      &quot;sort is not stable. make it stable to be more optimized:&quot;
++                      &quot; reg1=%d, reg2=%d, v1=%f, v2=%f&quot;, 
++                      reg1, reg2, v1, v2);
+     }
+-}
+-  
+-void RegressionTreeRegisters::sortSmallSubArray(int the_start_index, int the_end_index, int dim)
+-{
+-    for (int next_train_sample_index = the_start_index + 1;
+-         next_train_sample_index &lt;= the_end_index;
+-         next_train_sample_index++)
+-    {
+-        int saved_index = tsorted_row(dim, next_train_sample_index);
+-        real sample_feature = tsource-&gt;get(dim,saved_index);
+-        int each_train_sample_index;
+-        for (each_train_sample_index = next_train_sample_index - 1;
+-             each_train_sample_index &gt;= the_start_index;
+-             each_train_sample_index--)
+-        {
+-            if (compare(tsource-&gt;get(dim,tsorted_row(dim, each_train_sample_index)), sample_feature) &lt;= 0.0)
+-            {
+-                break;
+-            }
+-            tsorted_row(dim, each_train_sample_index + 1) = tsorted_row(dim, each_train_sample_index);
+-        }
+-        tsorted_row(dim, each_train_sample_index + 1) = saved_index;
+-    }  
+-}
++#endif
++    return;
+ 
+-void RegressionTreeRegisters::swapIndex(int index_i, int index_j, int dim)
+-{
+-    int saved_index = tsorted_row(dim, index_i);
+-    tsorted_row(dim, index_i) = tsorted_row(dim, index_j);
+-    tsorted_row(dim, index_j) = saved_index;
+ }
+ 
+-real RegressionTreeRegisters::compare(real field1, real field2)
+-{
+-    if (is_missing(field1) &amp;&amp; is_missing(field2)) return 0.0;
+-    if (is_missing(field1)) return -1.0;
+-    if (is_missing(field2)) return +1.0;
+-    return field1 - field2;
+-}
+-
+ void RegressionTreeRegisters::printRegisters()
+ {
+     cout &lt;&lt; &quot; register:  &quot;;
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2009-02-24 16:59:23 UTC (rev 9953)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2009-02-24 19:11:03 UTC (rev 9954)
+@@ -148,9 +148,6 @@
+     void         build_();
+     void         sortRows();
+     void         sortEachDim(int dim);
+-    void         sortSmallSubArray(int start_index, int end_index, int dim);
+-    void         swapIndex(int index_i, int index_j, int dim);
+-    real         compare(real field1, real field2);
+     void         verbose(string msg, int level);
+ 
+ };
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003393.html">[Plearn-commits] r9953 - trunk/plearn/math
+</A></li>
+	<LI>Next message: <A HREF="003395.html">[Plearn-commits] r9955 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3394">[ date ]</a>
+              <a href="thread.html#3394">[ thread ]</a>
+              <a href="subject.html#3394">[ subject ]</a>
+              <a href="author.html#3394">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,317 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8346 - trunk/plearn/ker
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-December/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8346%20-%20trunk/plearn/ker&In-Reply-To=%3C200712112043.lBBKhoqj025456%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001793.html">
+   <LINK REL="Next"  HREF="001795.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8346 - trunk/plearn/ker</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8346%20-%20trunk/plearn/ker&In-Reply-To=%3C200712112043.lBBKhoqj025456%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8346 - trunk/plearn/ker">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Tue Dec 11 21:43:50 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001793.html">[Plearn-commits] r8345 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="001795.html">[Plearn-commits] r8347 - trunk/plearn/ker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1794">[ date ]</a>
+              <a href="thread.html#1794">[ thread ]</a>
+              <a href="subject.html#1794">[ subject ]</a>
+              <a href="author.html#1794">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2007-12-11 21:43:50 +0100 (Tue, 11 Dec 2007)
+New Revision: 8346
+
+Modified:
+   trunk/plearn/ker/DTWKernel.cc
+   trunk/plearn/ker/DTWKernel.h
+Log:
+- more generic DTW
+
+
+
+Modified: trunk/plearn/ker/DTWKernel.cc
+===================================================================
+--- trunk/plearn/ker/DTWKernel.cc	2007-12-10 16:05:29 UTC (rev 8345)
++++ trunk/plearn/ker/DTWKernel.cc	2007-12-11 20:43:50 UTC (rev 8346)
+@@ -47,14 +47,16 @@
+     &quot;Kernel for Dynamic Time Warping&quot;,
+     &quot;Kernel for Dynamic Time Warping\n&quot;
+     &quot;(see sect.4.7 of Rabiner, L. and Juang, B. 1993 'Fundamentals of Speech Recognition'. Prentice-Hall, Inc.)\n&quot;
+-    &quot;TODO: Add global path constraints and other goodies...\n&quot;
+     );
+ 
+ //////////////////
+ // DTWKernel //
+ //////////////////
+ DTWKernel::DTWKernel()
+-    :subvec_length(-1), local_paths(), distance_type(&quot;euclidean&quot;)
++    :subvec_length(-1), 
++     local_paths(), 
++     distance_type(&quot;L2&quot;), 
++     max_time_deviation(-1)
+ {
+     /*
+      * default local paths: 
+@@ -77,13 +79,26 @@
+ 
+     declareOption(ol, &quot;local_paths&quot;, &amp;DTWKernel::local_paths,
+                   OptionBase::buildoption,
+-                  &quot;Specifies local path constraints.&quot;);
++                  &quot;Specifies local path constraints and weights. &quot;
++                  &quot;In each path, steps should be listed from &quot;
++                  &quot;the ending point to the starting point.&quot;
++                  &quot;e.g. if a path can start at (0,0), go to (1,1) &quot;
++                  &quot;and then end at (2,1), it should be listed as: &quot;
++                  &quot;[((1,0),0.5), ((1,1),0.5)] where '0.5' are weights&quot;);
+ 
+     declareOption(ol, &quot;distance_type&quot;, &amp;DTWKernel::distance_type,
+                   OptionBase::buildoption,
+                   &quot;Name of the 'distance' function to use &quot;
+-                  &quot;when comparing features (sub-vecs).&quot;);
++                  &quot;when comparing features (sub-vecs). &quot;
++                  &quot;one of: 'L2'  : sqrt{sum{(x-y)^2}}&quot;
++                  &quot;        'L1'  : sum{|x-y|}&quot;
++                  &quot;        'pow2': sum{(x-y)^2}&quot;);
+ 
++    declareOption(ol, &quot;max_time_deviation&quot;, &amp;DTWKernel::max_time_deviation,
++                  OptionBase::buildoption,
++                  &quot;Maximum allowed difference between i and j; &quot;
++                  &quot;negative means no limit.&quot;);
++
+     inherited::declareOptions(ol);
+ }
+ 
+@@ -121,12 +136,46 @@
+                 &quot;subvec_length must be specified before build &quot;
+                 &quot;(%d is not a valid value).&quot;, subvec_length);
+ 
+-    if(distance_type == &quot;euclidean&quot;)
++    //distance function
++    if(distance_type == &quot;L2&quot;)
++        dist_fn= L2distance;
++    else if(distance_type == &quot;L1&quot;)
++        dist_fn= L1distance;
++    else if(distance_type == &quot;pow2&quot;)
+         dist_fn= powdistance;
+     else
+         PLERROR(&quot;In DTWKernel::build_() : &quot;
+-                &quot;only 'euclidean' distance_type is supported for now &quot;
++                &quot;distance_type should be one of: &quot; 
++                &quot;'L2', 'L1' or 'pow2' &quot;
+                 &quot;('%s' is not a valid value).&quot;, distance_type.c_str());
++
++    //calc. valid region from local_paths (min/max slope)
++    TVec&lt;LocalPath&gt;::iterator it;
++    TVec&lt;LocalPath&gt;::iterator itbeg= local_paths.begin();
++    TVec&lt;LocalPath&gt;::iterator itend= local_paths.end();
++    TVec&lt;LocalStep&gt;::iterator jt;
++    TVec&lt;LocalStep&gt;::iterator jtend;
++    bool first= true;
++    for(it= itbeg; it != itend; ++it)
++    {
++        int i= 0, j= 0;
++        jtend= it-&gt;end();
++        for(jt= it-&gt;begin(); jt != jtend; ++jt)
++        {
++            i+= jt-&gt;first.first;
++            j+= jt-&gt;first.second;
++        }
++        real rij= i;
++        rij/= j;
++        if(rij &lt; slope_ij_min || first)
++            slope_ij_min= rij;
++        real rji= j;
++        rji/= i;
++        if(rji &lt; slope_ji_min || first)
++            slope_ji_min= rji;
++        first= false;
++    }
++
+ }
+ 
+ //////////////
+@@ -147,17 +196,43 @@
+         subvecs2[j]= x2.subVec(j*subvec_length, subvec_length);
+ 
+     //init: calc. point-to-point distances
++    // also pre-calc. bounds on j for each i
++    int i,j,jmin,jmax;
++    real jmin0, jmax0;
+     dpoint.resize(n1,n2);
+-    for(int i= 0; i &lt; n1; ++i)
+-        for(int j= 0; j &lt; n2; ++j)
++    jbounds.resize(n1,2);
++    for(i= 0; i &lt; n1; ++i)
++    {
++        if(slope_ij_min == 0.)
++        {
++            jmin0= 0.;
++            jmax0= n2;
++        }
++        else
++        {
++            jmin0= static_cast&lt;real&gt;(i+1-n1)/slope_ij_min + n2 - 1;
++            jmax0= static_cast&lt;real&gt;(i)/slope_ij_min;
++        }
++        jmin= static_cast&lt;int&gt;(ceil(max(jmin0, slope_ji_min * i)));
++        jmax= static_cast&lt;int&gt;(
++            floor(min(jmax0, slope_ji_min*(i-n1+1) + n2 - 1)));
++        if(max_time_deviation &gt;= 0)
++        {
++            jmin= max(jmin, i - max_time_deviation);
++            jmax= min(jmax, i + max_time_deviation);
++        }
++        jbounds(i,0)= jmin;
++        jbounds(i,1)= jmax;
++
++        for(j= jmin; j &lt;= jmax; ++j)
+             dpoint(i,j)= dist_fn(subvecs1[i], subvecs2[j]);
++    }
+ 
+     //recurs: calc. path distances
+     dpath.resize(n1,n2);
+     bptrs.resize(n1,n2);
+     dpath(0,0)= dpoint(0,0); //starting point
+     
+-    int i,j;
+     real mn; //min. found at each step
+     int ai, aj; //'actual' coords when following a local path
+     pair&lt;int,int&gt; scoords; //coords for a step
+@@ -171,10 +246,13 @@
+     bool some_path_ok; //is there any valid path to those coords?
+ 
+     for(i= 0; i &lt; n1; ++i)
+-        for(j= 0; j &lt; n2; ++j)
++    {
++        jmin= jbounds(i,0);
++        if(i==0)
++            jmin= max(1,jmin);//skip (0,0), already calc.
++        jmax= jbounds(i,1);
++        for(j= jmin; j &lt;= jmax; ++j)
+         {
+-            if(i==0 &amp;&amp; j==0)
+-                continue; //starting point already calc.
+             some_path_ok= false;
+             mn= REAL_MAX;
+             for(it= itbeg; it != itend; ++it)
+@@ -184,17 +262,19 @@
+                 dist= 0.;
+                 jtend= it-&gt;end();
+                 for(jt= it-&gt;begin(); jt != jtend; ++jt)
+-                {// for each step from a local path
++                {// for each step in the local path
+                     dist+= dpoint(ai,aj) * jt-&gt;second;
+                     scoords= jt-&gt;first;
+                     ai-= scoords.first;
+                     aj-= scoords.second;
+-                    if(ai &lt; 0 || aj &lt; 0)//invalid path
++                    if(ai &lt; 0 || aj &lt; 0)
+                     {
+                         path_ok= false;
+                         break;
+                     }
+                 }
++                if(ai &lt; 0 || aj &lt; jbounds(ai,0) || aj &gt; jbounds(ai,1))
++                    path_ok= false;
+                 if(path_ok)
+                 {
+                     dist+= dpath(ai,aj);//add dist. to beg. of path
+@@ -206,8 +286,12 @@
+                     }
+                 }
+             }
+-            dpath(i,j)= mn;//will be REAL_MAX if no path
++            dpath(i,j)= mn;//will be REAL_MAX if no path... but should not happen
++            if(!some_path_ok &amp;&amp; i==n1-1 &amp;&amp; j==n2-1)
++                PLERROR(&quot;In DTWKernel::dtw : can't reach end of path! &quot;
++                        &quot;Check your local_paths, they may be inconsistent.&quot;);
+         }
++    }
+ }
+ 
+ ////////////////
+
+Modified: trunk/plearn/ker/DTWKernel.h
+===================================================================
+--- trunk/plearn/ker/DTWKernel.h	2007-12-10 16:05:29 UTC (rev 8345)
++++ trunk/plearn/ker/DTWKernel.h	2007-12-11 20:43:50 UTC (rev 8346)
+@@ -50,7 +50,6 @@
+  *
+  * WARNING: THIS CLASS IS *NOT* THREAD-SAFE (has mutable pre-allocated data members)
+  * 
+- * TODO: Add global path constraints and other goodies
+  */
+ 
+ class DTWKernel : public Kernel
+@@ -79,6 +78,9 @@
+ 
+     //! name of the 'distance' function to use when comparing features (sub-vecs)
+     string distance_type;
++
++    //! Maximum allowed difference between i and j.
++    int max_time_deviation;
+     
+ public:
+     //#####  Public Member Functions  #########################################
+@@ -135,9 +137,18 @@
+     //! back-pointers of optimal paths (pre-alloc'd)
+     mutable TMat&lt;pair&lt;int,int&gt; &gt; bptrs;
+ 
++    //! bounds on j for each i
++    mutable TMat&lt;int&gt; jbounds;
++
+     //! actual pointer to distance function
+     real (*dist_fn)(const Vec&amp;,const Vec&amp;);
+ 
++    //! global path constraints calc. from local_paths
++    //! min. and max. slope
++    real slope_ij_min;
++    real slope_ji_min;
++
++
+ };
+ 
+ // Declares a few other classes and functions related to this class
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001793.html">[Plearn-commits] r8345 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="001795.html">[Plearn-commits] r8347 - trunk/plearn/ker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1794">[ date ]</a>
+              <a href="thread.html#1794">[ thread ]</a>
+              <a href="subject.html#1794">[ subject ]</a>
+              <a href="author.html#1794">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

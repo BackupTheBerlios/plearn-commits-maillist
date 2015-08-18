@@ -1,0 +1,357 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8059 - in trunk: python_modules/plearn/parallel	scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8059%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200709101904.l8AJ4fOi011134%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001506.html">
+   <LINK REL="Next"  HREF="001508.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8059 - in trunk: python_modules/plearn/parallel	scripts</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8059%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200709101904.l8AJ4fOi011134%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8059 - in trunk: python_modules/plearn/parallel	scripts">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Sep 10 21:04:41 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001506.html">[Plearn-commits] r8058 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="001508.html">[Plearn-commits] r8060 - in trunk: python_modules/plearn/parallel	python_modules/plearn/utilities scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1507">[ date ]</a>
+              <a href="thread.html#1507">[ thread ]</a>
+              <a href="subject.html#1507">[ subject ]</a>
+              <a href="author.html#1507">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-09-10 21:04:40 +0200 (Mon, 10 Sep 2007)
+New Revision: 8059
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/cdispatch
+Log:
+-Made the bqtools back-end work correctly.
+-Better help message.
+-Replaced the file function with open
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2007-09-10 16:13:16 UTC (rev 8058)
++++ trunk/python_modules/plearn/parallel/dbi.py	2007-09-10 19:04:40 UTC (rev 8059)
+@@ -116,6 +116,8 @@
+             self.__dict__[key] = args[key]
+ 
+         # check if log directory exists, if not create it
++        if (not os.path.exists('LOGS')):
++            os.mkdir('LOGS')
+         if (not os.path.exists(self.log_dir)):
+ #            if self.dolog or self.file_redirect_stdout or self.file_redirect_stderr:
+             os.mkdir(self.log_dir)
+@@ -143,11 +145,11 @@
+         output = PIPE
+         error = PIPE
+         if int(self.file_redirect_stdout):
+-            output = file(stdout_file, 'w')
++            output = open(stdout_file, 'w')
+         if self.redirect_stderr_to_stdout:
+             error = STDOUT
+         elif int(self.file_redirect_stderr):
+-            error = file(stderr_file, 'w')
++            error = open(stderr_file, 'w')
+         return (output,error)
+             
+     def exec_pre_batch(self):
+@@ -372,20 +374,43 @@
+ class DBIbqtools(DBIBase):
+ 
+     def __init__( self, commands, **args ):
++        self.nb_proc = 1
++        self.clean_up = True
++        self.micro = 1
++        self.queue = &quot;<A HREF="https://lists.berlios.de/mailman/listinfo/plearn-commits">qwork at ms</A>&quot;
++        self.long = False
++        self.duree = &quot;12:00:00&quot;
++
+         DBIBase.__init__(self, commands, **args)
+ 
++        self.nb_proc = int(self.nb_proc)
++        self.micro = int(self.micro)
++        
++### We can't accept the symbols &quot;,&quot; as this cause trouble with bqtools
++        if self.log_dir.find(',')!=-1 or self.log_file.find(',')!=-1:
++            print &quot;[DBI] ERROR: The log file and the log dir should not have the symbol ','&quot;
++            print &quot;[DBI] log file=&quot;,self.log_file
++            print &quot;[DBI] log dir=&quot;,self.log_dir
++            sys.exit(1)
++
+         # create directory in which all the temp files will be created
+-        self.temp_dir = 'batch_' + self.unique_id + '_tmp'
++        self.temp_dir = 'bqtools_tmp_' + os.path.split(self.log_dir)[1]
++        print &quot;[DBI] All bqtools file will be in &quot;,self.temp_dir
+         os.mkdir(self.temp_dir)
+         os.chdir(self.temp_dir)
++        
++        if self.long:
++            self.queue = &quot;<A HREF="https://lists.berlios.de/mailman/listinfo/plearn-commits">qlong at ms</A>&quot;
++            # Get max job duration from environment variable if it is set.
++            max = os.getenv(&quot;BQ_MAX_JOB_DURATION&quot;)
++            if max:
++                self.duree = max
++            else:
++                self.duree = &quot;1200:00:00&quot; #50 days
+ 
+-        # create the right symlink for parent in self.temp_dir_name
+-        self.parent_dir = 'parent'
+-        os.symlink( '..', self.parent_dir )
+-
+         # create the information about the tasks
+         args['temp_dir'] = self.temp_dir
+-        
++        self.args=args
+         self.add_commands(commands)
+ 
+     def add_commands(self,commands):
+@@ -395,9 +420,8 @@
+         # create the information about the tasks
+         for command in commands:
+             self.tasks.append(Task(command, self.tmp_dir, self.log_dir,
+-                                   self.time_format,
+-                                   [self.pre_tasks, 'cd parent;'],
+-                                   self.post_tasks,self.dolog,False,args))
++                                   self.time_format,self.pre_tasks,
++                                   self.post_tasks,self.dolog,False,self.args))
+     def run(self):
+         pre_batch_command = ';'.join( self.pre_batch );
+         post_batch_command = ';'.join( self.post_batch );
+@@ -415,6 +439,7 @@
+                 HOME=%s
+                 export HOME
+ 
++                cd ../../../
+                 (%s '~~task~~')'''
+                 % (bq_cluster_home, bq_shell_cmd)
+                 ) )
+@@ -438,31 +463,35 @@
+         # create the bqsubmit.dat, with
+         bqsubmit_dat = open( 'bqsubmit.dat', 'w' )
+         bqsubmit_dat.write( dedent('''\
+-                batchName = dbi_batch
++                batchName = dbi_batch_%s
+                 command = sh launcher
+                 templateFiles = launcher
+-                linkFiles = parent;parent/utils.py
+-                remoteHost = ss3
++                submitOptions = -q %s -l walltime=%s
+                 param1 = (task, logfile) = load tasks, logfiles
+-                concurrentJobs = 200
+-
+-                ''') )
++                linkFiles = launcher
++                concurrentJobs = %d
++                preBatch = rm -f _*.BQ
++                microJobs = %d
++                '''%(self.unique_id[1:6],self.queue,self.duree,self.nb_proc,self.micro)) )
++        print self.unique_id
++        if self.clean_up:
++            bqsubmit_dat.write('postBatch = rm -rf dbi_batch*.BQ ; rm -f logfiles tasks launcher bqsubmit.dat ;')
+         bqsubmit_dat.close()
+ 
+         # Execute pre-batch
+         if len(self.pre_batch)&gt;0:
+             exec_pre_batch()
+ 
++        print &quot;[DBI] All the log will be in the directory: &quot;,self.log_dir
+         # Launch bqsubmit
+         if not self.test:
+-            (output,error)=self.get_redirection(self.log_file + '.out',self.log_file + '.err')
+             task.set_scheduled_time()
+-            self.p = Popen( 'bqsubmit', shell=True, stdout=output, stderr=error)
++            self.p = Popen( 'bqsubmit', shell=True)
++            self.p.wait()
+         else:
+             print &quot;[DBI] Test mode, we generate all the file, but we do not execute bqsubmit&quot;
+             if self.dolog:
+                 print &quot;[DBI] The scheduling time will not be logged when you will submit the generated file&quot; 
+-        os.chdir('parent')
+ 
+         # Execute post-batchs
+         if len(self.post_batch)&gt;0:
+
+Modified: trunk/scripts/cdispatch
+===================================================================
+--- trunk/scripts/cdispatch	2007-09-10 16:13:16 UTC (rev 8058)
++++ trunk/scripts/cdispatch	2007-09-10 19:04:40 UTC (rev 8059)
+@@ -2,18 +2,56 @@
+ import sys,os,re,time,datetime
+ 
+ ScriptName=&quot;launchdbi.py&quot;
+-ShortHelp='Usage: cdispatch [--help|-h] [--log|*--nolog] [--cluster[=nb_process]|--local[=nb_process]|*--condor] [--nb_proc=nb_process] [--test] [--duree=X] [--wait] [--req=&quot;CONDOR_REQUIREMENT&quot;] [--32|--64|--3264] {--file=FILEPATH | &lt;command-template&gt;} \n An * before -- mean that it is the default'
++ShortHelp='Usage: cdispatch [--help|-h] [--dbilog|*--nodbilog] [--cluster[=nb_process]|--local[=nb_process]|--bqtools[=nb_process]|*--condor] [--nb_proc=nb_process] [--test] [--long] [--micro[=nb_batch]] [--duree=X] [--wait] [--req=&quot;CONDOR_REQUIREMENT&quot;] [--32|--64|--3264] {--file=FILEPATH | &lt;command-template&gt;} \n An * before -- mean that it is the default'
+ LongHelp=&quot;&quot;&quot;
+ Dispatches jobs with dbi.py. dbi allow to dispatch jobs on condor, cluster, local, ssh and bqtools.
+ 
+ %s
+-parameter for local and cluster:--nb_proc=INT, give the maximum number of concurent jobs running
+-parameter only for cluster:--duree,--wait,--3264,--32,--64,
+-parameter only for condor:--req=X
+ 
+-parameter --local=X is the same as --local --nb_proc=X
+-parameter --cluster=X is the same as --cluster --nb_proc=X
++option not explained:
++  --help, -h
++  --dbilog, --nodbilog
++  --cluster,--local,--bqtools,--condor
++  --file=FILEPATH
++  
++common option:
++  The '--test' option make that cdispatch generate the file $ScriptName, but do not execute it. That way you can see what cdispatch generate. Also, this file make dbi in test mode, so dbi do not execute automaticaly the experiment il $ScriptName is executer
++local, bqtools and cluster parameter:
++  --nb_proc=nb_process, give the maximum number of concurent jobs running
++    --local=X is the same as --local --nb_proc=X
++    --cluster=X is the same as --cluster --nb_proc=X
++    --bqtools=X is the same as --bqtools --nb_proc=X
+ 
++
++bqtools and cluster option:
++  The '--duree' option tell the maximum length of the jobs. The have the cluster syntaxe of accepted value 'cluster --help'. The bqtools syntaxe is '--duree=12:13:15'. This give 12 hours, 13 minutes and 15 seconds
++
++bqtools only option:
++  The '--micro[=nb_batch]' option can be used with BqTools when launching many jobs that
++  have a very short duration. This may prevent some queue crashes. The nb_batch value
++  is the number of experience to group together in a batch.(default 20)
++
++  The '--long' option must be used with BqTools to launch jobs whose duration
++  is more than 5 days. The maximum duration of a job will be either the
++  BQ_MAX_JOB_DURATION environment variable (in the form hour:min:sec) if it is
++  set, and 1200:00:00 (50 days) otherwise.
++  Since long jobs are launched on a different queue with few nodes, please make
++  sure you are not using too many nodes at once.
++  If this option is not set, the maximum duration of each job will be 120 hours
++  (5 days).
++
++cluster only option:
++  The '--wait' is transfered to cluster. This must be enabled if their is not nb_process available compute node. Otherwise when their is no compute node available, the launch of that command fail.
++  The '--3264', '--32' or '--64' tell the type of cpu the compute node must have to execute the commands.
++
++condor only option:
++  The '--req=\&quot;CONDOR_REQUIREMENT\&quot;' option make that cdispatch send additional option to DBI that will be used to generate addtional requirement for condor. CONDOR_REQUIREMENT must follow the syntax of requirement for condor with one exception. The symbol '\&quot;' must be escaped 3 times! So the requirement (Machine == \&quot;computer.example.com\&quot;) must be writed like that:
++
++  cdispatch \&quot;--req=Machine==\\\\\\\&quot;computer.example.com\\\\\\\&quot;\&quot;
++     or
++  cdispatch '--req=Machine==\\\&quot;computer.example.com\\\&quot;' 
++
++
+ where &lt;command-template&gt; is interpreted as follows: the first argument
+ is the &lt;command&gt; above, and the rest are interpreted as &lt;arguments&gt;.
+ The arguments may contain segments of the form {{a,b,c,d}}, which trigger
+@@ -43,14 +81,6 @@
+   aplearn myscript.plearn numhidden=25 wd=0.01
+   aplearn myscript.plearn numhidden=25 wd=0.001
+ 
+-The optional parameter '--test' make that cdispatch generate the file $ScriptName, but do not execute it. That way you can see what cdispatch generate.
+-
+-The optional parameter '--req=\&quot;CONDOR_REQUIREMENT\&quot;' make that cdispatch send additional option to DBI that will be used to generate addtional requirement for condor. CONDOR_REQUIREMENT must follow the syntax of requirement for condor with one exception. The symbol '\&quot;' must be escaped 3 times! So the requirement (Machine == \&quot;computer.example.com\&quot;) must be writed like that:
+-
+-cdispatch \&quot;--req=Machine==\\\\\\\&quot;computer.example.com\\\\\\\&quot;\&quot;
+-or
+-cdispatch '--req=Machine==\\\&quot;computer.example.com\\\&quot;' 
+-
+ If the optinal parameter '--file=FILEPATH' is set, the script will take commands from the file instead of taking one as parameter. This file must have one command to execute by line and each of them will be expended.
+ 
+ cdispatch --test --file=tests
+@@ -71,10 +101,17 @@
+     if argv == &quot;--help&quot; or argv == &quot;-h&quot;:
+         print LongHelp
+         sys.exit(1)
+-    elif argv == &quot;--nolog&quot;:
++    elif argv == &quot;--nodbilog&quot;:
+         dbi_param[&quot;dolog&quot;]=False
+-    elif argv == &quot;--log&quot;:
++    elif argv == &quot;--dbilog&quot;:
+         dbi_param[&quot;dolog&quot;]=True
++    elif argv.startswith(&quot;--bqtools&quot;):
++        optionargs.append(argv[2:9])
++        if len(argv)&gt;9:
++            assert(argv[9]==&quot;=&quot;)
++            dbi_param[&quot;nb_proc&quot;]=argv[10:]
++        dbi_param[&quot;file_redirect_stderr&quot;]=True
++        dbi_param[&quot;file_redirect_stderr&quot;]=True
+     elif argv.startswith(&quot;--cluster&quot;):
+         optionargs.append(argv[2:9])
+         if len(argv)&gt;9:
+@@ -103,6 +140,15 @@
+         dbi_param[&quot;wait&quot;]=True
+     elif argv[0:6] == &quot;--req=&quot;:
+         dbi_param[&quot;requirements&quot;]=&quot;\&quot;%s\&quot;&quot;%argv[6:]
++    elif argv == &quot;--no_clean_up&quot;:
++        dbi_param[&quot;clean_up&quot;]=False
++    elif argv == &quot;long&quot;:
++        dbi_param[&quot;long&quot;] = True
++    elif argv.startswith(&quot;--micro&quot;):
++        dbi_param[&quot;micro&quot;]=20
++        if len(argv)&gt;7:
++            assert(argv[7]==&quot;=&quot;)
++            dbi_param[&quot;micro&quot;]=argv[8:]
+     elif argv[0:1] == '-':
+ 	print &quot;Unknow parameter (%s)&quot;,argv
+ 	print ShortHelp
+@@ -172,6 +218,8 @@
+     launch_cmd='Cluster'
+ elif &quot;local&quot; in optionargs:
+     launch_cmd='Local'
++elif &quot;bqtools&quot; in optionargs:
++    launch_cmd='bqtools'
+ else:
+     launch_cmd='Condor'
+ 
+@@ -180,8 +228,9 @@
+     t[0]=os.path.split(t[0])[1]
+     tmp=&quot;_&quot;.join(t)
+     tmp=re.sub( '[^a-zA-Z0-9-.,]', '_', tmp )
+-    tmp+=str(datetime.datetime.now()).replace(' ','_')
+-    print &quot;tmp:&quot;,tmp
++    ### We need to remove the symbols &quot;,&quot; as this cause trouble with bqtools
++    tmp=re.sub( ',', '-', tmp )
++    tmp+='_'+str(datetime.datetime.now()).replace(' ','_')
+     dbi_param[&quot;log_dir&quot;]=os.path.join(&quot;LOGS&quot;,tmp)
+     dbi_param[&quot;log_file&quot;]=os.path.join(dbi_param[&quot;log_dir&quot;],'log')
+ else:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001506.html">[Plearn-commits] r8058 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="001508.html">[Plearn-commits] r8060 - in trunk: python_modules/plearn/parallel	python_modules/plearn/utilities scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1507">[ date ]</a>
+              <a href="thread.html#1507">[ thread ]</a>
+              <a href="subject.html#1507">[ subject ]</a>
+              <a href="author.html#1507">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

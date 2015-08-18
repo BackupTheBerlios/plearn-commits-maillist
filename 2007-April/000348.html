@@ -1,0 +1,286 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6899 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6899%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704171911.l3HJBnaR011951%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000347.html">
+   <LINK REL="Next"  HREF="000349.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6899 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6899%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704171911.l3HJBnaR011951%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6899 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue Apr 17 21:11:49 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000347.html">[Plearn-commits] r6898 - trunk/plearn/base
+</A></li>
+        <LI>Next message: <A HREF="000349.html">[Plearn-commits] r6900 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#348">[ date ]</a>
+              <a href="thread.html#348">[ thread ]</a>
+              <a href="subject.html#348">[ subject ]</a>
+              <a href="author.html#348">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-04-17 21:11:49 +0200 (Tue, 17 Apr 2007)
+New Revision: 6899
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+Log:
+- Proper initialization of 'n_classes' member
+- More safety checks and error messages
+- Fixed erroneous crash in build when no train set has been obtained yet (thus no targetsize available)
+- Added missing deep copy statements
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-04-17 19:08:57 UTC (rev 6898)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-04-17 19:11:49 UTC (rev 6899)
+@@ -47,8 +47,8 @@
+ 
+ PLEARN_IMPLEMENT_OBJECT(
+     DeepBeliefNet,
+-    &quot;Neural net, learned layer-wise in a greedy fashion&quot;,
+-    &quot;This version support different unit types, different connection types,\n&quot;
++    &quot;Neural network, learned layer-wise in a greedy fashion.&quot;,
++    &quot;This version supports different unit types, different connection types,\n&quot;
+     &quot;and different cost functions, including the NLL in classification.\n&quot;);
+ 
+ DeepBeliefNet::DeepBeliefNet() :
+@@ -56,6 +56,7 @@
+     grad_learning_rate( 0. ),
+     grad_decrease_ct( 0. ),
+     // grad_weight_decay( 0. ),
++    n_classes(-1),
+     use_classification_cost( true ),
+     reconstruct_layerwise( false ),
+     n_layers( 0 ),
+@@ -90,7 +91,7 @@
+ 
+     declareOption(ol, &quot;n_classes&quot;, &amp;DeepBeliefNet::n_classes,
+                   OptionBase::buildoption,
+-                  &quot;Number of classes in the training set\n&quot;
++                  &quot;Number of classes in the training set:\n&quot;
+                   &quot;  - 0 means we are doing regression,\n&quot;
+                   &quot;  - 1 means we have two classes, but only one output,\n&quot;
+                   &quot;  - 2 means we also have two classes, but two outputs&quot;
+@@ -236,7 +237,11 @@
+     MODULE_LOG &lt;&lt; &quot;build_() called&quot; &lt;&lt; endl;
+ 
+     // Initialize some learnt variables
+-    n_layers = layers.length();
++    if (layers.isEmpty())
++        PLERROR(&quot;In DeepBeliefNet::build_ - You must provide at least one RBM &quot;
++                &quot;layer through the 'layers' option&quot;);
++    else
++        n_layers = layers.length();
+ 
+     if( training_schedule.length() != n_layers-1  &amp;&amp; !online )
+     {
+@@ -298,8 +303,11 @@
+         expectation_gradients[i].resize( layers[i]-&gt;size );
+     }
+     layers[n_layers-1]-&gt;random_gen = random_gen;
+-    activation_gradients[n_layers-1].resize( layers[n_layers-1]-&gt;size );
+-    expectation_gradients[n_layers-1].resize( layers[n_layers-1]-&gt;size );
++    int last_layer_size = layers[n_layers-1]-&gt;size;
++    PLASSERT_MSG(last_layer_size &gt;= 0,
++                 &quot;Size of last layer must be non-negative&quot;);
++    activation_gradients[n_layers-1].resize(last_layer_size);
++    expectation_gradients[n_layers-1].resize(last_layer_size);
+ }
+ 
+ void DeepBeliefNet::build_classification_cost()
+@@ -317,6 +325,9 @@
+     target_layer-&gt;random_gen = random_gen;
+     target_layer-&gt;build();
+ 
++    PLASSERT_MSG(n_layers &gt;= 2, &quot;You must specify at least two layers (the &quot;
++            &quot;input layer and one hidden layer)&quot;);
++
+     classification_module = new RBMClassificationModule();
+     classification_module-&gt;previous_to_last = connections[n_layers-2];
+     classification_module-&gt;last_layer =
+@@ -343,19 +354,22 @@
+ {
+     MODULE_LOG &lt;&lt; &quot;build_final_cost() called&quot; &lt;&lt; endl;
+ 
++    PLASSERT_MSG(final_cost-&gt;input_size &gt;= 0, &quot;The input size of the final &quot;
++            &quot;cost must be non-negative&quot;);
++
+     final_cost_gradient.resize( final_cost-&gt;input_size );
+     final_cost-&gt;setLearningRate( grad_learning_rate );
+ 
+     if( final_module )
+     {
+         if( layers[n_layers-1]-&gt;size != final_module-&gt;input_size )
+-            PLERROR(&quot;DeepBeliefNet::build_final_cost() - \n&quot;
++            PLERROR(&quot;DeepBeliefNet::build_final_cost() - &quot;
+                     &quot;layers[%i]-&gt;size (%d) != final_module-&gt;input_size (%d).&quot;
+                     &quot;\n&quot;, n_layers-1, layers[n_layers-1]-&gt;size,
+                     final_module-&gt;input_size);
+ 
+         if( final_module-&gt;output_size != final_cost-&gt;input_size )
+-            PLERROR(&quot;DeepBeliefNet::build_final_cost() - \n&quot;
++            PLERROR(&quot;DeepBeliefNet::build_final_cost() - &quot;
+                     &quot;final_module-&gt;output_size (%d) != final_cost-&gt;input_size.&quot;
+                     &quot;\n&quot;, n_layers-1, layers[n_layers-1]-&gt;size,
+                     final_module-&gt;input_size);
+@@ -365,7 +379,7 @@
+     else
+     {
+         if( layers[n_layers-1]-&gt;size != final_cost-&gt;input_size )
+-            PLERROR(&quot;DeepBeliefNet::build_final_cost() - \n&quot;
++            PLERROR(&quot;DeepBeliefNet::build_final_cost() - &quot;
+                     &quot;layers[%i]-&gt;size (%d) != final_cost-&gt;input_size (%d).&quot;
+                     &quot;\n&quot;, n_layers-1, layers[n_layers-1]-&gt;size,
+                     final_cost-&gt;input_size);
+@@ -375,65 +389,75 @@
+     if( n_classes == 0 ) // regression
+     {
+         if( final_cost-&gt;input_size != targetsize() )
+-            PLERROR(&quot;DeepBeliefNet::build_final_cost() - \n&quot;
+-                    &quot;final_cost-&gt;input_size (%d) != targetsize() (%d),\n&quot;
++            PLERROR(&quot;DeepBeliefNet::build_final_cost() - &quot;
++                    &quot;final_cost-&gt;input_size (%d) != targetsize() (%d), &quot;
+                     &quot;although we are doing regression (n_classes == 0).\n&quot;,
+                     final_cost-&gt;input_size, targetsize());
+     }
+     else
+     {
+         if( final_cost-&gt;input_size != n_classes )
+-            PLERROR(&quot;DeepBeliefNet::build_final_cost() - \n&quot;
+-                    &quot;final_cost-&gt;input_size (%d) != n_classes (%d),\n&quot;
++            PLERROR(&quot;DeepBeliefNet::build_final_cost() - &quot;
++                    &quot;final_cost-&gt;input_size (%d) != n_classes (%d), &quot;
+                     &quot;although we are doing classification (n_classes != 0).\n&quot;,
+                     final_cost-&gt;input_size, n_classes);
+ 
+-        if( targetsize() != 1 )
+-            PLERROR(&quot;DeepBeliefNet::build_final_cost() - \n&quot;
+-                    &quot;targetsize() (%d) != 1,\n&quot;
+-                    &quot;although we are doing regression (n_classes == 0).\n&quot;,
++        if( targetsize_ &gt;= 0 &amp;&amp; targetsize() != 1 )
++            PLERROR(&quot;DeepBeliefNet::build_final_cost() - &quot;
++                    &quot;targetsize() (%d) != 1, &quot;
++                    &quot;although we are doing classification (n_classes != 0).\n&quot;,
+                     targetsize());
+     }
+ 
+ }
+ 
++///////////
++// build //
++///////////
+ void DeepBeliefNet::build()
+ {
+     inherited::build();
+     build_();
+ }
+ 
+-
++/////////////////////////////////
++// makeDeepCopyFromShallowCopy //
++/////////////////////////////////
+ void DeepBeliefNet::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+-    // deepCopyField(, copies);
+-
+-    deepCopyField(training_schedule, copies);
+-    deepCopyField(layers, copies);
+-    deepCopyField(connections, copies);
+-    deepCopyField(final_module, copies);
+-    deepCopyField(final_cost, copies);
+-    deepCopyField(partial_costs, copies);
+-    deepCopyField(classification_module, copies);
+-    deepCopyField(timer, copies);
+-    deepCopyField(classification_cost, copies);
+-    deepCopyField(joint_layer, copies);
+-    deepCopyField(activation_gradients, copies);
+-    deepCopyField(expectation_gradients, copies);
+-    deepCopyField(final_cost_input, copies);
+-    deepCopyField(final_cost_value, copies);
+-    deepCopyField(final_cost_output, copies);
+-    deepCopyField(class_output, copies);
+-    deepCopyField(class_gradient, copies);
+-    deepCopyField(final_cost_gradient, copies);
+-    deepCopyField(pos_down_values, copies);
+-    deepCopyField(pos_up_values, copies);
+-
++    deepCopyField(training_schedule,        copies);
++    deepCopyField(layers,                   copies);
++    deepCopyField(connections,              copies);
++    deepCopyField(final_module,             copies);
++    deepCopyField(final_cost,               copies);
++    deepCopyField(partial_costs,            copies);
++    deepCopyField(classification_module,    copies);
++    deepCopyField(timer,                    copies);
++    deepCopyField(classification_cost,      copies);
++    deepCopyField(joint_layer,              copies);
++    deepCopyField(activation_gradients,     copies);
++    deepCopyField(expectation_gradients,    copies);
++    deepCopyField(final_cost_input,         copies);
++    deepCopyField(final_cost_value,         copies);
++    deepCopyField(final_cost_output,        copies);
++    deepCopyField(class_output,             copies);
++    deepCopyField(class_gradient,           copies);
++    deepCopyField(class_input_gradient,     copies);
++    deepCopyField(final_cost_gradient,      copies);
++    deepCopyField(save_layer_activation,    copies);
++    deepCopyField(save_layer_expectation,   copies);
++    deepCopyField(pos_down_values,          copies);
++    deepCopyField(pos_up_values,            copies);
++    deepCopyField(final_cost_indices,       copies);
++    deepCopyField(partial_cost_indices,     copies);
+ }
+ 
+ 
++////////////////
++// outputsize //
++////////////////
+ int DeepBeliefNet::outputsize() const
+ {
+     int out_size = 0;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000347.html">[Plearn-commits] r6898 - trunk/plearn/base
+</A></li>
+	<LI>Next message: <A HREF="000349.html">[Plearn-commits] r6900 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#348">[ date ]</a>
+              <a href="thread.html#348">[ thread ]</a>
+              <a href="subject.html#348">[ subject ]</a>
+              <a href="author.html#348">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

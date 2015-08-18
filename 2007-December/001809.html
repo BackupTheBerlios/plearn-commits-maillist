@@ -1,0 +1,241 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8361 - trunk/python_modules/plearn/parallel
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-December/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8361%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200712181922.lBIJMIGD008875%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001808.html">
+   <LINK REL="Next"  HREF="001810.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8361 - trunk/python_modules/plearn/parallel</H1>
+    <B>dorionc at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8361%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200712181922.lBIJMIGD008875%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8361 - trunk/python_modules/plearn/parallel">dorionc at mail.berlios.de
+       </A><BR>
+    <I>Tue Dec 18 20:22:18 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001808.html">[Plearn-commits] r8360 - trunk/plearn/math
+</A></li>
+        <LI>Next message: <A HREF="001810.html">[Plearn-commits] r8362 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1809">[ date ]</a>
+              <a href="thread.html#1809">[ thread ]</a>
+              <a href="subject.html#1809">[ subject ]</a>
+              <a href="author.html#1809">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: dorionc
+Date: 2007-12-18 20:22:18 +0100 (Tue, 18 Dec 2007)
+New Revision: 8361
+
+Modified:
+   trunk/python_modules/plearn/parallel/dispatch.py
+Log:
+Modified to facilitate its use for non-plearn program
+
+
+Modified: trunk/python_modules/plearn/parallel/dispatch.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dispatch.py	2007-12-18 16:30:52 UTC (rev 8360)
++++ trunk/python_modules/plearn/parallel/dispatch.py	2007-12-18 19:22:18 UTC (rev 8361)
+@@ -70,6 +70,12 @@
+ LOGDIR        = None  # May be set by set_logdir()
+ DOMAIN_NAME   = get_domain_name()
+ 
++# Configurables
++NICE          = 'nice'
++ARG_VALUE_FMT = &quot;%s=%s&quot;
++QUOTED_ARGS   = lambda L: ['&quot;%s&quot;'%elem for elem in L]
++
++
+ #######  To be assigned to a subclass of TaskType when these will be declared
+ Task = None
+ 
+@@ -355,26 +361,45 @@
+     listAvailableMachines = classmethod(listAvailableMachines)
+ 
+     def nextAvailableMachine(cls):
+-        # If a StopIteration exception is encountered on an already began
+-        # loop, we simply have queried each machine once and shall start
+-        # over. If such an exception is raise on a new loop, then no
+-        # machines are currently available and we raise an
+-        # EmptyTaskListError so as to wait a little while before querying
+-        # again...
+-        new_loop = False
+-        if cls._available_machines is None:
+-            cls._available_machines = cls.listAvailableMachines()            
+-            new_loop = True
+-
+-        try:
+-            return cls._available_machines.next()
+-        except StopIteration:
+-            cls._available_machines = None
+-            if new_loop:
+-                time.sleep(SLEEP_TIME)
+-            return cls.nextAvailableMachine()
++        # If a StopIteration exception is encountered on an iteration
++        # already begun, we simply have queried each machine once and shall
++        # start over. If such an exception is raised on a fresh iterator,
++        # then no machines are currently available and we have to wait a
++        # little before querying again...
++        next = None
++        fresh_iterator = False
++        while next is None:
++            try:
++                next = cls._available_machines.next()
++            except (StopIteration, AttributeError), err:
++                if fresh_iterator:
++                    time.sleep(SLEEP_TIME)
++                cls._available_machines = cls.listAvailableMachines()
++                fresh_iterator = True
++        return next
+     nextAvailableMachine = classmethod(nextAvailableMachine)
+ 
++    #TBR: def nextAvailableMachine(cls):
++    #TBR:     # If a StopIteration exception is encountered on an already began
++    #TBR:     # loop, we simply have queried each machine once and shall start
++    #TBR:     # over. If such an exception is raise on a new loop, then no
++    #TBR:     # machines are currently available and we raise an
++    #TBR:     # EmptyTaskListError so as to wait a little while before querying
++    #TBR:     # again...
++    #TBR:     new_loop = False
++    #TBR:     if cls._available_machines is None:
++    #TBR:         cls._available_machines = cls.listAvailableMachines()            
++    #TBR:         new_loop = True
++    #TBR:     
++    #TBR:     try:
++    #TBR:         return cls._available_machines.next()
++    #TBR:     except StopIteration:
++    #TBR:         cls._available_machines = None
++    #TBR:         if new_loop:
++    #TBR:             time.sleep(SLEEP_TIME)
++    #TBR:         return cls.nextAvailableMachine()
++    #TBR: nextAvailableMachine = classmethod(nextAvailableMachine)
++
+     #
+     # Instance methods
+     #
+@@ -382,7 +407,7 @@
+     def getLaunchCommand(self):
+         # Get the first available machine
+         self.host = self.nextAvailableMachine()
+-        actual_command = ' '.join(['cd', os.getcwd(), ';', 'nice'] + self.argv)
++        actual_command = ' '.join(['cd', os.getcwd(), ';', NICE] + self.argv)
+         actual_command = actual_command.replace('&quot;', r'\&quot;')
+         return 'ssh %s %s &quot;%s&quot;'%(self.host, self.Xopt, actual_command)
+ 
+@@ -430,8 +455,6 @@
+ 
+ class RejectedByPredicate( Exception ): pass
+ 
+-## Under Development
+-_quoted = lambda L: ['&quot;%s&quot;'%elem for elem in L]
+ class Dispatch( PyPLearnObject ):
+     # The name of the program to invoke
+     program                  = PLOption(None)
+@@ -489,7 +512,7 @@
+ 
+           4) expdir_root      -&gt; Experiments are cached.
+ 
+-        Keys and values are joined using an equal sign ('=').
++        Keys and values are joined using the ARG_VALUE_FMT string.
+         &quot;&quot;&quot;
+         self.program       = argument_bindings.pop( &quot;_program_&quot;,       self.program )
+         self.script        = argument_bindings.pop( &quot;_script_&quot;,        self.script )
+@@ -503,9 +526,9 @@
+                 Experiment.cache_experiments( self.expdir_root )
+         
+         if self.protocol==&quot;expkey&quot;:            
+-            expkey = [ &quot;%s=%s&quot;%(k,v) for (k,v) in argument_bindings.iteritems() ]
++            expkey = [ ARG_VALUE_FMT%(k,v) for (k,v) in argument_bindings.iteritems() ]
+             if not self._predicate( expkey ):
+-                raise RejectedByPredicate( ' '.join(_quoted(expkey)) )
++                raise RejectedByPredicate( ' '.join(QUOTED_ARGS(expkey)) )
+             return expkey
+         elif self.protocol==&quot;named_args&quot;:
+             return [ arg%argument_bindings for arg in self.constant_args ]
+@@ -523,7 +546,7 @@
+             task_sum = 0
+             delayed_tasks = 0
+             for arguments_oracle in oracles:
+-                assert isinstance( arguments_oracle, ArgumentsOracle ), TypeError(type(argumentsoracle))
++                assert isinstance( arguments_oracle, ArgumentsOracle ), TypeError(type(arguments_oracle))
+                 done, delayed = self.__start( arguments_oracle )
+                 task_sum += done
+                 delayed_tasks += delayed
+@@ -552,12 +575,14 @@
+                 continue
+ 
+             assert self.program
+-            prepend = [ &quot;echo&quot;, &quot;$HOST;&quot;, 'nice', self.program ]
++            prepend = [ &quot;echo&quot;, &quot;$HOST;&quot;, NICE, self.program ]
+             if self.script:
+                 prepend.append( self.script )
+             if self.protocol==&quot;expkey&quot;:
+                 prepend.extend( self.constant_args )
+ 
++            # No expdir is created if there is no script or if the script
++            # is not a pyplearn script
+             if self.script.find( '.pyplearn' ) != -1:
+                 expdir = None
+                 for arg in arguments:
+@@ -573,19 +598,19 @@
+                     arguments.append( &quot;expdir=%s&quot; % expdir )
+ 
+             # # Module function defined above
+-            # launch_task( prepend+_quoted(arguments) )
++            # launch_task( prepend+QUOTED_ARGS(arguments) )
+             assert Task is not None
+-            ##TBM?: task = Task(prepend+_quoted(arguments)+[&quot;;&quot;, &quot;echo&quot;, &quot;'Task Done.'&quot;])
++            ##TBM?: task = Task(prepend+QUOTED_ARGS(arguments)+[&quot;;&quot;, &quot;echo&quot;, &quot;'Task Done.'&quot;])
+             if self.delay:
+                 ##TBM?: 
+-                cmd = ' '.join(prepend+_quoted(arguments))
++                cmd = ' '.join(prepend+QUOTED_ARGS(arguments))
+                 logging.info('Delayed: %s'%cmd)
+                 ##TBM?: logging.info('Delayed: %s'%task.getLaunchCommand())
+                 delayed += 1
+                 ##TBM?: task.free() # Since it won't be launch, free the resources...
+                 continue
+             ##TBM?: 
+-            task = Task(prepend+_quoted(arguments)+[&quot;;&quot;, &quot;echo&quot;, &quot;'Task Done.'&quot;])
++            task = Task(prepend+QUOTED_ARGS(arguments)+[&quot;;&quot;, &quot;echo&quot;, &quot;'Task Done.'&quot;])
+             
+             task.launch()
+             if Task.count( ) == self.max_nmachines:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001808.html">[Plearn-commits] r8360 - trunk/plearn/math
+</A></li>
+	<LI>Next message: <A HREF="001810.html">[Plearn-commits] r8362 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1809">[ date ]</a>
+              <a href="thread.html#1809">[ thread ]</a>
+              <a href="subject.html#1809">[ subject ]</a>
+              <a href="author.html#1809">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

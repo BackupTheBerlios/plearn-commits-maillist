@@ -1,0 +1,1773 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8036 - trunk/plearn_learners/online/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8036%20-%20trunk/plearn_learners/online/EXPERIMENTAL&In-Reply-To=%3C200708291853.l7TIrHR4008861%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001483.html">
+   <LINK REL="Next"  HREF="001485.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8036 - trunk/plearn_learners/online/EXPERIMENTAL</H1>
+    <B>sakenasv at mail.berlios.de</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8036%20-%20trunk/plearn_learners/online/EXPERIMENTAL&In-Reply-To=%3C200708291853.l7TIrHR4008861%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8036 - trunk/plearn_learners/online/EXPERIMENTAL">sakenasv at mail.berlios.de
+       </A><BR>
+    <I>Wed Aug 29 20:53:17 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001483.html">[Plearn-commits] r8035 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="001485.html">[Plearn-commits] r8037 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1484">[ date ]</a>
+              <a href="thread.html#1484">[ thread ]</a>
+              <a href="subject.html#1484">[ subject ]</a>
+              <a href="author.html#1484">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: sakenasv
+Date: 2007-08-29 20:53:09 +0200 (Wed, 29 Aug 2007)
+New Revision: 8036
+
+Added:
+   trunk/plearn_learners/online/EXPERIMENTAL/TreeDBNModule.cc
+   trunk/plearn_learners/online/EXPERIMENTAL/TreeDBNModule.h
+Log:
+Hierarchical deep network.
+
+Added: trunk/plearn_learners/online/EXPERIMENTAL/TreeDBNModule.cc
+===================================================================
+--- trunk/plearn_learners/online/EXPERIMENTAL/TreeDBNModule.cc	2007-08-29 18:23:02 UTC (rev 8035)
++++ trunk/plearn_learners/online/EXPERIMENTAL/TreeDBNModule.cc	2007-08-29 18:53:09 UTC (rev 8036)
+@@ -0,0 +1,1301 @@
++// TreeDBNModule.cc
++//
++// Copyright (C) 2007 Vytenis Sakenas
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Vytenis Sakenas
++
++/*! \file TreeDBNModule.cc */
++
++
++
++#include &quot;TreeDBNModule.h&quot;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++   TreeDBNModule,
++  &quot;Hierarchical deep network.&quot;,
++   &quot;Hierarchical deep network. In every level, a RBM takes input from n_parents_per_node lower&quot;
++       &quot; layer RBMs. All RBMs in a layer share weights. So, for example, a network with 3 layers and&quot;
++       &quot; n_parents_per_node=2 will have 1, 2 and 4 RBMs in top, middle and bottom layers respectively.&quot;
++       &quot; Typical usage is providing RBM modules for every layer through modules option, possibly adding &quot;
++       &quot;additional ports we want to compute and setting flags like propagate_gradient, propagate_energy_gradient&quot;
++       &quot; and propagate_full_gradient to a desired state.&quot;
++       &quot;Ports:\n&quot;
++       &quot;\tinput, output_1 ... output_n&quot;
++       &quot;where n is number of layers&quot;
++);
++
++//////////////////
++// TreeDBNModule //
++//////////////////
++TreeDBNModule::TreeDBNModule() : n_parents_per_node(2), n_shared_parents(0), gradient_multiplier(1.0),
++                               propagate_gradient(false), propagate_energy_gradient(false), propagate_full_gradient(false)
++/* ### Initialize all fields to their default value here */
++{
++}
++
++////////////////////
++// declareOptions //
++////////////////////
++void TreeDBNModule::declareOptions(OptionList&amp; ol)
++{
++   // Now call the parent class' declareOptions
++   inherited::declareOptions(ol);
++
++       declareOption(ol, &quot;modules&quot;, &amp;TreeDBNModule::modules,
++                  OptionBase::buildoption,
++                  &quot;RBMModule list that is used to build DBN.&quot;);
++
++       declareOption(ol, &quot;n_parents_per_node&quot;, &amp;TreeDBNModule::n_parents_per_node,
++                                 OptionBase::buildoption,
++                                 &quot;How many parents each node has.&quot;);
++
++       // Not implemented.
++       //declareOption(ol, &quot;n_shared_parents&quot;, &amp;TreeDBNModule::n_shared_parents,
++       //                        OptionBase::buildoption,
++       //                        &quot;Number of parents that two adjacent nodes share.&quot;);
++
++       declareOption(ol, &quot;propagate_gradient&quot;, &amp;TreeDBNModule::propagate_gradient,
++                                 OptionBase::buildoption,
++                                 &quot;Whether we propagate gradient through hierarchy.&quot;);
++
++       declareOption(ol, &quot;propagate_full_gradient&quot;, &amp;TreeDBNModule::propagate_full_gradient,
++                                 OptionBase::buildoption,
++                                 &quot;If propagate_gradient==true then this flag determines that gradient should be propagated&quot;
++                                 &quot; through full hierarchy. Else propagation is only done through the rightmost branch.&quot;);
++
++       declareOption(ol, &quot;propagate_energy_gradient&quot;, &amp;TreeDBNModule::propagate_energy_gradient,
++                                 OptionBase::buildoption,
++                                 &quot;Whether we compute and propagate free energy gradient from top layer.&quot;);
++
++	// Probabaly not useful.
++       declareOption(ol, &quot;gradient_multiplier&quot;, &amp;TreeDBNModule::gradient_multiplier,
++                                 OptionBase::buildoption,
++                                 &quot;Value that propagated gradient is multiplied before propagating from top layer.&quot;);
++
++       declareOption(ol, &quot;ports&quot;, &amp;TreeDBNModule::ports,
++                                 OptionBase::buildoption,
++                                 &quot;A sequence of pairs of strings, where each pair is of the form\n&quot;
++                                                 &quot;\&quot;P\&quot;:\&quot;M.N\&quot; with 'M' the name of an underlying module, 'N' one of\n&quot;
++                                                 &quot;its ports, and 'P' the name under which the TreeDBNModule sees this\n&quot;
++                                                 &quot;port. See the class help for an example. If 'P' is an empty string,\n&quot;
++                                                 &quot;then the port name will be 'M.N'.&quot;);
++
++}
++
++
++
++////////////////////
++// declareMethods //
++////////////////////
++void TreeDBNModule::declareMethods(RemoteMethodMap&amp; rmm)
++{
++   // Insert a backpointer to remote methods; note that this
++   // different than for declareOptions()
++       rmm.inherited(inherited::_getRemoteMethodMap_());
++
++       declareMethod(
++                       rmm, &quot;initSampling&quot;, &amp;TreeDBNModule::initSampling,
++       (BodyDoc(&quot;Initializes network for sampling. This function must be called before any calls to sample().\n&quot;),
++        ArgDoc (&quot;gibbsTop&quot;, &quot;Number of gibbs steps to do in top rbm.&quot;)));
++
++       declareMethod(
++                       rmm, &quot;clearCache&quot;, &amp;TreeDBNModule::clearCache,
++       (BodyDoc(&quot;Clears all caches. Call this after changing any of the module parameters.\n&quot;)));
++
++       declareMethod(
++                       rmm, &quot;sample&quot;, &amp;TreeDBNModule::sample,
++       (BodyDoc(&quot;Samples the network. Returns a sample on the visible layer.\n&quot;),
++        ArgDoc(&quot;gibbsTop&quot;, &quot;Number of gibbs steps in the top layer for each sample.&quot;),
++        RetDoc (&quot;Sample.&quot;)));
++}
++
++//! Add a port to the module with given name, which is filled from a rbm modules[rbm_index]
++//! an port port_name and provided port width. If a port you add is not directly filled from
++//! a rbm then provide rbm_index=-1. If port_width is not provided then it is determined from
++//! the rbm it is filled from.
++void TreeDBNModule::appendPort(string name, int rbm_index, string port_name, int port_width = -1)
++{
++       port_names.append(name);
++       port_rbms.append(rbm_index);
++
++       if (rbm_index &gt;= 0) {
++               int index = modules[rbm_index]-&gt;getPortIndex(port_name);
++               PLASSERT(index &gt;= 0);
++               port_index.append( index );
++       }
++       else
++               port_index.append( -1 );
++
++       if (port_width == -1) {
++               // We need to extract actual port size
++               port_width = modules[rbm_index]-&gt;getPortWidth(port_name);
++       }
++
++       TVec &lt;int&gt; sz(2, -1);
++       sz[1] = port_width;
++       port_sizes.appendRow(sz);
++}
++
++////////////
++// build_ //
++////////////
++void TreeDBNModule::build_()
++{
++       n_layers = modules.length();
++       time = 0;
++
++       // Fill ports
++       port_names.clear();
++       port_rbms.clear();
++       port_index.clear();
++       port_sizes.clear();
++       appendPort(&quot;input&quot;, -1, &quot;&quot;, modules[0]-&gt;visible_layer-&gt;size);
++
++       layer_sizes.resize(n_layers);
++
++       // Add output ports for every layer rbm
++       for (int i = 1; i &lt;= n_layers; ++i) {
++               appendPort(&quot;output_&quot; + tostring(i), i-1, &quot;hidden.state&quot;);
++               layer_sizes[i-1] = 1&lt;&lt;(n_layers-i);
++       }
++
++       // Add ports that are forwarded from internal modules
++       for (int i = 0; i &lt; ports.size(); ++i) {
++               string s = ports[i].second;
++
++               size_t dot = s.find('.');
++               PLASSERT( dot != string::npos );
++               string module_name = s.substr(0, dot);
++               string port_name = s.substr(dot + 1);
++
++               bool valid_redirect = false;
++               for (int j = 0; j &lt; n_layers; ++j) {
++                       if (modules[j]-&gt;name == module_name) {
++                               appendPort(ports[i].first, j, port_name);
++                               valid_redirect = true;
++                       }
++               }
++
++               PLASSERT(valid_redirect);
++       }
++
++       // Make sure storage matrix vectors will not be resized and we will not loose pointers.
++       mats.resize(1000);
++       mats.resize(0);
++       cache_mats.resize(1000);
++       cache_mats.resize(0);
++
++       step_size.resize(n_layers);
++       step_size[0] = 2;
++       for (int i = 1; i &lt; n_layers; ++i) {
++               step_size[i] = n_parents_per_node * step_size[i-1];
++       }
++
++       // Prepare arrays for holding fprop and bprop data
++       bprop_data.resize(n_layers);
++       fprop_data.resize(n_layers);
++       bprop_data_cache.resize(n_layers);                                      // do not cache (?)
++       fprop_data_cache.resize(n_layers);
++
++       for (int i = 0; i &lt; n_layers; ++i) {
++               int np = modules[i]-&gt;nPorts();
++               bprop_data[i].resize(np);
++               fprop_data[i].resize(np);
++               bprop_data_cache[i].resize(np);
++               fprop_data_cache[i].resize(np);
++               bprop_data[i].fill((Mat*)NULL);
++               fprop_data[i].fill((Mat*)NULL);
++               bprop_data_cache[i].fill((Mat*)NULL);
++               fprop_data_cache[i].fill((Mat*)NULL);
++       }
++
++       // Here we will hold last full input to lower layer
++       // It is done to be able to check if input is a shifted
++       // version of previous input.
++       last_full_input.resize(0);
++
++       // Safety check
++       for (int i = 0; i &lt; n_layers-1; ++i)
++               PLASSERT(modules[i]-&gt;hidden_layer-&gt;size * n_parents_per_node == modules[i+1]-&gt;visible_layer-&gt;size);
++
++       // Forward random number generator to all underlying modules.
++       if (random_gen) {
++               cout &lt;&lt; &quot;Forget in build&quot; &lt;&lt; endl;
++               for (int i = 0; i &lt; modules.length(); i++) {
++                       if (!modules[i]-&gt;random_gen) {
++				cout &lt;&lt; &quot;pass forget&quot; &lt;&lt; endl;
++                               modules[i]-&gt;random_gen = random_gen;
++                               modules[i]-&gt;build();
++                               modules[i]-&gt;forget();
++                       }
++               }
++       }
++}
++
++///////////
++// build //
++///////////
++void TreeDBNModule::build()
++{
++   inherited::build();
++   build_();
++   Profiler::activate();
++}
++
++////////////////////
++// bpropAccUpdate //
++////////////////////
++void TreeDBNModule::bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                                                  const TVec&lt;Mat*&gt;&amp; ports_gradient)
++{
++       PLASSERT( ports_value.length() == nPorts() &amp;&amp; ports_gradient.length() == nPorts());
++
++       Profiler::start(&quot;full bprop&quot;);
++       if (!propagate_gradient) {			// Only unsupervised learning in a module
++               for (int layer = n_layers-1; layer &gt;= 0; layer--) {
++                       int n_mod_ports = modules[layer]-&gt;nPorts();
++
++                       bprop_data[layer].resize(n_mod_ports);
++                       bprop_data[layer].fill((Mat*)NULL);
++                       int mod_batch_size = fprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;hidden.state&quot;)]-&gt;length();
++
++                       if (modules[layer]-&gt;reconstruction_connection != NULL) {
++                               bprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)] = createMatrix(mod_batch_size, 1, mats);
++                               bprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)]-&gt;fill(1);
++                       }
++
++                       Profiler::start(&quot;bprop&quot;);
++                       modules[layer]-&gt;bpropAccUpdate(fprop_data[layer], bprop_data[layer]);
++                       Profiler::end(&quot;bprop&quot;);
++               }
++       } else
++       {
++               if (!propagate_full_gradient)           // Propagate only rightmost branch
++               {
++                       // For top RBM we provide energy gradient only and get gradient on visible
++                       bprop_data[n_layers - 1].resize( modules[n_layers-1]-&gt;nPorts() );
++                       bprop_data[n_layers - 1].fill((Mat*)NULL);
++
++                       int mod_batch_size = fprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;visible&quot;)]-&gt;length();
++
++                       if (propagate_energy_gradient) {
++                               bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;energy&quot;)] = createMatrix(mod_batch_size, 1, mats);
++                               bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;energy&quot;)]-&gt;fill(1);
++                       }
++
++                       if (modules[n_layers-1]-&gt;reconstruction_connection != NULL) {
++                               bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)] = 
++												createMatrix(mod_batch_size, 1, mats);
++                               bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)]-&gt;fill(1);
++                       }
++
++                       // Take external gradient on output
++                       int out_grad = getPortIndex(&quot;output_&quot;+tostring(n_layers));
++
++                       if ( ports_gradient[out_grad] == NULL || ports_gradient[out_grad]-&gt;isEmpty() ) {
++                               // Make gradient zero
++                               ports_gradient[out_grad] = createMatrix(mod_batch_size, modules[n_layers-1]-&gt;hidden_layer-&gt;size, mats);
++                               ports_gradient[out_grad]-&gt;fill(0);
++                               PLWARNING(&quot;Top RBM output port has no gradient information. Using 0 gradient.&quot;);
++                       }
++                       //PLASSERT(ports_gradient[out_grad] != NULL);
++
++
++                       bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;hidden.state&quot;)] = 
++							createMatrix(mod_batch_size, ports_gradient[out_grad]-&gt;width(), mats);
++                       *bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;hidden.state&quot;)] &lt;&lt; *ports_gradient[out_grad];
++
++                       // Ask for visible gradient
++                       bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;visible&quot;)] = 
++							createMatrix(0, modules[n_layers-1]-&gt;visible_layer-&gt;size, mats);
++
++                       Profiler::start(&quot;bprop&quot;);
++                       modules[n_layers-1]-&gt;bpropAccUpdate(fprop_data[n_layers-1], bprop_data[n_layers-1]);
++                       Profiler::end(&quot;bprop&quot;);
++
++
++                       Mat *mat = bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;visible&quot;)];
++                       for (int i = 0; i &lt; mat-&gt;length(); ++i)
++                               for (int j = 0; j &lt; mat-&gt;width(); ++j)
++                                       (*mat)[i][j] *= gradient_multiplier;
++
++
++                       // Now for every layer take upper layers visible gradient
++                       // and pass it to current layers hidden.state port.
++                       for (int layer = n_layers-1; layer &gt; 0; layer--) {
++                               int n_mod_ports = modules[layer-1]-&gt;nPorts();
++
++                               bprop_data[layer-1].resize(n_mod_ports);
++                               bprop_data[layer-1].fill((Mat*)NULL);
++
++                               int mod_batch_size = fprop_data[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;visible&quot;)]-&gt;length();
++                               int width = modules[layer-1]-&gt;hidden_layer-&gt;size;
++
++
++                               Mat *hidden_state = createMatrix(mod_batch_size, width, mats);
++                               Mat *rbm_visible = bprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;visible&quot;)];
++
++                               int parent_width = modules[layer-1]-&gt;hidden_layer-&gt;size;
++                               int minibatch_size = ports_value[getPortIndex(&quot;input&quot;)]-&gt;length();
++
++                               TVec &lt;int&gt; used(mod_batch_size, 0);	// Ensure that we right gradient only once (the one we need is first one)
++
++                               // do the same thing like in fprop
++                               for (int mbi = 0, index = 0; mbi &lt; minibatch_size; ++mbi)
++                               {
++                                       if (mbi_time[mbi] &lt; step_size[layer]) {
++                                               // Computed all rbms in upper layer
++                                               for (int i = 0; i &lt; layer_sizes[layer]; ++i)
++                                               {
++                                                       // Here parents are this layer rbm (where we want to write gradient)
++                                                       for (int parent = 0; parent &lt; n_parents_per_node; ++parent) {
++                                                               int row_id = mod_batch_length[layer-1][mbi] - 
++											hash(mbi_time[mbi], layer-1, 2*i + parent);
++                                                               if (row_id &lt; 0) {
++                                                                       // It must be in cache - do nothing
++                                                               } else {
++                                                                       if (!used[row_id])
++                                                                               (*hidden_state)(row_id) &lt;&lt;
++										(*rbm_visible)(index).subVec(parent*parent_width, parent_width);
++                                                                       used[row_id]++;
++                                                               }
++                                                       }
++                                                       ++index;
++                                               }
++                                       } else {
++                                               // Compute only last rbm
++                                               for (int parent = 0; parent &lt; n_parents_per_node; ++parent) {
++                                                       int row_id = mod_batch_length[layer-1][mbi] - 
++										hash(mbi_time[mbi], layer-1, 2*(layer_sizes[layer]-1) + parent);
++                                                       if (row_id &lt; 0) {
++                                                               // It must be in cache - do nothing
++                                                       } else {
++                                                               if (!used[row_id])
++                                                                       (*hidden_state)(row_id) &lt;&lt; 
++										(*rbm_visible)(index).subVec(parent*parent_width, parent_width);
++                                                               used[row_id]++;
++                                                       }
++                                               }
++                                               ++index;
++                                       }
++                               }
++
++                               // Provide hidden gradient..
++                               bprop_data[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;hidden.state&quot;)] = hidden_state;
++
++                               // add a gradient that is provided externally on output_i port
++                               Mat *xgrad = ports_gradient[getPortIndex(&quot;output_&quot;+tostring(layer))];
++                               if (xgrad != NULL &amp;&amp; !xgrad-&gt;isEmpty()) {
++                                       //cout &lt;&lt; &quot;grad_flow: &quot; &lt;&lt; layer &lt;&lt; &quot; &quot; &lt;&lt; (*xgrad)(0)[0] &lt;&lt; endl;
++                                       // Length of xgrad is &lt;= hidden_state so we need to sum row by row
++                                       for (int mbi = 0; mbi &lt; minibatch_size; ++mbi) {
++                                               (*hidden_state)(mod_batch_length[layer-1][mbi]-1) += (*xgrad)(mbi);
++                                       }
++                               }
++
++                               // and ask for visible gradient
++                               bprop_data[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;visible&quot;)] = 
++							createMatrix(0, modules[layer-1]-&gt;visible_layer-&gt;size, mats);
++
++                               if (modules[layer-1]-&gt;reconstruction_connection != NULL) {
++                                       bprop_data[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)] =
++												createMatrix(mod_batch_size, 1, mats);
++                                       bprop_data[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)]-&gt;fill(1);
++                               }
++
++                               Profiler::start(&quot;bprop&quot;);
++                               modules[layer-1]-&gt;bpropAccUpdate(fprop_data[layer-1], bprop_data[layer-1]);
++                               Profiler::end(&quot;bprop&quot;);
++                       }  // for every layer
++               } else                          // Propagate through all hierarchy
++               {
++			bprop_data[n_layers - 1].resize( modules[n_layers-1]-&gt;nPorts() );
++			bprop_data[n_layers - 1].fill((Mat*)NULL);
++		
++			int mod_batch_size = fprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;visible&quot;)]-&gt;length();
++		
++			if (propagate_energy_gradient) {
++				bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;energy&quot;)] = createMatrix(mod_batch_size, 1, mats);
++				bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;energy&quot;)]-&gt;fill(1);
++			}
++		
++			if (modules[n_layers-1]-&gt;reconstruction_connection != NULL) {
++				bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)] =
++												createMatrix(mod_batch_size, 1, mats);
++				bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)]-&gt;fill(1);
++			}
++		
++			// Take external gradient on output
++			int out_grad = getPortIndex(&quot;output_&quot;+tostring(n_layers));
++		
++			if ( ports_gradient[out_grad] == NULL || ports_gradient[out_grad]-&gt;isEmpty() ) {
++				// Make gradient zero
++				ports_gradient[out_grad] = createMatrix(mod_batch_size, modules[n_layers-1]-&gt;hidden_layer-&gt;size, mats);
++				ports_gradient[out_grad]-&gt;fill(0);
++				PLWARNING(&quot;Top RBM output port has no gradient information. Using 0 gradient.&quot;);
++			}
++			//PLASSERT(ports_gradient[out_grad] != NULL);
++		
++		
++			bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;hidden.state&quot;)] = 
++								createMatrix(mod_batch_size, ports_gradient[out_grad]-&gt;width(), mats);
++			*bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;hidden.state&quot;)] &lt;&lt; *ports_gradient[out_grad];
++		
++			// Ask for visible gradient
++			bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;visible&quot;)] = 
++								createMatrix(0, modules[n_layers-1]-&gt;visible_layer-&gt;size, mats);
++		
++			Profiler::start(&quot;bprop&quot;);
++			modules[n_layers-1]-&gt;bpropAccUpdate(fprop_data[n_layers-1], bprop_data[n_layers-1]);
++			Profiler::end(&quot;bprop&quot;);
++		
++		
++			Mat *mat = bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;visible&quot;)];
++			for (int i = 0; i &lt; mat-&gt;length(); ++i)
++				for (int j = 0; j &lt; mat-&gt;width(); ++j)
++					(*mat)[i][j] *= gradient_multiplier;
++		
++			int minibatch_size = ports_value[getPortIndex(&quot;input&quot;)]-&gt;length();
++		
++			// Now for every layer take upper layers visible gradient
++			// and pass it to current layers hidden.state port.
++			for (int layer = n_layers-1; layer &gt; 0; layer--) {
++				int n_mod_ports = modules[layer-1]-&gt;nPorts();
++		
++				bprop_data[layer-1].resize(n_mod_ports);
++				bprop_data[layer-1].fill((Mat*)NULL);
++		
++				int mod_batch_size = minibatch_size*layer_sizes[layer-1];
++				int width = modules[layer-1]-&gt;hidden_layer-&gt;size;
++		
++				Mat *hidden_state = createMatrix(mod_batch_size, width, mats);
++				Mat *rbm_visible = bprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;visible&quot;)];
++		
++				int parent_width = modules[layer-1]-&gt;hidden_layer-&gt;size;
++		
++				for (int mbi = 0, index = 0; mbi &lt; minibatch_size; ++mbi)
++				{
++					for (int i = 0; i &lt; layer_sizes[layer-1]; ++i)
++					{
++						// Write gradient from parent
++						int parent_ix = mbi*layer_sizes[layer] + i/n_parents_per_node;
++						int child_ix = i%n_parents_per_node;
++						(*hidden_state)(index++) &lt;&lt; (*rbm_visible)(parent_ix).subVec(child_ix*parent_width, parent_width);
++					}
++				}
++		
++				// Provide hidden gradient..
++				bprop_data[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;hidden.state&quot;)] = hidden_state;
++		
++				// add a gradient that is provided externally on output_i port
++				Mat *xgrad = ports_gradient[getPortIndex(&quot;output_&quot;+tostring(layer))];
++				if (xgrad != NULL &amp;&amp; !xgrad-&gt;isEmpty()) {
++					//cout &lt;&lt; &quot;grad_flow: &quot; &lt;&lt; layer &lt;&lt; &quot; &quot; &lt;&lt; (*xgrad)(0)[0] &lt;&lt; endl;
++					// Length of xgrad is &lt;= hidden_state so we need to sum row by row
++					for (int mbi = 0; mbi &lt; minibatch_size; ++mbi) {
++						(*hidden_state)(mbi*layer_sizes[layer-1]+layer_sizes[layer-1]-1) += (*xgrad)(mbi);
++					}
++				}
++		
++				// and ask for visible gradient
++				bprop_data[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;visible&quot;)] = 
++									createMatrix(0, modules[layer-1]-&gt;visible_layer-&gt;size, mats);
++		
++				if (modules[layer-1]-&gt;reconstruction_connection != NULL) {
++					bprop_data[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)] = 
++												createMatrix(mod_batch_size, 1, mats);
++					bprop_data[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)]-&gt;fill(1);
++				}
++
++				/*for (int i = 0; i &lt; n_mod_ports; ++i) {
++					cout &lt;&lt; i &lt;&lt; &quot; &quot; &lt;&lt; modules[layer-1]-&gt;getPorts()[i] &lt;&lt; &quot; &quot;;
++					if (full_fprop_data[i])
++						cout &lt;&lt; full_fprop_data[i]-&gt;length() &lt;&lt; endl;
++					else
++						cout &lt;&lt; &quot;NULL&quot; &lt;&lt; endl;
++				}*/
++		
++				Profiler::start(&quot;bprop&quot;);
++				modules[layer-1]-&gt;bpropAccUpdate(fprop_data[layer-1], bprop_data[layer-1]);
++				Profiler::end(&quot;bprop&quot;);
++			}	// for every layer
++			//updateCache();		// no cache update as we dont have any
++		}
++
++
++		// Following code would work without need of doing full_fprop. However because RBMMixedLayer caches nll
++		// during fprop and then reuses it in bprop it is not possible.
++		/*{
++			// For top RBM we provide energy gradient only and get gradient on visible
++			bprop_data[n_layers - 1].resize( modules[n_layers-1]-&gt;nPorts() );
++			bprop_data[n_layers - 1].fill((Mat*)NULL);
++		
++			int mod_batch_size = fprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;visible&quot;)]-&gt;length();
++		
++			if (propagate_energy_gradient) {
++				bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;energy&quot;)] = createMatrix(mod_batch_size, 1, mats);
++				bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;energy&quot;)]-&gt;fill(1);
++			}
++		
++			if (modules[n_layers-1]-&gt;reconstruction_connection != NULL) {
++				bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)] = createMatrix(mod_batch_size, 1, mats);
++				bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)]-&gt;fill(1);
++			}
++		
++			// Take external gradient on output
++			int out_grad = getPortIndex(&quot;output_&quot;+tostring(n_layers));
++		
++			if ( ports_gradient[out_grad] == NULL || ports_gradient[out_grad]-&gt;isEmpty() ) {
++				// Make gradient zero
++				ports_gradient[out_grad] = createMatrix(mod_batch_size, modules[n_layers-1]-&gt;hidden_layer-&gt;size, mats);
++				ports_gradient[out_grad]-&gt;fill(0);
++				PLWARNING(&quot;Top RBM output port has no gradient information. Using 0 gradient.&quot;);
++			}
++			//PLASSERT(ports_gradient[out_grad] != NULL);
++		
++		
++			bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;hidden.state&quot;)] = createMatrix(mod_batch_size, ports_gradient[out_grad]-&gt;width(), mats);
++			*bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;hidden.state&quot;)] &lt;&lt; *ports_gradient[out_grad];
++		
++			// Ask for visible gradient
++			bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;visible&quot;)] = createMatrix(0, modules[n_layers-1]-&gt;visible_layer-&gt;size, mats);
++		
++			Profiler::start(&quot;bprop&quot;);
++			modules[n_layers-1]-&gt;bpropAccUpdate(fprop_data[n_layers-1], bprop_data[n_layers-1]);
++			Profiler::end(&quot;bprop&quot;);
++		
++		
++			Mat *mat = bprop_data[n_layers-1][modules[n_layers-1]-&gt;getPortIndex(&quot;visible&quot;)];
++			for (int i = 0; i &lt; mat-&gt;length(); ++i)
++				for (int j = 0; j &lt; mat-&gt;width(); ++j)
++					(*mat)[i][j] *= gradient_multiplier;
++		
++			int minibatch_size = ports_value[getPortIndex(&quot;input&quot;)]-&gt;length();
++		
++			// Now for every layer take upper layers visible gradient
++			// and pass it to current layers hidden.state port.
++			for (int layer = n_layers-1; layer &gt; 0; layer--) {
++				int n_mod_ports = modules[layer-1]-&gt;nPorts();
++		
++				bprop_data[layer-1].resize(n_mod_ports);
++				bprop_data[layer-1].fill((Mat*)NULL);
++		
++				int mod_batch_size = minibatch_size*layer_sizes[layer-1];
++				int width = modules[layer-1]-&gt;hidden_layer-&gt;size;
++		
++				// We need to make new fprop_data vector with full(expanded) data.
++				TVec &lt;Mat*&gt; full_fprop_data(n_mod_ports, (Mat*)NULL);
++				for (int i = 0; i &lt; n_mod_ports; ++i) {
++					if (fprop_data[layer-1][i] != NULL &amp;&amp; !fprop_data[layer-1][i]-&gt;isEmpty()
++						// HACK to make it work with a hack in RBMModule when visible_activations.state is not computed
++						&amp;&amp; (fprop_data[layer-1][i]-&gt;length() &gt; 1 || fprop_data[layer-1][i]-&gt;width() &gt; 1) ) {
++						full_fprop_data[i] = createMatrix(mod_batch_size, fprop_data[layer-1][i]-&gt;width(), mats);
++					}
++				}
++		
++				Mat *hidden_state = createMatrix(mod_batch_size, width, mats);
++				Mat *rbm_visible = bprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;visible&quot;)];
++		
++				int parent_width = modules[layer-1]-&gt;hidden_layer-&gt;size;
++		
++				for (int mbi = 0, index = 0; mbi &lt; minibatch_size; ++mbi)
++				{
++					for (int i = 0; i &lt; layer_sizes[layer-1]; ++i)
++					{
++						// Fill full_fprop_data properly
++						int row_id = mod_batch_length[layer-1][mbi] - hash(mbi_time[mbi], layer-1, i);
++						for (int j = 0; j &lt; n_mod_ports; ++j) {
++							if (full_fprop_data[j] != NULL) {
++								if (row_id &lt; 0) {
++									// Fill from cache
++									PLASSERT_MSG(fprop_data_cache[layer-1][j], &quot;Cache is NULL&quot;);
++									int row_in_cache = fprop_data_cache[layer-1][j]-&gt;length()+row_id;
++									PLASSERT_MSG(row_in_cache &gt;= 0, &quot;Cache is provided but is too small&quot;);
++									(*full_fprop_data[j])(index) &lt;&lt; (*fprop_data_cache[layer-1][j])(row_in_cache);
++								} else {
++									(*full_fprop_data[j])(index) &lt;&lt; (*fprop_data[layer-1][j])(row_id);
++								}
++							}
++						}
++		
++						// Write gradient from parent
++						int parent_ix = mbi*layer_sizes[layer] + i/n_parents_per_node;
++						int child_ix = i%n_parents_per_node;
++						(*hidden_state)(index++) &lt;&lt; (*rbm_visible)(parent_ix).subVec(child_ix*parent_width, parent_width);
++					}
++				}
++		
++		
++				// Provide hidden gradient..
++				bprop_data[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;hidden.state&quot;)] = hidden_state;
++		
++				// add a gradient that is provided externally on output_i port
++				Mat *xgrad = ports_gradient[getPortIndex(&quot;output_&quot;+tostring(layer))];
++				if (xgrad != NULL &amp;&amp; !xgrad-&gt;isEmpty()) {
++					//cout &lt;&lt; &quot;grad_flow: &quot; &lt;&lt; layer &lt;&lt; &quot; &quot; &lt;&lt; (*xgrad)(0)[0] &lt;&lt; endl;
++					// Length of xgrad is &lt;= hidden_state so we need to sum row by row
++					for (int mbi = 0; mbi &lt; minibatch_size; ++mbi) {
++						(*hidden_state)(mbi*layer_sizes[layer-1]+layer_sizes[layer-1]-1) += (*xgrad)(mbi);
++					}
++				}
++		
++				// and ask for visible gradient
++				bprop_data[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;visible&quot;)] = createMatrix(0, modules[layer-1]-&gt;visible_layer-&gt;size, mats);
++		
++				if (modules[layer-1]-&gt;reconstruction_connection != NULL) {
++					bprop_data[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)] = createMatrix(mod_batch_size, 1, mats);
++					bprop_data[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)]-&gt;fill(1);
++				}
++
++				for (int i = 0; i &lt; n_mod_ports; ++i) {
++					cout &lt;&lt; i &lt;&lt; &quot; &quot; &lt;&lt; modules[layer-1]-&gt;getPorts()[i] &lt;&lt; &quot; &quot;;
++					if (full_fprop_data[i])
++						cout &lt;&lt; full_fprop_data[i]-&gt;length() &lt;&lt; endl;
++					else
++						cout &lt;&lt; &quot;NULL&quot; &lt;&lt; endl;
++				}
++		
++				Profiler::start(&quot;bprop&quot;);
++				modules[layer-1]-&gt;bpropAccUpdate(full_fprop_data, bprop_data[layer-1]);
++				Profiler::end(&quot;bprop&quot;);
++			}	// for every layer
++			updateCache();
++		}*/
++
++
++       }
++
++       //cout &lt;&lt; &quot;end back&quot; &lt;&lt; endl;
++   // Ensure all required gradients have been computed.
++       checkProp(ports_gradient);
++
++       Profiler::end(&quot;full bprop&quot;);
++}
++
++
++
++
++//////////////////////
++// bpropDoesNothing //
++//////////////////////
++/* THIS METHOD IS OPTIONAL
++// the default implementation returns false
++bool TreeDBNModule::bpropDoesNothing()
++{
++}
++*/
++
++//////////////
++// finalize //
++//////////////
++/* THIS METHOD IS OPTIONAL
++void TreeDBNModule::finalize()
++{
++}
++*/
++
++////////////
++// forget //
++////////////
++void TreeDBNModule::forget()
++{
++       cout &lt;&lt; &quot;Forget&quot; &lt;&lt; endl;
++       for (int i  = 0; i &lt; n_layers; ++i)
++               modules[i]-&gt;forget();
++}
++
++//! Check if b equals a shifted left by k.
++bool TreeDBNModule::check_shift(Vec &amp;a, Vec&amp; b, int k)
++{
++       PLASSERT(a.length() == b.length());
++
++       for (int i = k; i &lt; a.length(); ++i) {
++               if ( !fast_is_equal(a[i], b[i-k]) )
++                       return false;
++       }
++
++       return true;
++}
++
++
++//! Provided pseudotime, rbm layer and rbm index (both zero based) in the layer returns 
++//! distance from the end of computed fprop_data where rbm with same 
++//! parameters was computed. For example, if provided parameters 6, 1, 1 
++//! it returns -3, then it means that second rbm in the second layer
++//! was computed and is stored in fprop_data[fprop_data.length-3]
++// OK
++int TreeDBNModule::hash(int t, int k, int i)
++{
++       if (t &lt; step_size[k]) return layer_sizes[k] - i;            // all rbms were computed
++       if (i == layer_sizes[k] - 1) return 1;                                          // last rbm in layer asked, and was computed
++
++  // check if there was a moment when this input was fed to the last rbm in the layer
++       if ( (layer_sizes[k] - 1 - i)*step_size[k] &lt;= t) {
++               int t_diff = (layer_sizes[k] - 1 - i)*step_size[k];
++      // In first step_size[k] time steps we added layer_size[k] entries.
++               return t_diff + max(0, step_size[k] - (t - t_diff) - 1)*(layer_sizes[k]-1) + 1;
++       }
++
++  // the only option is that this input was fed to some intermediate rbm
++       int ix = i + t/step_size[k];                    // Index of that rbm
++       int t_diff = (ix - i)*step_size[k];             //
++       return t_diff + max(0, step_size[k] - (t - t_diff) - 1)*(layer_sizes[k]-1) + layer_sizes[k] - 1 - ix + 1;
++}
++
++// helper function that creates matrix of given size in
++// mats vector and returns pointer to it.
++Mat* TreeDBNModule::createMatrix(int length, int width, TVec &lt;Mat&gt; &amp;mats)
++{
++       mats.append(Mat(length, width));
++       return &amp;mats.lastElement();
++}
++
++
++//! Unoptimized version of fprop
++void TreeDBNModule::full_fprop(const TVec&lt;Mat*&gt;&amp; ports_value)
++{
++       Profiler::start(&quot;full fprop&quot;);
++       mats.resize(0);
++
++       vector &lt;string&gt; prts = modules[0]-&gt;getPorts();
++
++	Mat* input = ports_value[getPortIndex(&quot;input&quot;)];
++	int minibatch_size = input-&gt;length();
++
++	mbi_time.resize(minibatch_size);
++	mod_batch_length.resize(n_layers, minibatch_size);
++
++	// Process layerwise
++	for (int layer = 0; layer &lt; n_layers; ++layer)
++	{
++		fprop_data[layer].resize(modules[layer]-&gt;nPorts());
++		fprop_data[layer].fill((Mat*)NULL);
++
++		// Count number of rows
++		int nRows = layer_sizes[layer]*minibatch_size;
++
++		// Prepare matrices
++		Mat* rbm_visible = createMatrix(nRows, modules[layer]-&gt;visible_layer-&gt;size, mats);
++		fprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;visible&quot;)] = rbm_visible;
++
++		//Create all .state matrices
++		for (int i = 0; i &lt; modules[layer]-&gt;nPorts(); ++i) {
++			string pname = modules[layer]-&gt;getPorts()[i];
++			if ( pname.length() &gt; 6 &amp;&amp; &quot;.state&quot; == pname.substr(pname.length()-6) ) {
++				if (fprop_data[layer][i] == NULL)
++					fprop_data[layer][i] = createMatrix(0, 0, mats);
++			}
++		}
++
++		if (modules[layer]-&gt;reconstruction_connection == NULL) {
++			fprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)] = NULL;
++			fprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;visible_reconstruction.state&quot;)] = NULL;
++			fprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;visible_reconstruction_activations.state&quot;)] = NULL;
++		}
++
++		// Create empty matrices for forwarded ports
++		for (int i = 0; i &lt; nPorts(); ++i) {
++			if (port_rbms[i] &gt;= 0) {
++				if (ports_value[i] != NULL &amp;&amp; fprop_data[port_rbms[i]][port_index[i]] == NULL)
++					fprop_data[port_rbms[i]][port_index[i]] = createMatrix(0, 0, mats);
++			}
++		}
++
++		// Go through all minibatch and fill visible expectations
++		if (layer == 0)
++		{       // Handle input layer in different manner
++			int visible_size = modules[layer]-&gt;visible_layer-&gt;size;
++
++			for (int mbi = 0, index = 0; mbi &lt; minibatch_size; ++mbi)
++			{
++				for (int i = 0; i &lt; layer_sizes[layer]; ++i)
++				{
++					(*rbm_visible)(index++) &lt;&lt; (*input)(mbi).subVec(i*visible_size, visible_size);
++				}
++			}
++		}
++		else
++		{
++			// Take parent layer expectations
++			Mat *expectations = fprop_data[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;hidden.state&quot;)];
++
++			int parent_width = modules[layer-1]-&gt;hidden_layer-&gt;size;
++			for (int mbi = 0, index = 0; mbi &lt; minibatch_size; ++mbi)
++			{
++				// Compute all rbms
++				for (int i = 0; i &lt; layer_sizes[layer]; ++i)
++				{
++					for (int parent = 0; parent &lt; n_parents_per_node; ++parent) {
++						int row_id = mbi*layer_sizes[layer-1] + i*n_parents_per_node + parent;
++						(*rbm_visible)(index).subVec(parent*parent_width, parent_width) &lt;&lt;
++									(*expectations)(row_id);
++					}
++					++index;
++				}
++			}
++		}
++
++		Profiler::start(&quot;fprop&quot;);
++		//cout &lt;&lt; &quot;fprop: &quot; &lt;&lt; endl;
++		//cout &lt;&lt; (*fprop_data[layer][0]) &lt;&lt; endl;
++		//cout &lt;&lt; &quot;************&quot; &lt;&lt; endl;
++		modules[layer]-&gt;fprop(fprop_data[layer]);
++		Profiler::end(&quot;fprop&quot;);
++	}
++
++	time = 0;
++	last_full_input.resize(input-&gt;width());
++	last_full_input &lt;&lt; (*input)(minibatch_size-1);
++
++	// and write all required output to the provided ports ( output_i + requested )
++	//cout &lt;&lt; &quot;write&quot; &lt;&lt; endl;
++	for (int i = 0; i &lt; nPorts(); ++i) {
++		Mat *mat = ports_value[i];
++
++		if ( mat != NULL &amp;&amp; mat-&gt;isEmpty() ) {
++			// We check of which layer output should be writen to the port
++			int pl = port_rbms[i];
++			if (pl &gt;= 0) {
++				mat-&gt;resize(minibatch_size, fprop_data[pl][port_index[i]]-&gt;width());
++				//cout &lt;&lt; modules[pl]-&gt;getPorts()[i] &lt;&lt; endl;
++				for (int j = 0; j &lt; minibatch_size; ++j)
++					(*mat)(j) &lt;&lt; (*fprop_data[pl][port_index[i]])(layer_sizes[pl]*j + layer_sizes[pl]-1);
++			} else
++				PLERROR(&quot;Data was requested for a port, but not computed!&quot;);
++		}
++	}
++
++       //cout &lt;&lt; &quot;redirected &quot; &lt;&lt; *ports_value[port_redirects[0][0].first] &lt;&lt; endl;
++	//cout &lt;&lt; &quot;ffprop end&quot; &lt;&lt; endl;
++       Profiler::end(&quot;full fprop&quot;);
++
++       //Profiler::report(cout);
++}
++
++
++//! Optimized fprop
++void TreeDBNModule::fprop(const TVec&lt;Mat*&gt;&amp; ports_value)
++{
++	if (propagate_gradient &amp;&amp; propagate_full_gradient) {
++		full_fprop(ports_value);
++		return;
++	}
++
++       Profiler::start(&quot;full fprop&quot;);
++       mats.resize(0);
++
++       vector &lt;string&gt; prts = modules[0]-&gt;getPorts();
++       //cout &lt;&lt; &quot;*********************&quot; &lt;&lt; endl;
++       //for (int i = 0; i &lt; prts.size(); ++i)
++       //      cout &lt;&lt; prts[i] &lt;&lt; endl;
++       //cout &lt;&lt; &quot;*********************&quot; &lt;&lt; endl;
++
++	Mat* input = ports_value[getPortIndex(&quot;input&quot;)];
++	int minibatch_size = input-&gt;length();
++	int symbol_size = modules[0]-&gt;visible_layer-&gt;size/n_parents_per_node;
++
++	mbi_time.resize(minibatch_size);
++	mod_batch_length.resize(n_layers, minibatch_size);
++
++	// Compute pseudo-time
++	Vec v = (*input)(0), v2;
++	if ( last_full_input != NULL &amp;&amp; !last_full_input.isEmpty() &amp;&amp; check_shift( last_full_input, v, symbol_size ) )
++		mbi_time[0] = time + 1;
++	else
++		mbi_time[0] = 0;
++
++	for (int mbi = 1; mbi &lt; minibatch_size; ++mbi)
++	{
++		// Two cases: either it is a shifted version of the previous
++		// or it is a new word
++		v = (*input)(mbi-1);    v2 = (*input)(mbi);
++		if ( check_shift( v, v2, symbol_size ) )
++			mbi_time[mbi] = mbi_time[mbi-1] + 1;
++		else
++			mbi_time[mbi] = 0;
++	}
++
++	// Process layerwise
++	for (int layer = 0; layer &lt; n_layers; ++layer)
++	{
++		fprop_data[layer].resize(modules[layer]-&gt;nPorts());
++		fprop_data[layer].fill((Mat*)NULL);
++
++		// Count number of rows
++		int nRows = 0;
++		for (int mbi = 0; mbi &lt; minibatch_size; ++mbi)
++		{
++			// We might need to compute either all or only last rbm
++			if (mbi_time[mbi] &lt; step_size[layer]) nRows += layer_sizes[layer];
++			else ++nRows;
++		}
++
++		// Prepare matrices
++		Mat* rbm_visible = createMatrix(nRows, modules[layer]-&gt;visible_layer-&gt;size, mats);
++		fprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;visible&quot;)] = rbm_visible;
++
++		//Create all .state matrices
++		for (int i = 0; i &lt; modules[layer]-&gt;nPorts(); ++i) {
++			string pname = modules[layer]-&gt;getPorts()[i];
++			if ( pname.length() &gt; 6 &amp;&amp; &quot;.state&quot; == pname.substr(pname.length()-6) ) {
++				if (fprop_data[layer][i] == NULL)
++					fprop_data[layer][i] = createMatrix(0, 0, mats);
++			}
++		}
++
++		//fprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;hidden.state&quot;)] = createMatrix(0, 0, mats);
++		//fprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;hidden_activations.state&quot;)] = createMatrix(0, 0, mats);
++
++		if (modules[layer]-&gt;reconstruction_connection == NULL) {
++			fprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;reconstruction_error.state&quot;)] = NULL;
++			fprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;visible_reconstruction.state&quot;)] = NULL;
++			fprop_data[layer][modules[layer]-&gt;getPortIndex(&quot;visible_reconstruction_activations.state&quot;)] = NULL;
++		}
++
++		// Create empty matrices for forwarded ports
++		for (int i = 0; i &lt; nPorts(); ++i) {
++			if (port_rbms[i] &gt;= 0) {
++				if (ports_value[i] != NULL &amp;&amp; fprop_data[port_rbms[i]][port_index[i]] == NULL)
++					fprop_data[port_rbms[i]][port_index[i]] = createMatrix(0, 0, mats);
++			}
++		}
++
++		// Go through all minibatch and fill visible expectations
++		if (layer == 0)
++		{                               // Handle input layer in different manner
++			int visible_size = modules[layer]-&gt;visible_layer-&gt;size;
++
++			for (int mbi = 0, index = 0; mbi &lt; minibatch_size; ++mbi)
++			{
++				// We might need to compute either all or only last rbm
++				if (mbi_time[mbi] &lt; step_size[layer]) {
++					// Compute all rbms
++					for (int i = 0; i &lt; layer_sizes[layer]; ++i)
++					{
++						(*rbm_visible)(index++) &lt;&lt; (*input)(mbi).subVec(i*visible_size, visible_size);
++					}
++				} else {
++					// Compute only last rbm
++					(*rbm_visible)(index++) &lt;&lt; (*input)(mbi).subVec((layer_sizes[layer]-1)*visible_size, visible_size);
++				}
++				mod_batch_length[0][mbi] = index;
++			}
++		}
++		else
++		{
++			// Take parent layer expectations
++			Mat *expectations = fprop_data[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;hidden.state&quot;)];
++			Mat *expectations_cache = fprop_data_cache[layer-1][modules[layer-1]-&gt;getPortIndex(&quot;hidden.state&quot;)];
++
++			int parent_width = modules[layer-1]-&gt;hidden_layer-&gt;size;
++			for (int mbi = 0, index = 0; mbi &lt; minibatch_size; ++mbi)
++			{
++				// We might need to compute either all or only last rbm
++				if (mbi_time[mbi] &lt; step_size[layer]) {
++					// Compute all rbms
++					for (int i = 0; i &lt; layer_sizes[layer]; ++i)
++					{
++						for (int parent = 0; parent &lt; n_parents_per_node; ++parent) {
++							int row_id = mod_batch_length[layer-1][mbi] - hash(mbi_time[mbi], layer-1, n_parents_per_node*i + parent);
++							//cout &lt;&lt; &quot;RID*: &quot; &lt;&lt; row_id &lt;&lt; endl;
++							if (row_id &lt; 0) {
++								// It must be in cache
++								PLASSERT_MSG(expectations_cache, &quot;Cache is NULL&quot;);
++								int row_in_cache = expectations_cache-&gt;length()+row_id;
++								PLASSERT_MSG(row_in_cache &gt;= 0, &quot;Cache is provided but is too small&quot;);
++								(*rbm_visible)(index).subVec(parent*parent_width, parent_width) &lt;&lt;
++										(*expectations_cache)(row_in_cache);
++							} else {
++								(*rbm_visible)(index).subVec(parent*parent_width, parent_width) &lt;&lt;
++										(*expectations)(row_id);
++							}
++						}
++						++index;
++					}
++				} else {
++					// Compute only last rbm
++					for (int parent = 0; parent &lt; n_parents_per_node; ++parent) {
++						int row_id = mod_batch_length[layer-1][mbi] - hash(mbi_time[mbi], layer-1, n_parents_per_node*(layer_sizes[layer]-1) + parent);
++						//cout &lt;&lt; &quot;RID: &quot; &lt;&lt; row_id &lt;&lt; endl;
++						//cout &lt;&lt; mbi_time[mbi] &lt;&lt; &quot; &quot; &lt;&lt; mod_batch_length[mbi] &lt;&lt; &quot; &quot; &lt;&lt; hash(mbi_time[mbi], layer-1, 2*(layer_sizes[layer]-1) + parent) &lt;&lt; &quot; &quot;&lt;&lt; row_id &lt;&lt; endl;
++						if (row_id &lt; 0) {
++							// It must be in cache
++							PLASSERT_MSG(expectations_cache, &quot;Cache is NULL&quot;);
++							int row_in_cache = expectations_cache-&gt;length()+row_id;
++							PLASSERT_MSG(row_in_cache &gt;= 0, &quot;Cache is provided but is too small&quot;);
++							(*rbm_visible)(index).subVec(parent*parent_width, parent_width) &lt;&lt;
++									(*expectations_cache)(row_in_cache);
++						} else {
++							(*rbm_visible)(index).subVec(parent*parent_width, parent_width) &lt;&lt;
++									(*expectations)(row_id);
++						}
++					}
++					++index;
++				}
++				mod_batch_length[layer][mbi] = index;
++			}
++		}
++
++		Profiler::start(&quot;fprop&quot;);
++		//cout &lt;&lt; &quot;fprop: &quot; &lt;&lt; endl;
++		//cout &lt;&lt; (*fprop_data[layer][0]) &lt;&lt; endl;
++		//cout &lt;&lt; &quot;************&quot; &lt;&lt; endl;
++		modules[layer]-&gt;fprop(fprop_data[layer]);
++		Profiler::end(&quot;fprop&quot;);
++	}
++
++	time = mbi_time[minibatch_size-1];
++	last_full_input.resize(input-&gt;width());
++	last_full_input &lt;&lt; (*input)(minibatch_size-1);
++
++	// Final things: fill the cache...
++	if (!propagate_gradient || !propagate_full_gradient)
++		updateCache();
++
++	// and write all required output to the provided ports ( output_i + requested )
++	for (int i = 0; i &lt; nPorts(); ++i) {
++		Mat *mat = ports_value[i];
++
++		if ( mat != NULL &amp;&amp; mat-&gt;isEmpty() ) {
++			// We check of which layer output should be writen to the port
++			int pl = port_rbms[i];
++			if (pl &gt;= 0) {
++				mat-&gt;resize(minibatch_size, fprop_data[pl][port_index[i]]-&gt;width());
++				for (int j = 0; j &lt; minibatch_size; ++j)
++					(*mat)(j) &lt;&lt; (*fprop_data[pl][port_index[i]])(mod_batch_length[pl][j] - 1);
++			} else
++				PLERROR(&quot;Data was requested for a port, but not computed!&quot;);
++		}
++	}
++
++       //cout &lt;&lt; &quot;redirected &quot; &lt;&lt; *ports_value[port_redirects[0][0].first] &lt;&lt; endl;
++
++       Profiler::end(&quot;full fprop&quot;);
++
++       //Profiler::report(cout);
++}
++
++//! Updates a cache with new fprop_data
++void TreeDBNModule::updateCache()
++{
++       //cache_mats.resize(0);
++       for (int i = 0; i &lt; n_layers; ++i) {
++               int n_ports = modules[i]-&gt;nPorts();
++               for (int j = 0; j &lt; n_ports; ++j) {
++
++                       if (fprop_data[i][j] != NULL &amp;&amp; !fprop_data[i][j]-&gt;isEmpty()) {
++                               // Take last rows
++                               int max_rows = layer_sizes[0]*n_parents_per_node;               // max we could need
++                               if (fprop_data[i][j]-&gt;length() &gt; max_rows) {
++                                       //cout &lt;&lt; &quot;full cache&quot; &lt;&lt; endl;
++                                       // copy submatrix
++                                       if (fprop_data_cache[i][j] == NULL)
++                                               fprop_data_cache[i][j] = createMatrix(max_rows, fprop_data[i][j]-&gt;width(), cache_mats);
++                                       else
++                                               fprop_data_cache[i][j]-&gt;resize(max_rows, fprop_data[i][j]-&gt;width());
++                                       *fprop_data_cache[i][j] &lt;&lt; fprop_data[i][j]-&gt;subMatRows(fprop_data[i][j]-&gt;length()-max_rows, max_rows);
++                               } else {
++                                       if (fprop_data_cache[i][j] == NULL) {           // have no cache, copy all
++                                               //cout &lt;&lt; &quot;first cache &quot; &lt;&lt; i &lt;&lt; &quot; &quot; &lt;&lt; j &lt;&lt; endl;
++                                               fprop_data_cache[i][j] = createMatrix(fprop_data[i][j]-&gt;length(), fprop_data[i][j]-&gt;width(), cache_mats);
++                                               *fprop_data_cache[i][j] &lt;&lt; *fprop_data[i][j];
++                                       } else {
++                                               //cout &lt;&lt; &quot;part cache&quot; &lt;&lt; endl;
++                                               // had something.., check how many rows we have to leave
++                                               int rows_reuse = min(max_rows - fprop_data[i][j]-&gt;length(), fprop_data_cache[i][j]-&gt;length());
++                                               Mat tmp(rows_reuse, fprop_data[i][j]-&gt;width());
++                                               tmp &lt;&lt; fprop_data_cache[i][j]-&gt;subMatRows(fprop_data_cache[i][j]-&gt;length() - rows_reuse, rows_reuse);
++                                               fprop_data_cache[i][j]-&gt;resize(rows_reuse + fprop_data[i][j]-&gt;length(), fprop_data[i][j]-&gt;width());
++                                               fprop_data_cache[i][j]-&gt;subMatRows(0, rows_reuse) &lt;&lt; tmp;
++                                               fprop_data_cache[i][j]-&gt;subMatRows(rows_reuse, fprop_data[i][j]-&gt;length()) &lt;&lt; *fprop_data[i][j];
++                                       }
++                               }
++                       }
++
++                       // TODO if we stop calculate fprop_data for some port the cache should be deleted (?)
++               }
++       }
++}
++
++//! Clears the cache. Do this if parameters changed.
++void TreeDBNModule::clearCache()
++{
++       time = 0;
++       cache_mats.resize(0);
++       for (int i = 0; i &lt; n_layers; ++i) {
++               int n_ports = modules[i]-&gt;nPorts();
++               for (int j = 0; j &lt; n_ports; ++j) {
++                       fprop_data_cache[i][j] = NULL;
++                       bprop_data_cache[i][j] = NULL;
++               }
++       }
++}
++
++//! Initializes sampling. Basically, it writes a random value to the
++//! top rbm and does gibbsTop gibbs steps. Call this before calling sample().
++void TreeDBNModule::initSampling(int gibbsTop)
++{
++       modules[n_layers-1]-&gt;min_n_Gibbs_steps = gibbsTop;
++
++       Mat hidden(1, modules[n_layers-1]-&gt;hidden_layer-&gt;size);
++
++       for (int i = 0; i &lt; modules[n_layers-1]-&gt;hidden_layer-&gt;size; ++i)
++       {
++               hidden[0][i] = rand() &amp; 1;
++       }
++
++       Mat exp;
++       TVec &lt;Mat*&gt; fprop_data(modules[n_layers-1]-&gt;nPorts(), (Mat*)NULL);
++
++       fprop_data[modules[n_layers-1]-&gt;getPortIndex(&quot;hidden_sample&quot;)] = &hidden;
++       fprop_data[modules[n_layers-1]-&gt;getPortIndex(&quot;visible_sample&quot;)] = &exp;
++
++       // Initialize with random sample
++       modules[n_layers-1]-&gt;fprop(fprop_data);
++
++       // Run chain for min_n_Gibbs_steps
++       fprop_data.fill((Mat*)NULL);
++       exp.resize(0,0);
++       fprop_data[modules[n_layers-1]-&gt;getPortIndex(&quot;visible_sample&quot;)] = &exp;
++       modules[n_layers-1]-&gt;fprop(fprop_data);
++}
++
++
++//! Returns a sample from the visible layer.
++Vec TreeDBNModule::sample(int gibbsTop)
++{
++	modules[n_layers-1]-&gt;n_Gibbs_steps_per_generated_sample = gibbsTop;
++
++       // Sample visible expectations from top layer rbm
++       TVec &lt;Mat&gt; samples(n_layers);
++
++       TVec &lt;Mat*&gt; fprop_data(modules[n_layers-1]-&gt;nPorts(), (Mat*)NULL);
++
++       fprop_data[modules[n_layers-1]-&gt;getPortIndex(&quot;visible_sample&quot;)] = &amp;samples[n_layers-1];
++
++       modules[n_layers-1]-&gt;fprop(fprop_data);
++
++       // Propagate expectations down the network
++       for (int layer = n_layers-2; layer &gt;= 0; --layer)
++       {
++               // Fill hidden sample for layer rbms
++               int width = modules[layer]-&gt;hidden_layer-&gt;size;
++               Mat hidden_sample(layer_sizes[layer], width);
++               for (int i = 0; i &lt; layer_sizes[layer]; ++i)
++               {
++                       hidden_sample(i) &lt;&lt; samples[layer+1](i/n_parents_per_node).subVec((i%n_parents_per_node)*width, width);
++               }
++
++               TVec &lt;Mat*&gt; fp_data(modules[layer]-&gt;nPorts(), (Mat*)NULL);
++               //fp_data[modules[layer]-&gt;getPortIndex(&quot;visible_reconstruction.state&quot;)] = &amp;samples[layer];
++               //fp_data[modules[layer]-&gt;getPortIndex(&quot;hidden.state&quot;)] = &amp;hidden_sample;
++               fp_data[modules[layer]-&gt;getPortIndex(&quot;visible_sample&quot;)] = &amp;samples[layer];
++               fp_data[modules[layer]-&gt;getPortIndex(&quot;hidden_sample&quot;)] = &amp;hidden_sample;
++
++               modules[layer]-&gt;fprop(fp_data);
++       }
++
++       Vec sample(samples[0].size());
++       for (int i = 0; i &lt; samples[0].length(); ++i)
++               sample.subVec(i*samples[0].width(), samples[0].width()) &lt;&lt; samples[0](i);
++
++       return sample;
++}
++
++//////////////////
++// getPortIndex //
++//////////////////
++/* Optional
++int TreeDBNModule::getPortIndex(const string&amp; port)
++{}
++*/
++
++//////////////
++// getPorts //
++//////////////
++const TVec&lt;string&gt;&amp; TreeDBNModule::getPorts() {
++       return port_names;
++}
++
++//////////////////
++// getPortSizes //
++//////////////////
++/* Optional
++const TMat&lt;int&gt;&amp; TreeDBNModule::getPortSizes() {
++}
++*/
++
++/////////////////////////////////
++// makeDeepCopyFromShallowCopy //
++/////////////////////////////////
++void TreeDBNModule::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++   inherited::makeDeepCopyFromShallowCopy(copies);
++
++   // ### Call deepCopyField on all &quot;pointer-like&quot; fields
++   // ### that you wish to be deepCopied rather than
++   // ### shallow-copied.
++   // ### ex:
++   deepCopyField(modules, copies);
++
++   // ### Remove this line when you have fully implemented this method.
++   //PLERROR(&quot;TreeDBNModule::makeDeepCopyFromShallowCopy not fully (correctly) implemented yet!&quot;);
++}
++
++/////////////////////
++// setLearningRate //
++/////////////////////
++/* OPTIONAL
++// The default implementation raises a warning and does not do anything.
++void TreeDBNModule::setLearningRate(real dynamic_learning_rate)
++{
++}
++*/
++
++
++}
++// end of namespace PLearn
++
++
++/*
++ Local Variables:
++ mode:c++
++ c-basic-offset:4
++ c-file-style:&quot;stroustrup&quot;
++ c-file-offsets:((innamespace . 0)(inline-open . 0))
++ indent-tabs-mode:nil
++ fill-column:79
++ End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/online/EXPERIMENTAL/TreeDBNModule.h
+===================================================================
+--- trunk/plearn_learners/online/EXPERIMENTAL/TreeDBNModule.h	2007-08-29 18:23:02 UTC (rev 8035)
++++ trunk/plearn_learners/online/EXPERIMENTAL/TreeDBNModule.h	2007-08-29 18:53:09 UTC (rev 8036)
+@@ -0,0 +1,389 @@
++// -*- C++ -*-
++
++// TreeDBNModule.h
++//
++// Copyright (C) 2007 Vytenis Sakenas
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Vytenis Sakenas
++
++/*! \file TreeDBNModule.h */
++
++
++#ifndef TreeDBNModule_INC
++#define TreeDBNModule_INC
++
++#include &lt;plearn_learners/online/OnlineLearningModule.h&gt;
++#include &lt;plearn_learners/online/RBMModule.h&gt;
++#include &lt;plearn/sys/Profiler.h&gt;
++
++namespace PLearn {
++
++
++class TreeDBNModule : public OnlineLearningModule
++{
++    typedef OnlineLearningModule inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++	//! Array of RBMModule's used for every layer	
++	TVec &lt;PP&lt;RBMModule&gt; &gt; modules;
++	
++	//! From how many parents the upper layer RBM takes its input.
++	int n_parents_per_node;
++	
++	//! NOT IMPLEMENTED. Defines how many parent modules adjacent
++	//! upper modules share
++	int n_shared_parents;
++	
++	//! Value that multiplies the gradient of energy if it is computed.
++	real gradient_multiplier;
++	
++	//! Whether to propagate gradient throug all hierarchical structure.
++	bool propagate_gradient;
++
++	//! Whether to compute and propagate energy gradient.
++	bool propagate_energy_gradient;
++	
++	//! If true, gradient is propagated through all hierarchy, not only rightmost branch
++	bool propagate_full_gradient;
++	
++	//! Ports that should be provided by module. It is mapping
++	//! (&quot;external_name&quot;, &quot;rbm_name.rbm_port&quot;)
++	TVec&lt; pair&lt;string, string &gt; &gt; ports;
++	
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    // ### Make sure the implementation in the .cc
++    // ### initializes all fields to reasonable default values.
++    TreeDBNModule();
++
++    // Your other public member functions go here
++
++    //! Perform a fprop step.
++    //! Each Mat* pointer in the 'ports_value' vector can be one of:
++    //! - a full matrix: this is data that is provided to the module, and can
++    //!                  be used to compute other ports' values
++    //! - an empty matrix: this is what we want to compute
++    //! - a NULL pointer: this is data that is not available, but whose value
++    //!                   does not need to be returned (or even computed)
++    //! The default version will either:
++    //! - call the mini-batch versions of standard fprop if 'ports_value' has
++    //!   size 2, with the first value being provided (and the second being
++    //!   the desired output)
++    //! - crash otherwise
++    void fprop(const TVec&lt;Mat*&gt;&amp; ports_value);
++
++    //! Perform a back propagation step (also updating parameters according to
++    //! the provided gradient).
++    //! The matrices in 'ports_value' must be the same as the ones given in a
++    //! previous call to 'fprop' (and thus they should in particular contain
++    //! the result of the fprop computation). However, they are not necessarily
++    //! the same as the ones given in the LAST call to 'fprop': if there is a
++    //! need to store an internal module state, this should be done using a
++    //! specific port to store this state.
++    //! Each Mat* pointer in the 'ports_gradient' vector can be one of:
++    //! - a full matrix  : this is the gradient that is provided to the module,
++    //!                    and can be used to compute other ports' gradient.
++    //! - an empty matrix: this is a gradient we want to compute and accumulate
++    //!                    into. This matrix must have length 0 and a width
++    //!                    equal to the width of the corresponding matrix in
++    //!                    the 'ports_value' vector (we can thus accumulate
++    //!                    gradients using PLearn's ability to keep intact
++    //!                    stored values when resizing a matrix' length).
++    //! - a NULL pointer : this is a gradient that is not available, but does
++    //!                    not need t(const TVec&lt;Mat*&gt;&amp; ports_value);o be returned (or even computed).
++    //! The default version tries to use the standard mini-batch bpropUpdate
++    //! method, when possible.
++    virtual void bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                const TVec&lt;Mat*&gt;&amp; ports_gradient);
++
++    /* Optional
++
++    //! Given the input, compute the output (possibly resize it appropriately)
++    //! SOON TO BE DEPRECATED, USE fprop(const TVec&lt;Mat*&gt;&amp; ports_value)
++    virtual void fprop(const Vec&amp; input, Vec&amp; output) const;
++
++    //! Given a batch of inputs, compute the outputs
++    //! SOON TO BE DEPRECATED, USE fprop(const TVec&lt;Mat*&gt;&amp; ports_value)
++    virtual void fprop(const Mat&amp; inputs, Mat&amp; outputs);
++    */
++
++    /* Optional
++    //! SOON TO BE DEPRECATED, USE bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++    //!                                           const TVec&lt;Mat*&gt;&amp; ports_gradient)
++    //! Adapt based on the output gradient, and obtain the input gradient.
++    //! The flag indicates wether the input_gradient is accumulated or set.
++    //! This method should only be called just after a corresponding
++    //! fprop; it should be called with the same arguments as fprop
++    //! for the first two arguments (and output should not have been
++    //! modified since then).
++    //! Since sub-classes are supposed to learn ONLINE, the object
++    //! is 'ready-to-be-used' just after any bpropUpdate.
++    virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                             Vec&amp; input_gradient,
++                             const Vec&amp; output_gradient,
++                             bool accumulate=false);
++
++    //! Batch version
++    //! SOON TO BE DEPRECATED, USE bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++    //!                                           const TVec&lt;Mat*&gt;&amp; ports_gradient)
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             Mat&amp; input_gradients,
++                             const Mat&amp; output_gradients,
++                             bool accumulate=false);
++    */
++
++    /* Optional
++    //! SOON TO BE DEPRECATED, USE bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++    //!                                           const TVec&lt;Mat*&gt;&amp; ports_gradient)
++       A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS, WHICH
++       JUST CALLS
++            bpropUpdate(input, output, input_gradient, output_gradient)
++       AND IGNORES INPUT GRADIENT.
++    //! This version does not obtain the input gradient.
++    virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                             const Vec&amp; output_gradient);
++
++    //! Batch version
++    //! SOON TO BE DEPRECATED, USE bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++    //!                                           const TVec&lt;Mat*&gt;&amp; ports_gradient)
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             const Mat&amp; output_gradients);
++    */
++
++    /* Optional
++       N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS, WHICH
++       RAISES A PLERROR.
++    //! Similar to bpropUpdate, but adapt based also on the estimation
++    //! of the diagonal of the Hessian matrix, and propagates this
++    //! back. If these methods are defined, you can use them INSTEAD of
++    //! bpropUpdate(...)
++    virtual void bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                              Vec&amp; input_gradient,
++                              const Vec&amp; output_gradient,
++                              Vec&amp; input_diag_hessian,
++                              const Vec&amp; output_diag_hessian,
++                              bool accumulate=false);
++    */
++
++    /* Optional
++       N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS,
++       WHICH JUST CALLS
++            bbpropUpdate(input, output, input_gradient, output_gradient,
++                         out_hess, in_hess)
++       AND IGNORES INPUT HESSIAN AND INPUT GRADIENT.
++    //! This version does not obtain the input gradient and diag_hessian.
++    virtual void bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                              const Vec&amp; output_gradient,
++                              const Vec&amp; output_diag_hessian);
++    */
++
++
++    //! Reset the parameters to the state they would be BEFORE starting
++    //! training.  Note that this method is necessarily called from
++    //! build().
++    virtual void forget();
++
++
++    /* Optional
++       THE DEFAULT IMPLEMENTATION PROVIDED IN THE SUPER-CLASS DOES NOT
++       DO ANYTHING.
++    //! Perform some processing after training, or after a series of
++    //! fprop/bpropUpdate calls to prepare the model for truly out-of-sample
++    //! operation.
++    virtual void finalize();
++    */
++
++    /* Optional
++       THE DEFAULT IMPLEMENTATION PROVIDED IN THE SUPER-CLASS RETURNS false
++    //! In case bpropUpdate does not do anything, make it known
++    virtual bool bpropDoesNothing();
++    */
++
++    /* Optional
++       Default implementation prints a warning and does nothing
++    //! If this class has a learning rate (or something close to it), set it.
++    //! If not, you can redefine this method to get rid of the warning.
++    virtual void setLearningRate(real dynamic_learning_rate);
++    */
++
++    //! Return the list of ports in the module.
++    //! The default implementation returns a pair (&quot;input&quot;, &quot;output&quot;) to handle
++    //! the most common case.
++    virtual const TVec&lt;string&gt;&amp; getPorts();
++	
++	//! Initialize tree to perform sampling.
++	//! gibbsTop - number of Gibbs steps to do on the top layer.
++	void initSampling(int gibbsTop);
++	
++	//! Returns a sample of the visible layer.
++	//! nGibbs - number of Gibbs steps to do before sampling
++	Vec sample(int nGibbs);
++
++	//! Clears all caches.
++	void clearCache();
++
++
++    /* Optional
++    //! Return the size of all ports, in the form of a two-column matrix, where
++    //! each row represents a port, and the two numbers on a row are
++    //! respectively its length and its width (with -1 representing an
++    //! undefined or variable value).
++    //! The default value fills this matrix with:
++    //!     - in the first column (lengths): -1
++    //!     - in the second column (widths):
++    //!         - -1 if nPorts() &lt; 2
++    //!         - 'input_size' for the first row and 'output_size' for the
++    //!           second row if nPorts() &gt;= 2
++    virtual const TMat&lt;int&gt;&amp; getPortSizes();
++
++    //! Return the index (as in the list of ports returned by getPorts()) of
++    //! a given port.
++    //! If 'port' does not exist, -1 is returned.
++    //  ### Default implementation performs a simple linear search in
++    //  ### getPorts().
++    virtual int getPortIndex(const string&amp; port);
++    */
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    // ### If your class is not instantiatable (it has pure virtual methods)
++    // ### you should replace this by PLEARN_DECLARE_ABSTRACT_OBJECT
++    PLEARN_DECLARE_OBJECT(TreeDBNModule);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++	
++	static void declareMethods(RemoteMethodMap&amp; rmm);
++	
++	// Number of layers.
++	int n_layers;
++	
++	TVec&lt;string&gt; port_names;
++	TVec&lt;int&gt; port_rbms;		// Index of rbm that writes to this port, or -1 if none does.
++	TVec&lt;int&gt; port_index;		// Index of rbms port that writes to this port.
++	
++	// Number of rbms in layer.
++	TVec&lt;int&gt; layer_sizes;
++	
++	// Steps after which current rbm output will be reused.
++	// Same as count of lowest layer inputs that this rbm depends on.
++	TVec &lt;int&gt; step_size;
++	
++	// Last input provided to the module. Is keeped for determining if input is shifted
++	// during subsequent fprop calls.
++	Vec last_full_input;
++	
++	// Fprop and bprop data that is used when calling individual
++	// rbm methods
++	TVec &lt; TVec&lt;Mat*&gt; &gt; fprop_data;
++	
++	TVec &lt; TVec&lt;Mat*&gt; &gt; bprop_data;
++	
++	// Same as above but saved for reuse between subsequent
++	// calls to fprop
++	TVec &lt; TVec&lt;Mat*&gt; &gt; fprop_data_cache;
++	
++	TVec &lt; TVec&lt;Mat*&gt; &gt; bprop_data_cache;
++	
++	int time;		// Current pseudo-time of module
++
++	TVec &lt;int&gt; mbi_time;	// Pseudo-time for each sample in the minibatch.
++	
++	// In ..[i][j] Keeps length of fprop_data for layer i rbm after processing j samples in the minibatch
++	TMat &lt;int&gt; mod_batch_length;	
++	
++	// Storage for actual matrices
++	TVec &lt;Mat&gt; mats;
++	TVec &lt;Mat&gt; cache_mats;
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++	
++	//! Checks whether b is a shifted to the left by k 
++	bool check_shift(Vec &amp;a, Vec &amp;b, int k);
++	
++	//! Used to compute row number in fprop matrix for a sample
++	int hash(int t, int k, int i);
++
++	void appendPort(string name, int rbm_index, string port_name, int port_width);
++	
++	//! Helper function to create a matrix
++	Mat* createMatrix(int length, int width, TVec &lt;Mat&gt; &amp;mats);
++
++	//! Updates cache after fprop
++	void updateCache();
++
++	//! Fprop that does not use any optimization
++	void full_fprop(const TVec&lt;Mat*&gt;&amp; ports_value);
++	
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(TreeDBNModule);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001483.html">[Plearn-commits] r8035 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="001485.html">[Plearn-commits] r8037 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1484">[ date ]</a>
+              <a href="thread.html#1484">[ thread ]</a>
+              <a href="subject.html#1484">[ subject ]</a>
+              <a href="author.html#1484">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

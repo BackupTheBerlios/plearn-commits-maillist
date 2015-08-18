@@ -1,0 +1,398 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8757 - trunk/python_modules/plearn/learners
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8757%20-%20trunk/python_modules/plearn/learners&In-Reply-To=%3C200804031954.m33JsNa5020383%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002204.html">
+   <LINK REL="Next"  HREF="002206.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8757 - trunk/python_modules/plearn/learners</H1>
+    <B>louradou at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8757%20-%20trunk/python_modules/plearn/learners&In-Reply-To=%3C200804031954.m33JsNa5020383%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8757 - trunk/python_modules/plearn/learners">louradou at mail.berlios.de
+       </A><BR>
+    <I>Thu Apr  3 21:54:23 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002204.html">[Plearn-commits] r8756 - trunk/plearn/math
+</A></li>
+        <LI>Next message: <A HREF="002206.html">[Plearn-commits] r8758 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2205">[ date ]</a>
+              <a href="thread.html#2205">[ thread ]</a>
+              <a href="subject.html#2205">[ subject ]</a>
+              <a href="author.html#2205">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: louradou
+Date: 2008-04-03 21:54:22 +0200 (Thu, 03 Apr 2008)
+New Revision: 8757
+
+Modified:
+   trunk/python_modules/plearn/learners/SVM.py
+Log:
+
+
+Modified: trunk/python_modules/plearn/learners/SVM.py
+===================================================================
+--- trunk/python_modules/plearn/learners/SVM.py	2008-04-03 16:12:16 UTC (rev 8756)
++++ trunk/python_modules/plearn/learners/SVM.py	2008-04-03 19:54:22 UTC (rev 8757)
+@@ -1,6 +1,5 @@
+ import os
+ 
+-#import plearn.utilities
+ from libsvm import *
+ 
+ from plearn.pyext import *
+@@ -8,6 +7,7 @@
+ from math import *
+ import random
+ 
++
+ class SVMHyperParamOracle__kernel(object):
+     &quot;&quot;&quot; An oracle that gives values of hyperparameters      
+         to train a SVM on vectors, given a popular kernel.
+@@ -534,6 +534,8 @@
+     &quot;&quot;&quot; Return &lt;bool&gt;: whether or not we should try other hyperparameter values.
+     &quot;&quot;&quot;
+     def should_be_tuned_again(self):
++        if len(self.trials_param_list) &gt; 50:
++            return False
+         best_degree = self.best_param['degree']
+         tried_degrees = self.get_trials_oneparam_list('degree')
+         if( best_degree in tried_degrees
+@@ -732,8 +734,7 @@
+         self.class_priors = None
+         self.weight = None
+         self.labels = None
+-        
+-        
++                
+         self.results_filename      = None
+         self.preproc_optionnames  = []
+         self.preproc_optionvalues = []
+@@ -749,6 +750,8 @@
+         self.validset_key = 'validset'
+         self.testset_key  = 'testset'
+ 
++        self.compute_outputs_from_probabilities = None
++
+     def forget(self):
+         for expert in self.all_experts:
+              expert.forget()
+@@ -762,14 +765,18 @@
+         #       a good candidate
+ 
+     def train_inputspec(self, dataspec):
++        assert type(dataspec) == dict
+         if self.trainset_key not in dataspec:
+-            return None
++            raise KeyError, &quot;Key %s not in dataspec (keys %s)&quot; % \
++                            ( self.trainset_key, dataspec.keys() )
+         return dataspec[ self.trainset_key ]
+     def valid_inputspec(self, dataspec):
++        assert type(dataspec) == dict
+         if self.validset_key not in dataspec:
+             return None
+         return dataspec[ self.validset_key ]
+     def test_inputspec(self, dataspec):
++        assert type(dataspec) == dict
+         if self.testset_key not in dataspec:
+             return None
+         return dataspec[ self.testset_key ]
+@@ -913,8 +920,13 @@
+                       for pn in param )
+         if len(s)&gt;0:s=', '+s
+ 
+-        # Note: 'svm_type = C_SVC' stands for classification
+-        return eval('svm_parameter( svm_type = C_SVC '+s+')' )
++        
++        if self.compute_outputs_from_probabilities:
++            # if this function is defined (see 
++            return eval('svm_parameter( svm_type = C_SVC, probability = 1 '+s+')' )
++        else:
++            # Note: 'svm_type = C_SVC' stands for classification
++            return eval('svm_parameter( svm_type = C_SVC '+s+')' )
+     
+ 
+     &quot;&quot;&quot; Write given results with corresponding parameters
+@@ -1146,12 +1158,24 @@
+             teststats= VecStatsCollector()        
+             teststats.setFieldNames( costnames )
+ 
+-        predictions=[]
+-        for x in samples:
+-            ## specific to libsvm
+-            predictions.append( int(model.predict(x)) )
+-        predictions, targets = self.update_predictions_targets( predictions, targets, testset)
++        if self.compute_outputs_from_probabilities:
++            predictions=[]
++            probas=[]
++            for x in samples:
++                ## specific to libsvm
++                prd, prb = model.predict_probability(x)
++                probas.append(prb)
++                predictions.append( int(prd) )
++            predictions, targets = self.compute_outputs_from_probabilities( probas, targets, testset)
+ 
++        else:
++            predictions=[]
++            for x in samples:
++                ## specific to libsvm
++                predictions.append( int(model.predict(x)) )
++            predictions, targets = self.update_predictions_targets( predictions, targets, testset)
++
++
+         # Computing misclassification costs for the default normalized
+         # classification error (= class error weighted w.r.t class priors)
+         
+@@ -1265,8 +1289,11 @@
+         return validstats
+ 
+ 
+-    &quot;&quot;&quot; THE interesting function of the class
+-# TODO: document the function
++    &quot;&quot;&quot; THE interesting function of the class.
++        See __main__ below for usage.
++        dataspec is a dictionary which specifies train, valid, test sets.
++        The train set is mandatory, but valid and/or test sets can be missing.
++        cf. train_inputspec(), valid_inputspec(), and test_inputspec().
+     &quot;&quot;&quot;
+     def train_and_tune(self, dataspec):
+ 
+@@ -1293,13 +1320,17 @@
+ 
+             valid_stats = self.valid(dataspec, param)
+ 
+-            # Better valid cost is obtained!
++            # No improvement measured
+             if not self.update_trials( param, valid_stats ):
+                 if self.verbosity &gt; 0:
+                     print &quot; -- valid costs: &quot;, self.get_all_costs( valid_stats )
+ 
+                 # We reject the model (to avoid testing on it)
+                 self.model = None
++                
++                self.write_results( param, valid_stats )
++
++            # Better valid cost is obtained!
+             else:
+ 
+                 # Cross Validation
+@@ -1308,27 +1339,27 @@
+ 
+                 # Simple Validation
+                 else:
++                    self.validtype = 'simple'
+                     self.best_model = self.model
+                     if self.retrain_on_valid:
+ 
+-                        # TODO: remove this part
++                        &quot;&quot;&quot; Uncomment following lines if you want to check that
++                            retraining on {train + valid} sets does not degrade.
++                        &quot;&quot;&quot;
++                        #train_stats = None
++                        #test_stats = None
++                        #if self.test_on_train:
++                        #    if self.verbosity &gt; 2:
++                        #        print &quot;\n** (testing simple valid on &quot;+self.trainset_key+&quot;)&quot;
++                        #    train_stats = self.test( trainset )
++                        #if testset &lt;&gt; None:
++                        #    if self.verbosity &gt; 2:
++                        #        print &quot;\n** (testing simple valid on &quot;+self.testset_key+&quot;)&quot;
++                        #test_stats = self.test( testset  )
++                        #
++                        #self.write_results( self.best_param,
++                        #                    valid_stats, test_stats, train_stats )
+ 
+-                        self.validtype = 'simple'
+-
+-                        train_stats = None
+-                        test_stats = None
+-                        if self.test_on_train:
+-                            if self.verbosity &gt; 2:
+-                                print &quot;\n** (testing simple valid on &quot;+self.trainset_key+&quot;)&quot;
+-                            train_stats = self.test( trainset )
+-                        if testset &lt;&gt; None:
+-                            if self.verbosity &gt; 2:
+-                                print &quot;\n** (testing simple valid on &quot;+self.testset_key+&quot;)&quot;
+-                        test_stats = self.test( testset  )
+-
+-                        self.write_results( self.best_param,
+-                                            valid_stats, test_stats, train_stats )
+-
+                         self.validtype = 'simple+retrain'
+ 
+                         tv_set = ConcatRowsVMatrix(
+@@ -1361,7 +1392,27 @@
+ 
+         return dataspec
+ 
++&quot;&quot;&quot; Some AUXILIARY FUNCTIONS, to have access or modify 
++    the input statistics.
++&quot;&quot;&quot;
++def get_std_cmp(data,i):
++    values=[float(vec[i]) for vec in data]
++    tot = sum(values)
++    avg = tot*1.0/len(values)
++    sdsq = sum([(i-avg)**2 for i in values])
++    return (sdsq*1.0/(len(values)-1 or 1))**.5
+ 
++def mean_std(data):
++    stds=[get_std_cmp(data,i) for i in range(len(data[0]))]
++    while 0 in stds:
++        stds.remove(0)
++    stds=array(stds)
++    return stds.mean(), stds.std()
++
++def get_mean_cmp(data,i):
++    values=[float(vec[i]) for vec in data]
++    return  sum(values)/len(values)
++
+ def normalize_data(data, mean=None, std=None):
+     if mean == None:
+         mean=[]
+@@ -1380,23 +1431,9 @@
+             data[j][i]=(data[j][i]-mean[i])/std[i]
+     return mean, std
+ 
+-def mean_std(data):
+-    stds=[get_std_cmp(data,i) for i in range(len(data[0]))]
+-    while 0 in stds:
+-        stds.remove(0)
+-    stds=array(stds)
+-    return stds.mean(), stds.std()
+-
+-def get_std_cmp(data,i):
+-    values=[float(vec[i]) for vec in data]
+-    tot = sum(values)
+-    avg = tot*1.0/len(values)
+-    sdsq = sum([(i-avg)**2 for i in values])
+-    return (sdsq*1.0/(len(values)-1 or 1))**.5
+-def get_mean_cmp(data,i):
+-    values=[float(vec[i]) for vec in data]
+-    return  sum(values)/len(values)
+-
++&quot;&quot;&quot; Geometric mean (useful to deal with multiplicative hyperparameters
++                    such as 'C', 'gamma', ...)
++&quot;&quot;&quot;
+ def geom_mean(data):
+     if type(data[0]) == list:
+         res=[]
+@@ -1409,7 +1446,80 @@
+             prod *= value
+         return prod**(1./len(data))
+ 
++&quot;&quot;&quot;&quot;&quot;&quot;
+ 
++&quot;&quot;&quot; In the following:
++    Some (API) Functions that can be assigned
++    to a SVM object, to deal with bags of data
++    to classify.
++&quot;&quot;&quot;
++&quot;&quot;&quot;
++
++# Usage:
++#-------
++    
++svm = SVM()
++svm.get_datalist = ToBagClassifier_get_datalist
++
++vote_with_proba = 1 # whether or not to use probabiblity
++                    # instead of hard vote [0,1] for each element of a bag.
++if vote_with_proba:
++    svm.compute_outputs_from_probabilities = ToBagClassifier_compute_outputs_from_probabilities
++else:
++    svm.update_predictions_targets = ToBagClassifier_update_predictions_targets
++&quot;&quot;&quot;         
++def get_baginfo( input_vmat ):
++    data_array = input_vmat.getMat()
++    inputsize = input_vmat.inputsize
++    targetsize = input_vmat.targetsize
++    assert targetsize == 2
++    baginfo = [ int(t) for t in data_array[:,inputsize+1] ]
++    return baginfo
++
++def ToBagClassifier_get_datalist( input_vmat ):
++    data_array = input_vmat.getMat()
++    inputsize = input_vmat.inputsize
++    targetsize = input_vmat.targetsize
++    nsamples = input_vmat.length
++    assert shape(data_array)[0] == nsamples
++    assert targetsize==2
++    samples   = [ [ float(x_t_i)    for x_t_i in x_t ]
++                                    for x_t in data_array[:,:inputsize] ]
++    targets   = [ float(t) for t in data_array[:,inputsize] ]
++    return samples, targets
++
++def ToBagClassifier_update_predictions_targets(predictions, targets, vmat):
++    baginfo = get_baginfo(vmat)
++    assert len(predictions) == len(targets) == len(baginfo)
++    nclasses = max(predictions)+1
++    bag_predictions=[]
++    bag_targets=[]
++    for p, t, b in zip(predictions, targets, baginfo):
++        if b in [1,3]: # beginning of a bag
++            votes = zeros(nclasses)
++        votes[p] +=1
++        if b in [2,3]: # end of a bag
++            bag_predictions.append( votes.argmax() )
++            bag_targets.append( t )
++    return bag_predictions, bag_targets
++
++def ToBagClassifier_compute_outputs_from_probabilities(probas, targets, vmat):
++    baginfo = get_baginfo(vmat)
++    assert len(probas) == len(targets) == len(baginfo)
++    nclasses = len(probas[0])
++    bag_predictions=[]
++    bag_targets=[]
++    for p, t, b in zip(probas, targets, baginfo):
++        if b in [1,3]: # beginning of a bag
++            votes = zeros(nclasses)
++        for c in p:
++            votes[c] += p[c]
++        if b in [2,3]: # end of a bag
++            bag_predictions.append( votes.argmax() )
++            bag_targets.append( t )
++    return bag_predictions, bag_targets
++
++
+ if __name__ == '__main__':
+ 
+     import os.path
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002204.html">[Plearn-commits] r8756 - trunk/plearn/math
+</A></li>
+	<LI>Next message: <A HREF="002206.html">[Plearn-commits] r8758 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2205">[ date ]</a>
+              <a href="thread.html#2205">[ thread ]</a>
+              <a href="subject.html#2205">[ subject ]</a>
+              <a href="author.html#2205">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

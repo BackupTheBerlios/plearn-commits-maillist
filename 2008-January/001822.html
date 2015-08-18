@@ -1,0 +1,177 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8374 - trunk/plearn_learners/classifiers
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8374%20-%20trunk/plearn_learners/classifiers&In-Reply-To=%3C200801031924.m03JOr29009860%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="001823.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8374 - trunk/plearn_learners/classifiers</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8374%20-%20trunk/plearn_learners/classifiers&In-Reply-To=%3C200801031924.m03JOr29009860%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8374 - trunk/plearn_learners/classifiers">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Thu Jan  3 20:24:53 CET 2008</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="001823.html">[Plearn-commits] r8375 - in trunk: commands/EXPERIMENTAL	plearn/opt/EXPERIMENTAL plearn/var	plearn_learners/classifiers/EXPERIMENTAL	plearn_learners/generic/EXPERIMENTAL	python_modules/plearn/var scripts scripts/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1822">[ date ]</a>
+              <a href="thread.html#1822">[ thread ]</a>
+              <a href="subject.html#1822">[ subject ]</a>
+              <a href="author.html#1822">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-01-03 20:24:52 +0100 (Thu, 03 Jan 2008)
+New Revision: 8374
+
+Modified:
+   trunk/plearn_learners/classifiers/ToBagClassifier.cc
+   trunk/plearn_learners/classifiers/ToBagClassifier.h
+Log:
+Can now compute the confusion matrix
+
+Modified: trunk/plearn_learners/classifiers/ToBagClassifier.cc
+===================================================================
+--- trunk/plearn_learners/classifiers/ToBagClassifier.cc	2007-12-28 20:54:06 UTC (rev 8373)
++++ trunk/plearn_learners/classifiers/ToBagClassifier.cc	2008-01-03 19:24:52 UTC (rev 8374)
+@@ -50,25 +50,28 @@
+     &quot;For testing, a majority vote is performed on each bag: assuming the\n&quot;
+     &quot;inner learner's output is made of the probabilities for each class,\n&quot;
+     &quot;these probabilities are summed over a full bag, and the class with\n&quot;
+-    &quot;highest sum is taken as prediction.&quot;);
++    &quot;highest sum is taken as prediction.\n&quot;
++    &quot;This learner can also compute the confusion matrix as a test cost, in\n&quot;
++    &quot;addition to classification error. Each element of the confusion matrix\n&quot;
++    &quot;is named 'cm_ij' with i the index of the true class, and j the index of\n&quot;
++    &quot;the predicted class.&quot;);
+ 
+ /////////////////////
+ // ToBagClassifier //
+ /////////////////////
+-ToBagClassifier::ToBagClassifier()
+-{
+-}
++ToBagClassifier::ToBagClassifier():
++    n_classes(-1)
++{}
+ 
+ ////////////////////
+ // declareOptions //
+ ////////////////////
+ void ToBagClassifier::declareOptions(OptionList&amp; ol)
+ {
+-    // ### ex:
+-    // declareOption(ol, &quot;myoption&quot;, &amp;ToBagClassifier::myoption,
+-    //               OptionBase::buildoption,
+-    //               &quot;Help text describing this option&quot;);
+-    // ...
++    declareOption(ol, &quot;n_classes&quot;, &amp;ToBagClassifier::n_classes,
++                  OptionBase::buildoption,
++        &quot;Number of classes in the dataset. This option is required to\n&quot;
++        &quot;compute the confusion matrix, but may be ignored otherwise.&quot;);
+ 
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+@@ -101,22 +104,29 @@
+     sub_target.resize(target.length() - 1);
+     sub_target &lt;&lt; target.subVec(0, sub_target.length());
+     inherited::computeCostsFromOutputs(input, output, sub_target, costs);
++    PLASSERT( is_equal(sum(output), 1) );   // Ensure probabilities sum to 1.
+     int bag_info = int(round(target.lastElement()));
+     if (bag_info % 2 == 1)
+         bag_output.resize(0, 0);
+     bag_output.appendRow(output);
+-    costs.resize(1);
++    costs.resize(nTestCosts());
++    costs.fill(MISSING_VALUE);
+     if (bag_info &gt;= 2) {
+         // Perform majority vote.
+         votes.resize(bag_output.width());
+         columnSum(bag_output, votes);
+         int target_class = int(round(target[0]));
+-        if (argmax(votes) == target_class)
++        int prediction = argmax(votes);
++        if (prediction == target_class)
+             costs[0] = 0;
+         else
+             costs[0] = 1;
+-    } else
+-        costs.fill(MISSING_VALUE);
++        if (n_classes &gt; 0) {
++            int i_start = 1 + target_class * n_classes;
++            costs.subVec(i_start, n_classes).fill(0);
++            costs[i_start + prediction] = 1;
++        }
++    }
+ }
+ 
+ //////////////////////
+@@ -124,9 +134,12 @@
+ //////////////////////
+ TVec&lt;string&gt; ToBagClassifier::getTestCostNames() const
+ {
+-    static TVec&lt;string&gt; costs;
+-    if (costs.isEmpty())
+-        costs.append(&quot;class_error&quot;);
++    TVec&lt;string&gt; costs;
++    costs.append(&quot;class_error&quot;);
++    if (n_classes &gt; 0)
++        for (int i = 0; i &lt; n_classes; i++)
++            for (int j = 0; j &lt; n_classes; j++)
++                costs.append(&quot;cm_&quot; + tostring(i) + tostring(j));
+     return costs;
+ }
+ 
+
+Modified: trunk/plearn_learners/classifiers/ToBagClassifier.h
+===================================================================
+--- trunk/plearn_learners/classifiers/ToBagClassifier.h	2007-12-28 20:54:06 UTC (rev 8373)
++++ trunk/plearn_learners/classifiers/ToBagClassifier.h	2008-01-03 19:24:52 UTC (rev 8374)
+@@ -61,8 +61,7 @@
+ public:
+     //#####  Public Build Options  ############################################
+ 
+-    //! ### declare public option fields (such as build options) here
+-    //! Start your comments with Doxygen-compatible comments such as //!
++    int n_classes;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="001823.html">[Plearn-commits] r8375 - in trunk: commands/EXPERIMENTAL	plearn/opt/EXPERIMENTAL plearn/var	plearn_learners/classifiers/EXPERIMENTAL	plearn_learners/generic/EXPERIMENTAL	python_modules/plearn/var scripts scripts/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1822">[ date ]</a>
+              <a href="thread.html#1822">[ thread ]</a>
+              <a href="subject.html#1822">[ subject ]</a>
+              <a href="author.html#1822">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

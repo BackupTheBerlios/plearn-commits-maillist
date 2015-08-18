@@ -1,0 +1,778 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7662 - in trunk/python_modules/plearn/learners: .	modulelearners modulelearners/examples
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7662%20-%20in%20trunk/python_modules/plearn/learners%3A%20.%0A%09modulelearners%20modulelearners/examples&In-Reply-To=%3C200706281938.l5SJcv60018933%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001109.html">
+   <LINK REL="Next"  HREF="001111.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7662 - in trunk/python_modules/plearn/learners: .	modulelearners modulelearners/examples</H1>
+    <B>louradou at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7662%20-%20in%20trunk/python_modules/plearn/learners%3A%20.%0A%09modulelearners%20modulelearners/examples&In-Reply-To=%3C200706281938.l5SJcv60018933%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7662 - in trunk/python_modules/plearn/learners: .	modulelearners modulelearners/examples">louradou at mail.berlios.de
+       </A><BR>
+    <I>Thu Jun 28 21:38:57 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001109.html">[Plearn-commits] r7661 - in	trunk/plearn_learners/online/test/ModuleLearner: .	.pytest/PL_ModuleLearner_TwoRBMs/expected_results	.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester/Split0	.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester2	.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester2/Split0	.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester2/global_stats.pmat.metadata	.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester2/split_stats.pmat.metadata
+</A></li>
+        <LI>Next message: <A HREF="001111.html">[Plearn-commits] r7663 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1110">[ date ]</a>
+              <a href="thread.html#1110">[ thread ]</a>
+              <a href="subject.html#1110">[ subject ]</a>
+              <a href="author.html#1110">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: louradou
+Date: 2007-06-28 21:38:56 +0200 (Thu, 28 Jun 2007)
+New Revision: 7662
+
+Added:
+   trunk/python_modules/plearn/learners/SVM.py
+Modified:
+   trunk/python_modules/plearn/learners/modulelearners/examples/do_sampling.py
+   trunk/python_modules/plearn/learners/modulelearners/examples/sample.py
+   trunk/python_modules/plearn/learners/modulelearners/network_view.py
+Log:
+Added SVM (easy module to run SVM without having to care too much about
+hyperparameters) 
+
+
+
+Added: trunk/python_modules/plearn/learners/SVM.py
+===================================================================
+--- trunk/python_modules/plearn/learners/SVM.py	2007-06-28 19:31:03 UTC (rev 7661)
++++ trunk/python_modules/plearn/learners/SVM.py	2007-06-28 19:38:56 UTC (rev 7662)
+@@ -0,0 +1,500 @@
++import sys, os, time
++#from numarray import *
++from math import *
++from libsvm import *
++
++             
++class SVM_expert(object):
++      __attributes__ = ['kernel_type',
++                        'parameters_names',
++                        'tried_parameters',
++                        'best_parameters',
++                        'error_rate'
++                        ]
++                        
++      def __init__( self ):
++          self.parameters_names = ['C']
++          self.tried_parameters = {}
++          self.best_parameters  = None
++          self.error_rate       = 1.
++
++      def reset(self):
++          self.tried_parameters = {}
++          #if self.best_parameters != None:
++          #   self.add_parameter_to_tried_list(self.getBestValue('C'), self.best_parameters[1:])
++          self.error_rate       = 1.
++          
++      def get_svm_parameter( self, parameters ):
++          s= ', '.join([ self.parameters_names[i]+' = '+str(parameters[i]) for i in range(len(self.parameters_names)) ])
++          return eval('svm_parameter( svm_type = C_SVC, kernel_type = '+self.kernel_type+', '+s+')')
++
++      def add_parameter_to_tried_list(self, C, kernel_parameters):
++          if self.tried_parameters.has_key(kernel_parameters):
++             self.tried_parameters[kernel_parameters]+=[C]
++          else:
++             self.tried_parameters[kernel_parameters] =[C] 
++             
++      def init_C(self, C_value):
++          return [C_value/10., C_value, C_value*10.]
++
++      def init_parameters(self, kernel_parameters_list):
++          C_base = self.init_C(10.)
++          table  = []
++          for C in C_base:
++              for prm in kernel_parameters_list:
++                  table.append( parameters2list(C, prm) )
++                  self.add_parameter_to_tried_list(C, prm)
++          return table
++
++      def choose_new_parameters(self, kernel_parameters):
++          if self.tried_parameters.has_key(kernel_parameters):
++             C_table = choose_new_parameters_geom( self.tried_parameters[kernel_parameters], self.getBestValue('C') )
++          else:
++             C_table = self.init_C( self.best_parameters[0] )
++          table  = []
++          for C in C_table:
++                  table.append( parameters2list(C, kernel_parameters) )
++                  self.add_parameter_to_tried_list(C, kernel_parameters)
++          return table
++          
++      def getBestValue(self, name_prm):
++          return self.best_parameters[ self.parameters_names.index(name_prm) ]
++          
++
++class RBF_expert(SVM_expert):
++      def __init__( self ):
++          SVM_expert.__init__( self )
++          self.kernel_type       = 'RBF'
++          self.parameters_names += ['gamma']
++
++      def init_gamma(self, gamma):
++          return [gamma, gamma/9., gamma*9.]
++          
++      def init_parameters( self, samples ):
++          dim = len(samples[0])
++          std = mean_std(samples)
++          rho=sqrt(dim)*std
++          gamma0 = 1/(2*rho**2)
++          gamma_base = self.init_gamma(gamma0)
++          return SVM_expert.init_parameters( self, gamma_base )
++          
++      def choose_new_parameters( self ):
++          best_gamma = self.getBestValue('gamma') 
++          tried_gamma = self.tried_parameters
++          if tried_gamma.has_key(best_gamma):
++             if self.getBestValue('C') == self.tried_parameters[best_gamma][0] or self.getBestValue('C') == self.tried_parameters[best_gamma][len(self.tried_parameters[best_gamma])-1]:
++                return SVM_expert.choose_new_parameters(self, best_gamma)
++             else:
++                proposed_gammas = choose_new_parameters_geom( tried_gamma, best_gamma)
++          else:
++             proposed_gammas = self.init_gamma(best_gamma)
++          return SVM_expert.init_parameters(self, proposed_gammas)
++
++class POLY_expert(SVM_expert):
++      def __init__( self ):
++          SVM_expert.__init__( self )
++          self.kernel_type       = 'POLY'
++          self.parameters_names += ['degree','coef0']
++
++      def init_degree(self, degree):
++          return [  (degree-1,1), (degree,1), (degree+1,1) ]
++
++      def init_parameters( self, samples ):
++          #return SVM_expert.init_parameters(self, self.init_degree(3) )
++          return SVM_expert.init_parameters(self, [ (2,1), (3,1), (4,1) ] )
++          
++      def choose_new_parameters( self ):
++          best_degree = self.getBestValue('degree')
++          tried_degrees = [prms[0] for prms in self.tried_parameters]
++          if self.tried_parameters.has_key(best_degree):
++             if best_degree == max(tried_degrees):
++                return SVM_expert.init_parameters(self, [(best_degree+1,1)])
++             else:
++                return SVM_expert.choose_new_parameters(self, (self.best_parameters[1], self.best_parameters[2])  )
++          else:
++             return SVM_expert.init_parameters(self, self.init_degree(best_degree) )
++             
++class LINEAR_expert(SVM_expert):
++      def __init__( self ):
++          SVM_expert.__init__( self )
++          self.kernel_type = 'LINEAR'
++
++      def init_parameters( self, samples ):
++          return SVM_expert.init_parameters(self, [None])
++
++      def choose_new_parameters( self ):
++          return SVM_expert.choose_new_parameters(self, None)
++
++
++class SVM(object):
++
++      __attributes__ = ['error_rate',
++                        'valid_error_rate',
++                        'best_parameters',
++                        'tried_parameters',
++                        'save_filename'
++                        ]
++       
++      def __init__( self ):
++      
++          self.error_rate       = 1.
++          self.valid_error_rate = 1.
++          
++          self.LINEAR_expert  = LINEAR_expert()
++          self.RBF_expert     = RBF_expert()
++          self.POLY_expert    = POLY_expert()
++          
++          self.best_parameters      = None  
++          self.best_model           = None
++          self.tried_parameters     = {}
++          
++          self.save_filename        = None
++          
++          # For cross-validation
++          self.nr_fold        = 5
++
++      def reset( self ):
++          self.LINEAR_expert.reset()
++          self.RBF_expert.reset()
++          self.POLY_expert.reset()
++          
++          self.tried_parameters = {}
++          #if self.best_parameters != None:
++          #   self.add_parameter_to_tried_list(self.best_parameters[0], self.best_parameters[1:])
++          self.error_rate       = 1.
++          self.valid_error_rate = 1.
++
++      def add_parameter_to_tried_list(self, kernel, kernel_parameters):
++          if self.tried_parameters.has_key(kernel):
++             self.tried_parameters[kernel]+=[kernel_parameters]
++          else:
++             self.tried_parameters[kernel] =[kernel_parameters] 
++
++      def train_and_test(self, samples_target_list):
++          check_samples_target_list(samples_target_list)
++
++          best_expert = eval( 'self.'+self.best_parameters[0]+'_expert' )
++          best_parameters = best_expert.best_parameters
++          param = best_expert.get_svm_parameter( best_parameters )
++          if len(samples_target_list) == 1: # cross-validation
++             error_rate = do_cross_validation(samples_target_list[0][0], samples_target_list[0][1], param, self.nr_fold)
++          else:
++             error_rate = do_simple_validation(samples_target_list[0][0] , samples_target_list[0][1] , samples_target_list[1][0] , samples_target_list[1][1], param)
++          return error_rate
++
++      def test(self, samples_target_list):
++          check_samples_target_list(samples_target_list)
++          if len(samples_target_list) &lt;&gt; 1:
++             raise TypeError, &quot;in SVM::test(), samples_target_list must be [[samples],[targets]] (list of list)&quot;
++          error_rate = test_model(model, samples_target_list[0][0], samples_target_list[0][1])
++          return error_rate
++
++
++      def train_and_tune(self, kernel_type, samples_target_list):
++          check_samples_target_list(samples_target_list)
++          
++          expert = eval( 'self.'+kernel_type+'_expert' )
++          
++          if len(expert.tried_parameters) == 0:
++             recompute_best = True
++          else:
++             recompute_best = False
++
++          if expert.best_parameters  == None:
++             parameters_to_try = expert.init_parameters( samples_target_list[0][0] )
++          else:
++             parameters_to_try = expert.choose_new_parameters()
++          
++          best_parameters   = expert.best_parameters
++          best_error_rate   = expert.error_rate
++
++          for parameters in parameters_to_try:
++              if parameters != expert.best_parameters or recompute_best:
++              
++                  self.add_parameter_to_tried_list(kernel_type, parameters)
++                  param = expert.get_svm_parameter( parameters )
++                  
++                  if len(samples_target_list) == 1: # cross-validation
++                     error_rate = do_cross_validation(samples_target_list[0][0], samples_target_list[0][1], param, self.nr_fold)
++                  else:
++                     train_problem = svm_problem( samples_target_list[0][1] , samples_target_list[0][0] )
++                     model = svm_model(train_problem, param)
++                     error_rate = test_model(model, samples_target_list[1][0], samples_target_list[1][1])
++                     
++                     if self.save_filename != None:
++                        try:
++                           FID=open(self.save_filename,'a')
++                           FID.write('------------\nTry with '+kernel_type+' kernel :\n')
++                           FID.write('parameters : '+str(parameters)+'\n')
++                           FID.write(' --&gt; Error rate = '+str(error_rate)+'\n')
++                           FID.close()
++                        except:
++                           print &quot;COULD not write in save_filename&quot;   
++                                  
++                  if error_rate &lt; best_error_rate:
++                     best_parameters = parameters
++                     best_error_rate = error_rate
++                     self.best_model = model
++
++          if best_error_rate &lt; expert.error_rate:
++             expert.best_parameters = best_parameters
++             expert.error_rate = best_error_rate
++             
++             if best_error_rate &lt; self.valid_error_rate:
++                self.best_parameters = [kernel_type, best_parameters]
++                self.valid_error_rate = best_error_rate
++                if len(samples_target_list) == 3: # train-valid-test
++                   self.error_rate = test_model(self.best_model, samples_target_list[2][0], samples_target_list[2][1])
++                else:
++                   self.error_rate = self.valid_error_rate
++          
++          return self.error_rate
++          
++
++##
++## Using the cross validation of libSVM
++## (problem: the folds are chosen randomly, so things are not rigorously compared)
++##
++#def do_cross_validation(samples, targets, param, nr_fold):
++#        N = len(targets)
++#        total_correct = 0
++#        prob = svm_problem(targets, samples)
++#            outputs = cross_validation(prob, param, nr_fold)
++#        for i in range(N):
++#            if outputs[i] == targets[i]:
++#               total_correct = total_correct + 1 
++#        return ( (N - total_correct) / N)
++
++##
++## Doing cross validation on samples
++## - divide the set of samples in nr_fold subsets
++## - (nr_fold - 1) subsets serve as training set / 1 subset as test set
++##   for each step.
++## - Then the error rate is simply the average error rate...
++##
++def do_cross_validation(samples, targets, param, nr_fold):
++    samples_subsets=[]
++    targets_subsets=[]
++    N=len(samples)
++    for i in range(nr_fold):
++        samples_subsets.append(samples[i:N:nr_fold])
++        targets_subsets.append(targets[i:N:nr_fold])
++    cum_error_rate=0.
++    for i in range(nr_fold):
++        test_samples = samples_subsets[i]
++        test_targets = targets_subsets[i]
++        train_samples=[]
++        train_targets=[]
++        for j in range(0,i)+range(i+1,nr_fold):
++            train_samples += samples_subsets[j]
++            train_targets += targets_subsets[j]
++        cum_error_rate += do_simple_validation(train_samples, train_targets, test_samples, test_targets, param)
++    return cum_error_rate / nr_fold
++        
++def test_model(model, samples, targets):
++    N = len(samples)
++    total_correct = 0
++    for i in range(N):
++        if model.predict(samples[i]) == targets[i]:
++           total_correct = total_correct + 1
++    return ( ( N - total_correct )*1. / N)
++
++def do_simple_validation(train_samples, train_targets, test_samples, test_targets, param):
++    train_problem = svm_problem( train_targets, train_samples )
++    model = svm_model(train_problem, param)
++    N = len(test_samples)
++    total_correct = 0
++    for i in range(N):
++        if model.predict(test_samples[i]) == test_targets[i]:
++           total_correct = total_correct + 1
++    return ( ( N - total_correct )*1. / N)
++
++
++
++
++
++
++#
++# Some useful functions
++#
++
++def choose_new_parameters_geom( table, best_value ):
++    sorted_table = sorted(table)
++    if best_value == sorted_table[0]:
++       # smallest value
++       proposed_table = [ best_value*1.1*best_value/sorted_table[1],
++                          #best_value,
++                          geom_mean([sorted_table[1],best_value]) ]
++    elif best_value == sorted_table[len(table)-1]:
++       # largest value
++       proposed_table = [ geom_mean([sorted_table[len(table)-2],best_value]), 
++                          #best_value,
++                          best_value*0.9*best_value/sorted_table[len(table)-2] ]
++    else:
++       # middle value (best case: dichotomie)
++       if best_value not in sorted_table:
++          raise TypeError, &quot;in RBF.choose_new_parameters: &quot;+str(best_value)+&quot; not found in tried_parameters&quot;
++       index = sorted_table.index(best_value)
++       proposed_table = [ geom_mean([sorted_table[index-1],best_value]),
++                          #best_value,
++                          geom_mean([sorted_table[index+1],best_value]) ]
++    return proposed_table
++
++def normalize(data,mean,std):
++    if mean == None:
++       mean=[]
++       for i in range(len(data[0])):
++           mean.append( get_mean_cmp(data,i) )
++    if std == None:
++       std=[]
++       for i in range(len(data[0])):
++           std_tmp=get_std_cmp(data,i)
++           if std_tmp == 0.:
++              print &quot;WARNING : standard deviation is 0 on component &quot;+str(i)
++              std.append( 1. )
++           else:
++              std.append( std_tmp )
++    for i in range(len(data[0])):
++        for j in range(len(data)):
++            data[j][i]=(data[j][i]-mean[i])/std[i]
++    return mean, std
++
++def mean_std(data):
++    stds=[get_std_cmp(data,i) for i in range(len(data[0]))]
++    return sum(stds)/len(stds)
++def get_std_cmp(data,i):
++    values=[vec[i] for vec in data]
++    tot = sum(values)
++    avg = tot*1.0/len(values)
++    sdsq = sum([(i-avg)**2 for i in values])
++    return (sdsq*1.0/(len(values)-1 or 1))**.5
++def get_mean_cmp(data,i):
++    values=[vec[i] for vec in data]
++    return  sum(values)/len(values)
++
++def arithm_mean(data):
++    if type(data[0]) == list:
++       return [sum( [data[i][coor] for i in range(len(data))] )*1.0/len(data) for coor in range(len(data[0]))]
++    else:
++       return sum(data)*1.0/len(data)
++def geom_mean(data):
++    if type(data[0]) == list:
++       res=[]
++       for coor in range(len(data[0])):
++           res.append( geom_mean( [data[i][coor] for i in range(len(data))] ) )
++       return res
++    else:
++       prod = 1.0
++       for value in data:
++           prod *= value
++       return prod**(1.0/len(data))
++
++def check_samples_target_list(samples_target_list):
++    if type(samples_target_list) != list or len(samples_target_list) == 0 or type(samples_target_list[0]) != list:
++       raise TypeError, &quot;ERROR: samples_target_list must be a list of list (of arrays)&quot;
++    else:
++       for samples_target in samples_target_list:
++           if len(samples_target) != 2:
++              raise TypeError, &quot;ERROR: samples_target_list has an element with length &quot;+str(len(samples_target))+&quot; (instead of 2)&quot;
++           if len(samples_target[0]) == 0 or len(samples_target[1]) == 0:
++              raise ValueError, &quot;ERROR: samples_target_list has an element that has an element with an empty length&quot;
++           if len(samples_target[0]) != len(samples_target[1]):
++              raise ValueError, &quot;ERROR: samples_target_list has an element that has an elements with different len. Len are: &quot; + len(samples_target[0])+&quot; and &quot; + len(samples_target[1])
++    if len(samples_target_list) == 1:
++       print &quot;cross-validation&quot;
++    elif len(samples_target_list) == 2:
++       print &quot;simple validation&quot;
++    elif len(samples_target_list) == 3:
++       print &quot;validation + test&quot;
++    else:
++       raise TypeError, &quot;ERROR: samples_target_list have length &quot;+str(len(samples_target_list))+&quot; (not in [1,2,3])\n&quot;+&quot;samples_target_list has to be a list of [sample, target] arrays\n&quot;+&quot;for example :\n\t[[TrainSet, TrainLabels]]\n&quot;+&quot;\tor [[TrainSamples, TrainLabels], [ValidSamples, ValidLabels]]\n&quot;+&quot;\tor [[TrainSamples, TrainLabels], [ValidSamples, ValidLabels], [TestSamples, TestLabels]]\n&quot;
++
++def parameters2list(C, kernel_parameters):
++          if kernel_parameters == None:
++             return [C]
++          elif type(kernel_parameters) == list:
++             return [C]+kernel_parameters
++          elif type(kernel_parameters) == tuple:
++             return [C]+[prm for prm in kernel_parameters]
++          else:
++             return [C, kernel_parameters ]
++
++
++
++if __name__ == '__main__':
++
++    # an EXAMPLE to use the class...
++
++#&gt;&gt;&gt;# Initialization 
++
++    my_svm=SVM()
++
++#&lt;&lt;&lt;#
++#&gt;&gt;&gt;# To save the results (progressively) in a ASCII file
++
++    my_svm.save_filename = 'my_svm_results.txt'
++   
++#&lt;&lt;&lt;#
++#&gt;&gt;&gt;# Defining train / valid data
++    # - CROSS-VALIDATION
++    
++    DATA = [ [train_samples , train_targets] ]
++
++    # or...
++    # - SIMPLE VALIDATION
++    
++    DATA = [ [train_samples , train_targets] , [valid_samples , valid_targets] ]
++    
++    # Note:
++    # You can also do
++    #
++    # DATA = [ [train_samples , train_targets] , [valid_samples , valid_targets] , [test_samples , test_targets] ]
++    #
++    # (my_svm.error_rate will be the statistic on test set, and my_svm.valid_error_rate the statistics on the validation set)
++    #
++    # But it is not the most efficient way to do :
++    #     You'd better tune your model with validation,
++    #     and then test when you have the best model
++    
++    
++#&lt;&lt;&lt;#
++#&gt;&gt;&gt;# Compute the accuracies (exploring a bit, each time, the space of parameters)
++    # - my_svm.error_rate indicates the current error rates.
++    # - This error rate can only decrease while you run &quot;train_and_tune&quot;
++    #   (as you are tuning parameters so as to improve the results)
++   
++    my_svm.train_and_tune( 'LINEAR' ,  DATA )
++    my_svm.train_and_tune( 'LINEAR' ,  DATA )
++    my_svm.train_and_tune( 'RBF' ,     DATA )
++    my_svm.train_and_tune( 'RBF' ,     DATA )
++    my_svm.train_and_tune( 'POLY' ,    DATA )
++    my_svm.train_and_tune( 'POLY' ,    DATA )
++    #[..]
++
++    valid_error_rate =  my_svm.error_rate
++    print valid_error_rate
++    print my_svm.best_parameters
++    print my_svm.tried_parameters
++    
++#&lt;&lt;&lt;#
++#&gt;&gt;&gt;# When training with new data (closed to the previous one)
++    # ones can need to forget the explored tables of parameters and accuracies
++    # while reminding the best set of parameters
++
++    my_svm.reset()
++   
++    NEW_DATA = #[..]
++   
++    # Simple Validation
++    my_svm.train_and_tune( 'RBF' , NEW_DATA )
++    
++    valid_error_rate = my_svm.error_rate
++
++#&lt;&lt;&lt;#
++#&gt;&gt;&gt;# To try the best trained model with new data (and obtain &quot;fair&quot; error rates)
++   
++    TEST_DATA=[ [test_samples , test_targets] ]
++    
++    test_error_rate = my_svm.test( TEST_DATA )
++    
++    print test_error_rate
+
+Modified: trunk/python_modules/plearn/learners/modulelearners/examples/do_sampling.py
+===================================================================
+--- trunk/python_modules/plearn/learners/modulelearners/examples/do_sampling.py	2007-06-28 19:31:03 UTC (rev 7661)
++++ trunk/python_modules/plearn/learners/modulelearners/examples/do_sampling.py	2007-06-28 19:38:56 UTC (rev 7662)
+@@ -50,8 +50,14 @@
+ plarg_defaults.supervised_nStages       = 100  # /!\ see after: supervised_nStages   *= trainNsamples
+ plarg_defaults.nStagesStep              = 5
+ plarg_defaults.LR_CDiv                  = 0.01
++plarg_defaults.LR_CDiv1		        = float(plargs.LR_CDiv)
++plarg_defaults.LR_CDiv2			= float(plargs.LR_CDiv)
++plarg_defaults.LR_CDiv3			= float(plargs.LR_CDiv)
+ plarg_defaults.LR_GRAD_UNSUP            = 0.003
+-plarg_defaults.LR_SUP                   = 0
++plarg_defaults.LR_GRAD_UNSUP1		= float(plargs.LR_GRAD_UNSUP) 
++plarg_defaults.LR_GRAD_UNSUP2 		= float(plargs.LR_GRAD_UNSUP) 
++plarg_defaults.LR_GRAD_UNSUP3 		= float(plargs.LR_GRAD_UNSUP)	
++plarg_defaults.LR_SUP                   = 0.
+ plarg_defaults.L2wd_SUP                 = 1e-5
+ plarg_defaults.nGibbs                   = 1
+ plarg_defaults.Tag                      = 'dbn-'+str(plargs.nRBM)+'RBMimage'
+@@ -70,7 +76,13 @@
+ supervised_nStages       *= trainNsamples
+ nStagesStep               = int(plargs.nStagesStep)                #
+ LR_CDiv                   = float(plargs.LR_CDiv)                # unsup. lr
++LR_CDiv1                   = float(plargs.LR_CDiv1)                # unsup. lr
++LR_CDiv2                   = float(plargs.LR_CDiv2)                # unsup. lr
++LR_CDiv3                   = float(plargs.LR_CDiv3)                # unsup. lr
+ LR_GRAD_UNSUP             = float(plargs.LR_GRAD_UNSUP)         # super. lr
++LR_GRAD_UNSUP1             = float(plargs.LR_GRAD_UNSUP1)         # super. lr
++LR_GRAD_UNSUP2             = float(plargs.LR_GRAD_UNSUP2)         # super. lr
++LR_GRAD_UNSUP3             = float(plargs.LR_GRAD_UNSUP3)         # super. lr
+ LR_SUP                    = float(plargs.LR_SUP) # super. lr
+ L2wd_SUP                  = float(plargs.L2wd_SUP)
+ nGibbs                     = int(plargs.nGibbs)
+@@ -79,15 +91,32 @@
+ Tag                     = plargs.Tag
+ 
+ 
+-
+ BaseDir =  '/u/louradoj/PRGM/blocksworld/res/'+os.path.basename(Path)
+ data_filename = Path+'/BABYAI_'+ImageType+'_'+str(unsupervised_trainNsamples)+'x'+str(Nobj)+'obj_'+str(Size)+'x'+str(Size)+'.'+Topics+'.train.'+Encoding+'.'+Extension
+ BaseTag = Tag+'_'+layerType+'_'+basename_withoutExt(data_filename)
+ 
+-unsupervised_expdir = BaseDir + '/greedyDBN/UNSUP_' + BaseTag + '_'+layerType+''.join(['_N'+str(i)+'-'+str(globals()['NH'+str(i)]) for i in range(1,nRBM+1)])+'_LRs'+str(LR_CDiv)+'-'+str(LR_GRAD_UNSUP)+'_ns'+str(unsupervised_nStages)+'_ng'+str(nGibbs) 
+-finetuning_expdir = BaseDir + '/greedyDBN/FINETUNE_' + BaseTag + '_'+layerType+''.join(['_N'+str(i)+'-'+str(globals()['NH'+str(i)]) for i in range(1,nRBM+1)])+'_LRs'+str(LR_CDiv)+'-'+str(LR_GRAD_UNSUP)+'-'+str(LR_SUP)+'_WD'+str(L2wd_SUP)+'_ns'+str(unsupervised_nStages)+'-'+str(supervised_nStages)+'_ng'+str(nGibbs)
+ 
+-if LR_SUP==None or LR_SUP == 0:
++unsupervised_expdir = BaseDir + '/greedyDBN/UNSUP_' + BaseTag + '_'+layerType+''.join(['_N'+str(i)+'-'+str(globals()['NH'+str(i)]) for i in range(1,nRBM+1)])+'_LRs'+'-'.join([str(globals()['LR_CDiv'+str(i)]) for i in range(1,nRBM+1)])+'_'+'-'.join([str(globals()['LR_GRAD_UNSUP'+str(i)]) for i in range(1,nRBM+1)])+'_ns'+str(unsupervised_nStages)+'_ng'+str(nGibbs) 
++finetuning_expdir = BaseDir + '/greedyDBN/FINETUNE_' + BaseTag + '_'+layerType+''.join(['_N'+str(i)+'-'+str(globals()['NH'+str(i)]) for i in range(1,nRBM+1)])+'_LRs'+'-'.join([str(globals()['LR_CDiv'+str(i)]) for i in range(1,nRBM+1)])+'_'+'-'.join([str(globals()['LR_GRAD_UNSUP'+str(i)]) for i in range(1,nRBM+1)])+'-'+str(LR_SUP)+'_WD'+str(L2wd_SUP)+'_ns'+str(unsupervised_nStages)+'-'+str(supervised_nStages)+'_ng'+str(nGibbs)
++
++
++
++if len(sys.argv) == 1:
++   learner_filename = '/u/louradoj/PRGM/blocksworld/res/textual_v3/greedyDBN/FINETUNE_dbn-3RBMimage_gaussian_BABYAI_gray_1250000x1obj_32x32.color-size-location-shape.train.3gram01_gaussian_N1-500_N2-500_N3-500_LRs0.01-0.01-0.01_0.003-0.003-0.003-0.03_WD1e-05_ns2500000-1000000_ng1'+&quot;/Split0/final_learner.psave&quot;
++   learner_filename = '/u/louradoj/PRGM/blocksworld/res/textual_v3/greedyDBN/UNSUP_dbn-3RBMimage_gaussian_BABYAI_gray_1250000x1obj_32x32.color-size-location-shape.train.3gram01_gaussian_N1-500_N2-500_N3-500_LRs0.01-0.01-0.01_0.003-0.003-0.003_ns1250000_ng1'+&quot;/init_learner.psave&quot;
++   learner_filename = '/u/louradoj/PRGM/blocksworld/res/textual_v3/greedyDBN/FINETUNE_dbn-3RBMimage_gaussian_BABYAI_gray_1250000x1obj_32x32.color-size-location-shape.train.3gram01_gaussian_N1-500_N2-500_N3-500_LRs0.01-0.01-0.01_0.01-0.01-0.01-0.03_WD1e-05_ns5000000-1000000_ng1'+&quot;/Split0/final_learner.psave&quot;
++   learner_filename = '/u/louradoj/PRGM/blocksworld/res/textual_v3/greedyDBN/UNSUP_dbn-3RBMimage_gaussian_BABYAI_gray_1250000x1obj_32x32.color-size-location-shape.train.3gram01_gaussian_N1-500_N2-500_N3-500_LRs0.01-0.01-0.01_0.01-0.01-0.01_ns5000000_ng1'+&quot;/init_learner.psave&quot;
++elif len(sys.argv) == 2:
++   basename=os.path.basename(sys.argv[1])
++   if basename[0:5] == 'UNSUP':
++      print &quot;UNSUPERVISED-way trained model&quot;
++      learner_filename = sys.argv[1]+&quot;/init_learner.psave&quot;
++   elif basename[0:5] == 'FINET':
++      print &quot;supervised FINETUNED model&quot;
++      learner_filename = sys.argv[1]+&quot;/Split0/final_learner.psave&quot;
++   else:
++      raise TypeError, &quot;Cannot recognize &quot;+basename[0:5]+&quot; in &quot;+sys.argv[1]
++elif LR_SUP==None or LR_SUP == 0:
+    print &quot;UNSUPERVISED-way trained model&quot;
+    learner_filename = unsupervised_expdir+&quot;/init_learner.psave&quot;
+ else:
+@@ -97,7 +126,7 @@
+ 
+ def check_choice(c):
+     try:
+-       if int(c) in [1,2]:
++       if int(c) in [1,2,3,4]:
+           return True
+     except: pass
+     return False
+@@ -108,9 +137,15 @@
+    print &quot;Type the number corresponding to your choice :&quot;
+    print &quot;1. Sample after having initialized input visible units with (randomly picked) real image&quot;
+    print &quot;2. Sample after having initialized top hidden units with a random binary vector&quot;
++   print &quot;3. Reconstruct the input image&quot;
++   print &quot;4. Visualize input weights&quot;
+    c = sys.stdin.readline()
+ 
+ if int(c) == 1:
+    os.system('python '+os.path.dirname(os.path.abspath(sys.argv[0]))+'/sample.py '+' '.join([ learner_filename, str(Size*Size), data_filename, 'gibbs_step='+str(gibbs_step) ]))
+ elif int(c) == 2:
+    os.system('python '+os.path.dirname(os.path.abspath(sys.argv[0]))+'/sample_from_hidden.py '+' '.join([ learner_filename, str(Size*Size), 'gibbs_step='+str(gibbs_step) ]))
++elif int(c) == 3:
++   os.system('python '+os.path.dirname(os.path.abspath(sys.argv[0]))+'/reconstruct.py '+' '.join([ learner_filename, str(Size*Size), data_filename]))
++elif int(c) == 4:
++   os.system('python '+os.path.dirname(os.path.abspath(sys.argv[0]))+'/inputweights.py '+' '.join([ learner_filename, str(Size*Size)]))
+
+Modified: trunk/python_modules/plearn/learners/modulelearners/examples/sample.py
+===================================================================
+--- trunk/python_modules/plearn/learners/modulelearners/examples/sample.py	2007-06-28 19:31:03 UTC (rev 7661)
++++ trunk/python_modules/plearn/learners/modulelearners/examples/sample.py	2007-06-28 19:38:56 UTC (rev 7662)
+@@ -47,7 +47,7 @@
+ 
+ if __name__ == &quot;__main__&quot;:
+ 
+-  if len(sys.argv) &lt; 2:
++  if len(sys.argv) &lt; 4:
+      print &quot;Usage:\n\t&quot; + sys.argv[0] + &quot; &lt;ModuleLearner_filename&gt; &lt;Image_size&gt; &lt;dataSet_filename&gt; [gibbs_step=&lt;gibbs_step&gt;]\n&quot;
+      print &quot;Purpose:\n\tSee consecutive Gibbs sample&quot;
+      print &quot;\twhen input visible units are initalized with real images&quot;
+
+Modified: trunk/python_modules/plearn/learners/modulelearners/network_view.py
+===================================================================
+--- trunk/python_modules/plearn/learners/modulelearners/network_view.py	2007-06-28 19:31:03 UTC (rev 7661)
++++ trunk/python_modules/plearn/learners/modulelearners/network_view.py	2007-06-28 19:38:56 UTC (rev 7662)
+@@ -1,4 +1,4 @@
+-#!/bin/env python
++#!/usr/bin/env python
+ 
+ import sys
+ import os, os.path
+@@ -49,7 +49,7 @@
+ def countModules(mynetwork):
+     n=0
+     for module in mynetwork.modules:
+-        if is_SplitModule(module) == False:
++        if isModule(module,'Split') == False:
+ 	   n += 1
+     return n
+ 
+@@ -110,9 +110,9 @@
+     return formatModulesNames(ModuleName,modules_dict)
+ 
+ 
+-def is_SplitModule(module):
+-    return 'SplitModule' in str(type(module)) # type(module)==type(pl.SplitModule())  #
+-       
++def isModule(module,name):
++    return name+'Module' in str(type(module))
++     
+ def module_type(module):
+     return str(type(module)).upper()
+ 
+@@ -148,20 +148,23 @@
+ def get_graph(modules, connections, ports):
+     edges=[]
+     edges_toAdd={}
+-    globals()['modules_dict'] = Modules2dict(modules)
++    tmp_dict = Modules2dict(modules)
++    for key in tmp_dict:
++        if globals()['modules_dict'].has_key(key) == False:
++	   globals()['modules_dict'][key] = tmp_dict[key]
+     ports_dict = getPortDict(ports)
+     for connection in connections:
+         inputModuleName , outputModuleName, inputModulePort = getInputOutput(connection)
+ 	inputModuleNameToplot = checkName(inputModuleName,ports_dict,modules_dict)
+ 	outputModuleNameToplot = checkName(outputModuleName,ports_dict,modules_dict)
+ 	
+-	if is_SplitModule(modules_dict[inputModuleName]):
++	if isModule(modules_dict[inputModuleName],'Split'):
+ 	   if edges_toAdd.has_key(inputModuleName):
+ 	      edges_toAdd[inputModuleName][1].append(outputModuleNameToplot)
+ 	   else:
+ 	      edges_toAdd[inputModuleName]=[[],[]]
+ 	      edges_toAdd[inputModuleName][1]=[outputModuleNameToplot]
+-	elif is_SplitModule(modules_dict[outputModuleName]):
++	elif isModule(modules_dict[outputModuleName],'Split'):
+ 	   if edges_toAdd.has_key(outputModuleName):
+ 	      edges_toAdd[outputModuleName][0].append(inputModuleNameToplot)
+ 	   else:
+@@ -188,6 +191,11 @@
+         myedge=pydot.Edge(edge[0],edge[1])
+ 	myedge.set_label(edge[2])
+         graph.add_edge(myedge)
++    
++    for module in modules:
++        if isModule(module,'Network'):
++	   for edge in get_graph(module.modules, module.connections, module.ports).get_edge_list():
++	       graph.add_edge(edge)
+ 
+ 
+     for port in port_list:
+@@ -237,7 +245,10 @@
+ 
+ if __name__ == '__main__':
+ 
+-    inputname  = sys.argv[1]
++    if len(sys.argv) == 2:
++       inputname  = sys.argv[1]
++    else:
++       inputname  =  '/u/louradoj/PRGM/babyAI/dbn/convNet.py'
+     output_extension = '.network.jpeg'
+     output_name = os.path.splitext(inputname)[0]
+     input_extension = os.path.splitext(inputname)[1]
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001109.html">[Plearn-commits] r7661 - in	trunk/plearn_learners/online/test/ModuleLearner: .	.pytest/PL_ModuleLearner_TwoRBMs/expected_results	.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester/Split0	.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester2	.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester2/Split0	.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester2/global_stats.pmat.metadata	.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester2/split_stats.pmat.metadata
+</A></li>
+	<LI>Next message: <A HREF="001111.html">[Plearn-commits] r7663 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1110">[ date ]</a>
+              <a href="thread.html#1110">[ thread ]</a>
+              <a href="subject.html#1110">[ subject ]</a>
+              <a href="author.html#1110">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

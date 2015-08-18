@@ -1,0 +1,229 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9303 - trunk/plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9303%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200807301344.m6UDiOnx022043%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002751.html">
+   <LINK REL="Next"  HREF="002753.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9303 - trunk/plearn_learners/regressors</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9303%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200807301344.m6UDiOnx022043%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9303 - trunk/plearn_learners/regressors">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed Jul 30 15:44:24 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002751.html">[Plearn-commits] r9302 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="002753.html">[Plearn-commits] r9304 - trunk/plearn/misc
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2752">[ date ]</a>
+              <a href="thread.html#2752">[ thread ]</a>
+              <a href="subject.html#2752">[ subject ]</a>
+              <a href="author.html#2752">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-07-30 15:44:24 +0200 (Wed, 30 Jul 2008)
+New Revision: 9303
+
+Modified:
+   trunk/plearn_learners/regressors/RegressionTree.cc
+   trunk/plearn_learners/regressors/RegressionTree.h
+Log:
+-added profiling
+-small bug fix in the buil_()(always init some var event if their is no test_set)
+-small uptimization in train() (use computeOutputAndCosts())
+
+
+Modified: trunk/plearn_learners/regressors/RegressionTree.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTree.cc	2008-07-30 13:16:43 UTC (rev 9302)
++++ trunk/plearn_learners/regressors/RegressionTree.cc	2008-07-30 13:44:24 UTC (rev 9303)
+@@ -193,10 +193,12 @@
+         if (weightsize != 1 &amp;&amp; weightsize != 0)
+             PLERROR(&quot;RegressionTree: expected weightsize to be 1 or 0, got %d&quot;,
+                     weightsize);
+-        nodes = new TVec&lt;PP&lt;RegressionTreeNode&gt; &gt;();
+-        tmp_vec.resize(2);
+     }
+ 
++    tmp_vec.resize(2);
++    nodes = new TVec&lt;PP&lt;RegressionTreeNode&gt; &gt;();
++    tmp_computeCostsFromOutput.resize(outputsize());
++    
+     if (loss_function_weight != 0.0)
+     {
+         l2_loss_function_factor = 2.0 / pow(loss_function_weight, 2);
+@@ -211,6 +213,8 @@
+ 
+ void RegressionTree::train()
+ {
++    Profiler::pl_profile_start(&quot;RegressionTree::train&quot;);
++
+     if (stage == 0) initialiseTree();
+     PP&lt;ProgressBar&gt; pb;
+     if (report_progress)
+@@ -231,7 +235,10 @@
+     pb = NULL;
+     verbose(&quot;split_cols: &quot;+tostring(split_cols),2);
+     verbose(&quot;split_values: &quot;+tostring(split_values),2);
+-    if (compute_train_stats &lt; 1) return;
++    if (compute_train_stats &lt; 1){
++        Profiler::pl_profile_end(&quot;RegressionTree::train&quot;);
++        return;
++    }
+     if (report_progress)
+     {
+         pb = new ProgressBar(&quot;RegressionTree : computing the statistics: &quot;, length);
+@@ -248,12 +255,13 @@
+          train_sample_index++)
+     {  
+         sorted_train_set-&gt;getExample(train_sample_index, sample_input, sample_target, sample_weight);
+-        computeOutput(sample_input, sample_output);
+-        computeCostsFromOutputs(sample_input, sample_output, sample_target, sample_costs); 
++        computeOutputAndCosts(sample_input,sample_target,sample_output,sample_costs);
+         train_stats-&gt;update(sample_costs);
+         if (report_progress) pb-&gt;update(train_sample_index);
+     }
+     train_stats-&gt;finalize();
++
++    Profiler::pl_profile_end(&quot;RegressionTree::train&quot;);
+ }
+ 
+ void RegressionTree::verbose(string the_msg, int the_level)
+@@ -415,42 +423,50 @@
+     outputv[0] = closest_value;
+ }
+ 
+-void RegressionTree::computeOutputAndCosts(const Vec&amp; inputv,
+-                                           const Vec&amp; targetv,
+-                                           Vec&amp; outputv, Vec&amp; costsv) const
++void RegressionTree::computeOutputAndCosts(const Vec&amp; input,
++                                           const Vec&amp; target,
++                                           Vec&amp; output, Vec&amp; costs) const
+ {
+-    PLASSERT(costsv.size()==nTestCosts());
++    PLASSERT(costs.size()==nTestCosts());
+     PLASSERT(nodes);
+     nodes-&gt;resize(0);
+ 
+-    computeOutputAndNodes(inputv, tmp_vec, nodes);
++    computeOutputAndNodes(input, tmp_vec, nodes);
+     if(!output_confidence_target)
+-        outputv[0]=tmp_vec[0];
++        output[0]=tmp_vec[0];
+     else
+-        outputv&lt;&lt;tmp_vec;
++        output&lt;&lt;tmp_vec;
+ 
+-    costsv.clear();
+-    costsv[0] = pow((outputv[0] - targetv[0]), 2);
+-    
+-    costsv[1] = tmp_vec[1];
+-    costsv[2] = 1.0 - (l2_loss_function_factor * costsv[0]);
+-    costsv[3] = 1.0 - (l1_loss_function_factor * abs(outputv[0] - targetv[0]));
+-    costsv[4] = !fast_is_equal(targetv[0],outputv[0]);
+-    for(int i=0;i&lt;nodes-&gt;length();i++)
+-        costsv[5+(*nodes)[i]-&gt;getSplitCol()]++;
++    computeCostsFromOutputsAndNodes(input, tmp_vec, target, *nodes, costs);
+ }
+ 
++void RegressionTree::computeCostsFromOutputsAndNodes(const Vec&amp; input,
++                                                     const Vec&amp; output, 
++                                                     const Vec&amp; target,
++                                                     const TVec&lt;PP&lt;RegressionTreeNode&gt; &gt;&amp; nodes,
++                                                     Vec&amp; costs) const
++{
++    costs.clear();
++    costs[0] = pow((output[0] - target[0]), 2);
++    if(output.length()&gt;1) costs[1] = output[1];
++    else costs[1] = MISSING_VALUE;
++    costs[2] = 1.0 - (l2_loss_function_factor * costs[0]);
++    costs[3] = 1.0 - (l1_loss_function_factor * abs(output[0] - target[0]));
++    costs[4] = !fast_is_equal(target[0],output[0]);
++
++    for(int i=0;i&lt;nodes.length();i++)
++        costs[5+nodes[i]-&gt;getSplitCol()]++;
++}
++
+ void RegressionTree::computeCostsFromOutputs(const Vec&amp; input,
+                                              const Vec&amp; output, 
+                                              const Vec&amp; target,
+                                              Vec&amp; costs) const
+ {
+-    Vec tmp(output.size());
+-    computeOutputAndCosts(input, target, tmp, costs); 
+-    PLASSERT(output==tmp);
++    computeOutputAndCosts(input, target, tmp_computeCostsFromOutput, costs); 
++    PLASSERT(output==tmp_computeCostsFromOutput);
+ }
+ 
+-
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/regressors/RegressionTree.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTree.h	2008-07-30 13:16:43 UTC (rev 9302)
++++ trunk/plearn_learners/regressors/RegressionTree.h	2008-07-30 13:44:24 UTC (rev 9303)
+@@ -93,6 +93,8 @@
+     TVec&lt;PP&lt;RegressionTreeNode&gt; &gt; *nodes;
+ 
+     mutable Vec tmp_vec;
++    mutable Vec tmp_computeCostsFromOutput;
++
+ public:
+     RegressionTree();
+     virtual              ~RegressionTree();
+@@ -114,7 +116,11 @@
+     virtual void         computeOutputAndNodes(const Vec&amp; input, Vec&amp; output,
+                                                TVec&lt;PP&lt;RegressionTreeNode&gt; &gt;* nodes=0) const;
+     virtual void         computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output, const Vec&amp; target, Vec&amp; costs) const;
+-  
++    virtual void         computeCostsFromOutputsAndNodes(const Vec&amp; input,
++                                                         const Vec&amp; output, 
++                                                         const Vec&amp; target,
++                                                         const TVec&lt;PP&lt;RegressionTreeNode&gt; &gt;&amp; nodes,
++                                                         Vec&amp; costs) const;
+ private:
+     void                   build_();
+     void                   initialiseTree();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002751.html">[Plearn-commits] r9302 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="002753.html">[Plearn-commits] r9304 - trunk/plearn/misc
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2752">[ date ]</a>
+              <a href="thread.html#2752">[ thread ]</a>
+              <a href="subject.html#2752">[ subject ]</a>
+              <a href="author.html#2752">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

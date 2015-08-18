@@ -1,0 +1,409 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10083 - trunk/plearn/ker
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10083%20-%20trunk/plearn/ker&In-Reply-To=%3C200904042033.n34KXK4o017714%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003522.html">
+   <LINK REL="Next"  HREF="003524.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10083 - trunk/plearn/ker</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10083%20-%20trunk/plearn/ker&In-Reply-To=%3C200904042033.n34KXK4o017714%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10083 - trunk/plearn/ker">chapados at mail.berlios.de
+       </A><BR>
+    <I>Sat Apr  4 22:33:20 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003522.html">[Plearn-commits] r10082 - trunk/plearn_learners/regressors
+</A></li>
+        <LI>Next message: <A HREF="003524.html">[Plearn-commits] r10084 - trunk/plearn/ker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3523">[ date ]</a>
+              <a href="thread.html#3523">[ thread ]</a>
+              <a href="subject.html#3523">[ subject ]</a>
+              <a href="author.html#3523">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2009-04-04 22:33:18 +0200 (Sat, 04 Apr 2009)
+New Revision: 10083
+
+Modified:
+   trunk/plearn/ker/Kernel.cc
+   trunk/plearn/ker/Kernel.h
+   trunk/plearn/ker/LinearARDKernel.cc
+   trunk/plearn/ker/LinearARDKernel.h
+   trunk/plearn/ker/MemoryCachedKernel.h
+   trunk/plearn/ker/NeuralNetworkARDKernel.cc
+   trunk/plearn/ker/NeuralNetworkARDKernel.h
+   trunk/plearn/ker/SquaredExponentialARDKernel.cc
+   trunk/plearn/ker/SquaredExponentialARDKernel.h
+Log:
+Some updates to Kernel interface to speed up computation of Gram matrix with test data
+
+Modified: trunk/plearn/ker/Kernel.cc
+===================================================================
+--- trunk/plearn/ker/Kernel.cc	2009-04-03 20:50:29 UTC (rev 10082)
++++ trunk/plearn/ker/Kernel.cc	2009-04-04 20:33:18 UTC (rev 10083)
+@@ -128,10 +128,17 @@
+ 
+     declareMethod(
+         rmm, &quot;evaluate&quot;, &amp;Kernel::evaluate,
+-        (BodyDoc(&quot;evaluate the kernel on two vectors\n&quot;),
++        (BodyDoc(&quot;Evaluate the kernel on two vectors\n&quot;),
+          ArgDoc(&quot;x1&quot;,&quot;first vector&quot;),
+          ArgDoc(&quot;x2&quot;,&quot;second vector&quot;),
+          RetDoc (&quot;K(x1,x2)&quot;)));
++
++    declareMethod(
++        rmm, &quot;setDataForKernelMatrix&quot;, &amp;Kernel::setDataForKernelMatrix,
++        (BodyDoc(&quot;This method sets the data VMat that will be used to define the kernel\n&quot;
++                 &quot;matrix. It may precompute values from this that may later accelerate\n&quot;
++                 &quot;the evaluation of a kernel matrix element\n&quot;),
++         ArgDoc(&quot;data&quot;, &quot;The data matrix to set into the kernel&quot;)));
+ }
+ 
+ ///////////
+@@ -407,6 +414,93 @@
+     computeGramMatrix(K);
+     return K;
+ }
++
++
++//////////////////////////////
++// computePartialGramMatrix //
++//////////////////////////////
++void Kernel::computePartialGramMatrix(const TVec&lt;int&gt;&amp; subset_indices, Mat K) const
++{
++    if (!data)
++        PLERROR(&quot;Kernel::computePartialGramMatrix should be called only after setDataForKernelMatrix&quot;);
++    if (!is_symmetric)
++        PLERROR(&quot;In Kernel::computePartialGramMatrix - Currently not implemented for non-symmetric kernels&quot;);
++    if (K.length() != subset_indices.length() || K.width() != subset_indices.length())
++        PLERROR(&quot;Kernel::computePartialGramMatrix: the argument matrix K should be\n&quot;
++                &quot;of size %d x %d (currently of size %d x %d)&quot;,
++                subset_indices.length(), subset_indices.length(), K.length(), K.width());
++
++    int l=subset_indices.size();
++    int m=K.mod();
++    PP&lt;ProgressBar&gt; pb;
++    int count = 0;
++    if (report_progress)
++        pb = new ProgressBar(&quot;Computing Partial Gram matrix for &quot; + classname(),
++                             (l * (l + 1)) / 2);
++    real Kij;
++    real* Ki;
++    real* Kji_;
++    for (int i=0;i&lt;l;i++)
++    {
++        int index_i = subset_indices[i];
++        Ki = K[i];
++        Kji_ = &amp;K[0][i];
++        for (int j=0; j&lt;=i; j++,Kji_+=m)
++        {
++            int index_j = subset_indices[j];
++            Kij = evaluate_i_j(index_i, index_j);
++            *Ki++ = Kij;
++            if (j&lt;i)
++                *Kji_ = Kij;
++        }
++        if (report_progress) {
++            count += i + 1;
++            PLASSERT( pb.isNotNull() );
++            pb-&gt;update(count);
++        }
++    }
++}
++
++///////////////////////////
++// computeTestGramMatrix //
++///////////////////////////
++void Kernel::computeTestGramMatrix(Mat test_elements, Mat K, Vec self_cov) const
++{
++    if (!data)
++        PLERROR(&quot;Kernel::computeTestGramMatrix should be called only after setDataForKernelMatrix&quot;);
++
++    if (test_elements.width() != data.width())
++        PLERROR(&quot;Kernel::computeTestGramMatrix: the input matrix test_elements &quot;
++                &quot;should be of width %d (currently of width %d)&quot;,
++                data.width(), test_elements.width());
++    
++    if (K.length() != test_elements.length() || K.width() != data.length())
++        PLERROR(&quot;Kernel::computeTestGramMatrix: the output matrix K should be\n&quot;
++                &quot;of size %d x %d (currently of size %d x %d)&quot;,
++                test_elements.length(), data.length(), K.length(), K.width());
++
++    if (self_cov.size() != test_elements.length())
++        PLERROR(&quot;Kernel::computeTestGramMatrix: the output vector self_cov should be\n&quot;
++                &quot;of length %d (currently of length %d)&quot;,
++                test_elements.length(), self_cov.size());
++
++    int n=test_elements.length();
++    PP&lt;ProgressBar&gt; pb = report_progress?
++        new ProgressBar(&quot;Computing Test Gram matrix for &quot; + classname(), n)
++        : 0;
++
++    for (int i=0 ; i&lt;n ; ++i)
++    {
++        Vec cur_test_elem = test_elements(i);
++        evaluate_all_i_x(cur_test_elem, K(i));
++        self_cov[i] = evaluate(cur_test_elem, cur_test_elem);
++        
++        if (pb)
++            pb-&gt;update(i);
++    }
++}
++
++
+ /////////////////////////////
+ // computeSparseGramMatrix //
+ /////////////////////////////
+
+Modified: trunk/plearn/ker/Kernel.h
+===================================================================
+--- trunk/plearn/ker/Kernel.h	2009-04-03 20:50:29 UTC (rev 10082)
++++ trunk/plearn/ker/Kernel.h	2009-04-04 20:33:18 UTC (rev 10083)
+@@ -160,6 +160,28 @@
+     virtual Mat returnComputedGramMatrix() const;
+ 
+     /**
++     *  Compute a partial Gram matrix between all pairs of a subset of elements
++     *  (length M) of the Kernel data matrix.  This is stored in matrix K
++     *  (assumed to be preallocated to M x M).  The subset_indices should be
++     *  SORTED in order of increasing indices.
++     */
++    virtual void computePartialGramMatrix(const TVec&lt;int&gt;&amp; subset_indices,
++                                          Mat K) const;
++    
++    /**
++     *  Compute a cross-covariance matrix between the given test elements
++     *  (length M) and the elements of the Kernel data matrix (length N).
++     *  This is stored in matrix K (assumed to be preallocated to M x N).
++     *  The self-covariance of the test elements is further stored in the
++     *  vector test_cov (assumed to be preallocated to size M).  (This is
++     *  useful for some kernels used in Gaussian Processes, since there is a
++     *  difference between vector equality and vector identity regarding how
++     *  sampling noise is treated.)
++     */
++    virtual void computeTestGramMatrix(Mat test_elements,
++                                       Mat K, Vec self_cov) const;
++    
++    /**
+      *  Fill K[i] with the non-zero elements of row i of the Gram matrix.
+      *  Specifically, K[i] is a (k_i x 2) matrix where k_i is the number of
+      *  non-zero elements in the i-th row of the Gram matrix, and K[i](k) =
+
+Modified: trunk/plearn/ker/LinearARDKernel.cc
+===================================================================
+--- trunk/plearn/ker/LinearARDKernel.cc	2009-04-03 20:50:29 UTC (rev 10082)
++++ trunk/plearn/ker/LinearARDKernel.cc	2009-04-04 20:33:18 UTC (rev 10083)
+@@ -2,7 +2,7 @@
+ 
+ // LinearARDKernel.cc
+ //
+-// Copyright (C) 2007 Nicolas Chapados
++// Copyright (C) 2007-2009 Nicolas Chapados
+ //
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -255,6 +255,16 @@
+ }
+ 
+ 
++//#####  evaluate_all_i_x  ####################################################
++
++void LinearARDKernel::evaluate_all_i_x(const Vec&amp; x, const Vec&amp; k_xi_x,
++                                       real squared_norm_of_x, int istart) const
++{
++    evaluateAllIXNV&lt;LinearARDKernel&gt;(x, k_xi_x, istart);
++}
++
++
++
+ //#####  derivIspSignalSigma  #################################################
+ 
+ real LinearARDKernel::derivIspSignalSigma(int i, int j, int arg, real K) const
+
+Modified: trunk/plearn/ker/LinearARDKernel.h
+===================================================================
+--- trunk/plearn/ker/LinearARDKernel.h	2009-04-03 20:50:29 UTC (rev 10082)
++++ trunk/plearn/ker/LinearARDKernel.h	2009-04-04 20:33:18 UTC (rev 10083)
+@@ -2,7 +2,7 @@
+ 
+ // LinearARDKernel.h
+ //
+-// Copyright (C) 2007 Nicolas Chapados
++// Copyright (C) 2007-2009 Nicolas Chapados
+ //
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -107,7 +107,11 @@
+     virtual void computeGramMatrixDerivative(Mat&amp; KD, const string&amp; kernel_param,
+                                              real epsilon=1e-6) const;
+     
++    //! Fill k_xi_x with K(x_i, x), for all i from istart to istart + k_xi_x.length() - 1.
++    virtual void evaluate_all_i_x(const Vec&amp; x, const Vec&amp; k_xi_x,
++                                  real squared_norm_of_x=-1, int istart = 0) const;
+ 
++
+     //#####  PLearn::Object Protocol  #########################################
+ 
+     // Declares other standard object methods.
+
+Modified: trunk/plearn/ker/MemoryCachedKernel.h
+===================================================================
+--- trunk/plearn/ker/MemoryCachedKernel.h	2009-04-03 20:50:29 UTC (rev 10082)
++++ trunk/plearn/ker/MemoryCachedKernel.h	2009-04-04 20:33:18 UTC (rev 10083)
+@@ -173,6 +173,13 @@
+               real (DerivedClass::*derivativeFunc)(int, int, int, real) const&gt;
+     void computeGramMatrixDerivNV(Mat&amp; KD, const DerivedClass* This, int arg,
+                                   bool derivative_func_requires_K = true) const;
++
++    /**
++     *  Interface to ease derived-class implementation of evaluate_all_i_x
++     *  that avoids virtual function calls in kernel evaluation.
++     */
++    template &lt;class DerivedClass&gt;
++    void evaluateAllIXNV(const Vec&amp; x, const Vec&amp; k_xi_x, int istart) const;
+     
+     
+ private:
+@@ -314,7 +321,26 @@
+ }
+ 
+ 
++//#####  evaluateAllIXNV  #####################################################
+ 
++template &lt;class DerivedClass&gt;
++void MemoryCachedKernel::evaluateAllIXNV(const Vec&amp; x, const Vec&amp; k_xi_x, int istart) const
++{
++    if (!data)
++        PLERROR(&quot;Kernel::computeGramMatrix: setDataForKernelMatrix not yet called&quot;);
++
++    const DerivedClass* This = static_cast&lt;const DerivedClass*&gt;(this);
++    int l = min(data-&gt;length(), k_xi_x.size());
++    Vec row_i;
++    real* k_xi = &amp;k_xi_x[0];
++    
++    for (int i=istart ; i&lt;l ; ++i) {
++        dataRow(i, row_i);
++        *k_xi++ = This-&gt;DerivedClass::evaluate(row_i, x);
++    }
++}
++
++
+ } // end of namespace PLearn
+ 
+ #endif
+
+Modified: trunk/plearn/ker/NeuralNetworkARDKernel.cc
+===================================================================
+--- trunk/plearn/ker/NeuralNetworkARDKernel.cc	2009-04-03 20:50:29 UTC (rev 10082)
++++ trunk/plearn/ker/NeuralNetworkARDKernel.cc	2009-04-04 20:33:18 UTC (rev 10083)
+@@ -289,6 +289,15 @@
+ }
+ 
+ 
++//#####  evaluate_all_i_x  ####################################################
++
++void NeuralNetworkARDKernel::evaluate_all_i_x(const Vec&amp; x, const Vec&amp; k_xi_x,
++                                              real squared_norm_of_x, int istart) const
++{
++    evaluateAllIXNV&lt;NeuralNetworkARDKernel&gt;(x, k_xi_x, istart);
++}
++
++
+ //#####  derivIspGlobalSigma  #################################################
+ 
+ real NeuralNetworkARDKernel::derivIspGlobalSigma(int i, int j, int arg, real K) const
+
+Modified: trunk/plearn/ker/NeuralNetworkARDKernel.h
+===================================================================
+--- trunk/plearn/ker/NeuralNetworkARDKernel.h	2009-04-03 20:50:29 UTC (rev 10082)
++++ trunk/plearn/ker/NeuralNetworkARDKernel.h	2009-04-04 20:33:18 UTC (rev 10083)
+@@ -106,7 +106,11 @@
+     virtual void computeGramMatrixDerivative(Mat&amp; KD, const string&amp; kernel_param,
+                                              real epsilon=1e-6) const;
+     
++    //! Fill k_xi_x with K(x_i, x), for all i from istart to istart + k_xi_x.length() - 1.
++    virtual void evaluate_all_i_x(const Vec&amp; x, const Vec&amp; k_xi_x,
++                                  real squared_norm_of_x=-1, int istart = 0) const;
+ 
++    
+     //#####  PLearn::Object Protocol  #########################################
+ 
+     // Declares other standard object methods.
+
+Modified: trunk/plearn/ker/SquaredExponentialARDKernel.cc
+===================================================================
+--- trunk/plearn/ker/SquaredExponentialARDKernel.cc	2009-04-03 20:50:29 UTC (rev 10082)
++++ trunk/plearn/ker/SquaredExponentialARDKernel.cc	2009-04-04 20:33:18 UTC (rev 10083)
+@@ -272,6 +272,15 @@
+ }
+ 
+ 
++//#####  evaluate_all_i_x  ####################################################
++
++void SquaredExponentialARDKernel::evaluate_all_i_x(const Vec&amp; x, const Vec&amp; k_xi_x,
++                                                   real squared_norm_of_x, int istart) const
++{
++    evaluateAllIXNV&lt;SquaredExponentialARDKernel&gt;(x, k_xi_x, istart);
++}
++
++
+ //#####  derivIspSignalSigma  #################################################
+ 
+ real SquaredExponentialARDKernel::derivIspSignalSigma(int i, int j, int arg, real K) const
+
+Modified: trunk/plearn/ker/SquaredExponentialARDKernel.h
+===================================================================
+--- trunk/plearn/ker/SquaredExponentialARDKernel.h	2009-04-03 20:50:29 UTC (rev 10082)
++++ trunk/plearn/ker/SquaredExponentialARDKernel.h	2009-04-04 20:33:18 UTC (rev 10083)
+@@ -112,7 +112,11 @@
+     virtual void computeGramMatrixDerivative(Mat&amp; KD, const string&amp; kernel_param,
+                                              real epsilon=1e-6) const;
+     
++    //! Fill k_xi_x with K(x_i, x), for all i from istart to istart + k_xi_x.length() - 1.
++    virtual void evaluate_all_i_x(const Vec&amp; x, const Vec&amp; k_xi_x,
++                                  real squared_norm_of_x=-1, int istart = 0) const;
+ 
++
+     //#####  PLearn::Object Protocol  #########################################
+ 
+     // Declares other standard object methods.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003522.html">[Plearn-commits] r10082 - trunk/plearn_learners/regressors
+</A></li>
+	<LI>Next message: <A HREF="003524.html">[Plearn-commits] r10084 - trunk/plearn/ker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3523">[ date ]</a>
+              <a href="thread.html#3523">[ thread ]</a>
+              <a href="subject.html#3523">[ subject ]</a>
+              <a href="author.html#3523">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

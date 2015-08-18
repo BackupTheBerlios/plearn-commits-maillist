@@ -1,0 +1,340 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9834 - trunk/plearn_learners/meta
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9834%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200901142033.n0EKXmlX023861%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003273.html">
+   <LINK REL="Next"  HREF="003275.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9834 - trunk/plearn_learners/meta</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9834%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200901142033.n0EKXmlX023861%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9834 - trunk/plearn_learners/meta">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed Jan 14 21:33:48 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003273.html">[Plearn-commits] r9833 - trunk/commands/PLearnCommands
+</A></li>
+        <LI>Next message: <A HREF="003275.html">[Plearn-commits] r9835 - trunk/plearn_learners/meta
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3274">[ date ]</a>
+              <a href="thread.html#3274">[ thread ]</a>
+              <a href="subject.html#3274">[ subject ]</a>
+              <a href="author.html#3274">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-01-14 21:33:48 +0100 (Wed, 14 Jan 2009)
+New Revision: 9834
+
+Modified:
+   trunk/plearn_learners/meta/AdaBoost.cc
+   trunk/plearn_learners/meta/AdaBoost.h
+Log:
+added the AdaBoost::reuse_test_results option. If true, we will reuse the past partial test results. Default to false. Tested to give the same results as before, but I must verify that this take a constant time. But this constant can be higher then the default version for low number of weak_learners.
+
+
+Modified: trunk/plearn_learners/meta/AdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.cc	2009-01-14 20:13:44 UTC (rev 9833)
++++ trunk/plearn_learners/meta/AdaBoost.cc	2009-01-14 20:33:48 UTC (rev 9834)
+@@ -69,7 +69,8 @@
+       early_stopping(1),
+       save_often(0),
+       forward_sub_learner_test_costs(false),
+-      modif_train_set_weights(false)
++      modif_train_set_weights(false),
++      reuse_test_results(false)
+ { }
+ 
+ PLEARN_IMPLEMENT_OBJECT(
+@@ -218,7 +219,29 @@
+                   OptionBase::nosave,
+                   &quot;A temp vector that contain the weak learner output\n&quot;);
+ 
+-    // Now call the parent class' declareOptions
++    declareOption(ol, &quot;reuse_test_results&quot;,
++                  &amp;AdaBoost::reuse_test_results,
++                  OptionBase::buildoption,
++                  &quot;If true we save and reuse previous call to test(). This is&quot;
++                  &quot; usefull to have a test time that is independent of the&quot;
++                  &quot; number of adaboost itaration.\n&quot;);
++
++     declareOption(ol, &quot;saved_testset&quot;,
++                  &amp;AdaBoost::saved_testset,
++                  OptionBase::nosave,
++                  &quot;Used with reuse_test_results\n&quot;);
++
++     declareOption(ol, &quot;saved_testoutputs&quot;,
++                  &amp;AdaBoost::saved_testoutputs,
++                  OptionBase::nosave,
++                  &quot;Used with reuse_test_results\n&quot;);
++
++     declareOption(ol, &quot;saved_last_test_stages&quot;,
++                  &amp;AdaBoost::saved_last_test_stages,
++                  OptionBase::nosave,
++                  &quot;Used with reuse_test_results\n&quot;);
++
++   // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ 
+     declareOption(ol, &quot;train_set&quot;,
+@@ -263,9 +286,12 @@
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+-    deepCopyField(tmp_output2,              copies);
+     deepCopyField(weighted_costs,           copies);
+     deepCopyField(sum_weighted_costs,       copies);
++    deepCopyField(saved_testset,            copies);
++    deepCopyField(saved_testoutputs,        copies);
++    deepCopyField(saved_last_test_stages,   copies);
++
+     deepCopyField(learners_error,           copies);
+     deepCopyField(example_weights,          copies);
+     deepCopyField(weak_learner_output,      copies);
+@@ -279,8 +305,9 @@
+ ////////////////
+ int AdaBoost::outputsize() const
+ {
+-    // Outputsize is always 1, since this is a 0-1 classifier
+-    return 1;
++    // Outputsize is always 2, since this is a 0-1 classifier
++    // and we append the weighted sum to allow the reuse of previous test
++    return 2;
+ }
+ 
+ void AdaBoost::finalize()
+@@ -701,30 +728,103 @@
+ 
+ 
+     }
++    PLCHECK(stage==weak_learners.length());
+     Profiler::pl_profile_end(&quot;AdaBoost::train&quot;);
+ 
+ }
+ 
++void AdaBoost::test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
++                    VMat testoutputs, VMat testcosts) const
++{
++    if(!reuse_test_results){
++        inherited::test(testset, test_stats, testoutputs, testcosts);
++        return;
++    }
++    Profiler::pl_profile_start(&quot;AdaBoost::test()&quot;);
++    int index=-1;
++    for(int i=0;i&lt;saved_testset.size();i++){
++        if(saved_testset[i]==testset){
++            index=i;
++            break;
++        }
++    }
++    if(index&lt;0){
++        //first time the testset is seen
++        Profiler::pl_profile_start(&quot;AdaBoost::test() first&quot; );
++        inherited::test(testset, test_stats, testoutputs, testcosts);
++        saved_testset.append(testset);
++        saved_testoutputs.append(PLearn::deepCopy(testoutputs));
++        PLCHECK(weak_learners.length()==stage);
++        saved_last_test_stages.append(stage);
++        Profiler::pl_profile_end(&quot;AdaBoost::test() first&quot; );
++    }else{
++        Profiler::pl_profile_start(&quot;AdaBoost::test() seconds&quot; );
++        PLCHECK(weak_learners.size()&gt;1);
++        PLCHECK(stage&gt;1);
++        PLCHECK(weak_learner_output.size()==weak_learner_template-&gt;outputsize());
+ 
+-void AdaBoost::computeOutput(const Vec&amp; input, Vec&amp; output) const
++        PLCHECK(saved_testset.length()&gt;index);
++        PLCHECK(saved_testoutputs.length()&gt;index);
++        PLCHECK(saved_last_test_stages.length()&gt;index);
++
++        int stages_done = saved_last_test_stages[index];
++        PLCHECK(weak_learners.size()&gt;=stages_done);
++         
++        Vec input;
++        Vec output(outputsize());
++        Vec target;
++        Vec costs(nTestCosts());
++        real weight;
++        VMat old_outputs=saved_testoutputs[index];
++        PLCHECK(old_outputs-&gt;width()==testoutputs-&gt;width());
++        PLCHECK(old_outputs-&gt;length()==testset-&gt;length());
++#ifndef NDEBUG
++        Vec output2(outputsize());
++        Vec costs2(nTestCosts());
++#endif
++        for(int row=0;row&lt;testset.length();row++){
++            output=old_outputs(row);
++            //compute the new testoutputs
++            testset.getExample(row, input, target, weight);
++            computeOutput_(input, output, stages_done, output[1]);
++            computeCostsFromOutputs(input,output,target,costs);
++#ifndef NDEBUG
++            computeOutputAndCosts(input,target, output2, costs2);
++            PLCHECK(output==output2);
++            PLCHECK(costs.isEqual(costs2,true));
++#endif
++            if(testoutputs)testoutputs-&gt;putOrAppendRow(row,output);
++            if(testcosts)testcosts-&gt;putOrAppendRow(row,costs);
++            if(test_stats)test_stats-&gt;update(costs,weight);
++        }
++        saved_testoutputs[index]=PLearn::deepCopy(testoutputs);
++        saved_last_test_stages[index]=stage;
++        Profiler::pl_profile_end(&quot;AdaBoost::test() seconds&quot; );
++    }
++    Profiler::pl_profile_end(&quot;AdaBoost::test()&quot;);
++}
++
++void AdaBoost::computeOutput_(const Vec&amp; input, Vec&amp; output,
++                             int start, real sum) const
+ {
+     PLASSERT(weak_learners.size()&gt;0);
+     PLASSERT(weak_learner_output.size()==weak_learner_template-&gt;outputsize());
+     PLASSERT(output.size()==outputsize());
+-    real sum_out=0;
++    real sum_out=sum;
+     if(!pseudo_loss_adaboost &amp;&amp; !conf_rated_adaboost)
+-        for (int i=0;i&lt;weak_learners.size();i++){
++        for (int i=start;i&lt;weak_learners.size();i++){
+             weak_learners[i]-&gt;computeOutput(input,weak_learner_output);
+             sum_out += (weak_learner_output[0] &lt; output_threshold ? 0 : 1) 
+                 *voting_weights[i];
+         }
+     else
+-        for (int i=0;i&lt;weak_learners.size();i++){
++        for (int i=start;i&lt;weak_learners.size();i++){
+             weak_learners[i]-&gt;computeOutput(input,weak_learner_output);
+             sum_out += weak_learner_output[0]*voting_weights[i];
+         }
+ 
+     output[0] = sum_out/sum_voting_weights;
++    output[1] = sum_out;
+ }
+ 
+ void AdaBoost::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output, 
+@@ -737,7 +837,6 @@
+     else
+         PLASSERT(costs.size()==nTrainCosts()||costs.size()==nTestCosts());
+     costs.resize(5);
+-    costs.clear();
+ 
+     // First cost is negative log-likelihood...  output[0] is the likelihood
+     // of the first class
+@@ -828,6 +927,7 @@
+     }
+ 
+     output[0] = sum_out/sum_voting_weights;
++    output[1] = sum_out;
+ 
+     //when computing train stats, costs==nTrainCosts() 
+     //  and forward_sub_learner_test_costs==false
+
+Modified: trunk/plearn_learners/meta/AdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.h	2009-01-14 20:13:44 UTC (rev 9833)
++++ trunk/plearn_learners/meta/AdaBoost.h	2009-01-14 20:33:48 UTC (rev 9834)
+@@ -53,18 +53,21 @@
+     typedef PLearner inherited;
+ 
+     //! Global storage to save memory allocations.
+-    mutable Vec tmp_output2;
+     mutable Vec weighted_costs;
+     mutable Vec sum_weighted_costs;
++    mutable Vec weak_learner_output;
++
++    //! Used with reuse_test_results
++    mutable TVec&lt;VMat&gt; saved_testset;
++    mutable TVec&lt;VMat&gt; saved_testoutputs;
++    mutable TVec&lt;int&gt;  saved_last_test_stages;
++
+ protected:
+     // average weighted error of each learner
+     Vec learners_error;
+     // weighing scheme over examples
+     Vec example_weights;
+ 
+-    //! Used to store outputs from the weak learners.
+-    mutable Vec weak_learner_output;
+-
+     // *********************
+     // * protected options *
+     // *********************
+@@ -125,6 +128,11 @@
+ 
+     // Did we modif directly the train_set weights?
+     bool modif_train_set_weights;
++
++    // Did we save and reuse previous test result?
++    // This is usefull to have a test time that is 
++    // independent of the number of adaboost itaration
++    bool reuse_test_results;
+     // ****************
+     // * Constructors *
+     // ****************
+@@ -144,6 +152,9 @@
+ 
+     void computeTrainingError(Vec input, Vec target);
+ 
++    void computeOutput_(const Vec&amp; input, Vec&amp; output,
++                       int start=0, real sum=0.) const;
++
+ protected: 
+     //! Declares this class' options
+     // (Please implement in .cc)
+@@ -183,14 +194,15 @@
+     //! And sets 'stage' back to 0   (this is the stage of a fresh learner!)
+     virtual void forget();
+ 
+-    
+     //! The role of the train method is to bring the learner up to stage==nstages,
+     //! updating the train_stats collector with training costs measured on-line in the process.
+     virtual void train();
++    virtual void test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
++                      VMat testoutputs, VMat testcosts) const;
+ 
+-
+     //! Computes the output from the input
+-    virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
++    virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const{
++        computeOutput_(input,output,0,0);}
+     virtual void computeOutputAndCosts(const Vec&amp; input, const Vec&amp; target,
+                                        Vec&amp; output, Vec&amp; costs) const;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003273.html">[Plearn-commits] r9833 - trunk/commands/PLearnCommands
+</A></li>
+	<LI>Next message: <A HREF="003275.html">[Plearn-commits] r9835 - trunk/plearn_learners/meta
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3274">[ date ]</a>
+              <a href="thread.html#3274">[ thread ]</a>
+              <a href="subject.html#3274">[ subject ]</a>
+              <a href="author.html#3274">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

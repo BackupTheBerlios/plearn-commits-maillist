@@ -1,0 +1,282 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7330 - in trunk/plearn_learners:	generic/EXPERIMENTAL online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7330%20-%20in%20trunk/plearn_learners%3A%0A%09generic/EXPERIMENTAL%20online&In-Reply-To=%3C200705250210.l4P2AVvE010755%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000778.html">
+   <LINK REL="Next"  HREF="000780.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7330 - in trunk/plearn_learners:	generic/EXPERIMENTAL online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7330%20-%20in%20trunk/plearn_learners%3A%0A%09generic/EXPERIMENTAL%20online&In-Reply-To=%3C200705250210.l4P2AVvE010755%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7330 - in trunk/plearn_learners:	generic/EXPERIMENTAL online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Fri May 25 04:10:31 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000778.html">[Plearn-commits] r7329 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000780.html">[Plearn-commits] r7331 - in	trunk/plearn_learners/online/test/ModuleLearner: . .pytest	.pytest/PL_ModuleLearner_Greedy	.pytest/PL_ModuleLearner_Greedy/expected_results	.pytest/PL_ModuleLearner_Greedy/expected_results/expdir-tester	.pytest/PL_ModuleLearner_Greedy/expected_results/expdir-tester/Split0	.pytest/PL_ModuleLearner_Greedy/expected_results/expdir-tester/global_stats.pmat.metadata	.pytest/PL_ModuleLearner_Greedy/expected_results/expdir-tester/split_stats.pmat.metadata
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#779">[ date ]</a>
+              <a href="thread.html#779">[ thread ]</a>
+              <a href="subject.html#779">[ subject ]</a>
+              <a href="author.html#779">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-05-25 04:10:30 +0200 (Fri, 25 May 2007)
+New Revision: 7330
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+   trunk/plearn_learners/online/RBMModule.cc
+   trunk/plearn_learners/online/RBMModule.h
+Log:
+Rationalized a bit RBMModule.cc and added &quot;bias&quot; port (for now just in fprop).
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-05-25 00:55:46 UTC (rev 7329)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-05-25 02:10:30 UTC (rev 7330)
+@@ -682,9 +682,9 @@
+                 g*=activations_scaling[i-1]; // pass gradient through scaling
+             }
+         if (input_size_lrate_normalization_power==-1)
+-            layer_lrate_factor /= (sumsquare(neuron_extended_outputs_per_layer[i-1])/minibatch_size);
++            layer_lrate_factor /= sumsquare(neuron_extended_outputs_per_layer[i-1]);
+         else if (input_size_lrate_normalization_power==-2)
+-            layer_lrate_factor /= sqrt(sumsquare(neuron_extended_outputs_per_layer[i-1])/minibatch_size);
++            layer_lrate_factor /= sqrt(sumsquare(neuron_extended_outputs_per_layer[i-1]));
+         else if (input_size_lrate_normalization_power!=0)
+         {
+             int fan_in = neuron_extended_outputs_per_layer[i-1].length();
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-05-25 00:55:46 UTC (rev 7329)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-05-25 02:10:30 UTC (rev 7330)
+@@ -284,6 +284,7 @@
+     Mat* visible_sample = ports_value[portname2index(&quot;visible_sample&quot;)];
+     Mat* hidden_sample = ports_value[portname2index(&quot;hidden_sample&quot;)];
+     Mat* energy = ports_value[portname2index(&quot;energy&quot;)];
++    bias = ports_value[portname2index(&quot;bias&quot;)];
+     Mat* visible_reconstruction = 0;
+     Mat* visible_reconstruction_activations = 0;
+     Mat* reconstruction_error = 0;
+@@ -337,8 +338,7 @@
+                 energy-&gt;clear();
+                 for (int i=0;i&lt;mbs;i++)
+                 {
+-                    connection-&gt;setAsDownInputs(*visible);
+-                    hidden_layer-&gt;getAllActivations(connection, 0, true);
++                    computeHiddenActivations(*visible);
+                     hidden_activations_are_computed=true;
+                     (*energy)(i,0) = visible_layer-&gt;energy((*visible)(i)) + 
+                         hidden_layer-&gt;energy((*hidden)(i)) + 
+@@ -356,8 +356,7 @@
+                 energy-&gt;clear();
+                 for (int i=0;i&lt;mbs;i++)
+                 {
+-                    connection-&gt;setAsDownInputs(*visible);
+-                    hidden_layer-&gt;getAllActivations(connection, 0, true);
++                    computeHiddenActivations(*visible);
+                     hidden_activations_are_computed=true;
+                     (*energy)(i,0) = visible_layer-&gt;energy((*visible)(i));
+                     for (int j=0;j&lt;hidden_layer-&gt;size;j++)
+@@ -378,8 +377,7 @@
+             energy-&gt;clear();
+             for (int i=0;i&lt;mbs;i++)
+             {
+-                connection-&gt;setAsUpInputs(*hidden);
+-                visible_layer-&gt;getAllActivations(connection, 0, true);
++                computeVisibleActivations(*hidden);
+                 visible_activations_are_computed=true; 
+                 (*energy)(i,0) = hidden_layer-&gt;energy((*hidden)(i));
+                 for (int j=0;j&lt;visible_layer-&gt;size;j++)
+@@ -400,8 +398,7 @@
+     {
+         if (!hidden_activations_are_computed)
+         {
+-            connection-&gt;setAsDownInputs(*visible); 
+-            hidden_layer-&gt;getAllActivations(connection, 0, true);
++            computeHiddenActivations(*visible);
+             hidden_activations_are_computed=true;
+         }
+         if (hidden_activations_are_computed &amp;&amp; hidden_act) {
+@@ -430,18 +427,14 @@
+         PLWARNING(&quot;In RBMModule::fprop - sampling in RBMModule has not been tested&quot;);
+         if (hidden &amp;&amp; !hidden-&gt;isEmpty()) // sample visible conditionally on hidden
+         {
+-            connection-&gt;setAsUpInputs(*hidden);
+-            visible_layer-&gt;getAllActivations(connection, 0, true);
+-            visible_layer-&gt;generateSamples();
++            sampleVisibleGivenHidden(*hidden);
+             visible_sample-&gt;resize(visible_layer-&gt;samples.length(),visible_layer-&gt;samples.width());
+             *visible_sample &lt;&lt; visible_layer-&gt;samples;
+             Gibbs_step = 0; // that would restart the chain for unconditional sampling
+         }
+         else if (visible &amp;&amp; !visible-&gt;isEmpty()) // if an input is provided, sample hidden conditionally
+         {
+-            connection-&gt;setAsDownInputs(visible_layer-&gt;samples);
+-            hidden_layer-&gt;getAllActivations(connection, 0, true);
+-            hidden_layer-&gt;generateSamples();
++            sampleHiddenGivenVisible(visible_layer-&gt;samples);
+             Gibbs_step = 0; // that would restart the chain for unconditional sampling
+         }
+         else // sample unconditionally: Gibbs sample after k steps
+@@ -452,12 +445,8 @@
+                             min_n_Gibbs_steps);
+             for (;Gibbs_step&lt;min_n;Gibbs_step++)
+             {
+-                connection-&gt;setAsDownInputs(visible_layer-&gt;samples);
+-                hidden_layer-&gt;getAllActivations(connection, 0, true);
+-                hidden_layer-&gt;generateSamples();
+-                connection-&gt;setAsUpInputs(hidden_layer-&gt;samples);
+-                visible_layer-&gt;getAllActivations(connection, 0, true);
+-                visible_layer-&gt;generateSamples();
++                sampleHiddenGivenVisible(visible_layer-&gt;samples);
++                sampleVisibleGivenHidden(hidden_layer-&gt;samples);
+             }
+         }
+         if (visible_sample &amp;&amp; visible_sample-&gt;isEmpty()) // provide sample of the visible units
+@@ -486,8 +475,7 @@
+             if (!hidden_activations_are_computed) // it must be because neither hidden nor hidden_act were asked
+             {
+                 PLASSERT(!hidden_act);
+-                connection-&gt;setAsDownInputs(*visible); 
+-                hidden_layer-&gt;getAllActivations(connection, 0, true);
++                computeHiddenActivations(*visible);
+                 hidden_activations_are_computed=true;
+                 // we need to save the hidden activations somewhere
+                 hidden_act_store.resize(mbs,hidden_layer-&gt;size);
+@@ -509,13 +497,9 @@
+             {
+                 hidden_layer-&gt;generateSamples();
+                 // (Negative phase) Generate visible samples.
+-                connection-&gt;setAsUpInputs(hidden_layer-&gt;samples);
+-                visible_layer-&gt;getAllActivations(connection, 0, true);
+-                visible_layer-&gt;generateSamples();
++                sampleVisibleGivenHidden(hidden_layer-&gt;samples);
+                 // compute corresponding hidden expectations.
+-                connection-&gt;setAsDownInputs(visible_layer-&gt;samples);
+-                hidden_layer-&gt;getAllActivations(connection, 0, true);
+-                hidden_layer-&gt;computeExpectations();
++                sampleHiddenGivenVisible(visible_layer-&gt;samples);
+             }
+             negative_phase_visible_samples-&gt;resize(mbs,visible_layer-&gt;size);
+             *negative_phase_visible_samples &lt;&lt; visible_layer-&gt;samples;
+@@ -563,8 +547,7 @@
+         PLASSERT( ports_value.length() == nPorts() );
+         if (!hidden_activations_are_computed)
+         {
+-            connection-&gt;setAsDownInputs(*visible); 
+-            hidden_layer-&gt;getAllActivations(connection, 0, true);
++            computeHiddenActivations(*visible); 
+             hidden_activations_are_computed=true;
+         }
+         if(!hidden_expectations_are_computed)
+@@ -579,9 +562,7 @@
+         }
+         // Don't need to verify if they are asked in a port, this was done previously
+         
+-        reconstruction_connection-&gt;setAsDownInputs(hidden_layer-&gt;getExpectations());
+-        visible_layer-&gt;getAllActivations(
+-            reconstruction_connection, 0, true);
++        computeVisibleActivations(hidden_layer-&gt;getExpectations(),true);
+         if(visible_reconstruction_activations) 
+         {
+             PLASSERT( visible_reconstruction_activations-&gt;isEmpty() );
+@@ -686,12 +667,9 @@
+                 {
+                     hidden_layer-&gt;generateSamples();
+                     // (Negative phase) Generate visible samples.
+-                    connection-&gt;setAsUpInputs(hidden_layer-&gt;samples);
+-                    visible_layer-&gt;getAllActivations(connection, 0, true);
+-                    visible_layer-&gt;generateSamples();
++                    sampleVisibleGivenHidden(hidden_layer-&gt;samples);
+                     // compute corresponding hidden expectations.
+-                    connection-&gt;setAsDownInputs(visible_layer-&gt;samples);
+-                    hidden_layer-&gt;getAllActivations(connection, 0, true);
++                    computeHiddenActivations(visible_layer-&gt;samples);
+                     hidden_layer-&gt;computeExpectations();
+                 }
+                 if (!negative_phase_hidden_expectations)
+
+Modified: trunk/plearn_learners/online/RBMModule.h
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.h	2007-05-25 00:55:46 UTC (rev 7329)
++++ trunk/plearn_learners/online/RBMModule.h	2007-05-25 02:10:30 UTC (rev 7330)
+@@ -243,6 +243,35 @@
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+ 
++    Mat* bias;
++
++    void computeHiddenActivations(Mat&amp; visible) {
++        connection-&gt;setAsDownInputs(visible);
++        hidden_layer-&gt;getAllActivations(connection, 0, true);
++        if (bias &amp;&amp; !bias-&gt;isEmpty())
++            hidden_layer-&gt;activations += *bias;
++    }
++    void sampleHiddenGivenVisible(Mat&amp; visible) {
++        computeHiddenActivations(visible);
++        hidden_layer-&gt;generateSamples();
++    }
++    void computeVisibleActivations(Mat&amp; hidden, bool using_reconstruction_connection=false) {
++        if (using_reconstruction_connection)
++        {
++            reconstruction_connection-&gt;setAsUpInputs(hidden);
++            visible_layer-&gt;getAllActivations(reconstruction_connection, 0, true);
++        }
++        else
++        {
++            connection-&gt;setAsUpInputs(hidden);
++            visible_layer-&gt;getAllActivations(connection, 0, true);
++        }
++    }
++    void sampleVisibleGivenHidden(Mat&amp; hidden) {
++        computeVisibleActivations(hidden);
++        visible_layer-&gt;generateSamples();
++    }
++
+ private:
+     //#####  Private Member Functions  ########################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000778.html">[Plearn-commits] r7329 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000780.html">[Plearn-commits] r7331 - in	trunk/plearn_learners/online/test/ModuleLearner: . .pytest	.pytest/PL_ModuleLearner_Greedy	.pytest/PL_ModuleLearner_Greedy/expected_results	.pytest/PL_ModuleLearner_Greedy/expected_results/expdir-tester	.pytest/PL_ModuleLearner_Greedy/expected_results/expdir-tester/Split0	.pytest/PL_ModuleLearner_Greedy/expected_results/expdir-tester/global_stats.pmat.metadata	.pytest/PL_ModuleLearner_Greedy/expected_results/expdir-tester/split_stats.pmat.metadata
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#779">[ date ]</a>
+              <a href="thread.html#779">[ thread ]</a>
+              <a href="subject.html#779">[ subject ]</a>
+              <a href="author.html#779">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

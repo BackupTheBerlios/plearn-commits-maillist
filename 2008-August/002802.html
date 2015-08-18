@@ -1,0 +1,223 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9353 - in trunk: python_modules/plearn/parallel	scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9353%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200808071701.m77H1Lhn027891%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002801.html">
+   <LINK REL="Next"  HREF="002803.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9353 - in trunk: python_modules/plearn/parallel	scripts</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9353%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200808071701.m77H1Lhn027891%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9353 - in trunk: python_modules/plearn/parallel	scripts">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Thu Aug  7 19:01:21 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002801.html">[Plearn-commits] r9352 - trunk/plearn/base
+</A></li>
+        <LI>Next message: <A HREF="002803.html">[Plearn-commits] r9354 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2802">[ date ]</a>
+              <a href="thread.html#2802">[ thread ]</a>
+              <a href="subject.html#2802">[ subject ]</a>
+              <a href="author.html#2802">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-08-07 19:01:13 +0200 (Thu, 07 Aug 2008)
+New Revision: 9353
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+added an option 'e--tasks_filename={compact,explicit,nb0,nb1}' that change the filename where the stdin,stderr are redirected.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2008-08-07 16:55:03 UTC (rev 9352)
++++ trunk/python_modules/plearn/parallel/dbi.py	2008-08-07 17:01:13 UTC (rev 9353)
+@@ -687,6 +687,7 @@
+         self.redirect_stderr_to_stdout = False
+         self.env = ''
+         self.os = ''
++        self.base_tasks_log_file = []
+ 
+         DBIBase.__init__(self, commands, **args)
+         self.mem=int(self.mem)*1024
+@@ -885,9 +886,19 @@
+             for i in condor_datas:
+                 condor_dat.write(&quot;arguments      = sh &quot;+i+&quot; $$(Arch) \nqueue\n&quot;)
+         else:
+-            for task in self.tasks:
+-                argstring = condor_escape_argument(' ; '.join(task.commands))
+-                condor_dat.write(&quot;arguments      = %s \nqueue\n&quot; % argstring)
++            if self.base_tasks_log_file:
++                for (task,task_log) in zip(self.tasks,self.base_tasks_log_file):
++                    argstring =condor_escape_argument(' ; '.join(task.commands))
++                    stdout_file=self.log_dir+&quot;/condor.&quot;+task_log+&quot;.out&quot;
++                    stderr_file=self.log_dir+&quot;/condor.&quot;+task_log+&quot;.err&quot;
++
++                    condor_dat.write(&quot;arguments    = %s \n&quot; %argstring)
++                    condor_dat.write(&quot;output       = %s \n&quot; %stdout_file)
++                    condor_dat.write(&quot;error        = %s \nqueue\n&quot; %stderr_file)
++            else:
++                for task in self.tasks:
++                    argstring =condor_escape_argument(' ; '.join(task.commands))
++                    condor_dat.write(&quot;arguments      = %s \nqueue\n&quot; %argstring)
+         condor_dat.close()
+ 
+         dbi_file=get_plearndir()+'/python_modules/plearn/parallel/dbi.py'
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2008-08-07 16:55:03 UTC (rev 9352)
++++ trunk/scripts/dbidispatch	2008-08-07 17:01:13 UTC (rev 9353)
+@@ -10,8 +10,14 @@
+     bqtools options          :[--micro[=nb_batch]] [--[*no_]long]
+     all except condor options:[--[*no_]nb_proc=N]
+     cluster, condor options  : [--32|--64|--3264] [--os=X] [--mem=N]
+-    condor option            : [--req=&quot;CONDOR_REQUIREMENT&quot;] [--[*no_]nice] [--[*no_]getenv] [*--[no_]prefserver] [--rank=RANK_EXPRESSION] [--files=file1[,file2...]] [--env=VAR=VALUE[;VAR2=VALUE2]][--raw=CONDOR_EXPRESSION]
+-    cluster option           : [*--[no_]cwait]  [--[*no_]force] [--[*no_]interruptible] [--cpu=nb_cpu_per_node]
++    condor option            : [--req=&quot;CONDOR_REQUIREMENT&quot;] [--[*no_]nice]
++                               [--[*no_]getenv] [*--[no_]prefserver] 
++                               [--rank=RANK_EXPRESSION] 
++                               [--files=file1[,file2...]]
++                               [--env=VAR=VALUE[;VAR2=VALUE2]]
++                               [--raw=CONDOR_EXPRESSION] [--tasks_filename={compact,explicit,nb0,nb1}]
++    cluster option           : [*--[no_]cwait]  [--[*no_]force]
++                               [--[*no_]interruptible] [--cpu=nb_cpu_per_node]
+ An * after '[' signals the default value.
+ '''
+ LongHelp=&quot;&quot;&quot;Dispatches jobs with dbi.py. dbi can dispatch jobs on condor, bqtools, cluster, local and ssh. If no system is selected on the command line, we try them in the previous order. ssh is never automaticaly selected.
+@@ -88,6 +94,12 @@
+   The '--raw=STRING1[\nSTRING2...]' option add all the STRINGX parameter to the submit file of condor.
+   If the CONDOR_HOME environment variable is set, then the HOME variable will
+      be set to this value for jobs submitted to condor.
++  The '--tasks_filename={compact,explicit,nb0,nb1}' option will change the filename where the stdout,stderr are redirected. They have this patter condor.X.{out,error} where X=:
++      - default : same as nb0
++      - compact : will be a unic string with parameter that change of value between jobs
++      - explicit: will be a unic string that represent the full command to execute
++      - nb0     : a number from 0 to nb job -1.
++      - nb1     : a number from 1 to nb job.
+ 
+ where &lt;command-template&gt; is interpreted as follows: the first argument
+ is the &lt;command&gt; above, and the rest are interpreted as &lt;arguments&gt;.
+@@ -132,6 +144,7 @@
+ FILE = &quot;&quot;
+ dbi_param={}
+ testmode=False
++tasks_filename=&quot;&quot;
+ 
+ PATH=os.getenv('PATH')
+ if search_file('condor_submit',PATH):
+@@ -180,6 +193,13 @@
+         if len(argv)&gt;7:
+             assert(argv[7]==&quot;=&quot;)
+             dbi_param[&quot;micro&quot;]=argv[8:]
++    elif argv.startswith(&quot;--tasks_filename=&quot;):
++        part = argv.split('=',1)
++        accepted_value=[&quot;compact&quot;,&quot;explicit&quot;,&quot;nb0&quot;,&quot;nb1&quot;]
++        if part[1] not in accepted_value:
++            print &quot;The option '&quot;+argv+&quot;' have an invalid value. possible value are:&quot;, accepted_value
++            sys.exit(2)
++        tasks_filename = part[1]
+     elif argv in  [&quot;--force&quot;, &quot;--interruptible&quot;, &quot;--long&quot;, 
+                    &quot;--getenv&quot;, &quot;--cwait&quot;, &quot;--clean_up&quot; ,&quot;--nice&quot;]:
+         dbi_param[argv[2:]]=True
+@@ -285,8 +305,7 @@
+             if res1 == []:
+                 res.append(y)
+             else:
+-                for r in res1:
+-                    res.append(y+&quot; &quot;+r)
++                res.extend([y+&quot; &quot;+r for r in res1])
+         return res
+ 
+ def generate_commands(sp):
+@@ -305,19 +324,24 @@
+         else:
+             repl.append([arg])
+     argscombination = generate_combination(repl)
+-    return argscombination
++    args_modif = generate_combination([x for x in repl if len(x)&gt;1])
+ 
++    return (argscombination,args_modif)
++
+ #generate the command
+ if FILE != &quot;&quot;:
+     FD = open(FILE,'r')#|| die &quot;couldn't open the file $FILE!&quot;;
+     commands=[]
++    choise_args = []
+     for line in FD.readlines():
+         line = line.rstrip()
+         sp = line.split(&quot; &quot;)
+-        commands+=generate_commands(sp)
++        (t1,t2)=generate_commands(sp)
++        commands+=t1
++        choise_args+=t2
+     FD.close
+ else:
+-    commands=generate_commands(command_argv)
++    (commands,choise_args)=generate_commands(command_argv)
+ 
+ if FILE == &quot;&quot;:
+     t = [x for x in sys.argv[1:] if not x[:2]==&quot;--&quot;]
+@@ -330,6 +354,19 @@
+     tmp+='_'+str(datetime.datetime.now()).replace(' ','_')
+     dbi_param[&quot;log_dir&quot;]=os.path.join(LOGDIR,tmp)
+     dbi_param[&quot;log_file&quot;]=os.path.join(dbi_param[&quot;log_dir&quot;],'log')
++    if tasks_filename == &quot;explicit&quot;:
++        dbi_param[&quot;base_tasks_log_file&quot;]=[re.sub( '[^a-zA-Z=0-9-]', '_', x ) for x in commands]
++    elif tasks_filename == &quot;compact&quot;:
++        dbi_param[&quot;base_tasks_log_file&quot;]=[re.sub( '[^a-zA-Z=0-9-]', '_', x ) for x in choise_args]
++    elif tasks_filename == &quot;nb0&quot;:
++        dbi_param[&quot;base_tasks_log_file&quot;]=map(str,range(len(commands)))
++    elif tasks_filename == &quot;nb1&quot;:
++        dbi_param[&quot;base_tasks_log_file&quot;]=map(str,range(1,len(commands)+1))
++    elif tasks_filename == &quot;&quot;:
++        pass
++    else:
++        print &quot;internal ERROR!&quot;
++        sys.exit(2)
+ else:
+     dbi_param[&quot;log_dir&quot;]=os.path.join(LOGDIR,FILE)
+     dbi_param[&quot;log_file&quot;]=os.path.join(dbi_param[&quot;log_dir&quot;],'log')
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002801.html">[Plearn-commits] r9352 - trunk/plearn/base
+</A></li>
+	<LI>Next message: <A HREF="002803.html">[Plearn-commits] r9354 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2802">[ date ]</a>
+              <a href="thread.html#2802">[ thread ]</a>
+              <a href="subject.html#2802">[ subject ]</a>
+              <a href="author.html#2802">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

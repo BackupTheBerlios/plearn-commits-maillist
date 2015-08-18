@@ -1,0 +1,423 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10156 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10156%20-%20trunk/plearn/vmat&In-Reply-To=%3C200904291642.n3TGgGJL020438%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003595.html">
+   <LINK REL="Next"  HREF="003597.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10156 - trunk/plearn/vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10156%20-%20trunk/plearn/vmat&In-Reply-To=%3C200904291642.n3TGgGJL020438%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10156 - trunk/plearn/vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed Apr 29 18:42:16 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003595.html">[Plearn-commits] r10155 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="003597.html">[Plearn-commits] r10157 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3596">[ date ]</a>
+              <a href="thread.html#3596">[ thread ]</a>
+              <a href="subject.html#3596">[ subject ]</a>
+              <a href="author.html#3596">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-04-29 18:42:15 +0200 (Wed, 29 Apr 2009)
+New Revision: 10156
+
+Modified:
+   trunk/plearn/vmat/GaussianizeVMatrix.cc
+   trunk/plearn/vmat/GaussianizeVMatrix.h
+Log:
+-remote declare some fct
+-added fct to ungauss a value
+-added parameter to save the columns that will be gaussianized or load it instead of calculating them.
+
+
+Modified: trunk/plearn/vmat/GaussianizeVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/GaussianizeVMatrix.cc	2009-04-28 20:57:25 UTC (rev 10155)
++++ trunk/plearn/vmat/GaussianizeVMatrix.cc	2009-04-29 16:42:15 UTC (rev 10156)
+@@ -42,6 +42,7 @@
+ #include &quot;VMat_computeStats.h&quot;
+ #include &lt;plearn/io/load_and_save.h&gt;
+ #include &lt;plearn/io/fileutils.h&gt;
++#include &lt;plearn/base/RemoteDeclareMethod.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -132,12 +133,32 @@
+         &quot;An optional VMat that will be used instead of 'source' to compute\n&quot;
+         &quot;the transformation parameters from the distribution statistics.&quot;);
+ 
++    declareOption(ol, &quot;fields_to_gaussianize&quot;,
++                  &amp;GaussianizeVMatrix::fields_to_gaussianize,
++                  OptionBase::buildoption,
++                  &quot;The fields that we want to be gaussianized.&quot;);
++
+     declareOption(ol, &quot;stats_file_to_use&quot;,
+                   &amp;GaussianizeVMatrix::stats_file_to_use,
+                   OptionBase::buildoption,
+                   &quot;The filename of the statistics to use instead of the&quot;
+                   &quot; train_source.&quot;);
+ 
++    declareOption(ol, &quot;save_fields_gaussianized&quot;,
++                  &amp;GaussianizeVMatrix::save_fields_gaussianized,
++                  OptionBase::buildoption,
++                  &quot;A path where we will save the fields selected to be gaussianized.&quot;);
++
++    declareOption(ol, &quot;features_to_gaussianize&quot;,
++                  &amp;GaussianizeVMatrix::features_to_gaussianize,
++                  OptionBase::learntoption,
++                  &quot;The columsn that will be gaussianized.&quot;);
++
++    declareOption(ol, &quot;values&quot;,
++                  &amp;GaussianizeVMatrix::values,
++                  OptionBase::learntoption,
++                  &quot;The values used to gaussinaze.&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -198,21 +219,51 @@
+ 
+     // Obtain meta information from source.
+     setMetaInfoFromSource();
+-    if(hasMetaDataDir() &amp;&amp; values.size()==0)
++    if((hasMetaDataDir()||!stats_file_to_use.empty()) &amp;&amp; values.size()==0)
+         setMetaDataDir(getMetaDataDir());
+ }
+ 
++///////////////////////////////
++// append_col_to_gaussianize //
++///////////////////////////////
++void GaussianizeVMatrix::append_col_to_gaussianize(int col, StatsCollector stat){
++    values.append(Vec());
++    Vec&amp; values_j = values.lastElement();
++    features_to_gaussianize.append(col);
++    map&lt;real, StatsCollectorCounts&gt;::const_iterator it, it_dummy;
++    // Note that we obtain the approximate counts, so that almost equal
++    // values have been merged together already.
++    map&lt;real,StatsCollectorCounts&gt;* count_map =
++        stat.getApproximateCounts();
++    values_j.resize(0,count_map-&gt;size());
++    // We use a dummy iterator to get rid of the last element in the
++    // map, which is the max real value.
++    it_dummy = count_map-&gt;begin();
++    it_dummy++;
++    for (it = count_map-&gt;begin(); it_dummy != count_map-&gt;end();
++         it++, it_dummy++)
++    {
++        values_j.append(it-&gt;first);
++    }
++}
++
+ ////////////////////
+ // setMetaDataDir //
+ ////////////////////
+ void GaussianizeVMatrix::setMetaDataDir(const PPath&amp; the_metadatadir){
+-    inherited::setMetaDataDir(the_metadatadir);
+ 
++    if(!the_metadatadir.empty())
++        inherited::setMetaDataDir(the_metadatadir);
++
+     if(features_to_gaussianize.size()==0)
+         return;
+ 
+     VMat the_source = train_source ? train_source : source;
+     
++    if(!the_source-&gt;hasMetaDataDir() &amp;&amp; stats_file_to_use.empty() )
++        PLERROR(&quot;In GaussianizeVMatrix::setMetaDataDir() - the &quot;
++                &quot; train_source, source or this VMatrix should have a metadata directory!&quot;);
++
+     //to save the stats their must be a metadatadir
+     if(!the_source-&gt;hasMetaDataDir() &amp;&amp; hasMetaDataDir()){
+         if (train_source)
+@@ -221,10 +272,6 @@
+             the_source-&gt;setMetaDataDir(getMetaDataDir()+&quot;source&quot;);
+     }
+ 
+-    if(!the_source-&gt;hasMetaDataDir() &amp;&amp; stats_file_to_use.empty())
+-        PLERROR(&quot;In GaussianizeVMatrix::setMetaDataDir() - the &quot;
+-                &quot; train_source, source or this VMatrix should have a metadata directory!&quot;);
+-    
+     TVec&lt;StatsCollector&gt; stats;
+     if(!stats_file_to_use.empty()){
+         if(!isfile(stats_file_to_use))
+@@ -238,43 +285,56 @@
+     else
+         stats = PLearn::computeStats(the_source, -1, true);
+ 
+-    // See which dimensions violate the Gaussian assumption and will be
+-    // actually Gaussianized, and store the corresponding list of values.
+-    TVec&lt;int&gt; candidates = features_to_gaussianize.copy();
+-    features_to_gaussianize.resize(0);
+-    values.resize(0);
+-    for (int i = 0; i &lt; candidates.length(); i++) {
+-        int j = candidates[i];
+-        StatsCollector&amp; stat = stats[j];
+-        if (fast_exact_is_equal(stat.stddev(), 0)){
+-            stats[j].forget();//to keep the total memory used lower faster
+-            continue;
++    if(fields_to_gaussianize.size()&gt;0){
++        for(int i=0;i&lt;fields_to_gaussianize.size();i++){
++            int field=fields_to_gaussianize[i];
++            if(field&gt;=width() || field&lt;0)
++                PLERROR(&quot;In GaussianizeVMatrix::setMetaDataDir() - &quot;
++                        &quot;bad fields number to gaussianize(%d)!&quot;,field);
+         }
+-        if (!gaussianize_binary &amp;&amp; stat.isbinary()) {
+-            stats[j].forget();//to keep the total memory used lower faster
+-            continue;
++        features_to_gaussianize.resize(0,fields_to_gaussianize.length());
++
++        values.resize(0);
++        int last_j=-1;
++        for (int i = 0; i &lt; fields_to_gaussianize.length(); i++) {
++            int j = fields_to_gaussianize[i];
++            StatsCollector&amp; stat = stats[j];
++            if(last_j+1!=j)
++                for(int k=last_j+1;k&lt;j;k++){
++                    //to keep the total memory used lower faster.
++                    stats[k].forget();
++                }
++            append_col_to_gaussianize(j,stat);
++            stats[j].forget();//to keep the total memory used lower.
+         }
+-        if ((stat.max() - stat.min()) &gt; threshold_ratio * stat.stddev()) {
+-            features_to_gaussianize.append(j);
+-            values.append(Vec());
+-            Vec&amp; values_j = values.lastElement();
+-            map&lt;real, StatsCollectorCounts&gt;::const_iterator it, it_dummy;
+-            // Note that we obtain the approximate counts, so that almost equal
+-            // values have been merged together already.
+-            map&lt;real,StatsCollectorCounts&gt;* count_map =
+-                                                stat.getApproximateCounts();
+-            // We use a dummy iterator to get rid of the last element in the
+-            // map, which is the max real value.
+-            it_dummy = count_map-&gt;begin();
+-            it_dummy++;
+-            for (it = count_map-&gt;begin(); it_dummy != count_map-&gt;end();
+-                                          it++, it_dummy++)
+-            {
+-                values_j.append(it-&gt;first);
++    }else{
++
++        // See which dimensions violate the Gaussian assumption and will be
++        // actually Gaussianized, and store the corresponding list of values.
++        TVec&lt;int&gt; candidates = features_to_gaussianize.copy();
++        features_to_gaussianize.resize(0);
++        values.resize(0);
++        for (int i = 0; i &lt; candidates.length(); i++) {
++            int j = candidates[i];
++            StatsCollector&amp; stat = stats[j];
++            if (fast_exact_is_equal(stat.stddev(), 0)){
++                //we don't gaussianize
++            }else if (!gaussianize_binary &amp;&amp; stat.isbinary()) {
++                //we don't gaussianize
++            }else if ((stat.max() - stat.min()) &gt; threshold_ratio * stat.stddev()) {
++                append_col_to_gaussianize(j,stat);
+             }
++
++            stats[j].forget();//to keep the total memory used lower.
+         }
++    }
+ 
+-        stats[j].forget();//to keep the total memory used lower.
++    fields_gaussianized.resize(width());
++    fields_gaussianized.fill(-1);
++    for(int i=0;i&lt;features_to_gaussianize.size();i++)
++        fields_gaussianized[features_to_gaussianize[i]]=i;
++    if(!save_fields_gaussianized.empty()){
++        PLearn::save(save_fields_gaussianized,features_to_gaussianize);
+     }
+     if(features_to_gaussianize.size()==0)
+         PLWARNING(&quot;GaussianizeVMatrix::build_() 0 variable was gaussianized&quot;);
+@@ -344,8 +404,85 @@
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+     deepCopyField(train_source, copies);
++    //features_to_gaussianize?
++    //scaling_factor?
++    //values?
+ }
+ 
++
++/////////////
++// unGauss //
++/////////////
++real GaussianizeVMatrix::unGauss(real input, int j) const
++{
++    int k=fields_gaussianized[j];
++    if(k&lt;0)
++        return input;//was not gaussianized
++    
++    real interpol = gauss_01_cum(input);
++    Vec&amp; values_j = values[k];
++    int idx=int(interpol*values_j.length());
++    return values_j[idx];
++}
++
++/////////////
++// unGauss //
++/////////////
++void GaussianizeVMatrix::unGauss(Vec&amp; inputs, Vec&amp; ret, int j) const
++{
++    int k=fields_gaussianized[j];
++    if(k&lt;0)
++        ret&lt;&lt;inputs;//was not gaussianized
++    
++    for(int i=0;i&lt;inputs.size();i++){
++        real value = inputs[i];
++        real interpol = gauss_01_cum(value);
++        Vec&amp; values_j = values[k];
++        int idx=int(interpol*values_j.length());
++        ret[i]=values_j[idx];
++    }
++   
++}
++
++//! Version of unGauss(vec,vec,int) that's called by RMI
++real GaussianizeVMatrix::remote_unGauss(real value, int col) const
++{
++    return unGauss(value,col);
++}
++
++//! Version of unGauss(vec,vec,int) that's called by RMI
++Vec GaussianizeVMatrix::remote_unGauss_vec(Vec values, int col) const
++{
++    Vec outputs(values.length());
++    unGauss(values,outputs,col);
++    return outputs;
++}
++
++////////////////////
++// declareMethods //
++////////////////////
++void GaussianizeVMatrix::declareMethods(RemoteMethodMap&amp; rmm)
++{
++    // Insert a backpointer to remote methods; note that this is different from
++    // declareOptions().
++    rmm.inherited(inherited::_getRemoteMethodMap_());
++
++    declareMethod(
++        rmm, &quot;unGauss&quot;, &amp;GaussianizeVMatrix::remote_unGauss,
++        (BodyDoc(&quot;Revert the gaussinisation done.&quot;),
++         ArgDoc (&quot;value&quot;, &quot;The value to revert.&quot;),
++         ArgDoc (&quot;j&quot;, &quot;The column of the value.&quot;)));
++
++
++    declareMethod(
++        rmm, &quot;unGauss2&quot;, &amp;GaussianizeVMatrix::remote_unGauss_vec,
++        (BodyDoc(&quot;Revert the gaussinisation done.&quot;),
++         ArgDoc (&quot;values&quot;, &quot;A vector of values to revert.&quot;),
++         ArgDoc (&quot;j&quot;, &quot;The column of the value.&quot;)));
++
++}
++
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn/vmat/GaussianizeVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/GaussianizeVMatrix.h	2009-04-28 20:57:25 UTC (rev 10155)
++++ trunk/plearn/vmat/GaussianizeVMatrix.h	2009-04-29 16:42:15 UTC (rev 10156)
+@@ -73,6 +73,8 @@
+     bool save_and_reuse_stats;
+     VMat train_source;
+     string stats_file_to_use;
++    TVec&lt;int&gt; fields_to_gaussianize;
++    PPath save_fields_gaussianized;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+@@ -94,14 +96,20 @@
+     virtual void build();
+ 
+     //! Transforms a shallow copy into a deep copy
+-    // (PLEASE IMPLEMENT IN .cc)
+     virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
+ 
++
++    //! return the approximate value of value before being gaussianized.
++    real unGauss(real value, int col)const;
++    void unGauss(Vec&amp; values, Vec&amp; ret, int col)const;
++
+ protected:
+ 
+     //! List of features that need to be Gaussianized.
+     TVec&lt;int&gt; features_to_gaussianize;
+ 
++    TVec&lt;int&gt; fields_gaussianized;
++
+     //! Scaling factor to map the rank to [0,1].
+     Vec scaling_factor;
+ 
+@@ -113,9 +121,11 @@
+     //#####  Protected Member Functions  ######################################
+ 
+     //! Declares the class options.
+-    // (PLEASE IMPLEMENT IN .cc)
+     static void declareOptions(OptionList&amp; ol);
+ 
++    //! Declare the methods that are remote-callable
++    static void declareMethods(RemoteMethodMap&amp; rmm);
++
+     //! Fill the vector 'v' with the content of the i-th row.
+     //! v is assumed to be the right size.
+     //! ### This function must be overridden in your class
+@@ -125,10 +135,11 @@
+     //#####  Private Member Functions  ########################################
+ 
+     //! This does the actual building.
+-    // (PLEASE IMPLEMENT IN .cc)
+     void build_();
+     virtual void setMetaDataDir(const PPath&amp; the_metadatadir);
+-
++    real remote_unGauss(real input, int col)const;
++    Vec remote_unGauss_vec(Vec inputs, int col) const;
++    void append_col_to_gaussianize(int col, StatsCollector stat);
+ private:
+     //#####  Private Data Members  ############################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003595.html">[Plearn-commits] r10155 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="003597.html">[Plearn-commits] r10157 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3596">[ date ]</a>
+              <a href="thread.html#3596">[ thread ]</a>
+              <a href="subject.html#3596">[ subject ]</a>
+              <a href="author.html#3596">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,323 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7783 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7783%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200707161701.l6GH1DVD030110%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001230.html">
+   <LINK REL="Next"  HREF="001232.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7783 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7783%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200707161701.l6GH1DVD030110%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7783 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Mon Jul 16 19:01:13 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001230.html">[Plearn-commits] r7782 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="001232.html">[Plearn-commits] r7784 - trunk/python_modules/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1231">[ date ]</a>
+              <a href="thread.html#1231">[ thread ]</a>
+              <a href="subject.html#1231">[ subject ]</a>
+              <a href="author.html#1231">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2007-07-16 19:01:11 +0200 (Mon, 16 Jul 2007)
+New Revision: 7783
+
+Modified:
+   trunk/plearn_learners/online/RBMMatrixConnection.cc
+   trunk/plearn_learners/online/RBMMatrixConnection.h
+Log:
+Added L1 and L2 weight decay, similarly to the way it is coded in GradNNetLayerModule...
+
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-07-16 14:45:19 UTC (rev 7782)
++++ trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-07-16 17:01:11 UTC (rev 7783)
+@@ -52,7 +52,9 @@
+ RBMMatrixConnection::RBMMatrixConnection( real the_learning_rate ) :
+     inherited(the_learning_rate),
+     gibbs_ma_increment(0.1),
+-    gibbs_initial_ma_coefficient(0.1)
++    gibbs_initial_ma_coefficient(0.1),
++    L1_penalty_factor(0),
++    L2_penalty_factor(0)
+ {
+ }
+ 
+@@ -70,15 +72,36 @@
+                   &quot;its inverse sigmoid by gibbs_ma_increment). After the last\n&quot;
+                   &quot;increase has been made, the moving average coefficient stays constant.\n&quot;);
+ 
+-    declareOption(ol, &quot;gibbs_ma_increment&quot;, &amp;RBMMatrixConnection::gibbs_ma_increment,
++    declareOption(ol, &quot;gibbs_ma_increment&quot;, 
++                  &amp;RBMMatrixConnection::gibbs_ma_increment,
+                   OptionBase::buildoption,
+-                  &quot;The increment in the inverse sigmoid of the moving average coefficient\n&quot;
+-                  &quot;to apply after the number of updates reaches an element of the gibbs_ma_schedule.\n&quot;);
++                  &quot;The increment in the inverse sigmoid of the moving &quot;
++                  &quot;average coefficient\n&quot;
++                  &quot;to apply after the number of updates reaches an element &quot;
++                  &quot;of the gibbs_ma_schedule.\n&quot;);
+ 
+-    declareOption(ol, &quot;gibbs_initial_ma_coefficient&quot;, &amp;RBMMatrixConnection::gibbs_initial_ma_coefficient,
++    declareOption(ol, &quot;gibbs_initial_ma_coefficient&quot;, 
++                  &amp;RBMMatrixConnection::gibbs_initial_ma_coefficient,
+                   OptionBase::buildoption,
+-                  &quot;Initial moving average coefficient for the negative phase statistics in the Gibbs chain.\n&quot;);
++                  &quot;Initial moving average coefficient for the negative phase &quot;
++                  &quot;statistics in the Gibbs chain.\n&quot;);
+ 
++    declareOption(ol, &quot;L1_penalty_factor&quot;, 
++                  &amp;RBMMatrixConnection::L1_penalty_factor,
++                  OptionBase::buildoption,
++                  &quot;Optional (default=0) factor of L1 regularization term, i.e.\n&quot;
++                  &quot;minimize L1_penalty_factor * sum_{ij} |weights(i,j)| &quot;
++                  &quot;during training.\n&quot;);
++
++    declareOption(ol, &quot;L2_penalty_factor&quot;, 
++                  &amp;RBMMatrixConnection::L2_penalty_factor,
++                  OptionBase::buildoption,
++                  &quot;Optional (default=0) factor of L2 regularization term, i.e.\n&quot;
++                  &quot;minimize 0.5 * L2_penalty_factor * sum_{ij} weights(i,j)^2 &quot;
++                  &quot;during training.\n&quot;);
++
++
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -217,6 +240,9 @@
+             }
+     }
+ 
++    if(!fast_exact_is_equal(L1_penalty_factor,0) || !fast_exact_is_equal(L2_penalty_factor,0)) 
++        applyWeightPenalty();
++
+     clearStats();
+ }
+ 
+@@ -272,6 +298,9 @@
+                 w_i[j] += winc_i[j];
+             }
+     }
++
++    if(!fast_exact_is_equal(L1_penalty_factor,0) || !fast_exact_is_equal(L2_penalty_factor,0)) 
++        applyWeightPenalty();
+ }
+ 
+ void RBMMatrixConnection::update( const Mat&amp; pos_down_values, // v_0
+@@ -323,6 +352,9 @@
+             }
+          */
+     }
++
++    if(!fast_exact_is_equal(L1_penalty_factor,0) || !fast_exact_is_equal(L2_penalty_factor,0)) 
++        applyWeightPenalty();
+ }
+ 
+ 
+@@ -361,6 +393,9 @@
+     transposeProductScaleAcc(weights, cd_neg_up_values, cd_neg_down_values,
+         -learning_rate*(1-background_gibbs_update_ratio)*normalize_factor,
+         real(1));
++
++    if(!fast_exact_is_equal(L1_penalty_factor,0) || !fast_exact_is_equal(L2_penalty_factor,0)) 
++        applyWeightPenalty();
+ }
+ 
+ void RBMMatrixConnection::updateGibbs( const Mat&amp; pos_down_values,
+@@ -403,6 +438,9 @@
+     transposeProductScaleAcc(weights, pos_up_values, pos_down_values,
+                              learning_rate*normalize_factor, real(1));
+     multiplyAcc(weights, weights_neg_stats, -learning_rate);
++
++    if(!fast_exact_is_equal(L1_penalty_factor,0) || !fast_exact_is_equal(L2_penalty_factor,0)) 
++        applyWeightPenalty();
+ }
+ 
+ ////////////////
+@@ -549,6 +587,9 @@
+ 
+     // weights -= learning_rate * output_gradient * input'
+     externalProductScaleAcc( weights, output_gradient, input, -learning_rate );
++
++    if(!fast_exact_is_equal(L1_penalty_factor,0) || !fast_exact_is_equal(L2_penalty_factor,0)) 
++        applyWeightPenalty();
+ }
+ 
+ void RBMMatrixConnection::bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
+@@ -579,6 +620,9 @@
+     // weights -= learning_rate/n * output_gradients' * inputs
+     transposeProductScaleAcc(weights, output_gradients, inputs,
+                              -learning_rate / inputs.length(), real(1));
++
++    if(!fast_exact_is_equal(L1_penalty_factor,0) || !fast_exact_is_equal(L2_penalty_factor,0)) 
++        applyWeightPenalty();
+ }
+ 
+ void RBMMatrixConnection::petiteCulotteOlivierUpdate(
+@@ -618,6 +662,8 @@
+                          input);
+     }
+ 
++    if(!fast_exact_is_equal(L1_penalty_factor,0) || !fast_exact_is_equal(L2_penalty_factor,0)) 
++        addWeightPenalty(rbm_weights, rbm_weights_gradient);
+ }
+ 
+ 
+@@ -686,6 +732,9 @@
+     else
+         PLCHECK_MSG( false,
+                      &quot;Unknown port configuration&quot; );
++
++    if(!fast_exact_is_equal(L1_penalty_factor,0) || !fast_exact_is_equal(L2_penalty_factor,0)) 
++        applyWeightPenalty();
+ }
+ 
+ 
+@@ -717,6 +766,9 @@
+             for( int j=0 ; j&lt;w ; j++ )
+                 w_i[j] = wns_i[j]/pos_count - wps_i[j]/neg_count;
+     }
++
++    if(!fast_exact_is_equal(L1_penalty_factor,0) || !fast_exact_is_equal(L2_penalty_factor,0)) 
++        addWeightPenalty(weights, weights_gradient);
+ }
+ 
+ // Instead of using the statistics, we assume we have only one markov chain
+@@ -755,8 +807,62 @@
+             for( int j=0 ; j&lt;w ; j++ )
+                 w_i[j] =  *nuv_i * ndv[j] - *puv_i * pdv[j] ;
+     }
++
++    if(!fast_exact_is_equal(L1_penalty_factor,0) || !fast_exact_is_equal(L2_penalty_factor,0)) 
++        addWeightPenalty(weights, weights_gradient);
+ }
+ 
++// Applies penalty (decay) on weights
++void RBMMatrixConnection::applyWeightPenalty()
++{
++    real delta_L1 = learning_rate * L1_penalty_factor;
++    real delta_L2 = learning_rate * L2_penalty_factor;
++    for( int i=0; i&lt;up_size; i++)
++    {
++        real* w_ = weights[i];
++        for( int j=0; j&lt;down_size; j++ )
++        {
++            if( delta_L2 != 0. )
++                w_[j] *= (1 - delta_L2);
++        
++            if( delta_L1 != 0. )
++            {
++                if( w_[j] &gt; delta_L1 )
++                    w_[j] -= delta_L1;
++                else if( w_[j] &lt; -delta_L1 )
++                    w_[j] += delta_L1;
++                else
++                    w_[j] = 0.;
++            }
++        }
++    }
++}
++
++// Adds penalty (decay) gradient
++void RBMMatrixConnection::addWeightPenalty(Mat weights, Mat weight_gradients)
++{
++    real delta_L1 = L1_penalty_factor;
++    real delta_L2 = L2_penalty_factor;
++    for( int i=0; i&lt;weights.length(); i++)
++    {
++        real* w_ = weights[i];
++        real* gw_ = weight_gradients[i];
++        for( int j=0; j&lt;weights.width(); j++ )
++        {
++            if( delta_L2 != 0. )
++                gw_[j] += delta_L2*w_[j];
++        
++            if( delta_L1 != 0. )
++            {
++                if( w_[j] &gt; 0 )
++                    gw_[j] += delta_L1;
++                else if( w_[j] &lt; 0 )
++                    gw_[j] -= delta_L1;
++            }
++        }
++    }
++}
++
+ ////////////
+ // forget //
+ ////////////
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.h	2007-07-16 14:45:19 UTC (rev 7782)
++++ trunk/plearn_learners/online/RBMMatrixConnection.h	2007-07-16 17:01:11 UTC (rev 7783)
+@@ -68,6 +68,12 @@
+ 
+     //#####  Learned Options  #################################################
+ 
++    //! Optional (default=0) factor of L1 regularization term
++    real L1_penalty_factor;
++
++    //! Optional (default=0) factor of L2 regularization term
++    real L2_penalty_factor;
++
+     //! Matrix containing unit-to-unit weights (output_size &#215; input_size)
+     Mat weights;
+ 
+@@ -226,6 +232,12 @@
+                                         Mat&amp; weights_gradient,
+                                         bool accumulate = false);
+ 
++    //! Applies penalty (decay) on weights
++    virtual void applyWeightPenalty();
++
++    //! Adds penalty (decay) gradient
++    virtual void addWeightPenalty(Mat weights, Mat weight_gradients);
++
+     //! reset the parameters to the state they would be BEFORE starting
+     //! training.  Note that this method is necessarily called from
+     //! build().
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001230.html">[Plearn-commits] r7782 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="001232.html">[Plearn-commits] r7784 - trunk/python_modules/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1231">[ date ]</a>
+              <a href="thread.html#1231">[ thread ]</a>
+              <a href="subject.html#1231">[ subject ]</a>
+              <a href="author.html#1231">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

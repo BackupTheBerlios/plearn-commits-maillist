@@ -1,0 +1,606 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6895 - in trunk/plearn_learners/generic: .	EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6895%20-%20in%20trunk/plearn_learners/generic%3A%20.%0A%09EXPERIMENTAL&In-Reply-To=%3C200704162043.l3GKh9Xn002474%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000343.html">
+   <LINK REL="Next"  HREF="000345.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6895 - in trunk/plearn_learners/generic: .	EXPERIMENTAL</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6895%20-%20in%20trunk/plearn_learners/generic%3A%20.%0A%09EXPERIMENTAL&In-Reply-To=%3C200704162043.l3GKh9Xn002474%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6895 - in trunk/plearn_learners/generic: .	EXPERIMENTAL">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Mon Apr 16 22:43:09 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000343.html">[Plearn-commits] r6894 - trunk/plearn/base
+</A></li>
+        <LI>Next message: <A HREF="000345.html">[Plearn-commits] r6896 - trunk/commands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#344">[ date ]</a>
+              <a href="thread.html#344">[ thread ]</a>
+              <a href="subject.html#344">[ subject ]</a>
+              <a href="author.html#344">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-04-16 22:43:03 +0200 (Mon, 16 Apr 2007)
+New Revision: 6895
+
+Added:
+   trunk/plearn_learners/generic/NatGradEstimator.cc
+   trunk/plearn_learners/generic/NatGradEstimator.h
+Removed:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradEstimator.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradEstimator.h
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+Log:
+Moved NatGradEstimator.{h,cc} from plearn_learners/generic/EXPERIMENTAL to plearn_learners/generic
+and changed the corresponding include in NatGradNNet
+
+
+Deleted: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradEstimator.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradEstimator.cc	2007-04-16 13:41:54 UTC (rev 6894)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradEstimator.cc	2007-04-16 20:43:03 UTC (rev 6895)
+@@ -1,299 +0,0 @@
+-// -*- C++ -*-
+-
+-// NatGradEstimator.cc
+-//
+-// Copyright (C) 2007 yoshua Bengio
+-//
+-// Redistribution and use in source and binary forms, with or without
+-// modification, are permitted provided that the following conditions are met:
+-//
+-//  1. Redistributions of source code must retain the above copyright
+-//     notice, this list of conditions and the following disclaimer.
+-//
+-//  2. Redistributions in binary form must reproduce the above copyright
+-//     notice, this list of conditions and the following disclaimer in the
+-//     documentation and/or other materials provided with the distribution.
+-//
+-//  3. The name of the authors may not be used to endorse or promote
+-//     products derived from this software without specific prior written
+-//     permission.
+-//
+-// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
+-// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+-// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
+-// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+-// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+-// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+-// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+-// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+-// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+-//
+-// This file is part of the PLearn library. For more information on the PLearn
+-// library, go to the PLearn Web site at www.plearn.org
+-
+-// Authors: yoshua Bengio
+-
+-/*! \file NatGradEstimator.cc */
+-
+-
+-#include &quot;NatGradEstimator.h&quot;
+-#include &lt;plearn/math/TMat_maths.h&gt;
+-#include &lt;plearn/math/plapack.h&gt;
+-
+-namespace PLearn {
+-using namespace std;
+-
+-PLEARN_IMPLEMENT_OBJECT(
+-    NatGradEstimator,
+-    &quot;Convert a sequence of gradients into covariance-corrected (natural gradient) directions.\n&quot;,
+-    &quot;The algorithm used for converting a sequence of n-dimensional gradients g_t\n&quot;
+-    &quot;into covariance-corrected update directions v_t is the following:\n\n&quot;
+-    &quot;operator(int t, Vec g, Vec v): (reads g and writes v)\n&quot;
+-    &quot;    i = t%b   /* denoting b = cov_minibatch_size */\n&quot;
+-    &quot;    extend X by a (k+i)-th column gamma^{\frac{-i}{2}} g\n&quot;
+-    &quot;    extend G by a (k+i)-th column and row, with G_{k+i,.}=X'_{k+1,.} X\n&quot;
+-    &quot;      and idem for the symmetric sub-column\n&quot;
+-    &quot;    extend vectors r and a by (k+i)-th element, r_{k+i-1}=0, r_{k+i}=gamma^{\frac{-i}{2}}\n&quot;
+-    &quot;    Solve linear system (G + gamma^{-k} lambda I) a = r in a\n&quot;
+-    &quot;    v = X a (1 - gamma)/(1 - gamma^t)\n&quot;
+-    &quot;    if i+1==b\n&quot;
+-    &quot;       (V,D) = leading_eigendecomposition(G,k)\n&quot;
+-    &quot;       U = gamma^{b/2} X V\n&quot;
+-    &quot;\n\n&quot;
+-    &quot;See technical report 'A new insight on the natural gradient' for justifications\n&quot;
+-    );
+-
+-NatGradEstimator::NatGradEstimator()
+-    /* ### Initialize all fields to their default value */
+-    : cov_minibatch_size(10),
+-      lambda(1),
+-      n_eigen(10),
+-      gamma(0.99),
+-      n_dim(-1),
+-      verbosity(0),
+-      renormalize(true),
+-      previous_t(-1)
+-{
+-    build();
+-}
+-
+-// ### Nothing to add here, simply calls build_
+-void NatGradEstimator::build()
+-{
+-    inherited::build();
+-    build_();
+-}
+-
+-void NatGradEstimator::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+-{
+-    inherited::makeDeepCopyFromShallowCopy(copies);
+-
+-    // ### Call deepCopyField on all &quot;pointer-like&quot; fields
+-    // ### that you wish to be deepCopied rather than
+-    // ### shallow-copied.
+-    // ### ex:
+-    deepCopyField(Ut, copies);
+-    deepCopyField(D, copies);
+-    deepCopyField(Xt, copies);
+-    deepCopyField(G, copies);
+-    deepCopyField(r, copies);
+-    deepCopyField(Vt, copies);
+-    deepCopyField(Vkt, copies);
+-    deepCopyField(A, copies);
+-    deepCopyField(pivots, copies);
+-}
+-
+-void NatGradEstimator::declareOptions(OptionList&amp; ol)
+-{
+-    // ### Declare all of this object's options here.
+-    // ### For the &quot;flags&quot; of each option, you should typically specify
+-    // ### one of OptionBase::buildoption, OptionBase::learntoption or
+-    // ### OptionBase::tuningoption. If you don't provide one of these three,
+-    // ### this option will be ignored when loading values from a script.
+-    // ### You can also combine flags, for example with OptionBase::nosave:
+-    // ### (OptionBase::buildoption | OptionBase::nosave)
+-
+-    // ### ex:
+-    declareOption(ol, &quot;cov_minibatch_size&quot;, &amp;NatGradEstimator::cov_minibatch_size,
+-                  OptionBase::buildoption,
+-                  &quot;Covariance estimator minibatch size, i.e. number of calls\n&quot;
+-                  &quot;to operator() before re-estimating the principal\n&quot;
+-                  &quot;eigenvectors/values. Note that each such re-computation will\n&quot;
+-                  &quot;cost O(n_eigen * n)&quot;);
+-    declareOption(ol, &quot;lambda&quot;, &amp;NatGradEstimator::lambda,
+-                  OptionBase::buildoption,
+-                  &quot;Initial variance. The first covariance is assumed to be\n&quot;
+-                  &quot;lambda times the identity. Default = 1.\n&quot;);
+-    declareOption(ol, &quot;n_eigen&quot;, &amp;NatGradEstimator::n_eigen,
+-                  OptionBase::buildoption,
+-                  &quot;Number of principal eigenvectors of the covariance matrix\n&quot;
+-                  &quot;that are kept in its approximation.\n&quot;);
+-    declareOption(ol, &quot;gamma&quot;, &amp;NatGradEstimator::gamma,
+-                  OptionBase::buildoption,
+-                  &quot;Forgetting factor in moving average estimator of covariance. 0&lt;gamma&lt;1.\n&quot;);
+-    declareOption(ol, &quot;amari_version&quot;, &amp;NatGradEstimator::amari_version,
+-                  OptionBase::buildoption,
+-                  &quot;Instead of our tricks, use the formula Ginv &lt;-- (1+eps) Ginv - eps Ginv g g' Ginv\n&quot;
+-                  &quot;to estimate the inverse of the covariance matrix, and multiply it with g at each step.\n&quot;);
+-    declareOption(ol, &quot;verbosity&quot;, &amp;NatGradEstimator::verbosity,
+-                  OptionBase::buildoption,
+-                  &quot;Verbosity level\n&quot;);
+-    declareOption(ol, &quot;renormalize&quot;, &amp;NatGradEstimator::renormalize,
+-                  OptionBase::buildoption,
+-                  &quot;Wether to renormalize z wrt scaling that gamma produces\n&quot;);
+-
+-    declareOption(ol, &quot;n_dim&quot;, &amp;NatGradEstimator::n_dim,
+-                  OptionBase::learntoption,
+-                  &quot;Number of dimensions of the gradient vectors\n&quot;);
+-    declareOption(ol, &quot;Ut&quot;, &amp;NatGradEstimator::Ut,
+-                  OptionBase::learntoption,
+-                  &quot;Estimated scaled principal eigenvectors of the gradients covariance matrix\n&quot;
+-                  &quot;(stored in the rows of Ut)\n&quot;);
+-    declareOption(ol, &quot;G&quot;, &amp;NatGradEstimator::G,
+-                  OptionBase::learntoption,
+-                  &quot;Gram matrix growing during a minibatch\n&quot;);
+-    declareOption(ol, &quot;previous_t&quot;, &amp;NatGradEstimator::previous_t,
+-                  OptionBase::learntoption,
+-                  &quot;Value of t at previous call of operator()\n&quot;);
+-    declareOption(ol, &quot;Xt&quot;, &amp;NatGradEstimator::Xt,
+-                  OptionBase::learntoption,
+-                  &quot;contains in its rows the scaled eigenvectors and g's\n&quot;
+-                  &quot;seen since the beginning of the minibatch.\n&quot;);
+-
+-    // Now call the parent class' declareOptions
+-    inherited::declareOptions(ol);
+-}
+-
+-void NatGradEstimator::build_()
+-{
+-    init();
+-}
+-
+-void NatGradEstimator::init()
+-{
+-    if (n_dim&gt;=0)
+-    {
+-        PLASSERT_MSG(n_dim&gt;0, &quot;NatGradEstimator::init(), n_dim should be &gt; 0&quot;);
+-        PLASSERT_MSG(gamma&lt;1 &amp;&amp; gamma&gt;0, &quot;NatGradEstimator::init(), gamma should be &lt; 1 and &gt;0&quot;);
+-        Ut.resize(n_eigen,n_dim);
+-        Vt.resize(n_eigen+1,n_eigen+cov_minibatch_size);
+-        Vkt = Vt.subMatRows(0,n_eigen);
+-        D.resize(n_eigen+1);
+-        G.resize(n_eigen + cov_minibatch_size, n_eigen + cov_minibatch_size);
+-        A.resize(n_eigen + cov_minibatch_size, n_eigen + cov_minibatch_size);
+-        G.clear();
+-        Xt.resize(n_eigen+cov_minibatch_size, n_dim);
+-        Xt.clear();
+-        r.resize(n_eigen);
+-    }
+-}
+-void NatGradEstimator::operator()(int t, const Vec&amp; g, Vec v)
+-{
+-    if (t!=0)
+-        PLASSERT_MSG(t==previous_t+1, &quot;NatGradEstimator() should be called sequentially!&quot;);
+-    if  (n_dim&lt;0) 
+-    {
+-        PLASSERT_MSG(t==0, &quot;The first call to NatGradEstimator() should be with t=0\n&quot;);
+-        n_dim = g.length();
+-        v.resize(n_dim);
+-        init();
+-    }
+-    int i = t % cov_minibatch_size;
+-    int n = n_eigen+i;
+-    Xt.resize(n+1,n_dim);
+-    Vec newX = Xt(n);
+-    real rn = pow(gamma,real(-0.5*(i+1)));
+-    multiply(g,rn,newX);
+-    G.resize(n+1,n+1);
+-    Vec newG=G(n);
+-    product(newG,Xt,newX);
+-    G.column(n) &lt;&lt; newG;
+-    r.resize(n+1);
+-    r.clear();
+-    r[n] = rn;
+-    // solve linear system (G + \gamma^{-k} \lambda I) a = r
+-    pivots.resize(n);
+-    A.resize(n+1,n+1);
+-    A &lt;&lt; G;
+-    real rn2 = rn*rn;
+-    real coef = rn2*lambda;
+-    for (int i=0;i&lt;=n;i++)
+-        A(i,i) += coef;
+-    Mat r_row = r.toMat(1,n+1);
+-    int status = lapackSolveLinearSystem(A,r_row,pivots);
+-    if (status!=0)
+-        PLWARNING(&quot;NatGradEstimator: lapackSolveLinearSystem returned %d\n:&quot;,status);
+-    if (verbosity&gt;1 &amp;&amp; i%(cov_minibatch_size/3)==0)
+-        cout &lt;&lt; &quot;solution r = &quot; &lt;&lt; r &lt;&lt; endl;
+-    // solution is in r
+-    transposeProduct(v, Xt, r);
+-    if (renormalize)
+-        v*=(1 - pow(gamma,real(t+1)))/(1 - gamma);
+-        //v/=(1 - pow(gamma,real(t+1)))/(1 - gamma);
+-/*    {
+-        real gnorm = dot(g,g);
+-        real vnorm = dot(v,v);
+-        g*=sqrt(vnorm/gnorm);
+-    }
+-*/
+-    if (verbosity&gt;0 &amp;&amp; i%(cov_minibatch_size/2)==0)
+-    {
+-        real gnorm = dot(g,g);
+-        real vnorm = dot(v,v);
+-        real angle = acos(dot(v,g)/sqrt(gnorm*vnorm))*360/(2*3.14159);
+-        cout &lt;&lt; &quot;angle(g,v)=&quot;&lt;&lt;angle&lt;&lt;&quot;, norm ratio=&quot;&lt;&lt;vnorm/gnorm&lt;&lt;endl;
+-    }
+-
+-    // recompute the eigen-decomposition
+-    if (i+1==cov_minibatch_size)
+-    {
+-        // get eigen-decomposition, with one more eigen-x than necessary to check if coherent with lambda
+-        eigenVecOfSymmMat(G,n_eigen+1,D,Vt);
+-        
+-        // convert eigenvectors Vt of G into eigenvectors U of C
+-        product(Ut,Vkt,Xt);
+-        Ut *= 1.0/rn;
+-        D *= 1.0/rn2;
+-        for (int j=0;j&lt;n_eigen;j++) 
+-            if (D[j]&lt;1e-10)
+-                PLWARNING(&quot;NatGradEstimator: very small eigenvalue %d = %g\n&quot;,j,D[j]);
+-        if (verbosity&gt;0) // verifier Ut U = D/
+-        {
+-            static Mat Dmat;
+-            cout &lt;&lt; &quot;eigenvalues = &quot; &lt;&lt; D &lt;&lt; endl;
+-            if (verbosity&gt;2)
+-            {
+-                Dmat.resize(n_eigen,n_eigen);
+-                productTranspose(Dmat,Ut,Ut);
+-                for (int j=0;j&lt;n_eigen;j++) 
+-                    Dmat(j,j)-=D[j];
+-                cout &lt;&lt; &quot;norm(U' U - D)/(n_eigen*n_eigen) = &quot; &lt;&lt; sumsquare(Dmat.toVec())/n_eigen &lt;&lt; endl;
+-            }
+-        }
+-        // prepare for next minibatch
+-        Xt.resize(n_eigen,n_dim);
+-        Xt &lt;&lt; Ut;
+-        G.resize(n_eigen,n_eigen);
+-        G.clear();
+-        for (int j=0;j&lt;n_eigen;j++)
+-            G(j,j) = D[j];
+-    }
+-    previous_t = t;
+-}
+-
+-} // end of namespace PLearn
+-
+-
+-/*
+-  Local Variables:
+-  mode:c++
+-  c-basic-offset:4
+-  c-file-style:&quot;stroustrup&quot;
+-  c-file-offsets:((innamespace . 0)(inline-open . 0))
+-  indent-tabs-mode:nil
+-  fill-column:79
+-  End:
+-*/
+-
+-// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Deleted: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradEstimator.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradEstimator.h	2007-04-16 13:41:54 UTC (rev 6894)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradEstimator.h	2007-04-16 20:43:03 UTC (rev 6895)
+@@ -1,199 +0,0 @@
+-// -*- C++ -*-
+-
+-// NatGradEstimator.h
+-//
+-// Copyright (C) 2007 yoshua Bengio
+-//
+-// Redistribution and use in source and binary forms, with or without
+-// modification, are permitted provided that the following conditions are met:
+-//
+-//  1. Redistributions of source code must retain the above copyright
+-//     notice, this list of conditions and the following disclaimer.
+-//
+-//  2. Redistributions in binary form must reproduce the above copyright
+-//     notice, this list of conditions and the following disclaimer in the
+-//     documentation and/or other materials provided with the distribution.
+-//
+-//  3. The name of the authors may not be used to endorse or promote
+-//     products derived from this software without specific prior written
+-//     permission.
+-//
+-// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
+-// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+-// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
+-// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+-// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+-// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+-// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+-// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+-// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+-// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+-//
+-// This file is part of the PLearn library. For more information on the PLearn
+-// library, go to the PLearn Web site at www.plearn.org
+-
+-// Authors: yoshua Bengio
+-
+-/*! \file NatGradEstimator.h */
+-
+-
+-#ifndef NatGradEstimator_INC
+-#define NatGradEstimator_INC
+-
+-#include &lt;plearn/base/Object.h&gt;
+-#include &lt;plearn/math/TMat_impl.h&gt;
+-
+-namespace PLearn {
+-
+-/**
+- * Class used for converting a sequence of n-dimensional gradients g_t
+- * into covariance-corrected update directions v_t, approximating
+- *     v_t = inv(C_t) g_t,
+- * with C_t = gamma C_{t-1} + g_t g_t'.
+- * 
+- * There is a main method, the operator(), which takes a g_t and fills v_t.
+- * The process can be initialized by init(). 
+- */
+-class NatGradEstimator : public Object
+-{
+-    typedef Object inherited;
+-
+-public:
+-    //#####  Public Build Options  ############################################
+-
+-    //! ### declare public option fields (such as build options) here
+-
+-    //! mini-batch size for covariance eigen-decomposition
+-    int cov_minibatch_size;
+-
+-    //! regularization coefficient of covariance matrix (initial values on diagonal)
+-    real lambda;
+-
+-    //! number of eigenvectors-eigenvalues that is preserved of the covariance matrix
+-    int n_eigen;
+-
+-    //! forgetting factor in moving average estimator of covariance
+-    real gamma;
+-
+-    //! number of input dimensions (size of g_t or v_t)
+-    int n_dim;
+-
+-    //! verbosity level, track improvement, spectrum, etgc.
+-    int verbosity;
+-
+-    bool renormalize;
+-
+-    //! use the formula Ginv &lt;-- (1+eps) Ginv - eps Ginv g g' Ginv
+-    //! to estimate the inverse of the covariance matrix
+-    bool amari_version;
+-
+-public:
+-    //#####  Public Member Functions  #########################################
+-
+-    //! Default constructor
+-    // ### Make sure the implementation in the .cc
+-    // ### initializes all fields to reasonable default values.
+-    NatGradEstimator();
+-
+-    // Your other public member functions go here
+-
+-    //! initialize the object to start collecting covariance statistics from fresh
+-    void init();
+-
+-    //! main method of this class: reads from the gradient &quot;g&quot; field
+-    //! and writes into the &quot;v&quot; field an estimator of inv(cov) g.
+-    //! The argument is an index over examples, which is used to
+-    //! know when cycling through a minibatch. The statistics on
+-    //! the covariance are updated.
+-    void operator()(int t, const Vec&amp; g, Vec v);
+-
+-    //#####  PLearn::Object Protocol  #########################################
+-
+-    // Declares other standard object methods.
+-    // ### If your class is not instantiatable (it has pure virtual methods)
+-    // ### you should replace this by PLEARN_DECLARE_ABSTRACT_OBJECT
+-    PLEARN_DECLARE_OBJECT(NatGradEstimator);
+-
+-    // Simply calls inherited::build() then build_()
+-    virtual void build();
+-
+-    //! Transforms a shallow copy into a deep copy
+-    // (PLEASE IMPLEMENT IN .cc)
+-    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
+-
+-protected:
+-    //#####  Protected Options  ###############################################
+-
+-    // ### Declare protected option fields (such as learned parameters) here
+-
+-    //! k principal eigenvectors of the estimated covariance matrix
+-    Mat Ut; // dimension = n_eigen x n_dim
+-
+-    //! k principal eigenvalues of the estimated covariance matrix
+-    Vec D; 
+-
+-    //! contains in its rows the scaled eigenvectors and g's seen since the beginning of the minibatch
+-    Mat Xt;
+-
+-    //! Gram matrix = X' X = Xt Xt'
+-    Mat G; 
+-
+-    //! previous value of t
+-    int previous_t;
+-
+-protected:
+-    //#####  Protected Member Functions  ######################################
+-
+-    //! Declares the class options.
+-    // (PLEASE IMPLEMENT IN .cc)
+-    static void declareOptions(OptionList&amp; ol);
+-
+-private:
+-    //#####  Private Member Functions  ########################################
+-
+-    //! This does the actual building.
+-    // (PLEASE IMPLEMENT IN .cc)
+-    void build_();
+-
+-private:
+-    //#####  Private Data Members  ############################################
+-
+-    // The rest of the private stuff goes here
+-
+-    Vec r; //! rhs of linear system (G + gamma^{-i} lambda I) a = r
+-    Mat Vt;
+-    Mat Vkt; //! sub-matrix of Vt with first n_eigen eigen-vectors
+-    Mat A; // matrix for linear system solving
+-    TVec&lt;int&gt; pivots; // pivots for linear system solving
+-    /*
+-    //! temporary buffer
+-    Vec tmp_v;
+-    //! Gram matrix, of dimension (k + minibatch_size, k + minibatch_size)
+-    //! and its sub-matrices
+-    Mat M, M11, M12, M21, M22;
+-    //! k+1 eigenvectors of the Gram matrix (in the rows)
+-    Mat Vbt; //! sub-matrix of Vt with last cov_minibatch_size elements of each eigen-vector
+-    //! temp for new value of Ut
+-    Mat newUt;
+-    */
+-};
+-
+-// Declares a few other classes and functions related to this class
+-DECLARE_OBJECT_PTR(NatGradEstimator);
+-
+-} // end of namespace PLearn
+-
+-#endif
+-
+-
+-/*
+-  Local Variables:
+-  mode:c++
+-  c-basic-offset:4
+-  c-file-style:&quot;stroustrup&quot;
+-  c-file-offsets:((innamespace . 0)(inline-open . 0))
+-  indent-tabs-mode:nil
+-  fill-column:79
+-  End:
+-*/
+-// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-04-16 13:41:54 UTC (rev 6894)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-04-16 20:43:03 UTC (rev 6895)
+@@ -41,7 +41,7 @@
+ #define NatGradNNet_INC
+ 
+ #include &lt;plearn_learners/generic/PLearner.h&gt;
+-#include &lt;plearn_learners/generic/EXPERIMENTAL/NatGradEstimator.h&gt;
++#include &lt;plearn_learners/generic/NatGradEstimator.h&gt;
+ #include &lt;plearn/sys/Profiler.h&gt;
+ 
+ namespace PLearn {
+
+Copied: trunk/plearn_learners/generic/NatGradEstimator.cc (from rev 6894, trunk/plearn_learners/generic/EXPERIMENTAL/NatGradEstimator.cc)
+
+Copied: trunk/plearn_learners/generic/NatGradEstimator.h (from rev 6894, trunk/plearn_learners/generic/EXPERIMENTAL/NatGradEstimator.h)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000343.html">[Plearn-commits] r6894 - trunk/plearn/base
+</A></li>
+	<LI>Next message: <A HREF="000345.html">[Plearn-commits] r6896 - trunk/commands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#344">[ date ]</a>
+              <a href="thread.html#344">[ thread ]</a>
+              <a href="subject.html#344">[ subject ]</a>
+              <a href="author.html#344">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

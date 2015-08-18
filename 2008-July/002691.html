@@ -1,0 +1,216 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9242 - trunk/plearn/python
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9242%20-%20trunk/plearn/python&In-Reply-To=%3C200807141933.m6EJXCEf016125%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002690.html">
+   <LINK REL="Next"  HREF="002692.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9242 - trunk/plearn/python</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9242%20-%20trunk/plearn/python&In-Reply-To=%3C200807141933.m6EJXCEf016125%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9242 - trunk/plearn/python">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Mon Jul 14 21:33:12 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002690.html">[Plearn-commits] r9241 - trunk/plearn_learners/generic
+</A></li>
+        <LI>Next message: <A HREF="002692.html">[Plearn-commits] r9243 - trunk/plearn/python
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2691">[ date ]</a>
+              <a href="thread.html#2691">[ thread ]</a>
+              <a href="subject.html#2691">[ subject ]</a>
+              <a href="author.html#2691">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2008-07-14 21:33:11 +0200 (Mon, 14 Jul 2008)
+New Revision: 9242
+
+Modified:
+   trunk/plearn/python/PythonExtension.cc
+   trunk/plearn/python/PythonExtension.h
+   trunk/plearn/python/PythonObjectWrapper.cc
+Log:
+- allow conversion of Python unicode to C++ string using UTF-8 encoding
+- const_cast string constants to 'char*' for Python API to make g++ 4.2 happy
+
+
+
+Modified: trunk/plearn/python/PythonExtension.cc
+===================================================================
+--- trunk/plearn/python/PythonExtension.cc	2008-07-14 17:56:16 UTC (rev 9241)
++++ trunk/plearn/python/PythonExtension.cc	2008-07-14 19:33:11 UTC (rev 9242)
+@@ -440,10 +440,10 @@
+ 
+ // Init func for python module.
+ // init module, then inject global funcs
+-void initPythonExtensionModule(char* module_name)
++void initPythonExtensionModule(char const * module_name)
+ {
+     PythonObjectWrapper::initializePython();
+-    PyObject* plext= Py_InitModule(module_name, NULL);
++    PyObject* plext= Py_InitModule(const_cast&lt;char*&gt;(module_name), NULL);
+     setPythonModuleAndInject(plext);
+ }
+ 
+
+Modified: trunk/plearn/python/PythonExtension.h
+===================================================================
+--- trunk/plearn/python/PythonExtension.h	2008-07-14 17:56:16 UTC (rev 9241)
++++ trunk/plearn/python/PythonExtension.h	2008-07-14 19:33:11 UTC (rev 9242)
+@@ -48,7 +48,7 @@
+ void injectPLearnClasses(PyObject* env);
+ 
+ // Init func for python module.
+-void initPythonExtensionModule(char* module_name);
++void initPythonExtensionModule(char const * module_name);
+ 
+ // inject funcs. and classes, set global module.
+ void setPythonModuleAndInject(PyObject* module);
+
+Modified: trunk/plearn/python/PythonObjectWrapper.cc
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.cc	2008-07-14 17:56:16 UTC (rev 9241)
++++ trunk/plearn/python/PythonObjectWrapper.cc	2008-07-14 19:33:11 UTC (rev 9242)
+@@ -149,8 +149,26 @@
+ string ConvertFromPyObject&lt;string&gt;::convert(PyObject* pyobj,
+                                             bool print_traceback)
+ {
+-    PLASSERT( pyobj );
+-    if (! PyString_Check(pyobj))
++    PLASSERT(pyobj);
++
++    // if unicode, encode into a string (utf8) then return
++    if(PyUnicode_Check(pyobj))
++    {
++        PyObject* pystr= PyUnicode_AsUTF8String(pyobj);
++        if(!pystr)
++        {
++            if(PyErr_Occurred()) PyErr_Print();
++            Py_DECREF(pystr);
++            PLERROR(&quot;in ConvertFromPyObject&lt;string&gt;::convert : &quot;
++                    &quot;Unicode to string conversion failed.&quot;);
++        }
++        string str= PyString_AsString(pystr);
++        Py_DECREF(pystr);
++        return str;
++    }
++    
++    // otherwise, should already be a string
++    if(!PyString_Check(pyobj))
+         PLPythonConversionError(&quot;ConvertFromPyObject&lt;string&gt;&quot;, pyobj,
+                                 print_traceback);
+     return PyString_AsString(pyobj);
+@@ -183,13 +201,13 @@
+     if(pyobj == Py_None)
+         return 0;
+ 
+-    if(!PyObject_HasAttrString(pyobj, &quot;_cptr&quot;))
++    if(!PyObject_HasAttrString(pyobj, const_cast&lt;char*&gt;(&quot;_cptr&quot;)))
+     {
+         PLERROR(&quot;in ConvertFromPyObject&lt;Object*&gt;::convert : &quot;
+                 &quot;python object has no attribute '_cptr'&quot;);
+         return 0;
+     }
+-    PyObject* cptr= PyObject_GetAttrString(pyobj, &quot;_cptr&quot;);
++    PyObject* cptr= PyObject_GetAttrString(pyobj, const_cast&lt;char*&gt;(&quot;_cptr&quot;));
+ 
+     if (! PyCObject_Check(cptr))
+         PLPythonConversionError(&quot;ConvertFromPyObject&lt;Object*&gt;&quot;, pyobj,
+@@ -263,7 +281,7 @@
+     PLASSERT(pyobj);
+     if(pyobj == Py_None)
+         return 0;
+-    if(PyObject_HasAttrString(pyobj, &quot;_cptr&quot;))
++    if(PyObject_HasAttrString(pyobj, const_cast&lt;char*&gt;(&quot;_cptr&quot;)))
+         return static_cast&lt;VMatrix*&gt;(
+             ConvertFromPyObject&lt;Object*&gt;::convert(pyobj, print_traceback));
+     Mat m;
+@@ -316,28 +334,28 @@
+ RealRange ConvertFromPyObject&lt;RealRange&gt;::convert(PyObject* pyobj, bool print_traceback)
+ {
+     PLASSERT(pyobj);
+-    PyObject* py_leftbracket= PyObject_GetAttrString(pyobj, &quot;leftbracket&quot;);
++    PyObject* py_leftbracket= PyObject_GetAttrString(pyobj, const_cast&lt;char*&gt;(&quot;leftbracket&quot;));
+     if(!py_leftbracket)
+         PLPythonConversionError(&quot;ConvertFromPyObject&lt;RealRange&gt;: &quot;
+                                 &quot;not a RealRange (no 'leftbracket' attr.)&quot;,
+                                 pyobj, print_traceback);
+     string leftbracket= ConvertFromPyObject&lt;string&gt;::convert(py_leftbracket, print_traceback);
+     Py_DECREF(py_leftbracket);
+-    PyObject* py_low= PyObject_GetAttrString(pyobj, &quot;low&quot;);
++    PyObject* py_low= PyObject_GetAttrString(pyobj, const_cast&lt;char*&gt;(&quot;low&quot;));
+     if(!py_low) 
+         PLPythonConversionError(&quot;ConvertFromPyObject&lt;RealRange&gt;: &quot;
+                                 &quot;not a RealRange (no 'low' attr.)&quot;,
+                                 pyobj, print_traceback);
+     real low= ConvertFromPyObject&lt;real&gt;::convert(py_low, print_traceback);
+     Py_DECREF(py_low);
+-    PyObject* py_high= PyObject_GetAttrString(pyobj, &quot;high&quot;);
++    PyObject* py_high= PyObject_GetAttrString(pyobj, const_cast&lt;char*&gt;(&quot;high&quot;));
+     if(!py_high) 
+         PLPythonConversionError(&quot;ConvertFromPyObject&lt;RealRange&gt;: &quot;
+                                 &quot;not a RealRange (no 'high' attr.)&quot;,
+                                 pyobj, print_traceback);
+     real high= ConvertFromPyObject&lt;real&gt;::convert(py_high, print_traceback);
+     Py_DECREF(py_high);
+-    PyObject* py_rightbracket= PyObject_GetAttrString(pyobj, &quot;rightbracket&quot;);
++    PyObject* py_rightbracket= PyObject_GetAttrString(pyobj, const_cast&lt;char*&gt;(&quot;rightbracket&quot;));
+     if(!py_rightbracket) 
+         PLPythonConversionError(&quot;ConvertFromPyObject&lt;RealRange&gt;: &quot;
+                                 &quot;not a RealRange (no 'rightbracket' attr.)&quot;,
+@@ -350,14 +368,14 @@
+ VMField ConvertFromPyObject&lt;VMField&gt;::convert(PyObject* pyobj, bool print_traceback)
+ {
+     PLASSERT(pyobj);
+-    PyObject* py_name = PyObject_GetAttrString(pyobj, &quot;name&quot;);
++    PyObject* py_name = PyObject_GetAttrString(pyobj, const_cast&lt;char*&gt;(&quot;name&quot;));
+     if (!py_name)
+         PLPythonConversionError(&quot;ConvertFromPyObject&lt;VMField&gt;: not a VMField (no 'name' attr.)&quot;,
+                                 pyobj, print_traceback);
+     string name = ConvertFromPyObject&lt;string&gt;::convert(py_name, print_traceback);
+     Py_DECREF(py_name);
+ 
+-    PyObject* py_fieldtype = PyObject_GetAttrString(pyobj, &quot;fieldtype&quot;);
++    PyObject* py_fieldtype = PyObject_GetAttrString(pyobj, const_cast&lt;char*&gt;(&quot;fieldtype&quot;));
+     if(!py_fieldtype) 
+         PLPythonConversionError(&quot;ConvertFromPyObject&lt;VMField&gt;: not a VMField (no 'fieldtype' attr.)&quot;,
+                                 pyobj, print_traceback);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002690.html">[Plearn-commits] r9241 - trunk/plearn_learners/generic
+</A></li>
+	<LI>Next message: <A HREF="002692.html">[Plearn-commits] r9243 - trunk/plearn/python
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2691">[ date ]</a>
+              <a href="thread.html#2691">[ thread ]</a>
+              <a href="subject.html#2691">[ subject ]</a>
+              <a href="author.html#2691">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

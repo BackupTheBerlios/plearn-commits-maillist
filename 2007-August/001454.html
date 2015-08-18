@@ -1,0 +1,349 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8006 - in trunk: plearn/python	python_modules/plearn/pymake
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8006%20-%20in%20trunk%3A%20plearn/python%0A%09python_modules/plearn/pymake&In-Reply-To=%3C200708211912.l7LJCwik032116%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001453.html">
+   <LINK REL="Next"  HREF="001455.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8006 - in trunk: plearn/python	python_modules/plearn/pymake</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8006%20-%20in%20trunk%3A%20plearn/python%0A%09python_modules/plearn/pymake&In-Reply-To=%3C200708211912.l7LJCwik032116%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8006 - in trunk: plearn/python	python_modules/plearn/pymake">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Tue Aug 21 21:12:58 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001453.html">[Plearn-commits] r8005 - trunk/plearn_learners/regressors
+</A></li>
+        <LI>Next message: <A HREF="001455.html">[Plearn-commits] r8007 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1454">[ date ]</a>
+              <a href="thread.html#1454">[ thread ]</a>
+              <a href="subject.html#1454">[ subject ]</a>
+              <a href="author.html#1454">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2007-08-21 21:12:57 +0200 (Tue, 21 Aug 2007)
+New Revision: 8006
+
+Modified:
+   trunk/plearn/python/PythonExtension.cc
+   trunk/plearn/python/PythonObjectWrapper.cc
+   trunk/plearn/python/PythonObjectWrapper.h
+   trunk/python_modules/plearn/pymake/pymake.py
+Log:
+- pybridge: keep python instances alive as long as corresponding plearn object is alive (w/ rudimentary gc)
+- new -pyso pymake option to create shared object libraries for python modules
+
+
+
+Modified: trunk/plearn/python/PythonExtension.cc
+===================================================================
+--- trunk/plearn/python/PythonExtension.cc	2007-08-21 15:01:23 UTC (rev 8005)
++++ trunk/plearn/python/PythonExtension.cc	2007-08-21 19:12:57 UTC (rev 8006)
+@@ -50,6 +50,9 @@
+     TVec&lt;PythonObjectWrapper&gt; as;
+     for(int i= 0; i &lt; nas; ++i)
+         as.push_back(PythonObjectWrapper(PyTuple_GET_ITEM(args, i)));
++
++    PythonObjectWrapper::gc_collect1();
++
+     try
+     {
+         PythonObjectWrapper returned_value= t-&gt;call(0, as);
+
+Modified: trunk/plearn/python/PythonObjectWrapper.cc
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.cc	2007-08-21 15:01:23 UTC (rev 8005)
++++ trunk/plearn/python/PythonObjectWrapper.cc	2007-08-21 19:12:57 UTC (rev 8006)
+@@ -395,6 +395,8 @@
+     Object* obj= args_tvec[0];
+     args_tvec.subVecSelf(1, args_tvec.size()-1);
+ 
++    gc_collect1();
++
+     //call, catch and send any errors to python
+     try
+     {
+@@ -441,6 +443,10 @@
+     obj-&gt;unref();//python no longer references this obj.
+     //perr &lt;&lt; &quot;aft.del o-&gt;usage()= &quot; &lt;&lt; obj-&gt;usage() &lt;&lt; endl;
+ 
++    //GC
++    if(m_gc_next_object-&gt;first == obj)
++        m_gc_next_object= m_wrapped_objects.end();
++
+     m_wrapped_objects.erase(obj);
+ 
+     //printWrappedObjects();
+@@ -453,7 +459,9 @@
+     TVec&lt;PyObject*&gt; args_tvec= 
+         PythonObjectWrapper(args).as&lt;TVec&lt;PyObject*&gt; &gt;();
+     Object* o= newObjectFromClassname(PyString_AsString(args_tvec[1]));
++
+     //perr &lt;&lt; &quot;new o-&gt;usage()= &quot; &lt;&lt; o-&gt;usage() &lt;&lt; endl;
++
+     return PyCObject_FromVoidPtr(o, 0);
+ }
+ 
+@@ -465,15 +473,34 @@
+     Object* o= PythonObjectWrapper(pyo);
+     if(args_tvec.length() &lt; 3 || args_tvec[2]==Py_True)
+         o-&gt;ref();
++
+     //perr &lt;&lt; &quot;ref o-&gt;usage()= &quot; &lt;&lt; o-&gt;usage() &lt;&lt; endl;
+     PythonObjectWrapper::m_wrapped_objects[o]= pyo;
+     //perr &lt;&lt; &quot;refCPPObj: &quot; &lt;&lt; (void*)o &lt;&lt; &quot; : &quot; &lt;&lt; (void*)pyo &lt;&lt; endl;
+ 
++    Py_INCREF(pyo);
+     //printWrappedObjects();
+ 
+     return newPyObject();//None
+ }
+ 
++void PythonObjectWrapper::gc_collect1()
++{
++    if(m_gc_next_object == m_wrapped_objects.end())
++        m_gc_next_object= m_wrapped_objects.begin();
++    if(m_gc_next_object != m_wrapped_objects.end())
++    {
++        wrapped_objects_t::iterator it= m_gc_next_object;
++        ++m_gc_next_object;
++        if(it-&gt;first-&gt;usage() == 1 &amp;&amp; it-&gt;second-&gt;ob_refcnt == 1)
++        {
++            Py_DECREF(it-&gt;second);
++            gc_collect1();
++        }
++    }
++}
++
++
+ //#####  newPyObject  #########################################################
+ 
+ //! Return None (increments refcount)
+@@ -493,11 +520,14 @@
+ PyMethodDef PythonObjectWrapper::m_unref_method_def;
+ PyMethodDef PythonObjectWrapper::m_newCPPObj_method_def;
+ PyMethodDef PythonObjectWrapper::m_refCPPObj_method_def;
++PythonObjectWrapper::wrapped_objects_t::iterator 
++  PythonObjectWrapper::m_gc_next_object= 
++  PythonObjectWrapper::m_wrapped_objects.end();
+ 
+ PyObject* ConvertToPyObject&lt;Object*&gt;::newPyObject(const Object* x)
+ {
+-//     perr &lt;&lt; &quot;in ConvertToPyObject&lt;Object*&gt;::newPyObject : &quot;
+-//          &lt;&lt; x-&gt;classname() &lt;&lt; ' ' &lt;&lt; (void*)x &lt;&lt; endl;
++    //perr &lt;&lt; &quot;in ConvertToPyObject&lt;Object*&gt;::newPyObject : &quot;
++    //     &lt;&lt; x-&gt;classname() &lt;&lt; ' ' &lt;&lt; (void*)x &lt;&lt; endl;
+ 
+     // void ptr becomes None
+     if(!x) return PythonObjectWrapper::newPyObject();
+@@ -555,7 +585,8 @@
+ 
+ //    perr &lt;&lt; &quot;newPyObject: &quot; &lt;&lt; (void*)x &lt;&lt; &quot; : &quot; &lt;&lt; (void*)the_obj &lt;&lt; endl;
+ 
+-//    printWrappedObjects();
++    Py_INCREF(the_obj);
++    //printWrappedObjects();
+ 
+     return the_obj;
+ }
+@@ -776,9 +807,29 @@
+              &lt;&lt; (void*)it-&gt;second &lt;&lt; ' ' &lt;&lt; it-&gt;second-&gt;ob_refcnt &lt;&lt; endl;
+ }
+ 
++void ramassePoubelles()
++{
++    size_t sz= 0;
++    while(sz != PythonObjectWrapper::m_wrapped_objects.size())
++    {
++        sz= PythonObjectWrapper::m_wrapped_objects.size();
++        PythonObjectWrapper::wrapped_objects_t::iterator it= 
++            PythonObjectWrapper::m_wrapped_objects.begin();
++        while(it != PythonObjectWrapper::m_wrapped_objects.end())
++        {
++            PythonObjectWrapper::wrapped_objects_t::iterator jt= it;
++            ++it;
++            if(jt-&gt;second-&gt;ob_refcnt == 1 &amp;&amp; jt-&gt;first-&gt;usage() == 1)
++                Py_DECREF(jt-&gt;second);
++        }
++    }
++}
++
+ BEGIN_DECLARE_REMOTE_FUNCTIONS
+     declareFunction(&quot;printWrappedObjects&quot;, &amp;printWrappedObjects,
+                     (BodyDoc(&quot;Prints PLearn objects wrapped into python.\n&quot;)));
++    declareFunction(&quot;ramassePoubelles&quot;, &amp;ramassePoubelles,
++                    (BodyDoc(&quot;GC for wrapped objects.\n&quot;)));
+ END_DECLARE_REMOTE_FUNCTIONS
+ 
+ 
+
+Modified: trunk/plearn/python/PythonObjectWrapper.h
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.h	2007-08-21 15:01:23 UTC (rev 8005)
++++ trunk/plearn/python/PythonObjectWrapper.h	2007-08-21 19:12:57 UTC (rev 8006)
+@@ -846,6 +846,8 @@
+ 
+     static PyObject* refCPPObj(PyObject* self, PyObject* args);
+ 
++    static void gc_collect1();
++
+     //#####  Low-Level PyObject Creation  #####################################
+ 
+     /**
+@@ -870,6 +872,7 @@
+     static pypl_classes_t m_pypl_classes;
+     typedef map&lt;const Object*, PyObject*&gt; wrapped_objects_t;
+     static wrapped_objects_t m_wrapped_objects; //!&lt; for wrapped PLearn Objects
++    static wrapped_objects_t::iterator m_gc_next_object;
+ 
+ protected:
+     OwnershipMode m_ownership;               //!&lt; Whether we own the PyObject or not
+@@ -1399,6 +1402,7 @@
+ 
+ //! for debug purposes
+ void printWrappedObjects();
++void ramassePoubelles();
+ 
+ } // end of namespace PLearn
+ 
+
+Modified: trunk/python_modules/plearn/pymake/pymake.py
+===================================================================
+--- trunk/python_modules/plearn/pymake/pymake.py	2007-08-21 15:01:23 UTC (rev 8005)
++++ trunk/python_modules/plearn/pymake/pymake.py	2007-08-21 19:12:57 UTC (rev 8006)
+@@ -911,8 +911,8 @@
+             print &quot;Warning: bad target&quot;, target
+         else:
+             info = file_info(cctarget)
+-            if info.hasmain or create_dll or create_so:
+-                if not force_link and not force_recompilation and info.corresponding_output_is_up_to_date() and not create_dll and not create_so:
++            if info.hasmain or create_dll or create_so or create_pyso:
++                if not force_link and not force_recompilation and info.corresponding_output_is_up_to_date() and not create_dll and not create_so and not create_pyso:
+                     info.make_symbolic_link(linkname, None, info.corresponding_output) # remake the correct symbolic link
+                     print 'Target',info.filebase,'is up to date.'
+                 else:
+@@ -1051,7 +1051,7 @@
+                 print '[ LINKING',ccfile.filebase,']'
+             link_exit_code = ccfile.launch_linking()
+             if platform!='win32':
+-                if create_so:
++                if create_so or create_pyso:
+                     so_filename = os.path.basename(ccfile.corresponding_output)
+                     ccfile.make_symbolic_link(so_filename, so_filename)
+                 else:
+@@ -1096,7 +1096,7 @@
+     so_options = &quot;&quot;
+     if force_32bits:
+         linkeroptions = linkeroptions + ' -m32'
+-    if create_so:
++    if create_so or create_pyso:
+         so_options = &quot; -shared &quot;
+     for opt in options:
+         optdef = pymake_options_defs[opt]
+@@ -1639,6 +1639,9 @@
+ 
+             elif create_so:
+                 self.corresponding_output = join(self.filedir, objsdir, 'lib'+self.filebase+'.so')
++                
++            elif create_pyso:
++                self.corresponding_output = join(self.filedir, objsdir, self.filebase+'.so')
+ 
+             elif self.hasmain:
+                 self.corresponding_output = join(self.filedir, objsdir, self.filebase)
+@@ -1683,7 +1686,7 @@
+         &quot;&quot;&quot;returns the list of FileInfos of all .cc files that need to be linked together to produce the corresponding_output&quot;&quot;&quot;
+         if not hasattr(self,&quot;ccfiles_to_link&quot;):
+             #if not self.hasmain or not self.is_ccfile:
+-            if (not self.hasmain and not create_dll and not create_so) or not self.is_ccfile:
++            if (not self.hasmain and not create_dll and not create_so and not create_pyso) or not self.is_ccfile:
+                 raise &quot;called get_ccfiles_to_link on a file that is not a .cc file or that does not contain a main()&quot;
+             self.ccfiles_to_link = []
+             visited_hfiles = []
+@@ -2216,7 +2219,7 @@
+         so_options = &quot;&quot;
+         if force_32bits:
+             linkeroptions = linkeroptions + ' -m32'
+-        if create_so:
++        if create_so or create_pyso:
+             so_options = &quot; -shared &quot;
+         elif static_linking:
+             so_options = &quot; -static &quot;
+@@ -2401,6 +2404,7 @@
+     # Variables that can be useful to have read access to in the config file
+     global optionargs, otherargs, linkname, link_target_override, \
+             create_dll, relocatable_dll, no_cygwin, force_32bits, create_so, \
++            create_pyso, \
+             static_linking, force_recompilation, force_link, \
+             local_compilation, symlinkobjs, temp_objs, distribute, vcproj, \
+             local_ofiles, local_ofiles_base_path
+@@ -2546,6 +2550,12 @@
+     else:
+         create_so = 0
+ 
++    if 'pyso' in optionargs:
++        create_pyso = 1
++        optionargs.remove('pyso')
++    else:
++        create_pyso = 0
++
+     # do we want to create a statically linked executable
+     if 'static' in optionargs:
+         static_linking = 1
+@@ -2554,12 +2564,13 @@
+         static_linking = 0
+ 
+     # Check for incompatibilities
+-    if create_so and create_dll:
+-        print 'Error: cannot create a DLL and a Shared Object at the same time.  Remove &quot;-dll&quot; or &quot;-so&quot; option.'
++    if create_so + create_dll + create_pyso &gt; 1:
++        print ('Error: cannot create a DLL, Shared Object and/or Python Shared Object '
++               +'at the same time.  Remove &quot;-dll&quot;, &quot;-so&quot; or &quot;-pyso&quot; option.')
+         sys.exit(100)
+ 
+-    if static_linking and (create_so or create_dll):
+-        print 'Incompatible command line options specified: you may specify only one of -static, -so, -dll'
++    if static_linking and (create_so or create_dll or create_pyso):
++        print 'Incompatible command line options specified: you may specify only one of -static, -so, -dll, -pyso'
+         sys.exit(100)
+ 
+     ##  Options that will not affect the final compiled file
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001453.html">[Plearn-commits] r8005 - trunk/plearn_learners/regressors
+</A></li>
+	<LI>Next message: <A HREF="001455.html">[Plearn-commits] r8007 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1454">[ date ]</a>
+              <a href="thread.html#1454">[ thread ]</a>
+              <a href="subject.html#1454">[ subject ]</a>
+              <a href="author.html#1454">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

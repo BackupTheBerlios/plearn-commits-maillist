@@ -1,0 +1,431 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9010 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9010%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200805152115.m4FLFKlt008527%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002457.html">
+   <LINK REL="Next"  HREF="002459.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9010 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9010%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200805152115.m4FLFKlt008527%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9010 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Thu May 15 23:15:20 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002457.html">[Plearn-commits] r9009 - trunk/scripts
+</A></li>
+        <LI>Next message: <A HREF="002459.html">[Plearn-commits] r9011 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2458">[ date ]</a>
+              <a href="thread.html#2458">[ thread ]</a>
+              <a href="subject.html#2458">[ subject ]</a>
+              <a href="author.html#2458">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-05-15 23:15:19 +0200 (Thu, 15 May 2008)
+New Revision: 9010
+
+Modified:
+   trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc
+   trunk/plearn_learners_experimental/PseudolikelihoodRBM.h
+Log:
+Added an option to adapt the pseudolikelihood context selection 
+
+
+Modified: trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc
+===================================================================
+--- trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc	2008-05-15 18:39:07 UTC (rev 9009)
++++ trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc	2008-05-15 21:15:19 UTC (rev 9010)
+@@ -41,6 +41,7 @@
+ #include &quot;PseudolikelihoodRBM.h&quot;
+ #include &lt;plearn_learners/online/RBMLayer.h&gt;
+ #include &lt;plearn/io/pl_log.h&gt;
++#include &lt;plearn/math/TMat_sort.h&gt;
+ 
+ #define minibatch_hack 0 // Do we force the minibatch setting? (debug hack)
+ 
+@@ -69,6 +70,8 @@
+     n_classes( -1 ),
+     compute_input_space_nll( false ),
+     pseudolikelihood_context_size ( 0 ),
++    pseudolikelihood_context_type( &quot;uniform_random&quot; ),
++    k_most_correlated( -1 ),
+     nll_cost_index( -1 ),
+     class_cost_index( -1 ),
+     training_cpu_time_cost_index ( -1 ),
+@@ -163,6 +166,26 @@
+                   &quot;(default = 0, which corresponds to standard pseudolikelihood).\n&quot;
+                   );
+ 
++    declareOption(ol, &quot;pseudolikelihood_context_type&quot;, 
++                  &amp;PseudolikelihoodRBM::pseudolikelihood_context_type,
++                  OptionBase::buildoption,
++                  &quot;Type of context for generalized pseudolikelihood:\n&quot;
++                  &quot;\&quot;uniform_random\&quot;: context elements are picked uniformly randomly\n&quot;
++                  &quot;\n&quot;
++                  &quot;- \&quot;most_correlated\&quot;: the most correlated (positively or negatively\n&quot;
++                  &quot;                     elemenst with the current input element are picked\n&quot;
++                  &quot;\n&quot;
++                  &quot;- \&quot;most_correlated_uniform_random\&quot;: context elements are picked uniformly\n&quot;
++                  &quot;                                    among the k_most_correlated other input\n&quot;
++                  &quot;                                    elements, for each current input\n&quot;
++                  );
++
++    declareOption(ol, &quot;k_most_correlated&quot;, 
++                  &amp;PseudolikelihoodRBM::k_most_correlated,
++                  OptionBase::buildoption,
++                  &quot;Number of most correlated input elements over which to sample.\n&quot;
++                  );
++
+     declareOption(ol, &quot;input_layer&quot;, &amp;PseudolikelihoodRBM::input_layer,
+                   OptionBase::buildoption,
+                   &quot;The binomial input layer of the RBM.\n&quot;);
+@@ -237,6 +260,18 @@
+             PLERROR(&quot;In PseudolikelihoodRBM::build_(): &quot;
+                     &quot;pseudolikelihood_context_size should be &gt;= 0.&quot;);
+ 
++        if( pseudolikelihood_context_type != &quot;uniform_random&quot; &amp;&amp;
++            pseudolikelihood_context_type != &quot;most_correlated&quot; &amp;&amp;
++            pseudolikelihood_context_type != &quot;most_correlated_uniform_random&quot; )
++            PLERROR(&quot;In PseudolikelihoodRBM::build_(): &quot;
++                    &quot;pseudolikelihood_context_type is not valid.&quot;);
++
++        if( pseudolikelihood_context_type == &quot;most_correlated&quot;
++            &amp;&amp; pseudolikelihood_context_size &lt;= 0 )
++            PLERROR(&quot;In PseudolikelihoodRBM::train(): &quot;
++                    &quot;pseudolikelihood_context_size should be &gt; 0 &quot;
++                    &quot;for \&quot;most_correlated\&quot; context type&quot;);        
++
+         build_layers_and_connections();
+         build_costs();
+ 
+@@ -422,6 +457,8 @@
+     deepCopyField(connection_gradient, copies);
+     deepCopyField(context_indices, copies);
+     deepCopyField(context_indices_per_i, copies);
++    deepCopyField(correlations_per_i, copies);
++    deepCopyField(context_most_correlated, copies);
+     deepCopyField(hidden_activations_context, copies);
+     deepCopyField(hidden_activations_context_k_gradient, copies);
+     deepCopyField(nums, copies);
+@@ -468,6 +505,7 @@
+     Z_is_up_to_date = false;
+ 
+     persistent_gibbs_chain_is_started.fill( false );
++    correlations_per_i.resize(0,0);
+ }
+ 
+ ///////////
+@@ -667,28 +705,211 @@
+                 }
+                 else
+                 {
+-                    // Generate contexts
+-                    for( int i=0; i&lt;context_indices.length(); i++)
+-                        context_indices[i] = i;
+-                    int tmp,k;
+-                    int n = input_layer-&gt;size-1;
+-                    int* c = context_indices.data();
+-                    int* ci;
+-                    for( int i=0; i&lt;context_indices_per_i.length(); i++)
++                    if( ( pseudolikelihood_context_type == &quot;most_correlated&quot; ||
++                          pseudolikelihood_context_type == &quot;most_correlated_uniform_random&quot; )
++                        &amp;&amp; correlations_per_i.length() == 0 )
+                     {
+-                        ci = context_indices_per_i[i];
+-                        for (int j = 0; j &lt; context_indices_per_i.width(); j++) {
+-                            k = j + random_gen-&gt;uniform_multinomial_sample(n - j);
+-                            tmp = c[j];
+-                            c[j] = c[k];
+-                            c[k] = tmp;
+-                            if( c[j] &gt;= i )
+-                                ci[j] = c[j]+1;
+-                            else
+-                                ci[j] = c[j];
++                        Vec corr_input(inputsize());
++                        Vec corr_target(targetsize());
++                        real corr_weight;
++                        Vec mean(inputsize());
++                        mean.clear();
++                        for(int t=0; t&lt;train_set-&gt;length(); t++)
++                        {
++                            train_set-&gt;getExample(t,corr_input,corr_target,
++                                                  corr_weight);
++                            mean += corr_input;
+                         }
++                        mean /= train_set-&gt;length();
++                        
++                        correlations_per_i.resize(inputsize(),inputsize());
++                        correlations_per_i.clear();
++                        Mat cov(inputsize(), inputsize());
++                        cov.clear();
++                        for(int t=0; t&lt;train_set-&gt;length(); t++)
++                        {
++                            train_set-&gt;getExample(t,corr_input,corr_target,
++                                                  corr_weight);
++                            corr_input -= mean;
++                            externalProductAcc(cov,
++                                               corr_input,corr_input);
++                        }
++                        //correlations_per_i /= train_set-&gt;length();
++
++                        for( int i=0; i&lt;inputsize(); i++ )
++                            for( int j=0; j&lt;inputsize(); j++)
++                            {
++                                correlations_per_i(i,j) = 
++                                    abs(cov(i,j)) 
++                                    / sqrt(cov(i,i)*cov(j,j));
++                            }
++
++                        if( pseudolikelihood_context_type == &quot;most_correlated&quot;)
++                        {
++                            if( pseudolikelihood_context_size &lt;= 0 )
++                                PLERROR(&quot;In PseudolikelihoodRBM::train(): &quot;
++                                    &quot;pseudolikelihood_context_size should be &gt; 0 &quot;
++                                    &quot;for \&quot;most_correlated\&quot; context type&quot;);
++                            real current_min;
++                            int current_min_position;
++                            real* corr;
++                            int* context;
++                            Vec context_corr(pseudolikelihood_context_size);
++                            context_indices_per_i.resize(
++                                inputsize(),
++                                pseudolikelihood_context_size);
++
++                            // HUGO: this is quite inefficient for big 
++                            // pseudolikelihood_context_sizes, should use a heap
++                            for( int i=0; i&lt;inputsize(); i++ )
++                            {
++                                current_min = REAL_MAX;
++                                current_min_position = -1;
++                                corr = correlations_per_i[i];
++                                context = context_indices_per_i[i];
++                                for( int j=0; j&lt;inputsize(); j++ )
++                                {
++                                    if( i == j )
++                                        continue;
++
++                                    // Filling first pseudolikelihood_context_size elements
++                                    if( j - (j&gt;i?1:0) &lt; pseudolikelihood_context_size )
++                                    {
++                                        context[j - (j&gt;i?1:0)] = j;
++                                        context_corr[j - (j&gt;i?1:0)] = corr[j];
++                                        if( current_min &gt; corr[j] )
++                                        {
++                                            current_min = corr[j];
++                                            current_min_position = j - (j&gt;i?1:0);
++                                        }
++                                        continue;
++                                    }
++
++                                    if( corr[j] &gt; current_min )
++                                    {
++                                        context[current_min_position] = j;
++                                        context_corr[current_min_position] = corr[j];
++                                        current_min = 
++                                            min( context_corr, 
++                                                 current_min_position );
++                                    }
++                                }
++                            }
++                        }
++                        
++                        if( pseudolikelihood_context_type == 
++                            &quot;most_correlated_uniform_random&quot; )
++                        {
++                            if( k_most_correlated &lt; 
++                                pseudolikelihood_context_size )
++                                PLERROR(&quot;In PseudolikelihoodRBM::train(): &quot;
++                                        &quot;k_most_correlated should be &quot;
++                                        &quot;&gt;= pseudolikelihood_context_size&quot;);
++
++                            if( k_most_correlated &gt; inputsize() - 1 )
++                                PLERROR(&quot;In PseudolikelihoodRBM::train(): &quot;
++                                        &quot;k_most_correlated should be &quot;
++                                        &quot;&lt; inputsize()&quot;);
++
++                            real current_min;
++                            int current_min_position;
++                            real* corr;
++                            int* context;
++                            Vec context_corr( k_most_correlated );
++                            context_most_correlated.resize( inputsize() );
++
++                            // HUGO: this is quite inefficient for big 
++                            // pseudolikelihood_context_sizes, should use a heap
++                            for( int i=0; i&lt;inputsize(); i++ )
++                            {
++                                context_most_correlated[i].resize( 
++                                    k_most_correlated );
++                                current_min = REAL_MAX;
++                                current_min_position = -1;
++                                corr = correlations_per_i[i];
++                                context = context_most_correlated[i].data();
++                                for( int j=0; j&lt;inputsize(); j++ )
++                                {
++                                    if( i == j )
++                                        continue;
++
++                                    // Filling first k_most_correlated elements
++                                    if( j - (j&gt;i?1:0) &lt;  k_most_correlated )
++                                    {
++                                        context[j - (j&gt;i?1:0)] = j;
++                                        context_corr[j - (j&gt;i?1:0)] = corr[j];
++                                        if( current_min &gt; corr[j] )
++                                        {
++                                            current_min = corr[j];
++                                            current_min_position = j - (j&gt;i?1:0);
++                                        }
++                                        continue;
++                                    }
++
++                                    if( corr[j] &gt; current_min )
++                                    {
++                                        context[current_min_position] = j;
++                                        context_corr[current_min_position] = corr[j];
++                                        current_min = 
++                                            min( context_corr, 
++                                                 current_min_position );
++                                    }
++                                }
++                            }
++                        }                        
+                     }
+ 
++                    if( pseudolikelihood_context_type == &quot;uniform_random&quot; ||
++                        pseudolikelihood_context_type == &quot;most_correlated_uniform_random&quot; )
++                    {
++                        // Generate contexts
++                        if( pseudolikelihood_context_type == &quot;uniform_random&quot; )
++                            for( int i=0; i&lt;context_indices.length(); i++)
++                                context_indices[i] = i;
++                        int tmp,k;
++                        int* c;
++                        int n;
++                        if( pseudolikelihood_context_type == &quot;uniform_random&quot; )
++                        {
++                            c = context_indices.data();
++                            n = input_layer-&gt;size-1;
++                        }
++                        int* ci;
++                        for( int i=0; i&lt;context_indices_per_i.length(); i++)
++                        {
++                            if( pseudolikelihood_context_type == 
++                                &quot;most_correlated_uniform_random&quot; )
++                            {
++                                c = context_most_correlated[i].data();
++                                n = context_most_correlated[i].length();
++                            }
++
++                            ci = context_indices_per_i[i];
++                            for (int j = 0; j &lt; context_indices_per_i.width(); j++) 
++                            {
++                                k = j + 
++                                    random_gen-&gt;uniform_multinomial_sample(n - j);
++                                
++                                tmp = c[j];
++                                c[j] = c[k];
++                                c[k] = tmp;
++
++                                if( pseudolikelihood_context_type 
++                                    == &quot;uniform_random&quot; )
++                                {
++                                    if( c[j] &gt;= i )
++                                        ci[j] = c[j]+1;
++                                    else
++                                        ci[j] = c[j];
++                                }
++
++                                if( pseudolikelihood_context_type == 
++                                    &quot;most_correlated_uniform_random&quot; )
++                                    ci[j] = c[j];
++                            }
++                        }
++                    }
++
+                     connection-&gt;setAsDownInput( input );
+                     hidden_layer-&gt;getAllActivations( 
+                         (RBMMatrixConnection *) connection );
+
+Modified: trunk/plearn_learners_experimental/PseudolikelihoodRBM.h
+===================================================================
+--- trunk/plearn_learners_experimental/PseudolikelihoodRBM.h	2008-05-15 18:39:07 UTC (rev 9009)
++++ trunk/plearn_learners_experimental/PseudolikelihoodRBM.h	2008-05-15 21:15:19 UTC (rev 9010)
+@@ -104,7 +104,7 @@
+ 
+     //! Number of classes in the training set (for supervised learning)
+     int n_classes;
+-
++    
+     //! Indication that the input space NLL should be computed
+     //! during test
+     bool compute_input_space_nll;
+@@ -114,6 +114,20 @@
+     //! (default = 0, which corresponds to standard pseudolikelihood)
+     int pseudolikelihood_context_size;
+ 
++    //! Type of context for generalized pseudolikelihood:
++    //! - &quot;uniform_random&quot;: context elements are picked uniformly randomly
++    //! 
++    //! - &quot;most_correlated&quot;: the most correlated (positively or negatively
++    //!                      elemenst with the current input element are picked
++    //!
++    //! - &quot;most_correlated_uniform_random&quot;: context elements are picked uniformly
++    //!                                     among the k_most_correlated other input
++    //!                                     elements, for each current input
++    string pseudolikelihood_context_type;
++
++    //! Number of most correlated input elements over which to sample
++    real k_most_correlated;
++
+     //! The binomial input layer of the RBM
+     PP&lt;RBMBinomialLayer&gt; input_layer;
+ 
+@@ -245,6 +259,8 @@
+     mutable Mat connection_gradient;
+     mutable TVec&lt;int&gt; context_indices;
+     mutable TMat&lt;int&gt; context_indices_per_i;
++    mutable Mat correlations_per_i;
++    mutable TVec&lt; TVec&lt; int &gt; &gt; context_most_correlated;
+     mutable Mat hidden_activations_context;
+     mutable Vec hidden_activations_context_k_gradient;
+     mutable Vec nums;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002457.html">[Plearn-commits] r9009 - trunk/scripts
+</A></li>
+	<LI>Next message: <A HREF="002459.html">[Plearn-commits] r9011 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2458">[ date ]</a>
+              <a href="thread.html#2458">[ thread ]</a>
+              <a href="subject.html#2458">[ subject ]</a>
+              <a href="author.html#2458">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

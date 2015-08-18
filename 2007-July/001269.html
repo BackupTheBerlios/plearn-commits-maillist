@@ -1,0 +1,354 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7821 -	trunk/plearn_learners/distributions/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7821%20-%0A%09trunk/plearn_learners/distributions/EXPERIMENTAL&In-Reply-To=%3C200707231834.l6NIYAXo019036%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001268.html">
+   <LINK REL="Next"  HREF="001270.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7821 -	trunk/plearn_learners/distributions/EXPERIMENTAL</H1>
+    <B>lysiane at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7821%20-%0A%09trunk/plearn_learners/distributions/EXPERIMENTAL&In-Reply-To=%3C200707231834.l6NIYAXo019036%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7821 -	trunk/plearn_learners/distributions/EXPERIMENTAL">lysiane at mail.berlios.de
+       </A><BR>
+    <I>Mon Jul 23 20:34:10 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001268.html">[Plearn-commits] r7820 - trunk/plearn/python
+</A></li>
+        <LI>Next message: <A HREF="001270.html">[Plearn-commits] r7822 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1269">[ date ]</a>
+              <a href="thread.html#1269">[ thread ]</a>
+              <a href="subject.html#1269">[ subject ]</a>
+              <a href="author.html#1269">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lysiane
+Date: 2007-07-23 20:34:10 +0200 (Mon, 23 Jul 2007)
+New Revision: 7821
+
+Modified:
+   trunk/plearn_learners/distributions/EXPERIMENTAL/TransformationLearner.cc
+   trunk/plearn_learners/distributions/EXPERIMENTAL/TransformationLearner.h
+Log:
+Modification : more transformation families
+new version is able to learn :- all the previous transformation families
+                              - [all the previous transformation families] + bias
+ 
+
+
+Modified: trunk/plearn_learners/distributions/EXPERIMENTAL/TransformationLearner.cc
+===================================================================
+--- trunk/plearn_learners/distributions/EXPERIMENTAL/TransformationLearner.cc	2007-07-23 15:28:15 UTC (rev 7820)
++++ trunk/plearn_learners/distributions/EXPERIMENTAL/TransformationLearner.cc	2007-07-23 18:34:10 UTC (rev 7821)
+@@ -72,8 +72,10 @@
+     transformDistributionPeriod(UNDEFINED),
+     transformDistributionOffset(UNDEFINED),
+     transformDistributionAlpha(TRANSFORM_DISTRIBUTION_ALPHA_NO_REG),
+-    transformsPeriod(1),
+-    transformsOffset(0),
++    transformsPeriod(UNDEFINED),
++    transformsOffset(UNDEFINED),
++    biasPeriod(UNDEFINED),
++    biasOffset(UNDEFINED),
+     noiseVariance(UNDEFINED),
+     transformsVariance(1.0),
+     nbTransforms(2),
+@@ -209,13 +211,24 @@
+                  &quot;transformsPeriod&quot;,
+                  &amp;TransformationLearner::transformsPeriod,
+                  OptionBase::buildoption,
+-                 &quot;time interval between two updates of the transformations parameters&quot;);
++                 &quot;time interval between two updates of the transformations matrices&quot;);
+    declareOption(ol,
+                  &quot;transformsOffset&quot;,
+                  &amp;TransformationLearner::transformsOffset,
+                  OptionBase::buildoption,
+-                 &quot;time of the first update of the transformations parameters&quot;);
++                 &quot;time of the first update of the transformations matrices&quot;);
++   declareOption(ol,
++                 &quot;biasPeriod&quot;,
++                 &amp;TransformationLearner::biasPeriod,
++                 OptionBase::buildoption,
++                 &quot;time interval between 2 updates of the transformations bias (if any)&quot;);
+ 
++   declareOption(ol,
++                 &quot;biasOffset&quot;,
++                 &amp;TransformationLearner::biasOffset,
++                 OptionBase::buildoption,
++                 &quot;time of the first update of the transformations bias (if any)&quot;);
++
+    declareOption(ol, 
+                  &quot;noiseVariance&quot;,
+                  &amp;TransformationLearner::noiseVariance,
+@@ -515,8 +528,12 @@
+     declareMethod(rmm,
+                   &quot;MStepTransformations&quot;,
+                   &amp;TransformationLearner::MStepTransformations,
+-                  (BodyDoc(&quot;maximization step with respect to transformation parameters (MAP version)&quot;)));
++                  (BodyDoc(&quot;maximization step with respect to transformation matrices (MAP version)&quot;)));
+     declareMethod(rmm,
++                  &quot;MStepBias&quot;,
++                  &amp;TransformationLearner::MStepBias,
++                  (BodyDoc(&quot;maximization step with respect to transformation bias (MAP version)&quot;)));
++    declareMethod(rmm,
+                   &quot;MStepNoiseVariance&quot;,
+                   &amp;TransformationLearner::MStepNoiseVariance,
+                   (BodyDoc(&quot;maximization step with respect to noise variance&quot;)));
+@@ -797,7 +814,24 @@
+ //!WARNING: the trainset (&quot;train_set&quot;) must be given
+ void TransformationLearner::trainBuild(){
+     
+-    
++    int nbOptimizations =1;
++    int defaultTransformsOffset =0;
++    int defaultBiasOffset ;
++    int defaultNoiseVarianceOffset ;
++    int defaultTransformDistributionOffset ;
++    if(withBias){
++        defaultBiasOffset = nbOptimizations ;
++        nbOptimizations ++;
++    }
++    if(learnNoiseVariance){
++        defaultNoiseVarianceOffset = nbOptimizations;
++        nbOptimizations ++;
++    }
++    if(learnTransformDistribution){
++        defaultTransformDistributionOffset = nbOptimizations;
++        nbOptimizations ++;
++    }
++
+     transformsSD = sqrt(transformsVariance);
+     
+     //DIMENSION VARIABLES
+@@ -831,27 +865,30 @@
+     
+     if(withBias){
+         biasSet = Mat(nbTransforms,inputSpaceDim);
++        if(biasPeriod == UNDEFINED || biasOffset == UNDEFINED){
++            biasPeriod = nbOptimizations;
++            biasOffset = defaultBiasOffset;
++        }
+     }
+-    
++    else{
++        biasPeriod = UNDEFINED;
++        biasOffset = UNDEFINED;
++    }
++
+     initTransformsParameters();
+ 
++  
+    
+     if(transformsPeriod == UNDEFINED || transformsOffset == UNDEFINED){
+-        if(learnNoiseVariance){
+-            transformsPeriod = 2;
+-            transformsOffset = 1;
+-        }
+-        else{
+-            transformsPeriod = 1;
+-            transformsOffset = 0;
+-        }
++        transformsPeriod = nbOptimizations;
++        transformsOffset = defaultTransformsOffset;
+     }
+ 
+     //training parameters for noise variance
+     if(learnNoiseVariance){
+         if(noiseVariancePeriod == UNDEFINED || noiseVarianceOffset == UNDEFINED){
+-            noiseVariancePeriod = 2;
+-            noiseVarianceOffset = 1;
++            noiseVariancePeriod = nbOptimizations;
++            noiseVarianceOffset = defaultNoiseVarianceOffset;
+         }
+         if(regOnNoiseVariance){
+             if(noiseAlpha &lt; 1)
+@@ -865,6 +902,10 @@
+             noiseBeta = NOISE_BETA_NO_REG;
+         }
+     }
++    else{
++        noiseVariancePeriod = UNDEFINED;
++        noiseVarianceOffset = UNDEFINED;
++    }
+     
+     //initialize the noise variance
+      if(noiseVariance == UNDEFINED){
+@@ -879,8 +920,8 @@
+      //training parameters for transformation distribution
+      if(learnTransformDistribution){
+          if(transformDistributionPeriod == UNDEFINED || transformDistributionOffset == UNDEFINED){
+-             transformDistributionPeriod = 1;
+-             transformDistributionOffset = 0;
++             transformDistributionPeriod = nbOptimizations;
++             transformDistributionOffset = defaultTransformDistributionOffset;
+          }
+          if(regOnTransformDistribution){
+              if(transformDistributionAlpha&lt;=0){
+@@ -891,6 +932,11 @@
+              }
+          }
+      }
++     else{
++         transformDistributionPeriod = UNDEFINED;
++         transformDistributionOffset = UNDEFINED;
++         
++     }
+ 
+ 
+     //transformDistribution
+@@ -980,7 +1026,7 @@
+     if(noiseBeta &lt;= 0){
+         noiseBeta = 1;
+     }
+-    if(noiseVariance_ == UNDEFINED){
++    if(noiseVariance_ &lt; 0){
+         initNoiseVariance();
+     }
+     else{
+@@ -2002,6 +2048,8 @@
+         MStepTransformDistribution();
+     if(stage % transformsPeriod == transformsOffset)
+         MStepTransformations();
++    if(stage % biasPeriod == biasOffset)
++        MStepBias();
+     
+ }
+ 
+@@ -2047,7 +2095,7 @@
+     transformDistribution &lt;&lt; newDistribution ;
+ }
+ 
+-//!maximization step with respect to transformation parameters
++//!maximization step with respect to transformation matrices
+ //!(MAP version)
+ void TransformationLearner::MStepTransformations()
+ {
+@@ -2088,7 +2136,43 @@
+     }  
+ }
+  
++//!maximization step with respect to transformation bias
++//!(MAP version)
++void TransformationLearner::MStepBias(){
++    Mat  newBiasSet;
++    newBiasSet.resize(nbTransforms,inputSpaceDim);
++    for(int i=0; i&lt;nbTransforms; i++){
++        for(int j =0; j&lt;inputSpaceDim; j++){
++            newBiasSet[i][j]= 0; 
++        }
++    }
++    int transformIdx;
++    real proba;
++    real w;
++    real sum = INIT_weight(0);
++    Vec reconstruction;
++    reconstruction.resize(inputSpaceDim);
++    for(int idx=0; idx&lt;nbReconstructions ; idx++){
++        transformIdx = reconstructionSet[idx].transformIdx;
++        w = reconstructionSet[idx].weight;
++        proba = PROBA_weight(w);
++        sum = SUM_weights(sum, w);
++        seeNeighbor(reconstructionSet[idx].neighborIdx);
++        if(transformFamily == TRANSFORM_FAMILY_LINEAR){
++            transposeProduct(reconstruction,transforms[transformIdx],neighbor);
++        }
++        else{
++            transposeProduct(reconstruction,transforms[transformIdx],neighbor);
++            reconstruction += neighbor;
++        }
++        seeTarget(reconstructionSet[idx].targetIdx);
++        newBiasSet += proba*(target - reconstruction);
++    }
++    newBiasSet = newBiasSet/( noiseVariance/transformsVariance + PROBA_weight(sum) );
++    biasSet &lt;&lt; newBiasSet;
++}
+ 
++
+ //!maximization step with respect to noise variance
+ void TransformationLearner::MStepNoiseVariance()
+ {
+
+Modified: trunk/plearn_learners/distributions/EXPERIMENTAL/TransformationLearner.h
+===================================================================
+--- trunk/plearn_learners/distributions/EXPERIMENTAL/TransformationLearner.h	2007-07-23 15:28:15 UTC (rev 7820)
++++ trunk/plearn_learners/distributions/EXPERIMENTAL/TransformationLearner.h	2007-07-23 18:34:10 UTC (rev 7821)
+@@ -248,7 +248,7 @@
+     //!(see MStep() for more details)
+     int transformDistributionPeriod;
+     int transformDistributionOffset;
+-    
++
+     //!This parameter have to be defined if the transformation distribution
+     //!is learned using a MAP procedure. We suppose that this distribution have a a multinomial form
+     //(u1,u2,...,uK) with dirichlet prior probability : 
+@@ -258,9 +258,11 @@
+     real transformDistributionAlpha;
+ 
+ 
+-    //!tells us when to update the transformation parameters
++    //!tells us when to update the transformation matrices and bias
+     int transformsPeriod;
+     int transformsOffset;
++    int biasPeriod;
++    int biasOffset;
+ 
+ 
+     //PARAMETERS OF THE DISTRIBUTION
+@@ -825,10 +827,18 @@
+     //!NOTE :  alpha =1 -&gt;  no regularization
+     void MStepTransformDistributionMAP(real alpha);
+ 
+-    //!maximization step with respect to transformation parameters
++
++
++    //!maximization step with respect to transformation matrices
+     //!(MAP version)
+     void MStepTransformations();
+     
++
++    //!maximization step with respect to transformation bias
++    //!(MAP version)
++    void MStepBias();
++    
++    
+     //!maximization step with respect to noise variance
+     void MStepNoiseVariance();
+     
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001268.html">[Plearn-commits] r7820 - trunk/plearn/python
+</A></li>
+	<LI>Next message: <A HREF="001270.html">[Plearn-commits] r7822 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1269">[ date ]</a>
+              <a href="thread.html#1269">[ thread ]</a>
+              <a href="subject.html#1269">[ subject ]</a>
+              <a href="author.html#1269">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

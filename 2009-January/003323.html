@@ -1,0 +1,506 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9883 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9883%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200901300330.n0U3UG40000920%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003322.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9883 - trunk/plearn_learners_experimental</H1>
+    <B>laulysta at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9883%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200901300330.n0U3UG40000920%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9883 - trunk/plearn_learners_experimental">laulysta at mail.berlios.de
+       </A><BR>
+    <I>Fri Jan 30 04:30:16 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003322.html">[Plearn-commits] r9882 - trunk/plearn_learners/online
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3323">[ date ]</a>
+              <a href="thread.html#3323">[ thread ]</a>
+              <a href="subject.html#3323">[ subject ]</a>
+              <a href="author.html#3323">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: laulysta
+Date: 2009-01-30 04:30:15 +0100 (Fri, 30 Jan 2009)
+New Revision: 9883
+
+Modified:
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.h
+Log:
+accumulate gradient for matrice connections
+
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2009-01-28 21:55:40 UTC (rev 9882)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2009-01-30 03:30:15 UTC (rev 9883)
+@@ -999,6 +999,13 @@
+     }    
+ }
+ 
++Mat DenoisingRecurrentNet::getTargetConnectionsWeightMatrix(int tar)
++{
++    RBMMatrixConnection* conn = dynamic_cast&lt;RBMMatrixConnection*&gt;((RBMConnection*)target_connections[tar]);
++    if(conn==0)
++        PLERROR(&quot;Expecting input connection to be a RBMMatrixConnection. Je sais c'est sale, mais au point ou on est rendu..&quot;);
++    return conn-&gt;weights;
++}
+ 
+ Mat DenoisingRecurrentNet::getInputConnectionsWeightMatrix()
+ {
+@@ -1024,6 +1031,95 @@
+     return conn-&gt;weights;
+ }
+ 
++void DenoisingRecurrentNet::updateTargetLayer( Vec&amp; grad, Vec&amp; bias, real&amp; lr )
++{
++    real* b = bias.data();
++    real* gb = grad.data();
++    int size = bias.length();
++
++    for( int i=0 ; i&lt;size ; i++ )
++    {
++        
++        b[i] -= lr * gb[i];
++        
++    }
++
++   
++}
++
++void DenoisingRecurrentNet::bpropUpdateConnection(const Vec&amp; input, 
++                                                  const Vec&amp; output,
++                                                  Vec&amp; input_gradient,
++                                                  const Vec&amp; output_gradient,
++                                                  Mat&amp; weights,
++                                                  Mat&amp; acc_weights_gr,
++                                                  int&amp; down_size,
++                                                  int&amp; up_size,
++                                                  real&amp; lr,
++                                                  bool accumulate)
++{
++    PLASSERT( input.size() == down_size );
++    PLASSERT( output.size() == up_size );
++    PLASSERT( output_gradient.size() == up_size );
++
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradient.size() == down_size,
++                      &quot;Cannot resize input_gradient AND accumulate into it&quot; );
++
++        // input_gradient += weights' * output_gradient
++        transposeProductAcc( input_gradient, weights, output_gradient );
++    }
++    else
++    {
++        input_gradient.resize( down_size );
++
++        // input_gradient = weights' * output_gradient
++        transposeProduct( input_gradient, weights, output_gradient );
++    }
++
++    // weights -= learning_rate * output_gradient * input'
++    //externalProductScaleAcc( weights, output_gradient, input, -lr );
++    externalProductScaleAcc( acc_weights_gr, output_gradient, input, -lr );
++    
++   
++}
++
++void DenoisingRecurrentNet::bpropUpdateHiddenLayer(const Vec&amp; input, 
++                                                   const Vec&amp; output,
++                                                   Vec&amp; input_gradient,
++                                                   const Vec&amp; output_gradient,                                                
++                                                   Vec&amp; bias,
++                                                   real&amp; lr)
++{
++
++    int size = bias.length();
++
++    PLASSERT( input.size() == size );
++    PLASSERT( output.size() == size );
++    PLASSERT( output_gradient.size() == size );
++
++    
++    input_gradient.resize( size );
++    input_gradient.clear();
++    
++    
++    for( int i=0 ; i&lt;size ; i++ )
++    {
++        real output_i = output[i];
++        real in_grad_i;
++        in_grad_i = output_i * (1-output_i) * output_gradient[i];
++        input_gradient[i] += in_grad_i;
++        
++       
++        // update the bias: bias -= learning_rate * input_gradient
++        bias[i] -= lr * in_grad_i;
++        
++    }
++    
++    //applyBiasDecay();
++}
++
+ double DenoisingRecurrentNet::fpropUpdateInputReconstructionFromHidden(Vec hidden, Mat&amp; reconstruction_weights, Vec&amp; input_reconstruction_bias, Vec&amp; input_reconstruction_prob, 
+                                                                        Vec clean_input, Vec hidden_gradient, double input_reconstruction_cost_weight, double lr)
+ {
+@@ -1101,7 +1197,7 @@
+ }
+ 
+ 
+-double DenoisingRecurrentNet::fpropHiddenReconstructionFromLastHidden(Vec hidden, Mat reconstruction_weights, Vec&amp; reconstruction_bias, Vec hidden_reconstruction_activation_grad, Vec&amp; reconstruction_prob, 
++double DenoisingRecurrentNet::fpropHiddenReconstructionFromLastHidden(Vec hidden, Mat reconstruction_weights, Mat&amp; acc_weights_gr, Vec&amp; reconstruction_bias, Vec hidden_reconstruction_activation_grad, Vec&amp; reconstruction_prob, 
+                                                                  Vec hidden_target, Vec hidden_gradient, double hidden_reconstruction_cost_weight, double lr)
+ {
+     // set appropriate sizes
+@@ -1116,8 +1212,8 @@
+     reconstruction_prob.resize(fullhiddenlength);
+ 
+     // predict (denoised) input_reconstruction 
+-    //transposeProduct(reconstruction_activation, reconstruction_weights, hidden);
+-    product(reconstruction_activation, reconstruction_weights, hidden);
++    transposeProduct(reconstruction_activation, reconstruction_weights, hidden);
++    //product(reconstruction_activation, reconstruction_weights, hidden);
+     reconstruction_activation += reconstruction_bias;
+ 
+     for( int j=0 ; j&lt;fullhiddenlength ; j++ )
+@@ -1133,17 +1229,17 @@
+     hidden_reconstruction_activation_grad *= hidden_reconstruction_cost_weight;
+ 
+ 
+-    //productAcc(hidden_gradient, reconstruction_weights, hidden_reconstruction_activation_grad);
+-    transposeProductAcc(hidden_gradient, reconstruction_weights, hidden_reconstruction_activation_grad);
++    productAcc(hidden_gradient, reconstruction_weights, hidden_reconstruction_activation_grad);
++    //transposeProductAcc(hidden_gradient, reconstruction_weights, hidden_reconstruction_activation_grad);
+     
+     //update bias
+     multiplyAcc(reconstruction_bias, hidden_reconstruction_activation_grad, -lr);
+     // update weight
+-    externalProductScaleAcc(reconstruction_weights, hidden_reconstruction_activation_grad, hidden, -lr);
++    //externalProductScaleAcc(reconstruction_weights, hidden_reconstruction_activation_grad, hidden, -lr);
+                 
+ 
+     // update weight
+-    //externalProductScaleAcc(reconstruction_weights, hidden, hidden_reconstruction_activation_grad, -lr);
++    externalProductScaleAcc(acc_weights_gr, hidden, hidden_reconstruction_activation_grad, -lr);
+     /********************************************************************************/
+ 
+     double result_cost = 0;
+@@ -1330,6 +1426,36 @@
+                                             real temporal_gradient_contribution,
+                                             real predic_cost_weight)
+ {
++    TVec &lt; Mat&gt; targetWeights ;
++    Mat inputWeights;
++    Mat dynamicWeights;
++    Mat reconsWeights;
++    targetWeights.resize(target_connections.length());
++    for( int tar=0; tar&lt;target_layers.length(); tar++)
++    {
++       targetWeights[tar] = getTargetConnectionsWeightMatrix(tar);
++    }
++    inputWeights = getInputConnectionsWeightMatrix();
++    if(dynamic_connections )
++    { 
++        dynamicWeights = getDynamicConnectionsWeightMatrix();
++        reconsWeights = getDynamicReconstructionConnectionsWeightMatrix();
++    }
++    acc_target_connections_gr.resize(target_connections.length());
++    for( int tar=0; tar&lt;target_layers.length(); tar++)
++    {
++        acc_target_connections_gr[tar].resize(target_connections[tar]-&gt;up_size, target_connections[tar]-&gt;down_size);
++        acc_target_connections_gr[tar].clear();
++    }
++    acc_input_connections_gr.resize(input_connections-&gt;up_size, input_connections-&gt;down_size);
++    acc_input_connections_gr.clear();
++    if(dynamic_connections )
++    { 
++        acc_dynamic_connections_gr.resize(dynamic_connections-&gt;up_size, dynamic_connections-&gt;down_size);
++        acc_dynamic_connections_gr.clear();
++    }
++
++
+     hidden_temporal_gradient.resize(hidden_layer-&gt;size);
+     hidden_temporal_gradient.clear();
+     for(int i=hidden_list.length()-1; i&gt;=0; i--){   
+@@ -1352,13 +1478,37 @@
+                     bias_gradient *= predic_cost_weight;
+                     if(use_target_layers_masks)
+                         bias_gradient *= masks_list[tar](i);
+-                    target_layers[tar]-&gt;update(bias_gradient);
+-                    if( hidden_layer2 )
+-                        target_connections[tar]-&gt;bpropUpdate(hidden2_list(i),target_prediction_act_no_bias_list[tar](i),
+-                                                             hidden_gradient, bias_gradient,true);
+-                    else
+-                        target_connections[tar]-&gt;bpropUpdate(hidden_list(i),target_prediction_act_no_bias_list[tar](i),
+-                                                             hidden_gradient, bias_gradient,true);
++                    //target_layers[tar]-&gt;update(bias_gradient);
++                    updateTargetLayer( bias_gradient, 
++                                       target_layers[tar]-&gt;bias, 
++                                       target_layers[tar]-&gt;learning_rate );
++                    //Mat targetWeights = getTargetConnectionsWeightMatrix(tar);
++                    if( hidden_layer2 ){
++                        //target_connections[tar]-&gt;bpropUpdate(hidden2_list(i),target_prediction_act_no_bias_list[tar](i),hidden_gradient, bias_gradient,true);
++                        bpropUpdateConnection(hidden2_list(i),
++                                              target_prediction_act_no_bias_list[tar](i),
++                                              hidden_gradient, 
++                                              bias_gradient,
++                                              targetWeights[tar],
++                                              acc_target_connections_gr[tar],
++                                              target_connections[tar]-&gt;down_size,
++                                              target_connections[tar]-&gt;up_size,
++                                              target_connections[tar]-&gt;learning_rate,
++                                              true);
++                    }
++                    else{
++                        //target_connections[tar]-&gt;bpropUpdate(hidden_list(i),target_prediction_act_no_bias_list[tar](i),hidden_gradient, bias_gradient,true);
++                        bpropUpdateConnection(hidden_list(i),
++                                              target_prediction_act_no_bias_list[tar](i),
++                                              hidden_gradient, 
++                                              bias_gradient,
++                                              targetWeights[tar],
++                                              acc_target_connections_gr[tar],
++                                              target_connections[tar]-&gt;down_size,
++                                              target_connections[tar]-&gt;up_size,
++                                              target_connections[tar]-&gt;learning_rate,
++                                              true);
++                    }
+                 }
+             }
+ 
+@@ -1392,7 +1542,7 @@
+             // Add contribution of hidden reconstruction cost in hidden_gradient
+             Vec hidden_reconstruction_activation_grad;
+             hidden_reconstruction_activation_grad.resize(hidden_layer-&gt;size);
+-            Mat reconstruction_weights = getDynamicReconstructionConnectionsWeightMatrix();
++            //Mat reconstruction_weights = getDynamicConnectionsWeightMatrix();
+             if(hidden_reconstruction_weight!=0)
+             {
+                 //Vec hidden_reconstruction_activation_grad;
+@@ -1400,7 +1550,7 @@
+ 
+                 //truc stan
+                 //fpropHiddenSymmetricDynamicMatrix(hidden_list(i-1), reconstruction_weights, hidden_reconstruction_prob, hidden_list(i), hidden_gradient, hidden_reconstruction_weight, current_learning_rate);
+-                fpropHiddenReconstructionFromLastHidden(hidden_list(i), reconstruction_weights, hidden_reconstruction_bias, hidden_reconstruction_activation_grad, hidden_reconstruction_prob, hidden_list(i-1), hidden_gradient, hidden_reconstruction_weight, current_learning_rate);
++                fpropHiddenReconstructionFromLastHidden(hidden_list(i), dynamicWeights, acc_dynamic_connections_gr, hidden_reconstruction_bias, hidden_reconstruction_activation_grad, hidden_reconstruction_prob, hidden_list(i-1), hidden_gradient, hidden_reconstruction_weight, current_learning_rate);
+                 
+             }
+             
+@@ -1412,15 +1562,25 @@
+                 multiplyAcc(hidden_gradient, hidden_temporal_gradient, temporal_gradient_contribution);
+                 
+             }
+-            hidden_layer-&gt;bpropUpdate(
+-                hidden_act_no_bias_list(i), hidden_list(i),
+-                hidden_temporal_gradient, hidden_gradient);
+-                
+-            dynamic_connections-&gt;bpropUpdate(
+-                hidden_list(i-1),
+-                hidden_act_no_bias_list(i), // Here, it should be dynamic_act_no_bias_contribution, but doesn't matter because a RBMMatrixConnection::bpropUpdate doesn't use its second argument
+-                hidden_gradient, hidden_temporal_gradient);
+ 
++            bpropUpdateHiddenLayer(hidden_act_no_bias_list(i), 
++                                   hidden_list(i),
++                                   hidden_temporal_gradient, 
++                                   hidden_gradient,
++                                   hidden_layer-&gt;bias, 
++                                   hidden_layer-&gt;learning_rate );
++            //Dynamic
++            bpropUpdateConnection(hidden_list(i-1),
++                                  hidden_act_no_bias_list(i), // Here, it should be dynamic_act_no_bias_contribution, but doesn't matter because a RBMMatrixConnection::bpropUpdate doesn't use its second argument
++                                  hidden_gradient, 
++                                  hidden_temporal_gradient, 
++                                  dynamicWeights,
++                                  acc_dynamic_connections_gr,
++                                  dynamic_connections-&gt;down_size,
++                                  dynamic_connections-&gt;up_size,
++                                  dynamic_connections-&gt;learning_rate,
++                                  false);
++
+             /*if(hidden_reconstruction_weight!=0)
+             {
+                 // update bias
+@@ -1430,26 +1590,50 @@
+                 
+                 }*/
+ 
+-            input_connections-&gt;bpropUpdate(
+-                input_list[i],
+-                hidden_act_no_bias_list(i), 
+-                visi_bias_gradient, hidden_temporal_gradient);// Here, it should be activations - cond_bias, but doesn't matter
++            //input
++            bpropUpdateConnection(input_list[i],
++                                  hidden_act_no_bias_list(i), 
++                                  visi_bias_gradient, 
++                                  hidden_temporal_gradient,// Here, it should be activations - cond_bias, but doesn't matter
++                                  inputWeights,
++                                  acc_input_connections_gr,
++                                  input_connections-&gt;down_size,
++                                  input_connections-&gt;up_size,
++                                  input_connections-&gt;learning_rate,
++                                  false);
+                 
+             hidden_temporal_gradient &lt;&lt; hidden_gradient;                
+         }
+         else
+         {
+-            hidden_layer-&gt;bpropUpdate(
+-                hidden_act_no_bias_list(i), hidden_list(i),
+-                hidden_temporal_gradient, hidden_gradient); // Not really temporal gradient, but this is the final iteration...
+-            input_connections-&gt;bpropUpdate(
+-                input_list[i],
+-                hidden_act_no_bias_list(i), 
+-                visi_bias_gradient, hidden_temporal_gradient);// Here, it should be activations - cond_bias, but doesn't matter
+-
++            bpropUpdateHiddenLayer(hidden_act_no_bias_list(i), 
++                                   hidden_list(i),
++                                   hidden_temporal_gradient, // Not really temporal gradient, but this is the final iteration...
++                                   hidden_gradient,
++                                   hidden_layer-&gt;bias, 
++                                   hidden_layer-&gt;learning_rate );
++            
++            //input
++            bpropUpdateConnection(input_list[i],
++                                  hidden_act_no_bias_list(i), 
++                                  visi_bias_gradient, 
++                                  hidden_temporal_gradient,// Here, it should be activations - cond_bias, but doesn't matter
++                                  inputWeights,
++                                  acc_input_connections_gr,
++                                  input_connections-&gt;down_size,
++                                  input_connections-&gt;up_size,
++                                  input_connections-&gt;learning_rate,
++                                  false);
+         }
+     }
+-    
++    //update matrice's connections
++    for( int tar=0; tar&lt;target_layers.length(); tar++)
++    {
++        multiplyAcc(targetWeights[tar], acc_target_connections_gr[tar], 1);
++    }
++    multiplyAcc(inputWeights, acc_input_connections_gr, 1);
++    if(dynamic_connections )
++        multiplyAcc(dynamicWeights, acc_dynamic_connections_gr, 1);
+ }
+ 
+ 
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.h
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.h	2009-01-28 21:55:40 UTC (rev 9882)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.h	2009-01-30 03:30:15 UTC (rev 9883)
+@@ -144,7 +144,6 @@
+     // Phase recurrent no noise (supervised fine tuning)
+     double recurrent_lr;
+ 
+-
+     // When training with trainUnconditionalPredictor, this is simply used to store the avg encoded frame
+     Vec mean_encoded_vec;
+ 
+@@ -315,6 +314,21 @@
+     //! Store external data;
+     AutoVMatrix*  data;
+    
++    mutable TVec&lt; Mat &gt; acc_target_connections_gr;
++
++    mutable Mat acc_input_connections_gr;
++
++    mutable Mat acc_dynamic_connections_gr;
++
++    //! Stores accumulate target bias gradient
++    mutable Vec acc_target_bias_gr;
++
++    //! Stores accumulate hidden bias gradient
++    mutable Vec acc_hidden_bias_gr;
++
++    //! Stores accumulate reconstruction bias gradient
++    mutable Vec acc_recons_bias_gr;
++
+     //! Stores bias gradient
+     mutable Vec bias_gradient;
+     
+@@ -407,12 +421,36 @@
+     void trainUnconditionalPredictor();
+     void unconditionalFprop(Vec train_costs, Vec train_n_items) const;
+ 
++    Mat getTargetConnectionsWeightMatrix(int tar);
++
+     Mat getInputConnectionsWeightMatrix();
+ 
+     Mat getDynamicConnectionsWeightMatrix();
+ 
+     Mat getDynamicReconstructionConnectionsWeightMatrix();
+ 
++    void updateTargetLayer( Vec&amp; grad, 
++                            Vec&amp; bias , 
++                            real&amp; lr );
++    
++    void bpropUpdateConnection(const Vec&amp; input, 
++                               const Vec&amp; output,
++                               Vec&amp; input_gradient,
++                               const Vec&amp; output_gradient,
++                               Mat&amp; weights,
++                               Mat&amp; acc_weights_gr,
++                               int&amp; down_size,
++                               int&amp; up_size,
++                               real&amp; lr,
++                               bool accumulate);
++
++    void bpropUpdateHiddenLayer(const Vec&amp; input, 
++                                const Vec&amp; output,
++                                Vec&amp; input_gradient,
++                                const Vec&amp; output_gradient,
++                                Vec&amp; bias,
++                                real&amp; lr);
++
+     //! Builds input_reconstruction_prob from hidden (using reconstruction_weights which is  nhidden x ninputs, and input_reconstruction_bias)
+     //! then backpropagates reconstruction cost (after comparison with clean_input) with learning rate input_reconstruction_lr
+     //! accumulates gradient in hidden_gradient, and updates reconstruction_weights and input_reconstruction_bias
+@@ -432,7 +470,7 @@
+     void updateInputReconstructionFromHidden(Vec hidden, Mat&amp; reconstruction_weights, Vec&amp; input_reconstruction_bias, Vec input_reconstruction_prob, 
+                                              Vec clean_input, Vec hidden_gradient, double input_reconstruction_cost_weight, double lr);
+ 
+-    double fpropHiddenReconstructionFromLastHidden(Vec hidden, Mat reconstruction_weights, Vec&amp; reconstruction_bias, Vec hidden_reconstruction_activation_grad, Vec&amp; reconstruction_prob, 
++    double fpropHiddenReconstructionFromLastHidden(Vec hidden, Mat reconstruction_weights, Mat&amp; acc_weights_gr, Vec&amp; reconstruction_bias, Vec hidden_reconstruction_activation_grad, Vec&amp; reconstruction_prob, 
+                                                                           Vec clean_input, Vec hidden_gradient, double hidden_reconstruction_cost_weight, double lr);
+     
+     double fpropHiddenSymmetricDynamicMatrix(Vec hidden, Mat reconstruction_weights, Vec&amp; reconstruction_prob, 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003322.html">[Plearn-commits] r9882 - trunk/plearn_learners/online
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3323">[ date ]</a>
+              <a href="thread.html#3323">[ thread ]</a>
+              <a href="subject.html#3323">[ subject ]</a>
+              <a href="author.html#3323">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

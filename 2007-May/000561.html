@@ -1,0 +1,183 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7112 - trunk/plearn_learners/online/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7112%20-%20trunk/plearn_learners/online/EXPERIMENTAL&In-Reply-To=%3C200705151959.l4FJxa5Q024674%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000560.html">
+   <LINK REL="Next"  HREF="000562.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7112 - trunk/plearn_learners/online/EXPERIMENTAL</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7112%20-%20trunk/plearn_learners/online/EXPERIMENTAL&In-Reply-To=%3C200705151959.l4FJxa5Q024674%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7112 - trunk/plearn_learners/online/EXPERIMENTAL">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue May 15 21:59:36 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000560.html">[Plearn-commits] r7111 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000562.html">[Plearn-commits] r7113 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#561">[ date ]</a>
+              <a href="thread.html#561">[ thread ]</a>
+              <a href="subject.html#561">[ subject ]</a>
+              <a href="author.html#561">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-05-15 21:59:36 +0200 (Tue, 15 May 2007)
+New Revision: 7112
+
+Modified:
+   trunk/plearn_learners/online/EXPERIMENTAL/RBMModule.cc
+   trunk/plearn_learners/online/EXPERIMENTAL/RBMModule.h
+Log:
+Implemented the contrastive divergence update
+
+Modified: trunk/plearn_learners/online/EXPERIMENTAL/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/EXPERIMENTAL/RBMModule.cc	2007-05-15 19:56:52 UTC (rev 7111)
++++ trunk/plearn_learners/online/EXPERIMENTAL/RBMModule.cc	2007-05-15 19:59:36 UTC (rev 7112)
+@@ -104,14 +104,8 @@
+     if (hidden_grad &amp;&amp; !hidden_grad-&gt;isEmpty() &amp;&amp;
+             (!visible_grad || visible_grad-&gt;isEmpty()))
+     {
+-        if (cd_learning_rate &gt; 0) {
+-            PLERROR(&quot;In RBMModule::bpropAccUpdate - Contrastive Divergence &quot;
+-                    &quot;not implemented yet&quot;);
+-        }
+         if (grad_learning_rate &gt; 0) {
+-            hidden_layer-&gt;setLearningRate(grad_learning_rate);
+-            visible_layer-&gt;setLearningRate(grad_learning_rate);
+-            connection-&gt;setLearningRate(grad_learning_rate);
++            setAllLearningRates(grad_learning_rate);
+             Mat* hidden_out = ports_value[1];
+             Mat* hidden_act = ports_value[2];
+             PLASSERT( hidden_out &amp;&amp; hidden_act );
+@@ -138,6 +132,31 @@
+                     *visible_out, *hidden_act, *store_visible_grad,
+                     hidden_act_grad, true);
+         }
++        if (cd_learning_rate &gt; 0) {
++            setAllLearningRates(cd_learning_rate);
++            // Perform a step of contrastive divergence.
++            PLASSERT( ports_value.length() == nPorts() );
++            Mat* visible_exp = ports_value[0];
++            Mat* hidden_exp = ports_value[1];
++            PLASSERT( visible_exp &amp;&amp; hidden_exp );
++            // Generate hidden samples.
++            hidden_layer-&gt;setExpectations(*hidden_exp);
++            hidden_layer-&gt;generateSamples();
++            // Generate visible samples.
++            connection-&gt;setAsUpInputs(hidden_layer-&gt;samples);
++            visible_layer-&gt;getAllActivations(connection, 0, true);
++            visible_layer-&gt;generateSamples();
++            // (Negative phase) compute corresponding hidden expectations.
++            connection-&gt;setAsDownInputs(visible_layer-&gt;samples);
++            hidden_layer-&gt;getAllActivations(connection, 0, true);
++            hidden_layer-&gt;computeExpectations();
++            // Perform update.
++            visible_layer-&gt;update(*visible_exp, visible_layer-&gt;samples);
++            connection-&gt;update(*visible_exp, *hidden_exp,
++                               visible_layer-&gt;samples,
++                               hidden_layer-&gt;getExpectations());
++            hidden_layer-&gt;update(*hidden_exp, hidden_layer-&gt;getExpectations());
++        }
+     } else
+         PLERROR(&quot;In RBMModule::bpropAccUpdate - Only hidden -&gt; visible &quot;
+                 &quot;back propagation is currently implemented&quot;);
+@@ -334,14 +353,26 @@
+ }
+ */
+ 
++/////////////////////////
++// setAllLearningRates //
++/////////////////////////
++void RBMModule::setAllLearningRates(real lr)
++{
++    hidden_layer-&gt;setLearningRate(lr);
++    visible_layer-&gt;setLearningRate(lr);
++    connection-&gt;setLearningRate(lr);
++}
++
+ /////////////////////
+ // setLearningRate //
+ /////////////////////
+-/* OPTIONAL
+ void RBMModule::setLearningRate(real dynamic_learning_rate)
+ {
++    // Out of safety, force the user to go through the two different learning
++    // rate. May need to be removed if it causes unwanted crashes.
++    PLERROR(&quot;In RBMModule::setLearningRate - Do not use this method, instead &quot;
++            &quot;explicitely use 'cd_learning_rate' and 'grad_learning_rate'&quot;);
+ }
+-*/
+ 
+ } // end of namespace PLearn
+ 
+
+Modified: trunk/plearn_learners/online/EXPERIMENTAL/RBMModule.h
+===================================================================
+--- trunk/plearn_learners/online/EXPERIMENTAL/RBMModule.h	2007-05-15 19:56:52 UTC (rev 7111)
++++ trunk/plearn_learners/online/EXPERIMENTAL/RBMModule.h	2007-05-15 19:59:36 UTC (rev 7112)
+@@ -158,12 +158,9 @@
+     virtual bool bpropDoesNothing();
+     */
+ 
+-    /* Optional
+-       Default implementation prints a warning and does nothing
+-    //! If this class has a learning rate (or something close to it), set it.
+-    //! If not, you can redefine this method to get rid of the warning.
++    //! Throws an error (please use explicitely the two different kinds of
++    //! learning rates available here).
+     virtual void setLearningRate(real dynamic_learning_rate);
+-    */
+ 
+     //! Overridden.
+     virtual void fprop(const TVec&lt;Mat*&gt;&amp; ports_value);
+@@ -202,6 +199,9 @@
+ 
+     //#####  Protected Member Functions  ######################################
+ 
++    //! Forward the given learning rate to all elements of this module.
++    void setAllLearningRates(real lr);
++
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000560.html">[Plearn-commits] r7111 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000562.html">[Plearn-commits] r7113 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#561">[ date ]</a>
+              <a href="thread.html#561">[ thread ]</a>
+              <a href="subject.html#561">[ subject ]</a>
+              <a href="author.html#561">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

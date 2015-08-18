@@ -1,0 +1,191 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9789 - in trunk: plearn/base plearn/math	plearn_learners/distributions plearn_learners/meta
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9789%20-%20in%20trunk%3A%20plearn/base%20plearn/math%0A%09plearn_learners/distributions%20plearn_learners/meta&In-Reply-To=%3C200812162135.mBGLZFAp027573%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003228.html">
+   <LINK REL="Next"  HREF="003230.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9789 - in trunk: plearn/base plearn/math	plearn_learners/distributions plearn_learners/meta</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9789%20-%20in%20trunk%3A%20plearn/base%20plearn/math%0A%09plearn_learners/distributions%20plearn_learners/meta&In-Reply-To=%3C200812162135.mBGLZFAp027573%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9789 - in trunk: plearn/base plearn/math	plearn_learners/distributions plearn_learners/meta">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Dec 16 22:35:15 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003228.html">[Plearn-commits] r9788 - trunk/plearn/base
+</A></li>
+        <LI>Next message: <A HREF="003230.html">[Plearn-commits] r9790 - in trunk/plearn_learners: generic online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3229">[ date ]</a>
+              <a href="thread.html#3229">[ thread ]</a>
+              <a href="subject.html#3229">[ subject ]</a>
+              <a href="author.html#3229">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-12-16 22:35:14 +0100 (Tue, 16 Dec 2008)
+New Revision: 9789
+
+Modified:
+   trunk/plearn/base/ProgressBar.cc
+   trunk/plearn/base/ProgressBar.h
+   trunk/plearn/math/stats_utils.cc
+   trunk/plearn_learners/distributions/PDistribution.cc
+   trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+Log:
+changed how we use the progress bar with OPENMP to be like with MPI. That make it more consistent and more thread safe. 
+
+
+Modified: trunk/plearn/base/ProgressBar.cc
+===================================================================
+--- trunk/plearn/base/ProgressBar.cc	2008-12-16 21:27:07 UTC (rev 9788)
++++ trunk/plearn/base/ProgressBar.cc	2008-12-16 21:35:14 UTC (rev 9789)
+@@ -53,6 +53,8 @@
+ 
+ #if USING_MPI
+ #include &lt;plearn/sys/PLMPI.h&gt;
++#elif _OPENMP
++#include &lt;omp.h&gt;
+ #endif //USING_MPI
+ 
+ namespace PLearn {
+@@ -128,22 +130,25 @@
+ {
+ #if USING_MPI
+     if(PLMPI::rank==0)
++#elif _OPENMP
++    if(omp_get_thread_num()==0)
++#endif
+     {
+-#endif
++
+         string fulltitle = string(&quot; &quot;) + pb-&gt;title + &quot; (&quot; + tostring(pb-&gt;maxpos) + &quot;) &quot;;
+         out &lt;&lt; &quot;[&quot; + center(fulltitle,width,'-') + &quot;]\n[&quot;;
+         out.flush();
+-#if USING_MPI
+     }
+-#endif
+ }
+ 
+ void TextProgressBarPlugin::update(ProgressBar * pb, uint32_t newpos)
+ {
+ #if USING_MPI
+     if(PLMPI::rank==0)
++#elif _OPENMP
++    if(omp_get_thread_num()==0)
++#endif
+     {
+-#endif
+         // this handles the case where we reuse the same progress bar
+         if(newpos &lt; pb-&gt;currentpos)
+         {
+@@ -168,9 +173,7 @@
+             out &lt;&lt; &quot;]&quot;;
+             out &lt;&lt; endl;
+         }
+-#if USING_MPI
+     }
+-#endif
+ }
+ 
+ 
+
+Modified: trunk/plearn/base/ProgressBar.h
+===================================================================
+--- trunk/plearn/base/ProgressBar.h	2008-12-16 21:27:07 UTC (rev 9788)
++++ trunk/plearn/base/ProgressBar.h	2008-12-16 21:35:14 UTC (rev 9789)
+@@ -168,7 +168,6 @@
+     void operator()(uint32_t newpos){plugin-&gt;update(this,newpos);}
+ 
+     void update(uint32_t newpos){plugin-&gt;update(this,newpos);}
+-    void updateone(){plugin-&gt;update(this,currentpos+1);}
+     // this function assumes plugin is always a valid object (it is created statically in the .cc)
+     static void setPlugin(PP&lt;ProgressBarPlugin&gt; plugin_) { plugin = plugin_; }
+     static PP&lt;ProgressBarPlugin&gt; getCurrentPlugin();
+
+Modified: trunk/plearn/math/stats_utils.cc
+===================================================================
+--- trunk/plearn/math/stats_utils.cc	2008-12-16 21:27:07 UTC (rev 9788)
++++ trunk/plearn/math/stats_utils.cc	2008-12-16 21:35:14 UTC (rev 9789)
+@@ -329,9 +329,7 @@
+         Ds[col]=D;
+         p_values[col]=p_value;
+         if (report_progress)
+-#pragma omp critical
+-            pbar-&gt;updateone();
+-
++            pbar-&gt;update(col);
+     }
+     }
+ }
+
+Modified: trunk/plearn_learners/distributions/PDistribution.cc
+===================================================================
+--- trunk/plearn_learners/distributions/PDistribution.cc	2008-12-16 21:27:07 UTC (rev 9788)
++++ trunk/plearn_learners/distributions/PDistribution.cc	2008-12-16 21:35:14 UTC (rev 9789)
+@@ -407,7 +407,7 @@
+         v = Y(i);
+         generate(v);
+         if (pb)
+-            pb-&gt;updateone();
++            pb-&gt;update(i);
+     }
+ }
+ 
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-12-16 21:27:07 UTC (rev 9788)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-12-16 21:35:14 UTC (rev 9789)
+@@ -231,13 +231,9 @@
+     if(omp_get_max_threads()&gt;1){
+       PLCHECK(learner1-&gt;verbosity==0);
+       PLCHECK(learner2-&gt;verbosity==0);
+-      PLCHECK(learner1-&gt;report_progress==false);
+-      PLCHECK(learner2-&gt;report_progress==false);
+       
+       PLCHECK(learner1-&gt;weak_learner_template-&gt;verbosity==0);
+       PLCHECK(learner2-&gt;weak_learner_template-&gt;verbosity==0);
+-      PLCHECK(learner1-&gt;weak_learner_template-&gt;report_progress==false);
+-      PLCHECK(learner2-&gt;weak_learner_template-&gt;report_progress==false);
+     }
+     
+     EXTREME_MODULE_LOG&lt;&lt;&quot;train() // start&quot;&lt;&lt;endl;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003228.html">[Plearn-commits] r9788 - trunk/plearn/base
+</A></li>
+	<LI>Next message: <A HREF="003230.html">[Plearn-commits] r9790 - in trunk/plearn_learners: generic online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3229">[ date ]</a>
+              <a href="thread.html#3229">[ thread ]</a>
+              <a href="subject.html#3229">[ subject ]</a>
+              <a href="author.html#3229">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

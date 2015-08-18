@@ -1,0 +1,238 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6975 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6975%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705022049.l42Kneoo003727%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000423.html">
+   <LINK REL="Next"  HREF="000425.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6975 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6975%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705022049.l42Kneoo003727%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6975 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Wed May  2 22:49:40 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000423.html">[Plearn-commits] r6974 - trunk/plearn_learners_experimental/netflix
+</A></li>
+        <LI>Next message: <A HREF="000425.html">[Plearn-commits] r6976 - trunk/plearn/sys
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#424">[ date ]</a>
+              <a href="thread.html#424">[ thread ]</a>
+              <a href="subject.html#424">[ subject ]</a>
+              <a href="author.html#424">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-05-02 22:49:40 +0200 (Wed, 02 May 2007)
+New Revision: 6975
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+Log:
+Gibbs chain initialization
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-02 18:11:08 UTC (rev 6974)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-02 20:49:40 UTC (rev 6975)
+@@ -59,17 +59,19 @@
+ DeepBeliefNet::DeepBeliefNet() :
+     cd_learning_rate( 0. ),
+     grad_learning_rate( 0. ),
+-    batch_size(1),
++    batch_size( 1 ),
+     grad_decrease_ct( 0. ),
+     // grad_weight_decay( 0. ),
+-    n_classes(-1),
++    n_classes( -1 ),
+     use_classification_cost( true ),
+     reconstruct_layerwise( false ),
+     n_layers( 0 ),
+     online ( false ),
+     background_gibbs_update_ratio(0),
+     gibbs_chain_statistics_forgetting_factor(0.999),
+-    minibatch_size(0),
++    gibbs_chain_reinit_freq( INT_MAX ),
++    minibatch_size( 0 ),
++    initialize_gibbs_chain( false ),
+     final_module_has_learning_rate( false ),
+     final_cost_has_learning_rate( false ),
+     nll_cost_index( -1 ),
+@@ -126,11 +128,11 @@
+     declareOption(ol, &quot;use_classification_cost&quot;,
+                   &amp;DeepBeliefNet::use_classification_cost,
+                   OptionBase::buildoption,
+-                  &quot;If the first cost function is the NLL in classification,\n&quot;
+-                  &quot;pre-trained with CD, and using the last *two* layers to get&quot;
+-                  &quot; a better\n&quot;
+-                  &quot;approximation (undirected softmax) than layer-wise&quot;
+-                  &quot; mean-field.\n&quot;);
++                  &quot;Put the class target as an extra input of the top-level RBM\n&quot;
++                  &quot;and compute and maximize conditional class probability in that\n&quot;
++                  &quot;top layer (probability of the correct class given the other input\n&quot;
++                  &quot;of the top-level RBM, which is the output of the rest of the network.\n&quot;
++                  &quot;This only makes sense if a classification_module is provided.\n&quot;);
+ 
+     declareOption(ol, &quot;reconstruct_layerwise&quot;,
+                   &amp;DeepBeliefNet::reconstruct_layerwise,
+@@ -145,7 +147,7 @@
+ 
+     declareOption(ol, &quot;layers&quot;, &amp;DeepBeliefNet::layers,
+                   OptionBase::buildoption,
+-                  &quot;The layers of units in the network&quot;);
++                  &quot;The layers of units in the network (including the input layer).&quot;);
+ 
+     declareOption(ol, &quot;connections&quot;, &amp;DeepBeliefNet::connections,
+                   OptionBase::buildoption,
+@@ -156,7 +158,6 @@
+                   OptionBase::learntoption,
+                   &quot;The module computing the class probabilities (if&quot;
+                   &quot; use_classification_cost)\n&quot;
+-                  &quot; on top of classification_module.\n&quot;
+                   );
+ 
+     declareOption(ol, &quot;classification_cost&quot;,
+@@ -225,6 +226,13 @@
+                   &quot;would only use the current sample, a value of .99 would use 1% of\n&quot;
+                   &quot;the current sample and 99% of the old statistics).\n&quot;);
+ 
++    declareOption(ol, &quot;gibbs_chain_reinit_freq&quot;,
++                  &amp;DeepBeliefNet::gibbs_chain_reinit_freq,
++                  OptionBase::buildoption,
++                  &quot;After how many training examples to re-initialize the Gibbs chains.\n&quot;
++                  &quot;If == INT_MAX, the default value of this option, then NEVER\n&quot;
++                  &quot;re-initialize except at the beginning, when stage==0.\n&quot;);
++
+     declareOption(ol, &quot;top_layer_joint_cd&quot;, &amp;DeepBeliefNet::top_layer_joint_cd,
+                   OptionBase::buildoption,
+                   &quot;Wether we do a step of joint contrastive divergence on&quot;
+@@ -819,6 +827,7 @@
+         bool update_stats = false;
+         for( ; stage&lt;nstages ; stage++ )
+         {
++            initialize_gibbs_chain=(stage%gibbs_chain_reinit_freq==0);
+             // Update every 'minibatch_size' samples.
+             if (stage % minibatch_size == 0) {
+                 int sample_start = stage % nsamples;
+@@ -1546,10 +1555,24 @@
+         {
+             Mat down_state = gibbs_down_state[layer_index];
+ 
+-            // sample up state given down state
+-            connection-&gt;setAsDownInputs(down_state);
+-            up_layer-&gt;getAllActivations(connection, 0, true);
+-            up_layer-&gt;computeExpectations();
++            if (initialize_gibbs_chain) // initializing or re-initializing the chain
++            {
++                if (background_gibbs_update_ratio==1) // if &lt;1 just use the CD state
++                {
++                    up_layer-&gt;generateSamples();
++                    connection-&gt;setAsUpInputs(up_layer-&gt;samples);
++                    down_layer-&gt;getAllActivations(connection, 0, true);
++                    down_layer-&gt;generateSamples();
++                }
++                initialize_gibbs_chain=false;
++            }
++            else 
++            {
++                // sample up state given down state
++                connection-&gt;setAsDownInputs(down_state);
++                up_layer-&gt;getAllActivations(connection, 0, true);
++                up_layer-&gt;computeExpectations();
++            }
+             up_layer-&gt;generateSamples();
+ 
+             // update using the down_state and up_layer-&gt;expectations for moving average in negative phase
+@@ -1557,12 +1580,12 @@
+             if (background_gibbs_update_ratio&lt;1)
+             {
+                 down_layer-&gt;updateCDandGibbs(pos_down_vals,cd_neg_down_vals,
+-                                             down_state,
++                                             down_layer-&gt;samples,
+                                              background_gibbs_update_ratio,
+                                              gibbs_chain_statistics_forgetting_factor);
+                 connection-&gt;updateCDandGibbs(pos_down_vals,pos_up_vals,
+                                              cd_neg_down_vals, cd_neg_up_vals,
+-                                             down_state,
++                                             down_layer-&gt;samples,
+                                              up_layer-&gt;getExpectations(),
+                                              background_gibbs_update_ratio,
+                                              gibbs_chain_statistics_forgetting_factor);
+@@ -1573,9 +1596,9 @@
+             }
+             else
+             {
+-                down_layer-&gt;updateGibbs(pos_down_vals,down_state,
++                down_layer-&gt;updateGibbs(pos_down_vals,down_layer-&gt;samples,
+                                         gibbs_chain_statistics_forgetting_factor);
+-                connection-&gt;updateGibbs(pos_down_vals,pos_up_vals,down_state,
++                connection-&gt;updateGibbs(pos_down_vals,pos_up_vals,down_layer-&gt;samples,
+                                         up_layer-&gt;getExpectations(),
+                                         gibbs_chain_statistics_forgetting_factor);
+                 up_layer-&gt;updateGibbs(pos_up_vals,up_layer-&gt;getExpectations(),
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2007-05-02 18:11:08 UTC (rev 6974)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2007-05-02 20:49:40 UTC (rev 6975)
+@@ -155,6 +155,10 @@
+     //! Only used if online for the moment
+     bool top_layer_joint_cd;
+ 
++    //! after how many examples should we re-initialize the Gibbs chains
++    //! (if == INT_MAX, the default then NEVER re-initialize except when stage==0)
++    int gibbs_chain_reinit_freq;
++
+     //#####  Not Options  #####################################################
+ 
+     //! Timer for monitoring the speed
+@@ -275,6 +279,9 @@
+     
+     //#####  Not Options  #####################################################
+ 
++    // whether to re-initialize Gibbs chain next time around
++    bool initialize_gibbs_chain;
++
+     //! Stores the gradient of the cost wrt the activations
+     //! (at the input of the layers)
+     mutable TVec&lt;Vec&gt; activation_gradients;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000423.html">[Plearn-commits] r6974 - trunk/plearn_learners_experimental/netflix
+</A></li>
+	<LI>Next message: <A HREF="000425.html">[Plearn-commits] r6976 - trunk/plearn/sys
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#424">[ date ]</a>
+              <a href="thread.html#424">[ thread ]</a>
+              <a href="subject.html#424">[ subject ]</a>
+              <a href="author.html#424">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

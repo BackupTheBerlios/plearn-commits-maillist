@@ -1,0 +1,139 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9274 -	trunk/plearn_learners/classifiers/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9274%20-%0A%09trunk/plearn_learners/classifiers/EXPERIMENTAL&In-Reply-To=%3C200807211532.m6LFWfXE029240%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002722.html">
+   <LINK REL="Next"  HREF="002724.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9274 -	trunk/plearn_learners/classifiers/EXPERIMENTAL</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9274%20-%0A%09trunk/plearn_learners/classifiers/EXPERIMENTAL&In-Reply-To=%3C200807211532.m6LFWfXE029240%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9274 -	trunk/plearn_learners/classifiers/EXPERIMENTAL">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Mon Jul 21 17:32:41 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002722.html">[Plearn-commits] r9273 - trunk/plearn_learners/hyper
+</A></li>
+        <LI>Next message: <A HREF="002724.html">[Plearn-commits] r9275 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2723">[ date ]</a>
+              <a href="thread.html#2723">[ thread ]</a>
+              <a href="subject.html#2723">[ subject ]</a>
+              <a href="author.html#2723">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-07-21 17:32:41 +0200 (Mon, 21 Jul 2008)
+New Revision: 9274
+
+Modified:
+   trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.cc
+   trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.h
+Log:
+Using conjugate gradient now
+
+Modified: trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.cc
+===================================================================
+--- trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.cc	2008-07-21 15:32:05 UTC (rev 9273)
++++ trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.cc	2008-07-21 15:32:41 UTC (rev 9274)
+@@ -38,7 +38,7 @@
+ 
+ 
+ #include &quot;KFoldLogisticClassifier.h&quot;
+-#include &lt;plearn/opt/GradientOptimizer.h&gt;
++#include &lt;plearn/opt/ConjGradientOptimizer.h&gt;
+ #include &lt;plearn/vmat/ExplicitSplitter.h&gt;
+ #include &lt;plearn/vmat/KFoldSplitter.h&gt;
+ #include &lt;plearn_learners/generic/NNet.h&gt;
+@@ -64,9 +64,8 @@
+ /////////////////////////////
+ KFoldLogisticClassifier::KFoldLogisticClassifier():
+     kfold(5),
+-    learning_rate(1e-3),
+-    max_degraded_steps(100),
+-    max_epochs(1000),
++    max_degraded_steps(20),
++    max_epochs(500),
+     step_size(1)
+ {
+ }
+@@ -82,10 +81,6 @@
+                   OptionBase::buildoption,
+         &quot;Number of splits of the data (and of classifiers being trained).&quot;);
+ 
+-    declareOption(ol, &quot;learning_rate&quot;, &amp;KFoldLogisticClassifier::learning_rate,
+-                  OptionBase::buildoption,
+-        &quot;Learning rate in the logistic classifiers.&quot;);
+-
+     declareOption(ol, &quot;max_degraded_steps&quot;,
+                   &amp;KFoldLogisticClassifier::max_degraded_steps,
+                   OptionBase::buildoption,
+@@ -214,8 +209,7 @@
+     log_net.resize(0);
+     string cost_func;
+     for (int k = 0; k &lt; kfold; k++) {
+-        PP&lt;GradientOptimizer&gt; opt = new GradientOptimizer();
+-        opt-&gt;start_learning_rate = this-&gt;learning_rate;
++        PP&lt;ConjGradientOptimizer&gt; opt = new ConjGradientOptimizer();
+         opt-&gt;build();
+         PP&lt;NNet&gt; nnet = new NNet();
+         nnet-&gt;optimizer = opt;
+@@ -230,6 +224,7 @@
+             nnet-&gt;noutputs = n_classes;
+         }
+         nnet-&gt;cost_funcs = TVec&lt;string&gt;(1, cost_func);
++        nnet-&gt;batch_size = 0;
+         nnet-&gt;build();
+         log_net.append(get_pointer(nnet));
+     }
+
+Modified: trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.h
+===================================================================
+--- trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.h	2008-07-21 15:32:05 UTC (rev 9273)
++++ trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.h	2008-07-21 15:32:41 UTC (rev 9274)
+@@ -62,7 +62,6 @@
+     //#####  Public Build Options  ############################################
+ 
+     int kfold;
+-    real learning_rate;
+     int max_degraded_steps;
+     int max_epochs;
+     int step_size;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002722.html">[Plearn-commits] r9273 - trunk/plearn_learners/hyper
+</A></li>
+	<LI>Next message: <A HREF="002724.html">[Plearn-commits] r9275 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2723">[ date ]</a>
+              <a href="thread.html#2723">[ thread ]</a>
+              <a href="subject.html#2723">[ subject ]</a>
+              <a href="author.html#2723">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

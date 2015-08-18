@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9350 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9350%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200808061443.m76EhsQW016499%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002798.html">
+   <LINK REL="Next"  HREF="002800.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9350 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9350%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200808061443.m76EhsQW016499%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9350 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Wed Aug  6 16:43:54 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002798.html">[Plearn-commits] r9349 - in trunk: plearn/base	python_modules/plearn/pybridge python_modules/plearn/pyext
+</A></li>
+        <LI>Next message: <A HREF="002800.html">[Plearn-commits] r9351 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2799">[ date ]</a>
+              <a href="thread.html#2799">[ thread ]</a>
+              <a href="subject.html#2799">[ subject ]</a>
+              <a href="author.html#2799">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-08-06 16:43:53 +0200 (Wed, 06 Aug 2008)
+New Revision: 9350
+
+Modified:
+   trunk/plearn_learners/online/RBMWoodsLayer.cc
+   trunk/plearn_learners/online/RBMWoodsLayer.h
+Log:
+Changed computations in freeEnergyContributionGradient to log-scale to avoid numeric precision errors...
+
+
+Modified: trunk/plearn_learners/online/RBMWoodsLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMWoodsLayer.cc	2008-08-05 18:01:52 UTC (rev 9349)
++++ trunk/plearn_learners/online/RBMWoodsLayer.cc	2008-08-06 14:43:53 UTC (rev 9350)
+@@ -1120,6 +1120,16 @@
+     // called was with the same unit_activations...
+     freeEnergyContribution(unit_activations);
+ 
++    unit_activations_neg_gradient.resize(size);
++    unit_activations_neg_gradient_init.resize(size);
++    unit_activations_neg_gradient_init.fill(false);
++    if( use_signed_samples )
++    {
++        unit_activations_pos_gradient.resize(size);
++        unit_activations_pos_gradient_init.resize(size);
++        unit_activations_pos_gradient_init.fill(false);
++    }
++
+     for( int t = 0; t&lt;n_trees; t++ )
+     {
+         for( int n = 0; n &lt; n_nodes_per_tree; n = n+2 ) // Looking only at leaves
+@@ -1127,19 +1137,27 @@
+             // Computation energy of tree
+             tree_energy = 0;
+             sub_tree_size = n_nodes_per_tree / 2;
+-            sub_root = sub_tree_size;            
+-            tree_energy_leaf_on_gradient = output_gradient * 
+-                safeexp(-tree_energies[offset+t+n] + tree_free_energies[t]);
+-            tree_energy_leaf_off_gradient = output_gradient * 
+-                safeexp(-tree_energies[offset+t+n+1] + tree_free_energies[t]);
+-            tree_energy_gradient = tree_energy_leaf_on_gradient + 
+-                tree_energy_leaf_off_gradient;
++            sub_root = sub_tree_size;
++            // First do things on log-scale
++            tree_energy_leaf_on_gradient = -tree_energies[offset+t+n] + tree_free_energies[t];
++            tree_energy_leaf_off_gradient = -tree_energies[offset+t+n+1] + tree_free_energies[t];
++            tree_energy_gradient = logadd(tree_energy_leaf_on_gradient,
++                                          tree_energy_leaf_off_gradient);
+             for( int d=0; d&lt;tree_depth-1; d++ )
+             {
+                 if( n &lt; sub_root )
+                 {
+-                    unit_activations_gradient[offset+sub_root] -= 
+-                        tree_energy_gradient;
++                    if( unit_activations_neg_gradient_init[offset+sub_root] )
++                        unit_activations_neg_gradient[offset+sub_root] = 
++                            logadd(tree_energy_gradient,
++                                   unit_activations_neg_gradient[offset+sub_root]);
++                    else
++                    {
++                        unit_activations_neg_gradient[offset+sub_root] = 
++                            tree_energy_gradient;
++                        unit_activations_neg_gradient_init[offset+sub_root] = true;
++                    }
++                        
+                     sub_tree_size /= 2;
+                     sub_root -= sub_tree_size + 1;
+                 }
+@@ -1147,21 +1165,44 @@
+                 {
+                     if( use_signed_samples )
+                     {
+-                        unit_activations_gradient[offset+sub_root] += 
+-                            tree_energy_gradient;
++                        if( unit_activations_pos_gradient_init[offset+sub_root] )
++                            unit_activations_pos_gradient[offset+sub_root] = 
++                                logadd(tree_energy_gradient,
++                                       unit_activations_pos_gradient[offset+sub_root]);
++                        else
++                        {
++                            unit_activations_pos_gradient[offset+sub_root] = 
++                                tree_energy_gradient;
++                            unit_activations_pos_gradient_init[offset+sub_root] = true;
++                        }
+                     }
+                     sub_tree_size /= 2;
+                     sub_root += sub_tree_size+1;
+                 }
+             }
+             
+-            unit_activations_gradient[offset+n] -= tree_energy_leaf_on_gradient;
++            unit_activations_neg_gradient[offset+n] = 
++                tree_energy_leaf_on_gradient;
++            unit_activations_neg_gradient_init[offset+n] = true;
+ 
+             if( use_signed_samples )
+-                unit_activations_gradient[offset+n] += tree_energy_leaf_off_gradient;
++            {
++                unit_activations_pos_gradient[offset+n] = 
++                    tree_energy_leaf_off_gradient;
++                unit_activations_pos_gradient_init[offset+n] = true;
++            }
+         }
+         offset += n_nodes_per_tree;
+     }
++
++    // Go back to linear-scale
++    for(int i=0; i&lt;size; i++)
++        unit_activations_gradient[i] -= output_gradient * safeexp( unit_activations_neg_gradient[i] );
++
++    if( use_signed_samples )
++        for(int i=0; i&lt;size; i++)
++            unit_activations_gradient[i] += output_gradient * 
++                safeexp( unit_activations_pos_gradient[i] );
+ }
+ 
+ int RBMWoodsLayer::getConfigurationCount()
+
+Modified: trunk/plearn_learners/online/RBMWoodsLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMWoodsLayer.h	2008-08-05 18:01:52 UTC (rev 9349)
++++ trunk/plearn_learners/online/RBMWoodsLayer.h	2008-08-06 14:43:53 UTC (rev 9350)
+@@ -179,7 +179,11 @@
+     // Temporary computations, for freeEnergyContribution() and its gradient variant
+     mutable Vec tree_free_energies;
+     mutable Vec tree_energies;
+-
++    mutable Vec unit_activations_pos_gradient;
++    mutable Vec unit_activations_neg_gradient;
++    mutable TVec&lt;bool&gt; unit_activations_pos_gradient_init;
++    mutable TVec&lt;bool&gt; unit_activations_neg_gradient_init;
++    
+ protected:
+     //#####  Protected Member Functions  ######################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002798.html">[Plearn-commits] r9349 - in trunk: plearn/base	python_modules/plearn/pybridge python_modules/plearn/pyext
+</A></li>
+	<LI>Next message: <A HREF="002800.html">[Plearn-commits] r9351 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2799">[ date ]</a>
+              <a href="thread.html#2799">[ thread ]</a>
+              <a href="subject.html#2799">[ subject ]</a>
+              <a href="author.html#2799">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

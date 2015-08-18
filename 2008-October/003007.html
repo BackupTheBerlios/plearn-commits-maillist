@@ -1,0 +1,455 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9567 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9567%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200810161611.m9GGBDV8012781%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003006.html">
+   <LINK REL="Next"  HREF="003008.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9567 - trunk/plearn_learners_experimental</H1>
+    <B>laulysta at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9567%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200810161611.m9GGBDV8012781%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9567 - trunk/plearn_learners_experimental">laulysta at mail.berlios.de
+       </A><BR>
+    <I>Thu Oct 16 18:11:13 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003006.html">[Plearn-commits] r9566 - trunk/python_modules/plearn/utilities
+</A></li>
+        <LI>Next message: <A HREF="003008.html">[Plearn-commits] r9568 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3007">[ date ]</a>
+              <a href="thread.html#3007">[ thread ]</a>
+              <a href="subject.html#3007">[ subject ]</a>
+              <a href="author.html#3007">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: laulysta
+Date: 2008-10-16 18:11:12 +0200 (Thu, 16 Oct 2008)
+New Revision: 9567
+
+Modified:
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.h
+Log:
+work in progress
+
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2008-10-15 17:15:07 UTC (rev 9566)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2008-10-16 16:11:12 UTC (rev 9567)
+@@ -71,6 +71,9 @@
+     );
+ 
+ DenoisingRecurrentNet::DenoisingRecurrentNet() :
++    prediction_cost_weight(1),
++    input_reconstruction_cost_weight(0),
++    hidden_reconstruction_cost_weight(0),
+     use_target_layers_masks( false ),
+     end_of_sequence_symbol( -1000 ),
+     encoding(&quot;note_octav_duration&quot;),
+@@ -83,8 +86,8 @@
+     tied_hidden_reconstruction_weights( false ),
+     noisy_recurrent_lr( 0.000001),
+     dynamic_gradient_scale_factor( 1.0 ),
+-    dynamic_input_reconstruction_lr(0.),
+-    recurrent_lr( 0.00001 )
++    recurrent_lr( 0.00001 ),
++    current_learning_rate(0)
+ {
+     random_gen = new PRandom();
+ }
+@@ -229,11 +232,6 @@
+                   OptionBase::buildoption,
+                   &quot;The scale factor of the learning rate used in the noisy recurrent phase for the dynamic hidden reconstruction\n&quot;);
+ 
+-    declareOption(ol, &quot;dynamic_input_reconstruction_lr&quot;, 
+-                  &amp;DenoisingRecurrentNet::dynamic_input_reconstruction_lr,
+-                  OptionBase::buildoption,
+-                  &quot;The learning rate for the input reconstruction cost in the recurrent noisy phase\n&quot;);
+-
+     declareOption(ol, &quot;recurrent_lr&quot;, 
+                   &amp;DenoisingRecurrentNet::recurrent_lr,
+                   OptionBase::buildoption,
+@@ -243,6 +241,18 @@
+                   OptionBase::learntoption,
+                   &quot;When training with trainUnconditionalPredictor (if input_window_size==0), this is simply used to store the the avg encoded frame&quot;);
+ 
++    declareOption(ol, &quot;prediction_cost_weight&quot;, &amp;DenoisingRecurrentNet::prediction_cost_weight,
++                  OptionBase::learntoption,
++                  &quot;The training weight for the target prediction&quot;);
++
++    declareOption(ol, &quot;input_reconstruction_cost_weight&quot;, &amp;DenoisingRecurrentNet::input_reconstruction_cost_weight,
++                  OptionBase::learntoption,
++                  &quot;The training weight for the input reconstruction&quot;);
++
++    declareOption(ol, &quot;hidden_reconstruction_cost_weight&quot;, &amp;DenoisingRecurrentNet::hidden_reconstruction_cost_weight,
++                  OptionBase::learntoption,
++                  &quot;The training weight for the hidden reconstruction&quot;);
++
+  /*
+     declareOption(ol, &quot;&quot;, &amp;DenoisingRecurrentNet::,
+                   OptionBase::learntoption,
+@@ -640,6 +650,9 @@
+             pb = new ProgressBar( &quot;Recurrent training phase of &quot;+classname(),
+                                   end_stage - init_stage );
+ 
++        int nCost = 2;
++        train_costs.resize(train_costs.length() + nCost);
++        train_n_items.resize(train_n_items.length() + nCost);
+         while(stage &lt; end_stage)
+         {
+             train_costs.clear();
+@@ -659,15 +672,19 @@
+                 if(corrupt_input)  // WARNING: encoded_sequence will be dirty!!!!
+                     inject_zero_forcing_noise(encoded_seq, input_noise_prob);
+                 
++                recurrentFprop(train_costs, train_n_items);
++
+                 // greedy phase
+-                if(input_reconstruction_lr!=0 || hidden_reconstruction_lr!=0)
+-                    performGreedyDenoisingPhase();
++                if(input_reconstruction_lr!=0 || hidden_reconstruction_lr!=0){
++                    setLearningRate( input_reconstruction_lr );
++                    performGreedyDenoisingPhase(train_costs, train_n_items);
++                }
+ 
+                 // recurrent noisy phase
+                 if(noisy_recurrent_lr!=0)
+                 {
+                     setLearningRate( noisy_recurrent_lr );
+-                    recurrentFprop(train_costs, train_n_items);
++                    //recurrentFprop(train_costs, train_n_items);
+                     recurrentUpdate(true);
+                 }
+ 
+@@ -685,12 +702,24 @@
+             if( pb )
+                 pb-&gt;update( stage + 1 - init_stage);
+             
++            double totalCosts = 0;
+             for(int i=0; i&lt;train_costs.length(); i++)
+             {
+-                if( !fast_exact_is_equal(target_layers_weights[i],0) )
++                if (i &lt; target_layers_weights.length()){
++                    if( !fast_exact_is_equal(target_layers_weights[i],0) ){
++                        train_costs[i] /= train_n_items[i];
++                        totalCosts += train_costs[i]*target_layers_weights[i];
++                    }
++                    else
++                        train_costs[i] = MISSING_VALUE;
++                }
++                
++                if (i == train_costs.length()-nCost ){
+                     train_costs[i] /= train_n_items[i];
+-                else
+-                    train_costs[i] = MISSING_VALUE;
++                    totalCosts += train_costs[i]*input_reconstruction_cost_weight;
++                }
++                else if (i == train_costs.length()-1)
++                    train_costs[i] = totalCosts;
+             }
+ 
+             if(verbosity&gt;0)
+@@ -711,11 +740,46 @@
+ }
+ 
+ 
+-void DenoisingRecurrentNet::performGreedyDenoisingPhase()
++void DenoisingRecurrentNet::performGreedyDenoisingPhase(Vec train_costs, Vec train_n_items)
+ {
++    hidden_temporal_gradient.resize(hidden_layer-&gt;size);
++    hidden_gradient.resize(hidden_layer-&gt;size);
+     
++    double cost = 0;
++    Mat reconstruction_weights = getInputConnectionsWeightMatrix();
++    for(int i=hidden_list.length()-1; i&gt;=0; i--){ 
++        // Add contribution of input reconstruction cost in hidden_gradient
++        if(input_reconstruction_cost_weight!=0)
++        {
++            hidden_temporal_gradient.clear();
++            hidden_gradient.clear();
+ 
++            Vec clean_input = clean_encoded_seq.subMatRows(i, input_window_size).toVec();
++            
++            train_costs[train_costs.length()-2] += fpropUpdateInputReconstructionFromHidden(hidden_list(i), reconstruction_weights, input_reconstruction_bias, input_reconstruction_prob, 
++                                                                    clean_input, hidden_gradient, input_reconstruction_cost_weight, input_reconstruction_lr);
++            train_n_items[train_n_items.length()-2]++;
+ 
++            if(i!=0 &amp;&amp; dynamic_connections )
++            {
++                hidden_layer-&gt;bpropUpdate(
++                    hidden_act_no_bias_list(i), hidden_list(i),
++                    hidden_temporal_gradient, hidden_gradient);
++                
++                dynamic_connections-&gt;bpropUpdate(
++                    hidden_list(i-1),
++                    hidden_act_no_bias_list(i), // Here, it should be dynamic_act_no_bias_contribution, but doesn't matter because a RBMMatrixConnection::bpropUpdate doesn't use its second argument
++                    hidden_gradient, hidden_temporal_gradient);
++            }
++            else{
++                hidden_layer-&gt;bpropUpdate(
++                    hidden_act_no_bias_list(i), hidden_list(i),
++                    hidden_temporal_gradient, hidden_gradient); // Not really temporal gradient, but this is the final iteration...
++            }
++        }
++    }
++
++    
+ }
+ 
+ 
+@@ -883,7 +947,7 @@
+                              hidden_i);
+         
+         Vec last_hidden = hidden_i;
+-                 
++
+         if( hidden_layer2 )
+         {
+             Vec hidden2_i = hidden2_list(i); 
+@@ -956,11 +1020,20 @@
+     return conn-&gt;weights;
+ }
+ 
++double DenoisingRecurrentNet::fpropUpdateInputReconstructionFromHidden(Vec hidden, Mat&amp; reconstruction_weights, Vec&amp; input_reconstruction_bias, Vec&amp; input_reconstruction_prob, 
++                                                                       Vec clean_input, Vec hidden_gradient, double input_reconstruction_cost_weight, double lr)
++{
++    double cost = fpropInputReconstructionFromHidden(hidden, reconstruction_weights, input_reconstruction_bias, input_reconstruction_prob, clean_input);
++    updateInputReconstructionFromHidden(hidden, reconstruction_weights, input_reconstruction_bias, input_reconstruction_prob, 
++                                        clean_input, hidden_gradient, input_reconstruction_cost_weight, lr);
++    return cost;
++}
++
++
+ //! Builds input_reconstruction_prob from hidden (using reconstruction_weights which is  nhidden x ninputs, and input_reconstruction_bias)
+-//! then backpropagates reconstruction cost (after comparison with clean_input) with learning rate input_reconstruction_lr
+-//! accumulates gradient in hidden_gradient, and updates reconstruction_weights and input_reconstruction_bias
+-void DenoisingRecurrentNet::fpropUpdateInputReconstructionFromHidden(Vec hidden, Mat&amp; reconstruction_weights, Vec&amp; input_reconstruction_bias, Vec&amp; input_reconstruction_prob, 
+-                                              Vec clean_input, Vec hidden_gradient, double input_reconstruction_lr)
++//! Also computes neg log cost and returns it
++double DenoisingRecurrentNet::fpropInputReconstructionFromHidden(Vec hidden, Mat reconstruction_weights, Vec&amp; input_reconstruction_bias, Vec&amp; input_reconstruction_prob, 
++                                                                 Vec clean_input)
+ {
+     // set appropriate sizes
+     int fullinputlength = clean_input.length();
+@@ -976,19 +1049,32 @@
+     transposeProduct(input_reconstruction_activation, reconstruction_weights, hidden); 
+     input_reconstruction_activation += input_reconstruction_bias;
+     applyMultipleSoftmaxToInputWindow(input_reconstruction_activation, input_reconstruction_prob);
++    
++    double neg_log_cost = 0; // neg log softmax
++    for(int k=0; k&lt;input_reconstruction_prob.length(); k++)
++        if(clean_input[k]!=0)
++            neg_log_cost -= clean_input[k]*safelog(input_reconstruction_prob[k]);
+ 
++    return neg_log_cost;
++}
++
++//! Backpropagates reconstruction cost (after comparison with clean_input) with learning rate input_reconstruction_lr
++//! accumulates gradient in hidden_gradient, and updates reconstruction_weights and input_reconstruction_bias
++void DenoisingRecurrentNet::updateInputReconstructionFromHidden(Vec hidden, Mat&amp; reconstruction_weights, Vec&amp; input_reconstruction_bias, Vec input_reconstruction_prob, 
++                                                                Vec clean_input, Vec hidden_gradient, double input_reconstruction_cost_weight, double lr)
++{
+     // gradient of -log softmax is just  output_of_softmax - onehot_target
+     // so let's accumulate this in hidden_gradient
+     Vec input_reconstruction_activation_grad = input_reconstruction_prob;
+     input_reconstruction_activation_grad -= clean_input;
+-    input_reconstruction_activation_grad *= input_reconstruction_lr;
++    input_reconstruction_activation_grad *= input_reconstruction_cost_weight;
+ 
+     // update bias
+-    input_reconstruction_bias -= input_reconstruction_activation_grad;
++    multiplyAcc(input_reconstruction_bias, input_reconstruction_activation_grad, -lr);
+ 
+     // update weight
+     // productTransposeAcc(reconstruction_weights, hidden, input_reconstruction_activation_grad);
+-    externalProductAcc(reconstruction_weights, hidden, input_reconstruction_activation_grad);
++    externalProductScaleAcc(reconstruction_weights, hidden, input_reconstruction_activation_grad, -lr);
+ 
+     // accumulate in hidden_gradient
+     productAcc(hidden_gradient, reconstruction_weights, input_reconstruction_activation_grad);
+@@ -1021,25 +1107,23 @@
+         else
+             hidden_gradient.resize(hidden_layer-&gt;size);
+         hidden_gradient.clear();
+-        for( int tar=0; tar&lt;target_layers.length(); tar++)
++        int tar = 0;
++        if( prediction_cost_weight!=0 )
+         {
+-            if( !fast_exact_is_equal(target_layers_weights[tar],0) )
+-            {
+-                target_layers[tar]-&gt;activation &lt;&lt; target_prediction_act_no_bias_list[tar](i);
+-                target_layers[tar]-&gt;activation += target_layers[tar]-&gt;bias;
+-                target_layers[tar]-&gt;setExpectation(target_prediction_list[tar](i));
+-                target_layers[tar]-&gt;bpropNLL(targets_list[tar](i),nll_list(i,tar),bias_gradient);
+-                bias_gradient *= target_layers_weights[tar];
+-                if(use_target_layers_masks)
+-                    bias_gradient *= masks_list[tar](i);
+-                target_layers[tar]-&gt;update(bias_gradient);
+-                if( hidden_layer2 )
+-                    target_connections[tar]-&gt;bpropUpdate(hidden2_list(i),target_prediction_act_no_bias_list[tar](i),
+-                                                         hidden_gradient, bias_gradient,true);
+-                else
+-                    target_connections[tar]-&gt;bpropUpdate(hidden_list(i),target_prediction_act_no_bias_list[tar](i),
+-                                                         hidden_gradient, bias_gradient,true);
+-            }
++            target_layers[tar]-&gt;activation &lt;&lt; target_prediction_act_no_bias_list[tar](i);
++            target_layers[tar]-&gt;activation += target_layers[tar]-&gt;bias;
++            target_layers[tar]-&gt;setExpectation(target_prediction_list[tar](i));
++            target_layers[tar]-&gt;bpropNLL(targets_list[tar](i),nll_list(i,tar),bias_gradient);
++            bias_gradient *= prediction_cost_weight;
++            //if(use_target_layers_masks)
++            //    bias_gradient *= masks_list[tar](i);
++            target_layers[tar]-&gt;update(bias_gradient);
++            if( hidden_layer2 )
++                target_connections[tar]-&gt;bpropUpdate(hidden2_list(i),target_prediction_act_no_bias_list[tar](i),
++                                                     hidden_gradient, bias_gradient,true);
++            else
++                target_connections[tar]-&gt;bpropUpdate(hidden_list(i),target_prediction_act_no_bias_list[tar](i),
++                                                     hidden_gradient, bias_gradient,true);
+         }
+         if (hidden_layer2)
+         {
+@@ -1054,14 +1138,14 @@
+         }
+             
+         // Add contribution of input reconstruction cost in hidden_gradient
+-        if(input_is_corrupted &amp;&amp; dynamic_input_reconstruction_lr!=0)
++        /*   if(input_is_corrupted &amp;&amp; input_reconstruction_cost_weight!=0)
+         {
+             Mat reconstruction_weights = getInputConnectionsWeightMatrix();
+             Vec clean_input = clean_encoded_seq.subMatRows(i, input_window_size).toVec();
+ 
+             fpropUpdateInputReconstructionFromHidden(hidden_list(i), reconstruction_weights, input_reconstruction_bias, input_reconstruction_prob, 
+-                                                     clean_input, hidden_gradient, dynamic_input_reconstruction_lr);
+-        }
++                                                     clean_input, hidden_gradient, input_reconstruction_cost_weight, current_learning_rate);
++                                                     }*/
+ 
+         if(i!=0 &amp;&amp; dynamic_connections )
+         {   
+@@ -1428,6 +1512,7 @@
+ 
+ void DenoisingRecurrentNet::setLearningRate( real the_learning_rate )
+ {
++    current_learning_rate = the_learning_rate;
+     input_layer-&gt;setLearningRate( the_learning_rate );
+     hidden_layer-&gt;setLearningRate( the_learning_rate );
+     input_connections-&gt;setLearningRate( the_learning_rate );
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.h
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.h	2008-10-15 17:15:07 UTC (rev 9566)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.h	2008-10-16 16:11:12 UTC (rev 9567)
+@@ -137,7 +137,6 @@
+     // this phase *also* uses dynamic_gradient_scale_factor;
+     double noisy_recurrent_lr;    
+     double dynamic_gradient_scale_factor;
+-    double dynamic_input_reconstruction_lr;
+     
+     // Phase recurrent no noise (supervised fine tuning)
+     double recurrent_lr;
+@@ -149,6 +148,11 @@
+     // learnt bias for input reconstruction
+     Vec input_reconstruction_bias;
+     
++    double prediction_cost_weight;
++    double input_reconstruction_cost_weight;
++    double hidden_reconstruction_cost_weight;
++
++
+     //#####  Not Options  #####################################################
+ 
+ 
+@@ -215,6 +219,7 @@
+     virtual void train();
+ 
+     //! Sets the learning of all layers and connections
++    //! Remembers it by copying value to current_learning_rate
+     void setLearningRate( real the_learning_rate );
+ 
+     //! Computes the output from the input.
+@@ -296,8 +301,8 @@
+ 
+ protected:
+     //#####  Not Options  #####################################################
++    mutable double current_learning_rate;
+ 
+-
+     //! Store external data;
+     AutoVMatrix*  data;
+    
+@@ -372,7 +377,7 @@
+     void build_();
+ 
+ 
+-    void performGreedyDenoisingPhase();
++    void performGreedyDenoisingPhase(Vec train_costs, Vec train_n_items);
+ 
+     void applyMultipleSoftmaxToInputWindow(Vec input_reconstruction_activation, Vec input_reconstruction_prob);
+ 
+@@ -400,11 +405,24 @@
+     //! Builds input_reconstruction_prob from hidden (using reconstruction_weights which is  nhidden x ninputs, and input_reconstruction_bias)
+     //! then backpropagates reconstruction cost (after comparison with clean_input) with learning rate input_reconstruction_lr
+     //! accumulates gradient in hidden_gradient, and updates reconstruction_weights and input_reconstruction_bias
+-    void fpropUpdateInputReconstructionFromHidden(Vec hidden, Mat&amp; reconstruction_weights, Vec&amp; input_reconstruction_bias, Vec&amp; input_reconstruction_prob, 
+-                                                  Vec clean_input, Vec hidden_gradient, double input_reconstruction_lr);
++    //! Also computes neg log cost and returns it
++    
++    double fpropUpdateInputReconstructionFromHidden(Vec hidden, Mat&amp; reconstruction_weights, Vec&amp; input_reconstruction_bias, Vec&amp; input_reconstruction_prob, 
++                                                Vec clean_input, Vec hidden_gradient, double input_reconstruction_cost_weight, double lr);
+ 
++    
++    //! Builds input_reconstruction_prob from hidden (using reconstruction_weights which is  nhidden x ninputs, and input_reconstruction_bias)
++    //! Also computes neg log cost and returns it
++    double fpropInputReconstructionFromHidden(Vec hidden, Mat reconstruction_weights, Vec&amp; input_reconstruction_bias, Vec&amp; input_reconstruction_prob, 
++                                              Vec clean_input);
+ 
++    //! Backpropagates reconstruction cost (after comparison with clean_input) with learning rate input_reconstruction_lr
++    //! accumulates gradient in hidden_gradient, and updates reconstruction_weights and input_reconstruction_bias
++    void updateInputReconstructionFromHidden(Vec hidden, Mat&amp; reconstruction_weights, Vec&amp; input_reconstruction_bias, Vec input_reconstruction_prob, 
++                                             Vec clean_input, Vec hidden_gradient, double input_reconstruction_cost_weight, double lr);
+ 
++
++
+ private:
+     //#####  Private Data Members  ############################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003006.html">[Plearn-commits] r9566 - trunk/python_modules/plearn/utilities
+</A></li>
+	<LI>Next message: <A HREF="003008.html">[Plearn-commits] r9568 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3007">[ date ]</a>
+              <a href="thread.html#3007">[ thread ]</a>
+              <a href="subject.html#3007">[ subject ]</a>
+              <a href="author.html#3007">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,260 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8710 - trunk/plearn_learners/meta
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8710%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200803201643.m2KGhTbR004134%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002157.html">
+   <LINK REL="Next"  HREF="002156.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8710 - trunk/plearn_learners/meta</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8710%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200803201643.m2KGhTbR004134%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8710 - trunk/plearn_learners/meta">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Thu Mar 20 17:43:29 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002157.html">[Plearn-commits] r8709 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="002156.html">[Plearn-commits] r8711 - trunk/plearn_learners/meta
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2160">[ date ]</a>
+              <a href="thread.html#2160">[ thread ]</a>
+              <a href="subject.html#2160">[ subject ]</a>
+              <a href="author.html#2160">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-03-20 17:43:28 +0100 (Thu, 20 Mar 2008)
+New Revision: 8710
+
+Modified:
+   trunk/plearn_learners/meta/AdaBoost.cc
+   trunk/plearn_learners/meta/AdaBoost.h
+Log:
+can revert to an old state. Currently we can't continue to learn, but this can be added.
+
+
+Modified: trunk/plearn_learners/meta/AdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.cc	2008-03-20 16:39:48 UTC (rev 8709)
++++ trunk/plearn_learners/meta/AdaBoost.cc	2008-03-20 16:43:28 UTC (rev 8710)
+@@ -280,6 +280,7 @@
+     weak_learners.resize(0, nstages);
+     voting_weights.resize(0, nstages);
+     sum_voting_weights = 0;
++    found_zero_error_weak_learner=false;
+     if (seed_ &gt;= 0)
+         manual_seed(seed_);
+     else
+@@ -298,9 +299,29 @@
+         PLERROR(&quot;In AdaBoost::train, targetsize should be 1, found %d&quot;, 
+                 train_set-&gt;targetsize());
+ 
+-    if (nstages &lt; stage)        //!&lt; Asking to revert to previous stage
+-        forget();
++    if (nstages &lt; stage){        //!&lt; Asking to revert to previous stage
++        PLCHECK(nstages&gt;0); // should use forget
++        cout&lt;&lt;&quot;In AdaBoost::train() - reverting to an old stage &quot;&lt;&lt;stage&lt;&lt;&quot; with nstages &quot;&lt;&lt;nstages&lt;&lt;endl;
++        stage = nstages;
++        PLCHECK(learners_error.size()&gt;=stage);
++        PLCHECK(weak_learners.size()&gt;=stage);
++        PLCHECK(voting_weights.size()&gt;=stage);
++        PLCHECK(nstages&gt;0);
++        learners_error.resize(stage);
++        weak_learners.resize(stage);
++        voting_weights.resize(stage);
++        sum_voting_weights = sum(voting_weights);
++        found_zero_error_weak_learner=false;
+ 
++        example_weights.resize(0);
++        return;
++        //need examples_weights
++        //computeTrainingError();
++
++    }else if(nstages&gt;0 &amp;&amp; stage&gt;0 &amp;&amp; example_weights.size()==0){
++        PLERROR(&quot;In AdaBoost::train() -  we can't retrain a reverted learner...&quot;);
++    }
++    
+     if(found_zero_error_weak_learner) // Training is over...
+         return;
+ 
+@@ -636,49 +657,8 @@
+         }
+         example_weights *= real(1.0)/sum_w;
+ 
+-        if (compute_training_error)
+-        {
+-            {
+-                PP&lt;ProgressBar&gt; pb;
+-                if(report_progress) pb = new ProgressBar(&quot;computing weighted training error of whole model&quot;,n);
+-                train_stats-&gt;forget();
+-                Vec err(nTrainCosts());
+-                int nb_class_0=0;
+-                int nb_class_1=0;
+-                real cum_weights_0=0;
+-                real cum_weights_1=0;
++        computeTrainingError(input, target);
+ 
+-                bool save_forward_sub_learner_test_costs = 
+-                    forward_sub_learner_test_costs;
+-                forward_sub_learner_test_costs=false;
+-                for (int i=0;i&lt;n;i++)
+-                {
+-                    if(report_progress) pb-&gt;update(i);
+-                    train_set-&gt;getExample(i, input, target, weight);
+-                    computeCostsOnly(input,target,err);
+-                    if(fast_is_equal(target[0],0.)){
+-                        cum_weights_0 += example_weights[i];
+-                        nb_class_0++;
+-                    }else{
+-                        cum_weights_1 += example_weights[i];
+-                        nb_class_1++;
+-                    }
+-                    err[3]=cum_weights_0/nb_class_0;
+-                    err[4]=cum_weights_1/nb_class_1;
+-                    train_stats-&gt;update(err);
+-                }
+-                train_stats-&gt;finalize();
+-                forward_sub_learner_test_costs = 
+-                    save_forward_sub_learner_test_costs;
+-
+-            }
+-            if (verbosity&gt;2)
+-                cout &lt;&lt; &quot;At stage &quot; &lt;&lt; stage &lt;&lt; 
+-                    &quot; boosted (weighted) classification error on training set = &quot; 
+-                     &lt;&lt; train_stats-&gt;getMean() &lt;&lt; endl;
+-     
+-        }
+-
+         if(fast_exact_is_equal(learners_error[stage], 0))
+         {
+             cout &lt;&lt; &quot;AdaBoost::train found weak learner with 0 training &quot;
+@@ -716,6 +696,8 @@
+ }
+ void AdaBoost::computeOutput(const Vec&amp; input, Vec&amp; output, int nb_learner) const
+ {
++    if(nb_learner&lt;0)
++        nb_learner=weak_learners.size();
+     PLASSERT(nb_learner&gt;0);
+     real local_sum_weight = sum_voting_weights;
+     if (nb_learner&gt;voting_weights.length() and not found_zero_error_weak_learner){
+@@ -773,11 +755,6 @@
+     else
+         costs[3]=costs[4]=MISSING_VALUE;
+ 
+-    PP&lt;VMatrix&gt; the_train_set = train_set;
+-    if(!train_set)
+-        the_train_set=sorted_train_set;
+-    PLASSERT(the_train_set);
+-
+     if(forward_sub_learner_test_costs){
+         Vec weighted_costs(weak_learners[0]-&gt;nTestCosts());
+         Vec sum_weighted_costs(weak_learners[0]-&gt;nTestCosts());
+@@ -832,6 +809,57 @@
+     return tmp_output2;
+ }
+ 
++
++void AdaBoost::computeTrainingError(Vec input, Vec target)
++{
++    if (compute_training_error)
++    {
++        PP&lt;VMatrix&gt; the_train_set = train_set;
++        if(!train_set)
++            the_train_set=sorted_train_set;
++        PLASSERT(the_train_set);
++        int n=the_train_set-&gt;length();
++        PP&lt;ProgressBar&gt; pb;
++        if(report_progress) pb = new ProgressBar(&quot;computing weighted training error of whole model&quot;,n);
++        train_stats-&gt;forget();
++        Vec err(nTrainCosts());
++        int nb_class_0=0;
++        int nb_class_1=0;
++        real cum_weights_0=0;
++        real cum_weights_1=0;
++
++        bool save_forward_sub_learner_test_costs = 
++            forward_sub_learner_test_costs;
++        forward_sub_learner_test_costs=false;
++        real weight;
++        for (int i=0;i&lt;n;i++)
++        {
++            if(report_progress) pb-&gt;update(i);
++            train_set-&gt;getExample(i, input, target, weight);
++            computeCostsOnly(input,target,err);
++            if(fast_is_equal(target[0],0.)){
++                cum_weights_0 += example_weights[i];
++                nb_class_0++;
++            }else{
++                cum_weights_1 += example_weights[i];
++                nb_class_1++;
++            }
++            err[3]=cum_weights_0/nb_class_0;
++            err[4]=cum_weights_1/nb_class_1;
++            train_stats-&gt;update(err);
++        }
++        train_stats-&gt;finalize();
++        forward_sub_learner_test_costs = 
++            save_forward_sub_learner_test_costs;
++
++        if (verbosity&gt;2)
++            cout &lt;&lt; &quot;At stage &quot; &lt;&lt; stage &lt;&lt; 
++                &quot; boosted (weighted) classification error on training set = &quot; 
++                 &lt;&lt; train_stats-&gt;getMean() &lt;&lt; endl;
++     
++    }
++}
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/meta/AdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.h	2008-03-20 16:39:48 UTC (rev 8709)
++++ trunk/plearn_learners/meta/AdaBoost.h	2008-03-20 16:43:28 UTC (rev 8710)
+@@ -149,6 +149,7 @@
+     //! be modified by subsequent use of this object, and thus should be copied
+     //! if it needs to be stored safely.
+     Vec remote_computeOutput_at_stage(const Vec&amp; input, const int stage) const;
++    void computeTrainingError(Vec input, Vec target);
+ 
+ protected: 
+     //! Declares this class' options
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002157.html">[Plearn-commits] r8709 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="002156.html">[Plearn-commits] r8711 - trunk/plearn_learners/meta
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2160">[ date ]</a>
+              <a href="thread.html#2160">[ thread ]</a>
+              <a href="subject.html#2160">[ subject ]</a>
+              <a href="author.html#2160">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

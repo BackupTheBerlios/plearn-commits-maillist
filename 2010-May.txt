@@ -1,0 +1,637 @@
+From nouiz at mail.berlios.de  Thu May 13 16:36:01 2010
+From: nouiz at mail.berlios.de (nouiz at BerliOS)
+Date: Thu, 13 May 2010 16:36:01 +0200
+Subject: [Plearn-commits] r10337 - trunk/scripts
+Message-ID: <201005131436.o4DEa1LS008522@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-05-13 16:36:00 +0200 (Thu, 13 May 2010)
+New Revision: 10337
+
+Modified:
+   trunk/scripts/dbidispatch
+Log:
+try to guess Sge backend and remove useless warning
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2010-04-29 17:44:58 UTC (rev 10336)
++++ trunk/scripts/dbidispatch	2010-05-13 14:36:00 UTC (rev 10337)
+@@ -313,6 +313,8 @@
+     launch_cmd = 'Bqtools'
+ elif search_file('cluster',PATH):
+     launch_cmd = 'Cluster'
++elif search_file('qsub',PATH):
++    launch_cmd = 'Sge'
+ else:
+     launch_cmd = 'Local'
+ LOGDIR=os.getenv("DBIDISPATCH_LOGDIR")
+@@ -493,7 +495,7 @@
+ print "\n\nThe jobs will be launched on the system:", launch_cmd
+ print "With options: ",[str(param)+":"+str(value) for param,value in dbi_param.items() if value!=dbi_param_orig.get(param,None)]
+ for i in dbi_param:
+-    if i not in valid_dbi_param:
++    if i not in valid_dbi_param and i in dbi_param_orig and dbi_param_orig[i]!=dbi_param[i]:
+         print "WARNING: The parameter",i,"is not valid for the",launch_cmd,"back-end. It will be ignored."
+ if dbi_param["restart"]:
+     print "With the command to be restarted:"," ".join(command_argv),"\n\n"
+
+
+
+From nouiz at mail.berlios.de  Thu May 13 16:41:32 2010
+From: nouiz at mail.berlios.de (nouiz at BerliOS)
+Date: Thu, 13 May 2010 16:41:32 +0200
+Subject: [Plearn-commits] r10338 - trunk/scripts
+Message-ID: <201005131441.o4DEfWtG009022@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-05-13 16:41:32 +0200 (Thu, 13 May 2010)
+New Revision: 10338
+
+Modified:
+   trunk/scripts/dbidispatch
+Log:
+fix doc, we need to separate them by space into the same token
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2010-05-13 14:36:00 UTC (rev 10337)
++++ trunk/scripts/dbidispatch	2010-05-13 14:41:32 UTC (rev 10338)
+@@ -35,7 +35,7 @@
+     bqtools, cluster, sge option:           [--duree=X]
+     bqtools, condor options  :[--raw=STRING[\nSTRING]]
+                               [*--[no_]set_special_env]
+-                              [--env=VAR=VALUE[;VAR2=VALUE2]]
++                              [--env=VAR=VALUE[ VAR2=VALUE2]] (must be quoted into the shell!)
+     cluster, condor options  :[--32|--64|--3264] [--os=X]
+     bqtools, sge options:     [--queue=X] [--jobs_name=X]
+     bqtools options          :[--micro[=nb_batch]] [--[*no_]long]
+@@ -147,7 +147,7 @@
+     MKL_NUM_THREADS and GOTO_NUM_THREADS to the number of cpus allocated to job.
+   The '--env=VAR=VALUE' option will set in the environment of the executing
+     jobs the variable VAR with value VALUE. To pass many variable you can:
+-      1) use one --env option and separ the pair by ';'(don't forget to quote)
++      1) use one --env option and separ the pair by ' '(don't forget to quote)
+       2) you can pass many time the --env parameter.
+ 
+ cluster and condor options:
+
+
+
+From nouiz at mail.berlios.de  Thu May 13 16:51:11 2010
+From: nouiz at mail.berlios.de (nouiz at BerliOS)
+Date: Thu, 13 May 2010 16:51:11 +0200
+Subject: [Plearn-commits] r10339 - in trunk: python_modules/plearn/parallel
+	scripts
+Message-ID: <201005131451.o4DEpBIF009846@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-05-13 16:51:11 +0200 (Thu, 13 May 2010)
+New Revision: 10339
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+dbidispatch: implement the --env parameter to the sge backend
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-05-13 14:41:32 UTC (rev 10338)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-05-13 14:51:11 UTC (rev 10339)
+@@ -781,6 +781,7 @@
+         self.queue = ''
+         self.duree = '23:59:59'
+         self.project = 'jvb-000-aa'
++        self.env = ''
+         DBIBase.__init__(self, commands, **args)
+ 
+         self.tmp_dir = os.path.abspath(self.tmp_dir)
+@@ -892,6 +893,12 @@
+                 ## Queue name
+                 #$ -q %(queue)s
+                 '''
++        if self.env:
++            submit_sh_template += '''
++                ## Variable to put into the environment
++                #$ -v %s
++                '''%(','.join(self.env[1:-1].split()))
++
+         submit_sh_template += '''
+                 ## Execute the 'launcher' script in bash
+                 # Bash is needed because we use its "array" data structure
+@@ -921,18 +928,20 @@
+         print "[DBI] WARNING: the log formatting specified by --task_names will be ignored,"
+         print "     the following format will be used: $JOB_NAME.$JOB_ID.$TASK_ID.log.{err,out}"
+         # Launch qsub
++        submit_command = 'qsub ' + os.path.join(self.log_dir, 'submit.sh')
+         if not self.test:
+             for t in self.tasks:
+                 t.set_scheduled_time()
+ 
+-            submit_command = 'qsub ' + os.path.join(self.log_dir, 'submit.sh')
+             self.p = Popen(submit_command, shell=True)
+             self.p.wait()
+ 
+             if self.p.returncode!=0:
+                 raise DBIError("[DBI] ERROR: qsub returned an error code of"+str(self.p.returncode))
+         else:
+-            print "[DBI] Test mode, we generated all files, but will not execute bqsubmit"
++            print "[DBI] Test mode, we generated all files, but will not execute qsub"
++            print '[DBI] Test mode, to manually launch it execute "'+submit_command+'"'
++            
+             if self.dolog:
+                 print "[DBI] The scheduling time will not be logged when you submit the generated file"
+ 
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2010-05-13 14:41:32 UTC (rev 10338)
++++ trunk/scripts/dbidispatch	2010-05-13 14:51:11 UTC (rev 10339)
+@@ -33,9 +33,9 @@
+     bqtools, cluster, condor, sge option:   [--cpu=nb_cpu_per_node]
+     bqtools, cluster, condor option:        [--mem=N]
+     bqtools, cluster, sge option:           [--duree=X]
++    bqtools, condor, sge options:           [--env=VAR=VALUE[ VAR2=VALUE2]]  (must be quoted into the shell!)
+     bqtools, condor options  :[--raw=STRING[\nSTRING]]
+                               [*--[no_]set_special_env]
+-                              [--env=VAR=VALUE[ VAR2=VALUE2]] (must be quoted into the shell!)
+     cluster, condor options  :[--32|--64|--3264] [--os=X]
+     bqtools, sge options:     [--queue=X] [--jobs_name=X]
+     bqtools options          :[--micro[=nb_batch]] [--[*no_]long]
+@@ -140,15 +140,17 @@
+     For bqtools and sge, the syntax is '--duree=12:13:15', giving 12 hours, 
+     13 minutes and 15 seconds.
+ 
++bqtools, condor and sge options:
++  The '--env=VAR=VALUE' option will set in the environment of the executing
++    jobs the variable VAR with value VALUE. To pass many variable you can:
++      1) use one --env option and separ the pair by ' '(don't forget to quote)
++      2) you can pass many time the --env parameter.
++
+ bqtools and condor options:
+   The '--raw=STRING1[\nSTRING2...]' option append all STRINGX in the submit file.
+       if this option appread many time, they will be concatanated with a new line.
+   The '--[no_]set_special_env' option will set the varialbe OMP_NUM_THREADS, 
+     MKL_NUM_THREADS and GOTO_NUM_THREADS to the number of cpus allocated to job.
+-  The '--env=VAR=VALUE' option will set in the environment of the executing
+-    jobs the variable VAR with value VALUE. To pass many variable you can:
+-      1) use one --env option and separ the pair by ' '(don't forget to quote)
+-      2) you can pass many time the --env parameter.
+ 
+ cluster and condor options:
+   The '--3264', '--32' or '--64' specify the type of cpu for the execution node.
+@@ -460,7 +462,7 @@
+                        "nano", "queue", "raw", "submit_options", "jobs_name",
+                        "set_special_env", "env" ]
+ elif launch_cmd=="Sge":
+-    valid_dbi_param += ["duree", "jobs_name", "queue"]
++    valid_dbi_param += ["duree", "jobs_name", "queue", "env"]
+ 
+ if dbi_param['gpu']:
+     dbi_param['req']+="&&(Target.GPU=?=True)"
+
+
+
+From nouiz at mail.berlios.de  Thu May 13 16:56:27 2010
+From: nouiz at mail.berlios.de (nouiz at BerliOS)
+Date: Thu, 13 May 2010 16:56:27 +0200
+Subject: [Plearn-commits] r10340 - trunk/scripts
+Message-ID: <201005131456.o4DEuRTH010095@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-05-13 16:56:27 +0200 (Thu, 13 May 2010)
+New Revision: 10340
+
+Modified:
+   trunk/scripts/dbidispatch
+Log:
+fix warning condition
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2010-05-13 14:51:11 UTC (rev 10339)
++++ trunk/scripts/dbidispatch	2010-05-13 14:56:27 UTC (rev 10340)
+@@ -497,7 +497,7 @@
+ print "\n\nThe jobs will be launched on the system:", launch_cmd
+ print "With options: ",[str(param)+":"+str(value) for param,value in dbi_param.items() if value!=dbi_param_orig.get(param,None)]
+ for i in dbi_param:
+-    if i not in valid_dbi_param and i in dbi_param_orig and dbi_param_orig[i]!=dbi_param[i]:
++    if i not in valid_dbi_param and (i not in dbi_param_orig or dbi_param_orig[i]!=dbi_param[i]):
+         print "WARNING: The parameter",i,"is not valid for the",launch_cmd,"back-end. It will be ignored."
+ if dbi_param["restart"]:
+     print "With the command to be restarted:"," ".join(command_argv),"\n\n"
+
+
+
+From nouiz at mail.berlios.de  Thu May 13 17:59:23 2010
+From: nouiz at mail.berlios.de (nouiz at BerliOS)
+Date: Thu, 13 May 2010 17:59:23 +0200
+Subject: [Plearn-commits] r10341 - in trunk: python_modules/plearn/parallel
+	scripts
+Message-ID: <201005131559.o4DFxNT4014646@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-05-13 17:59:22 +0200 (Thu, 13 May 2010)
+New Revision: 10341
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+dbidispatch: enabled --mem for sge backend
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-05-13 14:56:27 UTC (rev 10340)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-05-13 15:59:22 UTC (rev 10341)
+@@ -184,7 +184,7 @@
+         self.stderrs = ''
+         self.raw = ''
+         self.cpu = 1
+-        self.mem = 0
++        self.mem = "0"
+ 
+         for key in args.keys():
+             self.__dict__[key] = args[key]
+@@ -193,8 +193,14 @@
+         if (not os.path.exists(self.log_dir)):
+ #            if self.dolog or self.file_redirect_stdout or self.file_redirect_stderr:
+             os.mkdir(self.log_dir)
+-
+-        self.mem = int(self.mem)
++        if self.mem[-1] in ['G', 'g']:
++            self.mem = int(self.mem[:-1])*1024
++        elif self.mem[-1] in ['M', 'm']:
++            self.mem = int(self.mem[:-1])
++        elif self.mem[-1] in ['K', 'k']:
++            self.mem = int(self.mem[:-1])/1024
++        else: self.mem = int(self.mem)
++            
+         self.cpu = int(self.cpu)
+         # If some arguments aren't lists, put them in a list
+         if not isinstance(commands, list):
+@@ -888,6 +894,12 @@
+                 ## Number of CPU (on the same node) per job
+                 #$ -pe smp %(cpu)i
+                 '''
++        if self.mem > 0:
++            submit_sh_template += '''
++                ## Memory size (on the same node) per job
++                #$ -l ml=%sM
++                '''%str(self.mem)
++            
+         if self.queue:
+             submit_sh_template += '''
+                 ## Queue name
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2010-05-13 14:56:27 UTC (rev 10340)
++++ trunk/scripts/dbidispatch	2010-05-13 15:59:22 UTC (rev 10341)
+@@ -31,7 +31,7 @@
+                                                  clusterid(condor only),
+                                                  processid(condor only))}+]
+     bqtools, cluster, condor, sge option:   [--cpu=nb_cpu_per_node]
+-    bqtools, cluster, condor option:        [--mem=N]
++                                            [--mem=N]
+     bqtools, cluster, sge option:           [--duree=X]
+     bqtools, condor, sge options:           [--env=VAR=VALUE[ VAR2=VALUE2]]  (must be quoted into the shell!)
+     bqtools, condor options  :[--raw=STRING[\nSTRING]]
+@@ -130,9 +130,9 @@
+ bqtools, cluster, condor and sge option:
+   The '--cpu=nb_cpu_per_node' option determine the number of cpu(cores) that 
+     will be reserved for each job.(default=1, -1 won't set it)
+-
+-bqtools, cluster and condor option:
+   The '--mem=X' speficify the number of ram in meg the program need to execute.
++    If you put G[g],M[m] or K[k] at the end. We consider it as Gig, Meg or K
++    with multiple of 1024.
+ 
+ bqtools, cluster and sge option:
+   The '--duree' option specifies the maximum duration of the jobs. The syntax 
+@@ -462,7 +462,7 @@
+                        "nano", "queue", "raw", "submit_options", "jobs_name",
+                        "set_special_env", "env" ]
+ elif launch_cmd=="Sge":
+-    valid_dbi_param += ["duree", "jobs_name", "queue", "env"]
++    valid_dbi_param += ["duree", "jobs_name", "queue", "mem", "env"]
+ 
+ if dbi_param['gpu']:
+     dbi_param['req']+="&&(Target.GPU=?=True)"
+
+
+
+From nouiz at mail.berlios.de  Thu May 13 19:00:12 2010
+From: nouiz at mail.berlios.de (nouiz at BerliOS)
+Date: Thu, 13 May 2010 19:00:12 +0200
+Subject: [Plearn-commits] r10342 - trunk/scripts
+Message-ID: <201005131700.o4DH0Cv1022836@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-05-13 19:00:10 +0200 (Thu, 13 May 2010)
+New Revision: 10342
+
+Modified:
+   trunk/scripts/dbidispatch
+Log:
+remove useless warning as the parameter is implemented
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2010-05-13 15:59:22 UTC (rev 10341)
++++ trunk/scripts/dbidispatch	2010-05-13 17:00:10 UTC (rev 10342)
+@@ -462,7 +462,8 @@
+                        "nano", "queue", "raw", "submit_options", "jobs_name",
+                        "set_special_env", "env" ]
+ elif launch_cmd=="Sge":
+-    valid_dbi_param += ["duree", "jobs_name", "queue", "mem", "env"]
++    valid_dbi_param += ["duree", "jobs_name", "queue", "cpu", "mem", "env",
++                        ]
+ 
+ if dbi_param['gpu']:
+     dbi_param['req']+="&&(Target.GPU=?=True)"
+
+
+
+From nouiz at mail.berlios.de  Thu May 13 19:55:24 2010
+From: nouiz at mail.berlios.de (nouiz at BerliOS)
+Date: Thu, 13 May 2010 19:55:24 +0200
+Subject: [Plearn-commits] r10343 - in trunk: python_modules/plearn/parallel
+	scripts
+Message-ID: <201005131755.o4DHtONg032639@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-05-13 19:55:24 +0200 (Thu, 13 May 2010)
+New Revision: 10343
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+implement the --set_special_env for Sge backend.
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-05-13 17:00:10 UTC (rev 10342)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-05-13 17:55:24 UTC (rev 10343)
+@@ -788,6 +788,7 @@
+         self.duree = '23:59:59'
+         self.project = 'jvb-000-aa'
+         self.env = ''
++        self.set_special_env = True
+         DBIBase.__init__(self, commands, **args)
+ 
+         self.tmp_dir = os.path.abspath(self.tmp_dir)
+@@ -905,11 +906,16 @@
+                 ## Queue name
+                 #$ -q %(queue)s
+                 '''
+-        if self.env:
++        env = self.env
++        if self.set_special_env and self.cpu>0:
++            if not env:
++                env = '""'
++            env = env[:-1]+ ' OMP_NUM_THREADS=%d GOTO_NUM_THREADS=%d MKL_NUM_THREADS=%d"'%(self.cpu,self.cpu,self.cpu)
++        if env:
+             submit_sh_template += '''
+                 ## Variable to put into the environment
+                 #$ -v %s
+-                '''%(','.join(self.env[1:-1].split()))
++                '''%(','.join(env[1:-1].split()))
+ 
+         submit_sh_template += '''
+                 ## Execute the 'launcher' script in bash
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2010-05-13 17:00:10 UTC (rev 10342)
++++ trunk/scripts/dbidispatch	2010-05-13 17:55:24 UTC (rev 10343)
+@@ -34,8 +34,8 @@
+                                             [--mem=N]
+     bqtools, cluster, sge option:           [--duree=X]
+     bqtools, condor, sge options:           [--env=VAR=VALUE[ VAR2=VALUE2]]  (must be quoted into the shell!)
++                                            [*--[no_]set_special_env]
+     bqtools, condor options  :[--raw=STRING[\nSTRING]]
+-                              [*--[no_]set_special_env]
+     cluster, condor options  :[--32|--64|--3264] [--os=X]
+     bqtools, sge options:     [--queue=X] [--jobs_name=X]
+     bqtools options          :[--micro[=nb_batch]] [--[*no_]long]
+@@ -145,12 +145,12 @@
+     jobs the variable VAR with value VALUE. To pass many variable you can:
+       1) use one --env option and separ the pair by ' '(don't forget to quote)
+       2) you can pass many time the --env parameter.
++  The '--[no_]set_special_env' option will set the varialbe OMP_NUM_THREADS, 
++    MKL_NUM_THREADS and GOTO_NUM_THREADS to the number of cpus allocated to job.
+ 
+ bqtools and condor options:
+   The '--raw=STRING1[\nSTRING2...]' option append all STRINGX in the submit file.
+       if this option appread many time, they will be concatanated with a new line.
+-  The '--[no_]set_special_env' option will set the varialbe OMP_NUM_THREADS, 
+-    MKL_NUM_THREADS and GOTO_NUM_THREADS to the number of cpus allocated to job.
+ 
+ cluster and condor options:
+   The '--3264', '--32' or '--64' specify the type of cpu for the execution node.
+@@ -463,6 +463,7 @@
+                        "set_special_env", "env" ]
+ elif launch_cmd=="Sge":
+     valid_dbi_param += ["duree", "jobs_name", "queue", "cpu", "mem", "env",
++                        "set_special_env",
+                         ]
+ 
+ if dbi_param['gpu']:
+
+
+
+From nouiz at mail.berlios.de  Thu May 13 20:05:36 2010
+From: nouiz at mail.berlios.de (nouiz at BerliOS)
+Date: Thu, 13 May 2010 20:05:36 +0200
+Subject: [Plearn-commits] r10344 - in trunk: python_modules/plearn/parallel
+	scripts
+Message-ID: <201005131805.o4DI5asY000596@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-05-13 20:05:36 +0200 (Thu, 13 May 2010)
+New Revision: 10344
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+implemented --raw for Sge backend
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-05-13 17:55:24 UTC (rev 10343)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-05-13 18:05:36 UTC (rev 10344)
+@@ -917,6 +917,10 @@
+                 #$ -v %s
+                 '''%(','.join(env[1:-1].split()))
+ 
++        if self.raw:
++            submit_sh_template += '''%s
++                '''%self.raw
++
+         submit_sh_template += '''
+                 ## Execute the 'launcher' script in bash
+                 # Bash is needed because we use its "array" data structure
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2010-05-13 17:55:24 UTC (rev 10343)
++++ trunk/scripts/dbidispatch	2010-05-13 18:05:36 UTC (rev 10344)
+@@ -35,7 +35,7 @@
+     bqtools, cluster, sge option:           [--duree=X]
+     bqtools, condor, sge options:           [--env=VAR=VALUE[ VAR2=VALUE2]]  (must be quoted into the shell!)
+                                             [*--[no_]set_special_env]
+-    bqtools, condor options  :[--raw=STRING[\nSTRING]]
++                                            [--raw=STRING[\nSTRING]]
+     cluster, condor options  :[--32|--64|--3264] [--os=X]
+     bqtools, sge options:     [--queue=X] [--jobs_name=X]
+     bqtools options          :[--micro[=nb_batch]] [--[*no_]long]
+@@ -147,8 +147,6 @@
+       2) you can pass many time the --env parameter.
+   The '--[no_]set_special_env' option will set the varialbe OMP_NUM_THREADS, 
+     MKL_NUM_THREADS and GOTO_NUM_THREADS to the number of cpus allocated to job.
+-
+-bqtools and condor options:
+   The '--raw=STRING1[\nSTRING2...]' option append all STRINGX in the submit file.
+       if this option appread many time, they will be concatanated with a new line.
+ 
+@@ -463,7 +461,7 @@
+                        "set_special_env", "env" ]
+ elif launch_cmd=="Sge":
+     valid_dbi_param += ["duree", "jobs_name", "queue", "cpu", "mem", "env",
+-                        "set_special_env",
++                        "raw", "set_special_env",
+                         ]
+ 
+ if dbi_param['gpu']:
+
+
+
+From nouiz at mail.berlios.de  Thu May 13 22:21:40 2010
+From: nouiz at mail.berlios.de (nouiz at BerliOS)
+Date: Thu, 13 May 2010 22:21:40 +0200
+Subject: [Plearn-commits] r10345 - in trunk: python_modules/plearn/parallel
+	scripts
+Message-ID: <201005132021.o4DKLeO5012944@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-05-13 22:21:39 +0200 (Thu, 13 May 2010)
+New Revision: 10345
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+fix bqtools set_special_env to set all var. Simplified --env handling.
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-05-13 18:05:36 UTC (rev 10344)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-05-13 20:21:39 UTC (rev 10345)
+@@ -619,7 +619,7 @@
+         self.nano = int(self.nano)
+ 
+         if self.set_special_env and self.cpu>0:
+-            self.env+=' OMP_NUM_THREADS=%d'%self.cpu
++            self.env+=' OMP_NUM_THREADS=%d OMP_NUM_THREADS=%d GOTO_NUM_THREADS=%d MKL_NUM_THREADS=%d'%(self.cpu,self.cpu,self.cpu)
+         if self.env:
+             self.env='export '+self.env
+ ### We can't accept the symbols "," as this cause trouble with bqtools
+@@ -910,12 +910,12 @@
+         if self.set_special_env and self.cpu>0:
+             if not env:
+                 env = '""'
+-            env = env[:-1]+ ' OMP_NUM_THREADS=%d GOTO_NUM_THREADS=%d MKL_NUM_THREADS=%d"'%(self.cpu,self.cpu,self.cpu)
++            env += ' OMP_NUM_THREADS=%d GOTO_NUM_THREADS=%d MKL_NUM_THREADS=%d'%(self.cpu,self.cpu,self.cpu)
+         if env:
+             submit_sh_template += '''
+                 ## Variable to put into the environment
+                 #$ -v %s
+-                '''%(','.join(env[1:-1].split()))
++                '''%(','.join(env.split()))
+ 
+         if self.raw:
+             submit_sh_template += '''%s
+@@ -1465,7 +1465,7 @@
+                 transfer_input_files    = %s
+                 '''%(self.files+','+self.launch_file+','+self.tasks[0].commands[0].split()[0]))) # no directory
+         if self.env:
+-            fd.write('environment    = '+self.env+'\n')
++            fd.write('environment    = "'+self.env+'"\n')
+         if self.raw:
+             fd.write( self.raw+'\n')
+         if self.rank:
+@@ -1623,16 +1623,10 @@
+             return #no task to run
+ 
+         if self.set_special_env:
+-            if self.env:
+-                self.env=self.env[:-1]+' OMP_NUM_THREADS=$$(CPUS) GOTO_NUM_THREADS=$$(CPUS) MKL_NUM_THREADS=$$(CPUS) CONDOR_JOB_LOGDIR=%s"'%self.log_dir
+-            else:
+-                self.env='" OMP_NUM_THREADS=$$(CPUS) GOTO_NUM_THREADS=$$(CPUS) MKL_NUM_THREADS=$$(CPUS) CONDOR_JOB_LOGDIR=%s"'%self.log_dir
+-        else:
+-            if self.env:
+-                self.env=self.env[:-1]+' CONDOR_JOB_LOGDIR=%s"'%self.log_dir
+-            else:
+-                self.env='" CONDOR_JOB_LOGDIR=%s"'%self.log_dir
++            self.env += ' OMP_NUM_THREADS=$$(CPUS) GOTO_NUM_THREADS=$$(CPUS) MKL_NUM_THREADS=$$(CPUS)'
+ 
++        self.env += ' CONDOR_JOB_LOGDIR=%s"'%self.log_dir
++
+         if not self.req:
+             self.req = "True"
+         if self.targetcondorplatform == 'BOTH':
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2010-05-13 18:05:36 UTC (rev 10344)
++++ trunk/scripts/dbidispatch	2010-05-13 20:21:39 UTC (rev 10345)
+@@ -396,10 +396,7 @@
+         elif param == "raw":
+             dbi_param[param]+='\n'+val
+         elif param=="env":
+-            if dbi_param[param]:
+-                dbi_param[param]=dbi_param[param][:-1]+' '+val+'"'
+-            else:
+-                dbi_param[param]+='"'+val+'"'
++            dbi_param[param] += ' '+val
+         elif param in ["machine", "machines", "no_machine", "tasks_filename"]:
+             dbi_param[param]+=val.split(",")
+         else:
+
+
+
+From nouiz at mail.berlios.de  Thu May 13 22:40:03 2010
+From: nouiz at mail.berlios.de (nouiz at BerliOS)
+Date: Thu, 13 May 2010 22:40:03 +0200
+Subject: [Plearn-commits] r10346 - trunk/python_modules/plearn/parallel
+Message-ID: <201005132040.o4DKe3cc014151@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-05-13 22:40:02 +0200 (Thu, 13 May 2010)
+New Revision: 10346
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+small fix
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-05-13 20:21:39 UTC (rev 10345)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-05-13 20:40:02 UTC (rev 10346)
+@@ -619,7 +619,7 @@
+         self.nano = int(self.nano)
+ 
+         if self.set_special_env and self.cpu>0:
+-            self.env+=' OMP_NUM_THREADS=%d OMP_NUM_THREADS=%d GOTO_NUM_THREADS=%d MKL_NUM_THREADS=%d'%(self.cpu,self.cpu,self.cpu)
++            self.env+=' OMP_NUM_THREADS=%d GOTO_NUM_THREADS=%d MKL_NUM_THREADS=%d'%(self.cpu,self.cpu,self.cpu)
+         if self.env:
+             self.env='export '+self.env
+ ### We can't accept the symbols "," as this cause trouble with bqtools
+
+
+

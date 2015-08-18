@@ -1,0 +1,331 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7258 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7258%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705231449.l4NEnUGN011372%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000706.html">
+   <LINK REL="Next"  HREF="000708.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7258 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7258%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705231449.l4NEnUGN011372%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7258 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Wed May 23 16:49:30 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000706.html">[Plearn-commits] r7257 - trunk/scripts
+</A></li>
+        <LI>Next message: <A HREF="000708.html">[Plearn-commits] r7259 - in trunk: plearn/var/EXPERIMENTAL	plearn_learners/generic/EXPERIMENTAL python_modules/plearn/var
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#707">[ date ]</a>
+              <a href="thread.html#707">[ thread ]</a>
+              <a href="subject.html#707">[ subject ]</a>
+              <a href="author.html#707">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-05-23 16:49:30 +0200 (Wed, 23 May 2007)
+New Revision: 7258
+
+Modified:
+   trunk/plearn_learners/online/ModuleLearner.cc
+   trunk/plearn_learners/online/ModuleLearner.h
+Log:
+Can now use more than one cost port (untested yet, but old tests still pass)
+
+Modified: trunk/plearn_learners/online/ModuleLearner.cc
+===================================================================
+--- trunk/plearn_learners/online/ModuleLearner.cc	2007-05-23 14:33:24 UTC (rev 7257)
++++ trunk/plearn_learners/online/ModuleLearner.cc	2007-05-23 14:49:30 UTC (rev 7258)
+@@ -49,12 +49,18 @@
+ PLEARN_IMPLEMENT_OBJECT(
+     ModuleLearner,
+     &quot;A PLearner that contains a single OnlineLearningModule.\n&quot;,
+-    &quot;That module should have ports named 'input', 'target', 'weight', 'output' and 'cost'.\n&quot;
++    &quot;That module should have ports named 'input', 'target', 'weight' and\n&quot;
++    &quot;'output', and other ports that compute costs and are given in the\n&quot;
++    &quot;'cost_ports' option (the default behavior is to use a single 'cost'\n&quot;
++    &quot;port).\n&quot;
+     &quot;For example one can use a NetworkModule, which has such ports.\n&quot;
+-    &quot;The input and target from the training VMatrix are plugged on the 'input' and 'target'\n&quot;
+-    &quot;ports, and the output (for ComputeOutput) and cost (for ComputeOutputAndCost and\n&quot;
+-    &quot;for training) are obtained from the 'output' and 'cost' ports.\n&quot;
+-    &quot;During training gradient is propagated from the cost and the bpropUpdate()\n&quot;
++    &quot;\n&quot;
++    &quot;The input and target from the training VMatrix are plugged on the\n&quot;
++    &quot;'input' and 'target' ports, and the output (for ComputeOutput) and\n&quot;
++    &quot;cost (for ComputeOutputAndCost and for training) are obtained from the\n&quot;
++    &quot;'output' port and the ports defined by the 'cost_ports' option.\n&quot;
++    &quot;\n&quot;
++    &quot;During training gradient is propagated from the costs and the bpropUpdate()\n&quot;
+     &quot;method of the module is called (possibly one mini-batch of examples at a time)\n&quot;
+     &quot;so as to update the internal parameters of the module. During ComputeOutput,\n&quot;
+     &quot;it is not necessary to provide a target in order to obtain an output.\n&quot;
+@@ -65,6 +71,7 @@
+ /////////////////////
+ ModuleLearner::ModuleLearner():
+     batch_size(1),
++    cost_ports(TVec&lt;string&gt;(1, &quot;cost&quot;)),
+     mbatch_size(-1)
+ {
+     random_gen = new PRandom();
+@@ -86,6 +93,10 @@
+        &quot;User-specified number of samples fed to the network at each iteration of learning.\n&quot;
+        &quot;Use '0' for full batch learning.&quot;);
+ 
++    declareOption(ol, &quot;cost_ports&quot;, &amp;ModuleLearner::cost_ports,
++                  OptionBase::buildoption,
++       &quot;List of ports that contain costs being optimized.&quot;);
++
+     declareOption(ol, &quot;mbatch_size&quot;, &amp;ModuleLearner::mbatch_size,
+                   OptionBase::learntoption,
+        &quot;Effective 'batch_size': it takes the same value as 'batch_size'\n&quot;
+@@ -158,23 +169,27 @@
+     } else
+         store_outputs = NULL;
+ 
+-    if (ports.find(&quot;cost&quot;) &gt;= 0) {
+-        store_costs = new MatrixModule(&quot;store_costs&quot;, true);
+-        all_modules.append(get_pointer(store_costs));
+-        // Note that this is the only connection that propagates the gradient.
++    store_costs.resize(0);
++    for (int i = 0; i &lt; cost_ports.length(); i++) {
++        const string&amp; cost_port = cost_ports[i];
++        PLCHECK( ports.find(cost_port) &gt;= 0 );
++        PP&lt;MatrixModule&gt; store = new MatrixModule(&quot;store_costs_&quot; + tostring(i),
++                                                  true);
++        all_modules.append(get_pointer(store));
++        // Note that these connections do propagate the gradient.
+         all_connections.append(new NetworkConnection(
+-                    module, &quot;cost&quot;,
+-                    get_pointer(store_costs), &quot;data&quot;, true));
+-    } else
+-        store_costs = NULL;
++                    module, cost_port,
++                    get_pointer(store), &quot;data&quot;, true));
++        store_costs.append(store);
++    }
+ 
+     network = new NetworkModule();
+     network-&gt;modules = all_modules;
+     network-&gt;connections = all_connections;
+     network-&gt;build();
+ 
+-    // Initialize the list of null pointers to provided for forward and
+-    // backward propagation.
++    // Initialize the list of null pointers used for forward and backward
++    // propagation.
+     null_pointers.resize(module-&gt;nPorts());
+     null_pointers.fill(NULL);
+ }
+@@ -195,6 +210,7 @@
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+     deepCopyField(module,             copies);
++    deepCopyField(cost_ports,         copies);
+     deepCopyField(store_inputs,       copies);
+     deepCopyField(store_targets,      copies);
+     deepCopyField(store_weights,      copies);
+@@ -293,8 +309,8 @@
+     // Initialize cost gradients to 1.
+     // Note that we may not need to re-do it at every iteration, but this is so
+     // cheap it should not impact performance.
+-    if (store_costs)
+-        store_costs-&gt;setGradientTo(1);
++    for (int i = 0; i &lt; store_costs.length(); i++)
++        store_costs[i]-&gt;setGradientTo(1);
+ 
+     // Backpropagation.
+     network-&gt;bpropAccUpdate(null_pointers, null_pointers);
+@@ -327,11 +343,12 @@
+     output &lt;&lt; net_out;
+ 
+     // Store costs.
+-    PLASSERT( store_costs );
+-    const Mat&amp; net_cost = store_costs-&gt;getData();
+-    PLASSERT( net_cost.length() == 1 );
+-    costs.resize(net_cost.width());
+-    costs &lt;&lt; net_cost;
++    costs.resize(0);
++    for (int i = 0; i &lt; store_costs.length(); i++) {
++        const Mat&amp; cost_i = store_costs[i]-&gt;getData();
++        PLASSERT( cost_i.length() == 1 );
++        costs.append(cost_i(0));
++    }
+ }
+ 
+ ///////////////////////////
+@@ -358,19 +375,29 @@
+     Mat old_net_out = net_out;
+     output.resize(input.length(),outputsize());
+     net_out = output;
+-    PLASSERT( store_costs );
+-    // make the store_costs temporarily point to costs
+-    Mat&amp; net_cost = store_costs-&gt;getData();
+-    Mat old_net_cost = net_cost;
+-    costs.resize(input.length(),module-&gt;getPortWidth(&quot;cost&quot;));
+-    net_cost = costs;
+-    
++
+     // Forward propagation.
+     network-&gt;fprop(null_pointers);
+ 
+-    // restore output_store.
++    // Restore output_store.
+     net_out = old_net_out;
+-    net_cost = old_net_cost;
++
++    // Copy costs.
++    // Note that a more efficient implementation may be done when only one cost
++    // is computed (see code in previous version).
++    // First compute total size.
++    int cost_size = 0;
++    for (int i = 0; i &lt; store_costs.length(); i++)
++        cost_size += store_costs[i]-&gt;getData().width();
++    // Then resize the 'costs' matrix and fill it.
++    costs.resize(input.length(), cost_size);
++    int cost_idx = 0;
++    for (int i = 0; i &lt; store_costs.length(); i++) {
++        const Mat&amp; cost_i = store_costs[i]-&gt;getData();
++        PLASSERT( cost_i.length() == costs.length() );
++        costs.subMatColumns(cost_idx, cost_i.width()) &lt;&lt; cost_i;
++        cost_idx += cost_i.width();
++    }
+ }
+ 
+ ///////////////////
+@@ -408,10 +435,10 @@
+ //////////////////////
+ TVec&lt;string&gt; ModuleLearner::getTestCostNames() const
+ {
+-    if (!store_costs)
+-        return TVec&lt;string&gt;();
+-    else
+-        return module-&gt;getPortDescription(&quot;cost&quot;);
++    TVec&lt;string&gt; cost_names;
++    for (int i = 0; i &lt; cost_ports.length(); i++)
++        cost_names.append(module-&gt;getPortDescription(cost_ports[i]));
++    return cost_names;
+ }
+ 
+ ///////////////////////
+@@ -419,11 +446,10 @@
+ ///////////////////////
+ TVec&lt;string&gt; ModuleLearner::getTrainCostNames() const
+ {
+-    // No training cost computed.
++    // No training cost is currently computed.
+     return TVec&lt;string&gt;();
+ }
+ 
+-
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/online/ModuleLearner.h
+===================================================================
+--- trunk/plearn_learners/online/ModuleLearner.h	2007-05-23 14:33:24 UTC (rev 7257)
++++ trunk/plearn_learners/online/ModuleLearner.h	2007-05-23 14:49:30 UTC (rev 7258)
+@@ -48,16 +48,6 @@
+ 
+ namespace PLearn {
+ 
+-/**
+- * The first sentence should be a BRIEF DESCRIPTION of what the class does.
+- * Place the rest of the class programmer documentation here.  Doxygen supports
+- * Javadoc-style comments.  See <A HREF="http://www.doxygen.org/manual.html">http://www.doxygen.org/manual.html</A>
+- *
+- * @todo Write class to-do's here if there are any.
+- *
+- * @deprecated Write deprecated stuff here if there is any.  Indicate what else
+- * should be used instead.
+- */
+ class ModuleLearner : public PLearner
+ {
+     typedef PLearner inherited;
+@@ -68,6 +58,7 @@
+     PP&lt;OnlineLearningModule&gt; module;
+ 
+     int batch_size;
++    TVec&lt;string&gt; cost_ports;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+@@ -89,26 +80,21 @@
+     //! The role of the train method is to bring the learner up to
+     //! stage==nstages, updating the train_stats collector with training costs
+     //! measured on-line in the process.
+-    // (PLEASE IMPLEMENT IN .cc)
+     virtual void train();
+ 
+     //! Computes the output from the input.
+-    // (PLEASE IMPLEMENT IN .cc)
+     virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
+ 
+     //! Computes the costs from already computed output.
+-    // (PLEASE IMPLEMENT IN .cc)
+     virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
+                                          const Vec&amp; target, Vec&amp; costs) const;
+ 
+     //! Returns the names of the costs computed by computeCostsFromOutpus (and
+     //! thus the test method).
+-    // (PLEASE IMPLEMENT IN .cc)
+     virtual TVec&lt;std::string&gt; getTestCostNames() const;
+ 
+     //! Returns the names of the objective costs that the train method computes
+-    //! and  for which it updates the VecStatsCollector train_stats.
+-    // (PLEASE IMPLEMENT IN .cc)
++    //! and for which it updates the VecStatsCollector train_stats.
+     virtual TVec&lt;std::string&gt; getTrainCostNames() const;
+ 
+ 
+@@ -165,9 +151,9 @@
+     //! fprop step.
+     PP&lt;MatrixModule&gt; store_outputs;
+ 
+-    //! Simple module that will contain the network's costs at the end of a
++    //! Simple modules that will contain the network's costs at the end of a
+     //! fprop step.
+-    PP&lt;MatrixModule&gt; store_costs;
++    TVec&lt; PP&lt;MatrixModule&gt; &gt; store_costs;
+ 
+     //! The network consisting of the optimized module and the additional
+     //! modules described above.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000706.html">[Plearn-commits] r7257 - trunk/scripts
+</A></li>
+	<LI>Next message: <A HREF="000708.html">[Plearn-commits] r7259 - in trunk: plearn/var/EXPERIMENTAL	plearn_learners/generic/EXPERIMENTAL python_modules/plearn/var
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#707">[ date ]</a>
+              <a href="thread.html#707">[ thread ]</a>
+              <a href="subject.html#707">[ subject ]</a>
+              <a href="author.html#707">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

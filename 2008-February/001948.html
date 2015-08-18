@@ -1,0 +1,493 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8500 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8500%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200802131550.m1DFoCa2013885%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001947.html">
+   <LINK REL="Next"  HREF="001949.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8500 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8500%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200802131550.m1DFoCa2013885%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8500 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Wed Feb 13 16:50:12 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001947.html">[Plearn-commits] r8499 - trunk/plearn_learners_experimental
+</A></li>
+        <LI>Next message: <A HREF="001949.html">[Plearn-commits] r8501 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1948">[ date ]</a>
+              <a href="thread.html#1948">[ thread ]</a>
+              <a href="subject.html#1948">[ subject ]</a>
+              <a href="author.html#1948">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-02-13 16:50:11 +0100 (Wed, 13 Feb 2008)
+New Revision: 8500
+
+Modified:
+   trunk/plearn_learners_experimental/DeepNonLocalManifoldParzen.cc
+   trunk/plearn_learners_experimental/DeepNonLocalManifoldParzen.h
+Log:
+Still coding and debugging...
+
+
+Modified: trunk/plearn_learners_experimental/DeepNonLocalManifoldParzen.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DeepNonLocalManifoldParzen.cc	2008-02-13 15:49:04 UTC (rev 8499)
++++ trunk/plearn_learners_experimental/DeepNonLocalManifoldParzen.cc	2008-02-13 15:50:11 UTC (rev 8500)
+@@ -44,6 +44,7 @@
+ #include &lt;plearn/vmat/VMat_computeNearestNeighbors.h&gt;
+ #include &lt;plearn/vmat/GetInputVMatrix.h&gt;
+ #include &lt;plearn_learners/online/GradNNetLayerModule.h&gt;
++#include &lt;plearn/math/plapack.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -67,10 +68,10 @@
+     n_classes( -1 ),
+     output_connections_l1_penalty_factor( 0 ),
+     output_connections_l2_penalty_factor( 0 ),
+-    n_layers( 0 ),
+     save_manifold_parzen_parameters( false ),
+-    manifold_parzen_parameters_are_up_to_date( false ),
+-    currently_trained_layer( 0 )
++    n_layers( 0 ),
++    currently_trained_layer( 0 ),
++    manifold_parzen_parameters_are_up_to_date( false )
+ {
+     // random_gen will be initialized in PLearner::build_()
+     random_gen = new PRandom();
+@@ -144,16 +145,6 @@
+                   OptionBase::buildoption,
+                   &quot;The reconstruction weights of the autoassociators&quot;);
+ 
+-    declareOption(ol, &quot;unsupervised_layers&quot;, 
+-                  &amp;DeepNonLocalManifoldParzen::unsupervised_layers,
+-                  OptionBase::buildoption,
+-                  &quot;Additional units for greedy unsupervised learning&quot;);
+-
+-    declareOption(ol, &quot;unsupervised_connections&quot;, 
+-                  &amp;DeepNonLocalManifoldParzen::unsupervised_connections,
+-                  OptionBase::buildoption,
+-                  &quot;Additional connections for greedy unsupervised learning&quot;);
+-
+     declareOption(ol, &quot;k_neighbors&quot;, 
+                   &amp;DeepNonLocalManifoldParzen::k_neighbors,
+                   OptionBase::buildoption,
+@@ -165,6 +156,11 @@
+                   OptionBase::buildoption,
+                   &quot;Dimensionality of the manifold&quot;);
+ 
++    declareOption(ol, &quot;min_sigma_noise&quot;, 
++                  &amp;DeepNonLocalManifoldParzen::min_sigma_noise,
++                  OptionBase::buildoption,
++                  &quot;Minimum value for the noise variance&quot;);
++
+     declareOption(ol, &quot;n_classes&quot;, 
+                   &amp;DeepNonLocalManifoldParzen::n_classes,
+                   OptionBase::buildoption,
+@@ -187,12 +183,6 @@
+                   &quot;windows estimator should be saved during test, to speed up &quot;
+                   &quot;testing.&quot;);
+ 
+-    declareOption(ol, &quot;manifold_parzen_parameters_are_up_to_date&quot;, 
+-                  &amp;DeepNonLocalManifoldParzen::manifold_parzen_parameters_are_up_to_date,
+-                  OptionBase::buildoption,
+-                  &quot;Indication that the saved manifold parzen parameters are\n&quot;
+-                  &quot;up to date.&quot;);
+-
+     declareOption(ol, &quot;greedy_stages&quot;, 
+                   &amp;DeepNonLocalManifoldParzen::greedy_stages,
+                   OptionBase::learntoption,
+@@ -269,7 +259,7 @@
+ 
+         if( min_sigma_noise &lt; 0)
+             PLERROR(&quot;DeepNonLocalManifoldParzen::build_() - \n&quot;
+-                    &quot;min_sigma_noise should be &gt; or = to 0.\n&quot;)
++                    &quot;min_sigma_noise should be &gt; or = to 0.\n&quot;);
+ 
+         if(greedy_stages.length() == 0)
+         {
+@@ -372,7 +362,7 @@
+     activation_gradients[n_layers-1].resize( layers[n_layers-1]-&gt;size );
+     expectation_gradients[n_layers-1].resize( layers[n_layers-1]-&gt;size );
+ 
+-    int output_size = n_components*inputsize + (predict_mu ? inputsize : 0) + 1;
++    int output_size = n_components*inputsize() + inputsize() + 1;
+     all_outputs.resize( output_size );
+ 
+     if( !output_connections || output_connections-&gt;output_size != output_size)
+@@ -382,9 +372,16 @@
+         ow-&gt;output_size = output_size;
+         ow-&gt;L1_penalty_factor = output_connections_l1_penalty_factor;
+         ow-&gt;L2_penalty_factor = output_connections_l2_penalty_factor;
++        ow-&gt;random_gen = random_gen;
+         ow-&gt;build();
+         output_connections = ow;
+     }
++
++    if( !(output_connections-&gt;random_gen) )
++    {
++        output_connections-&gt;random_gen = random_gen;
++        output_connections-&gt;forget();
++    }
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+@@ -428,13 +425,11 @@
+     deepCopyField(U, copies);
+     deepCopyField(V, copies);
+     deepCopyField(z, copies);
+-    deepCopyField(invSigma_F, copies);
+-    deepCopyField(invSigma_z, copies);
++    deepCopyField(inv_Sigma_F, copies);
++    deepCopyField(inv_Sigma_z, copies);
+     deepCopyField(temp_ncomp, copies);
+     deepCopyField(diff_neighbor_input, copies);
+     deepCopyField(sm_svd, copies);
+-    deepCopyField(sn, copies);
+-    deepCopyField(S, copies);
+     deepCopyField(uk, copies);
+     deepCopyField(fk, copies);
+     deepCopyField(uk2, copies);
+@@ -549,9 +544,9 @@
+         reconstruction_expectation_gradients.resize(layers[i]-&gt;size);
+ 
+         pos_down_val.resize(layers[i]-&gt;size);
+-        pos_up_val.resize(greedy_layers[i]-&gt;size);
++        pos_up_val.resize(layers[i]-&gt;size);
+         neg_down_val.resize(layers[i]-&gt;size);
+-        neg_up_val.resize(greedy_layers[i]-&gt;size);
++        neg_up_val.resize(layers[i]-&gt;size);
+ 
+         for( ; *this_stage&lt;end_stage ; (*this_stage)++ )
+         {
+@@ -813,14 +808,14 @@
+ 
+     computeManifoldParzenParameters( input, F, mu, pre_sigma_noise, U, sm_svd );
+ 
+-    real sigma_noise = square(pre_sigma_noise[0], 2) + min_sigma_noise;
++    real sigma_noise = pre_sigma_noise[0]* pre_sigma_noise[0] + min_sigma_noise;
+ 
+     real mahal = 0;
+     real norm_term = 0;
+     real dotp = 0;
+     real coef = 0;
+     real n = inputsize();
+-    inv_Sigma_z.resize(inputsize());
++    inv_Sigma_z.resize(k_neighbors,inputsize());
+     inv_Sigma_z.clear();
+     real tr_inv_Sigma = 0;
+     train_costs.last() = 0;
+@@ -846,7 +841,7 @@
+             dotp = dot(zj,uk);
+             coef = (1.0/(sm_svd[k]+sigma_noise) - 1.0/sigma_noise);
+             multiplyAcc(inv_sigma_zj,uk,dotp*coef);
+-            mahal -= square(dotp)*0.5*coef;
++            mahal -= dotp*dotp*0.5*coef;
+             norm_term -= 0.5*pl_log(sm_svd[k]);
+             if(j==0)
+                 tr_inv_Sigma += coef;
+@@ -855,7 +850,7 @@
+         train_costs.last() += -1*(norm_term + mahal);
+     }
+ 
+-    train_costs.last() / k_neighbors;
++    train_costs.last() /= k_neighbors;
+ 
+     inv_Sigma_F.resize( n_components, inputsize() );
+     inv_Sigma_F.clear();
+@@ -875,12 +870,12 @@
+     }
+ 
+     all_outputs_gradient.clear();
+-    real coef = 1/train_set-&gt;length();
++    coef = 1/train_set-&gt;length();
+     for(int neighbor=0; neighbor&lt;k_neighbors; neighbor++)
+     {
+         // dNLL/dF
+         product(temp_ncomp,F,inv_Sigma_z(neighbor));
+-        bprop_to_bases(all_outputs_gradient.toVec(0,n_components * inputsize()).toMat(n_components,inputsize()),
++        bprop_to_bases(all_outputs_gradient.subVec(0,n_components * inputsize()).toMat(n_components,inputsize()),
+                        inv_Sigma_F,
+                        temp_ncomp,inv_Sigma_z(neighbor),
+                        coef);
+@@ -965,6 +960,15 @@
+ 
+ void DeepNonLocalManifoldParzen::computeOutput(const Vec&amp; input, Vec&amp; output) const
+ {
++
++    if( currently_trained_layer&lt;n_layers
++        &amp;&amp; reconstruction_connections.length() != 0 )
++    {
++        computeRepresentation(input, input_representation, 
++                              currently_trained_layer);
++        return;
++    }
++
+     test_votes.resize(n_classes);
+     test_votes.clear();
+ 
+@@ -990,13 +994,13 @@
+         {
+             for( int j=0; j&lt;class_datasets[i]-&gt;length(); j++ )
+             {
+-                class_datasets[i]-&gt;getExample(input_j,target,weight);
++                class_datasets[i]-&gt;getExample(j,input_j,target,weight);
+ 
+                 input_j_index = class_datasets[i]-&gt;indices[j];
+                 U &lt;&lt; eigenvectors[input_j_index];
+-                sm_svd &lt;&lt; eigenvalues[input_j_index];
++                sm_svd &lt;&lt; eigenvalues(input_j_index);
+                 sigma_noise = sigma_noises[input_j_index];
+-                mu &lt;&lt; mus[input_j_index];
++                mu &lt;&lt; mus(input_j_index);
+ 
+                 substract(input,input_j,diff_neighbor_input); 
+                 substract(diff_neighbor_input,mu,diff); 
+@@ -1010,7 +1014,7 @@
+                     uk = U(k);
+                     dotp = dot(diff,uk);
+                     coef = (1.0/(sm_svd[k]+sigma_noise) - 1.0/sigma_noise);
+-                    mahal -= square(dotp)*0.5*coef;
++                    mahal -= dotp*dotp*0.5*coef;
+                     norm_term -= 0.5*pl_log(sm_svd[k]);
+                 }
+                 
+@@ -1030,12 +1034,13 @@
+         {
+             for( int j=0; j&lt;class_datasets[i]-&gt;length(); j++ )
+             {
+-                class_datasets[i]-&gt;getExample(input_j,target,weight);
++                class_datasets[i]-&gt;getExample(j,input_j,target,weight);
+ 
+                 computeManifoldParzenParameters( input_j, F, mu, 
+                                                  pre_sigma_noise, U, sm_svd );
+                 
+-                sigma_noise = square(pre_sigma_noise[0], 2) + min_sigma_noise;
++                sigma_noise = pre_sigma_noise[0]*pre_sigma_noise[0] 
++                    + min_sigma_noise;
+                 
+                 substract(input,input_j,diff_neighbor_input); 
+                 substract(diff_neighbor_input,mu,diff); 
+@@ -1049,7 +1054,7 @@
+                     uk = U(k);
+                     dotp = dot(diff,uk);
+                     coef = (1.0/(sm_svd[k]+sigma_noise) - 1.0/sigma_noise);
+-                    mahal -= square(dotp)*0.5*coef;
++                    mahal -= dotp*dotp*0.5*coef;
+                     norm_term -= 0.5*pl_log(sm_svd[k]);
+                 }
+                 
+@@ -1079,15 +1084,8 @@
+     if( currently_trained_layer&lt;n_layers 
+         &amp;&amp; reconstruction_connections.length() != 0 )
+     {
+-        greedy_connections[currently_trained_layer-1]-&gt;fprop(
+-            expectations[currently_trained_layer-1],
+-            greedy_activation);
+-        
+-        greedy_layers[currently_trained_layer-1]-&gt;fprop(greedy_activation,
+-                                    greedy_expectation);
+-        
+         reconstruction_connections[ currently_trained_layer-1 ]-&gt;fprop( 
+-            greedy_expectation,
++            expectations[currently_trained_layer],
+             reconstruction_activations);
+         layers[ currently_trained_layer-1 ]-&gt;fprop( 
+             reconstruction_activations,
+@@ -1101,11 +1099,13 @@
+             layers[ currently_trained_layer-1 ]-&gt;fpropNLL(
+                 expectations[currently_trained_layer-1]);
+     }
+-
+-    if( ((int)round(output[0])) == ((int)round(target[0])) )
+-        costs[n_layers-1] = 0;
+     else
+-        costs[n_layers-1] = 1;
++    {
++        if( ((int)round(output[0])) == ((int)round(target[0])) )
++            costs[n_layers-1] = 0;
++        else
++            costs[n_layers-1] = 1;
++    }
+ }
+ 
+ //////////
+@@ -1119,6 +1119,7 @@
+         Vec input( inputsize() );
+         Vec target( targetsize() );
+         real weight;
++        real sigma_noise;
+ 
+         eigenvectors.resize(train_set-&gt;length());
+         eigenvalues.resize(train_set-&gt;length(),n_components);
+@@ -1127,18 +1128,18 @@
+ 
+         for( int i=0; i&lt;train_set-&gt;length(); i++ )
+         {
+-            train_set[i]-&gt;getExample(input,target,weight);
++            train_set-&gt;getExample(i,input,target,weight);
+ 
+             computeManifoldParzenParameters( input, F, mu, 
+                                              pre_sigma_noise, U, sm_svd );
+             
+-            sigma_noise = square(pre_sigma_noise[0], 2) + min_sigma_noise;
++            sigma_noise = pre_sigma_noise[0]*pre_sigma_noise[0] + min_sigma_noise;
+ 
+             eigenvectors[i].resize(n_components,inputsize());
+             eigenvectors[i] &lt;&lt; U;
+-            eigenvalues[i] &lt;&lt; sm_svd;
++            eigenvalues(i) &lt;&lt; sm_svd;
+             sigma_noises[i] = sigma_noise;
+-            mus[i] &lt;&lt; mu;
++            mus(i) &lt;&lt; mu;
+         }
+         
+         manifold_parzen_parameters_are_up_to_date = true;
+@@ -1174,10 +1175,6 @@
+     
+     manifold_parzen_parameters_are_up_to_date = false;
+ 
+-    Vec input( inputsize() );
+-    Vec target( targetsize() );
+-    real weight; // unused
+-    
+     // Separate classes
+     class_datasets.resize(n_classes);
+     for(int k=0; k&lt;n_classes; k++)
+
+Modified: trunk/plearn_learners_experimental/DeepNonLocalManifoldParzen.h
+===================================================================
+--- trunk/plearn_learners_experimental/DeepNonLocalManifoldParzen.h	2008-02-13 15:49:04 UTC (rev 8499)
++++ trunk/plearn_learners_experimental/DeepNonLocalManifoldParzen.h	2008-02-13 15:50:11 UTC (rev 8500)
+@@ -103,7 +103,7 @@
+     int k_neighbors;
+ 
+     //! Dimensionality of the manifold
+-    real n_components;
++    int n_components;
+ 
+     //! Minimum value for the noise variance.
+     real min_sigma_noise;
+@@ -121,9 +121,6 @@
+     //! windows estimator should be saved during test, to speed up testing.
+     bool save_manifold_parzen_parameters;
+ 
+-    //! Indication that the saved manifold parzen parameters are up to date.
+-    bool manifold_parzen_parameters_are_up_to_date;
+-
+     //#####  Public Learnt Options  ###########################################
+ 
+     //! Number of layers
+@@ -182,8 +179,7 @@
+     virtual void setTrainingSet(VMat training_set, bool call_forget=true);
+ 
+     void greedyStep( const Vec&amp; input, const Vec&amp; target, int index, 
+-                     Vec train_costs, int stage, Vec similar_example,
+-                     Vec dissimilar_example);
++                     Vec train_costs, int stage);
+ 
+     void fineTuningStep( const Vec&amp; input, const Vec&amp; target,
+                          Vec&amp; train_costs, Mat nearest_neighbors);
+@@ -241,7 +237,7 @@
+     mutable Vec reconstruction_expectation_gradients;
+ 
+     //! Output weights
+-    mutable PP&lt;OnlineLearningModuling&gt; output_connections;
++    mutable PP&lt;OnlineLearningModule&gt; output_connections;
+     
+     //! Example representation
+     mutable Vec input_representation;
+@@ -261,8 +257,8 @@
+     mutable Vec pre_sigma_noise;
+ 
+     //! Variables for the SVD and gradient computation
+-    mutable Mat Ut, U, V, z, invSigma_F, invSigma_z;
+-    mutable Vec temp_ncomp, diff_neighbor_input, sm_svd, sn, S;
++    mutable Mat Ut, U, V, z, inv_Sigma_F, inv_Sigma_z;
++    mutable Vec temp_ncomp, diff_neighbor_input, sm_svd, S;
+     mutable Vec uk, fk, uk2, inv_sigma_zj, zj, inv_sigma_fk, diff;
+ 
+     //! Positive down statistic
+@@ -277,13 +273,13 @@
+     // Saved components of manifold parzen windows
+ 
+     //! Eigenvectors
+-    TVec&lt;Mat&gt; eigenvectors;
++    mutable TVec&lt;Mat&gt; eigenvectors;
+     //! Eigenvalues
+-    Mat eigenvalues;
++    mutable Mat eigenvalues;
+     //! Sigma noises
+-    Vec sigma_noises;
++    mutable Vec sigma_noises;
+     //! Mus
+-    Mat mus;
++    mutable Mat mus;
+ 
+     //! Datasets for each class
+     TVec&lt; PP&lt;ClassSubsetVMatrix&gt; &gt; class_datasets;
+@@ -295,11 +291,8 @@
+     //! Nearest neighbors for each training example
+     TMat&lt;int&gt; nearest_neighbors_indices;
+ 
+-    //! Nearest neighbors for each test example
+-    mutable TVec&lt;int&gt; test_nearest_neighbors_indices;
+-
+     //! Nearest neighbor votes for test example
+-    TVec&lt;int&gt; test_votes;
++    mutable Vec test_votes;
+ 
+     //! Stages of the different greedy phases
+     TVec&lt;int&gt; greedy_stages;
+@@ -308,6 +301,9 @@
+     //! n_layers means the output layer)
+     int currently_trained_layer;
+ 
++    //! Indication that the saved manifold parzen parameters are up to date.
++    mutable bool manifold_parzen_parameters_are_up_to_date;
++
+ protected:
+     //#####  Protected Member Functions  ######################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001947.html">[Plearn-commits] r8499 - trunk/plearn_learners_experimental
+</A></li>
+	<LI>Next message: <A HREF="001949.html">[Plearn-commits] r8501 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1948">[ date ]</a>
+              <a href="thread.html#1948">[ thread ]</a>
+              <a href="subject.html#1948">[ subject ]</a>
+              <a href="author.html#1948">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

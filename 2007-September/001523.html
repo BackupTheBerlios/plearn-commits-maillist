@@ -1,0 +1,213 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8075 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8075%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200709131853.l8DIrtiS018599%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001522.html">
+   <LINK REL="Next"  HREF="001524.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8075 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>manzagop at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8075%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200709131853.l8DIrtiS018599%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8075 - trunk/plearn_learners/generic/EXPERIMENTAL">manzagop at mail.berlios.de
+       </A><BR>
+    <I>Thu Sep 13 20:53:55 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001522.html">[Plearn-commits] r8074 - trunk/scripts
+</A></li>
+        <LI>Next message: <A HREF="001524.html">[Plearn-commits] r8076 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1523">[ date ]</a>
+              <a href="thread.html#1523">[ thread ]</a>
+              <a href="subject.html#1523">[ subject ]</a>
+              <a href="author.html#1523">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: manzagop
+Date: 2007-09-13 20:53:54 +0200 (Thu, 13 Sep 2007)
+New Revision: 8075
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+Log:
+- Added a deceleration coefficient for the step sizes.
+- Added limits on the step sizes.
+- Default values for step size related values now based upon '94 rprop tech report.
+- Now performing the step size update before taking the step.
+- In pvGradUpdate, now checking to see if m and e (gradient mean and stderror) are
+inferior to 1e-15. If so we skip the iteration (continue). This cures the symptom,
+but isn't a real fix to the cause (saturating weights?).
+
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-09-13 13:43:37 UTC (rev 8074)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-09-13 18:53:54 UTC (rev 8075)
+@@ -75,8 +75,12 @@
+       //corr_profiling_start(0), 
+       //corr_profiling_end(0),
+       use_pvgrad(false),
+-      pv_initial_stepsize(1e-6),
+-      pv_acceleration(2),
++      // Next 5 values based on those used in the '94 rprop tech report
++      pv_initial_stepsize(1e-1),
++      pv_min_stepsize(1e-6),
++      pv_max_stepsize(50.0),
++      pv_acceleration(1.2),
++      pv_deceleration(0.5),
+       pv_min_samples(2),
+       pv_required_confidence(0.80),
+       pv_random_sample_step(false),
+@@ -295,8 +299,13 @@
+     declareOption(ol, &quot;pv_acceleration&quot;,
+                   &amp;NatGradNNet::pv_acceleration,
+                   OptionBase::buildoption,
+-                  &quot;Coefficient by which to multiply/divide the step sizes&quot;);
++                  &quot;Coefficient by which to multiply the step sizes.&quot;);
+ 
++    declareOption(ol, &quot;pv_deceleration&quot;,
++                  &amp;NatGradNNet::pv_deceleration,
++                  OptionBase::buildoption,
++                  &quot;Coefficient by which to multiply the step sizes.&quot;);
++
+     declareOption(ol, &quot;pv_min_samples&quot;,
+                   &amp;NatGradNNet::pv_min_samples,
+                   OptionBase::buildoption,
+@@ -823,39 +832,54 @@
+ 
+ void NatGradNNet::pvGradUpdate()
+ {
+-    int n = all_params_gradient.length();
++    int np = all_params_gradient.length();
+     if(pv_stepsizes.length()==0)
+     {
+-        pv_stepsizes.resize(n);
++        pv_stepsizes.resize(np);
+         pv_stepsizes.fill(pv_initial_stepsize);
+-        pv_stepsigns.resize(n);
++        pv_stepsigns.resize(np);
+         pv_stepsigns.fill(true);
+     }
+     pv_gradstats-&gt;update(all_params_gradient);
+-    real pv_deceleration = 1.0/pv_acceleration;
+-    for(int k=0; k&lt;n; k++)
++    for(int k=0; k&lt;np; k++)
+     {
+         StatsCollector&amp; st = pv_gradstats-&gt;getStats(k);
+-        int n = (int)st.nnonmissing();
+-        if(n&gt;pv_min_samples)
++        int ns = (int)st.nnonmissing();
++        if(ns&gt;pv_min_samples)
+         {
+             real m = st.mean();
+             real e = st.stderror();
++
++            // test to see if solve numerical problems
++            if( fabs(m) &lt; 1e-15 || e &lt; 1e-15 )
++                continue;
++
+             real prob_pos = gauss_01_cum(m/e);
+             real prob_neg = 1.-prob_pos;
+             if(!pv_random_sample_step)
+             {
++                // We adapt the stepsize before taking the step
++                // gradient is positive
+                 if(prob_pos&gt;=pv_required_confidence)
+                 {
++                    pv_stepsizes[k] *= (pv_stepsigns[k]?pv_acceleration:pv_deceleration);
++                    if( pv_stepsizes[k] &gt; pv_max_stepsize )
++                        pv_stepsizes[k] = pv_max_stepsize;
++                    else if( pv_stepsizes[k] &lt; pv_min_stepsize )
++                        pv_stepsizes[k] = pv_min_stepsize;
+                     all_params[k] += pv_stepsizes[k];
+-                    pv_stepsizes[k] *= (pv_stepsigns[k]?pv_acceleration:pv_deceleration);
+                     pv_stepsigns[k] = true;
+                     st.forget();
+                 }
++                // gradient is negative
+                 else if(prob_neg&gt;=pv_required_confidence)
+                 {
++                    pv_stepsizes[k] *= ((!pv_stepsigns[k])?pv_acceleration:pv_deceleration);
++                    if( pv_stepsizes[k] &gt; pv_max_stepsize )
++                        pv_stepsizes[k] = pv_max_stepsize;
++                    else if( pv_stepsizes[k] &lt; pv_min_stepsize )
++                        pv_stepsizes[k] = pv_min_stepsize;
+                     all_params[k] -= pv_stepsizes[k];
+-                    pv_stepsizes[k] *= ((!pv_stepsigns[k])?pv_acceleration:pv_deceleration);
+                     pv_stepsigns[k] = false;
+                     st.forget();
+                 }
+@@ -873,6 +897,14 @@
+             }
+         }
+     }
++
++    // Ouput for profiling: step sizes and number of samples
++    // horribly inefficient!
++//    ofstream fd_ss;
++//    fd_ss.open(&quot;step_sizes.txt&quot;, ios::app);
++//    fd_ss &lt;&lt; pv_stepsizes &lt;&lt; endl;
++//    fd_ss.close();
++
+ }
+ 
+ void NatGradNNet::computeOutput(const Vec&amp; input, Vec&amp; output) const
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-09-13 13:43:37 UTC (rev 8074)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-09-13 18:53:54 UTC (rev 8075)
+@@ -153,9 +153,12 @@
+     //! Initial size of steps in parameter space
+     real pv_initial_stepsize;
+ 
+-    //! Coefficient by which to multiply/divide the step sizes  
+-    real pv_acceleration;
++    //! Bounds for the step sizes
++    real pv_min_stepsize, pv_max_stepsize;
+ 
++    //! Coefficients by which to multiply the step sizes  
++    real pv_acceleration, pv_deceleration;
++
+     //! PV's gradient minimum number of samples to estimate confidence
+     int pv_min_samples;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001522.html">[Plearn-commits] r8074 - trunk/scripts
+</A></li>
+	<LI>Next message: <A HREF="001524.html">[Plearn-commits] r8076 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1523">[ date ]</a>
+              <a href="thread.html#1523">[ thread ]</a>
+              <a href="subject.html#1523">[ subject ]</a>
+              <a href="author.html#1523">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,147 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9900 - trunk/python_modules/plearn/parallel
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9900%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200902032222.n13MMTjk018062%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003339.html">
+   <LINK REL="Next"  HREF="003341.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9900 - trunk/python_modules/plearn/parallel</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9900%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200902032222.n13MMTjk018062%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9900 - trunk/python_modules/plearn/parallel">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Feb  3 23:22:29 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003339.html">[Plearn-commits] r9899 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="003341.html">[Plearn-commits] r9901 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3340">[ date ]</a>
+              <a href="thread.html#3340">[ thread ]</a>
+              <a href="subject.html#3340">[ subject ]</a>
+              <a href="author.html#3340">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-02-03 23:22:29 +0100 (Tue, 03 Feb 2009)
+New Revision: 9900
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+now fully check the path to file for their length.y
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2009-02-03 22:00:03 UTC (rev 9899)
++++ trunk/python_modules/plearn/parallel/dbi.py	2009-02-03 22:22:29 UTC (rev 9900)
+@@ -276,6 +276,27 @@
+         print &quot;[DBI] %d jobs. finished: %d, running: %d, waiting: %d, init: %d&quot;%(len(self.tasks),finished, running, waiting, init)
+         print &quot;[DBI] jobs unfinished (starting at 1): &quot;,unfinished
+ 
++    def check_path(self, p):
++        &quot;&quot;&quot;
++        A function that check we use a path to file that is valid.
++        We currently check that each directory and the file in the path
++        are not too long.
++        &quot;&quot;&quot;
++        l = [p]
++        while True:
++            sp=os.path.split(l[0])
++            if sp[0]==&quot;&quot;: break
++            l.append(sp[1])
++            l[0]=sp[0]
++        for pp in l:
++            if len(pp)&gt; MAX_FILENAME_SIZE:
++                raise DBIError(&quot;ERROR: a path containt a diretory or a filename that &quot;+
++                               &quot; is too long, so the jobs will fail. Maybe&quot;+
++                               &quot; use the --tasks_filename option to change those name.\n&quot;+
++                               &quot;The full bad path: &quot;+p+&quot;\n&quot;+&quot;The bad part: &quot;+pp)
++                
++
++
+ class Task:
+ 
+     def __init__(self, command, tmp_dir, log_dir, time_format, pre_tasks=[], post_tasks=[], dolog = True, id=-1, gen_unique_id = True, args = {}):
+@@ -640,12 +661,10 @@
+         if self.base_tasks_log_file:
+             for task,base in zip(self.tasks,self.base_tasks_log_file):
+                 #-4 as we will happend .err or .out
+-                if len(os.path.basename(base)) &gt; MAX_FILENAME_SIZE-4:
+-                    raise DBIError(&quot;ERROR: the filename for the stdout and&quot;+
+-                                   &quot; stderr file will be too long, so the jobs will fail.&quot;+
+-                                   &quot; Use the --tasks_filename option to change those name.&quot;)
++                p=os.path.join(self.log_dir,base)
++                self.check_path(p)
+                 tasks_file.write( ';'.join(task.commands) + '\n' )
+-                logfiles_file.write( os.path.join(self.log_dir,base) + '\n' )
++                logfiles_file.write( p + '\n' )
+         else:
+             for task in self.tasks:
+                 tasks_file.write( ';'.join(task.commands) + '\n' )
+@@ -1152,11 +1171,8 @@
+         def print_task(id, task, stdout_file, stderr_file):
+             argstring =condor_dag_escape_argument(' ; '.join(task.commands))
+             condor_dag_fd.write(&quot;JOB %d %s\n&quot;%(id,self.condor_submit_file))
+-            if len(os.path.basename(stdout_file))&gt;MAX_FILENAME_SIZE or len(os.path.basename(stderr_file))&gt;MAX_FILENAME_SIZE:
+-                raise DBIError(&quot;ERROR: the filename for the stdout and stderr&quot;+
+-                               &quot; file will be too long, so the jobs will fail.&quot;+
+-                               &quot; Use the --tasks_filename option to change those name.&quot;)
+-                
++            self.check_path(stdout_file)
++            self.check_path(stderr_file)
+             condor_dag_fd.write('VARS %d args=&quot;%s&quot;\n'%(id,argstring))
+             condor_dag_fd.write('VARS %d stdout=&quot;%s&quot;\n'%(id,stdout_file))
+             condor_dag_fd.write('VARS %d stderr=&quot;%s&quot;\n\n'%(id,stderr_file))
+@@ -1248,10 +1264,8 @@
+             def print_task(task, stdout_file, stderr_file,req=&quot;&quot;):
+                 argstring = condor_escape_argument(' ; '.join(task.commands))
+                 condor_submit_fd.write(&quot;arguments    = %s \n&quot; %argstring)
+-                if len(os.path.basename(stdout_file)) &gt; MAX_FILENAME_SIZE or len(os.path.basename(stderr_file)) &gt; MAX_FILENAME_SIZE:
+-                    raise DBIError(&quot;ERROR: the filename for the stdout and stderr file&quot;+
+-                                   &quot; will be too long, so the jobs will fail.&quot;+
+-                                   &quot; Use the --tasks_filename option to change those name.&quot;)
++                self.check_path(stdout_file)
++                self.check_path(stderr_file)
+                 if stdout_file:
+                     condor_submit_fd.write(&quot;output       = %s \n&quot; %stdout_file)
+                 if stderr_file:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003339.html">[Plearn-commits] r9899 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="003341.html">[Plearn-commits] r9901 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3340">[ date ]</a>
+              <a href="thread.html#3340">[ thread ]</a>
+              <a href="subject.html#3340">[ subject ]</a>
+              <a href="author.html#3340">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

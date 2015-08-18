@@ -1,0 +1,147 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7522 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7522%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200706041917.l54JHI8w000067%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000970.html">
+   <LINK REL="Next"  HREF="000972.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7522 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>manzagop at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7522%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200706041917.l54JHI8w000067%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7522 - trunk/plearn_learners/generic/EXPERIMENTAL">manzagop at mail.berlios.de
+       </A><BR>
+    <I>Mon Jun  4 21:17:18 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000970.html">[Plearn-commits] r7521 - in trunk/python_modules/plearn: io	learners/autolr
+</A></li>
+        <LI>Next message: <A HREF="000972.html">[Plearn-commits] r7523 - in trunk/python_modules/plearn: . pyext
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#971">[ date ]</a>
+              <a href="thread.html#971">[ thread ]</a>
+              <a href="subject.html#971">[ subject ]</a>
+              <a href="author.html#971">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: manzagop
+Date: 2007-06-04 21:17:17 +0200 (Mon, 04 Jun 2007)
+New Revision: 7522
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+Log:
+Added an option for applying L1 regularization to the output layer's parameters.
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-06-04 17:58:49 UTC (rev 7521)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-06-04 19:17:17 UTC (rev 7522)
+@@ -61,6 +61,7 @@
+       params_averaging_freq(5),
+       init_lrate(0.01),
+       lrate_decay(0),
++      output_layer_L1_penalty_factor(0.0),
+       output_layer_lrate_scale(1),
+       minibatch_size(1),
+       output_type(&quot;NLL&quot;),
+@@ -154,6 +155,13 @@
+                   OptionBase::buildoption,
+                   &quot;Learning rate decay factor\n&quot;);
+ 
++    declareOption(ol, &quot;output_layer_L1_penalty_factor&quot;,
++                  &amp;NatGradNNet::output_layer_L1_penalty_factor,
++                  OptionBase::buildoption,
++                  &quot;Optional (default=0) factor of L1 regularization term, i.e.\n&quot;
++                  &quot;minimize L1_penalty_factor * sum_{ij} |weights(i,j)| during training.\n&quot;
++                  &quot;Gets multiplied by the learning rate. Only on output layer!!&quot;);
++
+     declareOption(ol, &quot;output_layer_lrate_scale&quot;, &amp;NatGradNNet::output_layer_lrate_scale,
+                   OptionBase::buildoption,
+                   &quot;Scaling factor of the learning rate for the output layer. Values less than 1&quot;
+@@ -334,6 +342,8 @@
+     }
+     else PLERROR(&quot;NatGradNNet: output_type should be NLL or MSE\n&quot;);
+ 
++    if( output_layer_L1_penalty_factor &lt; 0. )
++        PLWARNING(&quot;NatGradNNet::build_ - output_layer_L1_penalty_factor is negative!\n&quot;);
+ 
+     if(use_pvgrad &amp;&amp; minibatch_size!=1)
+         PLERROR(&quot;PV's gradient technique (triggered by use_pvgrad): support for minibatch not yet implemented (must have minibatch_size=1)&quot;);
+@@ -790,6 +800,23 @@
+     //    (*ng_corrprof)(all_params_delta);
+     //}
+ 
++    // Output layer L1 regularization
++    if( output_layer_L1_penalty_factor != 0. )    {
++        real L1_delta = lrate * output_layer_L1_penalty_factor;
++        real* m_i = layer_params[n_layers-2].data();
++
++        for(int i=0; i&lt;layer_params[n_layers-2].length(); i++,m_i+=layer_params[n_layers-2].mod())  {
++            for(int j=0; j&lt;layer_params[n_layers-2].width(); j++)   {
++                if( m_i[j] &gt; L1_delta )
++                    m_i[j] -= L1_delta;
++                else if( m_i[j] &lt; -L1_delta )
++                    m_i[j] += L1_delta;
++                else
++                    m_i[j] = 0.;
++            }
++        }
++    }
++
+ }
+ 
+ void NatGradNNet::pvGradUpdate()
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-06-04 17:58:49 UTC (rev 7521)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-06-04 19:17:17 UTC (rev 7522)
+@@ -79,6 +79,9 @@
+     //! learning rate decay factor
+     real lrate_decay;
+ 
++    //! L1 penalty applied to the output layer's parameters
++    real output_layer_L1_penalty_factor;
++
+     //! scaling factor of the learning rate for the output layer
+     real output_layer_lrate_scale;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000970.html">[Plearn-commits] r7521 - in trunk/python_modules/plearn: io	learners/autolr
+</A></li>
+	<LI>Next message: <A HREF="000972.html">[Plearn-commits] r7523 - in trunk/python_modules/plearn: . pyext
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#971">[ date ]</a>
+              <a href="thread.html#971">[ thread ]</a>
+              <a href="subject.html#971">[ subject ]</a>
+              <a href="author.html#971">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

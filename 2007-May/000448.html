@@ -1,0 +1,772 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6999 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6999%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705040605.l4465XXo012484%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000447.html">
+   <LINK REL="Next"  HREF="000449.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6999 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6999%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705040605.l4465XXo012484%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6999 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Fri May  4 08:05:33 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000447.html">[Plearn-commits] r6998 - in	trunk/plearn_learners/online/test/DeepBeliefNet: .	.pytest/PL_DBN_SimpleRBM/expected_results	.pytest/PL_DBN_SimpleRBM/expected_results/expdir	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0/LearnerExpdir	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0/LearnerExpdir/Strat1results.pmat.metadata
+</A></li>
+        <LI>Next message: <A HREF="000449.html">[Plearn-commits] r7000 - in	trunk/plearn_learners/online/test/DeepBeliefNet: .	.pytest/PL_DBN_SimpleRBM/expected_results	.pytest/PL_DBN_SimpleRBM/expected_results/expdir	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0/LearnerExpdir
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#448">[ date ]</a>
+              <a href="thread.html#448">[ thread ]</a>
+              <a href="subject.html#448">[ subject ]</a>
+              <a href="author.html#448">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-05-04 08:05:31 +0200 (Fri, 04 May 2007)
+New Revision: 6999
+
+Modified:
+   trunk/plearn_learners/online/BackConvolution2DModule.cc
+   trunk/plearn_learners/online/CombiningCostsModule.cc
+   trunk/plearn_learners/online/Convolution2DModule.cc
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/GradNNetLayerModule.cc
+   trunk/plearn_learners/online/ModuleStackModule.cc
+   trunk/plearn_learners/online/ModulesLearner.cc
+   trunk/plearn_learners/online/ProcessInputCostModule.cc
+   trunk/plearn_learners/online/RBMBinomialLayer.cc
+   trunk/plearn_learners/online/RBMClassificationModule.cc
+   trunk/plearn_learners/online/RBMConv2DConnection.cc
+   trunk/plearn_learners/online/RBMGaussianLayer.cc
+   trunk/plearn_learners/online/RBMMatrixConnection.cc
+   trunk/plearn_learners/online/RBMMatrixTransposeConnection.cc
+   trunk/plearn_learners/online/RBMMixedConnection.cc
+   trunk/plearn_learners/online/RBMMixedLayer.cc
+   trunk/plearn_learners/online/RBMMultinomialLayer.cc
+   trunk/plearn_learners/online/RBMTruncExpLayer.cc
+   trunk/plearn_learners/online/Subsampling2DModule.cc
+   trunk/plearn_learners/online/Supersampling2DModule.cc
+Log:
+Change the behaviour of build() wrt random_gen:
+    * An OnlineLearningModule never creates a new PRandom
+    * An Object containing OnlineLearningModules AND having a random_gen
+    shares it with the contained modules which don't already have one
+    * A PLearner containing OnlineLearningModules MUST have a
+    random_gen, and share it with the contained modules which don't
+    already have one
+
+
+
+Modified: trunk/plearn_learners/online/BackConvolution2DModule.cc
+===================================================================
+--- trunk/plearn_learners/online/BackConvolution2DModule.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/BackConvolution2DModule.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -241,9 +241,6 @@
+         connection_matrix.fill(1);
+     }
+ 
+-    if( !random_gen )
+-        random_gen = new PRandom();
+-
+     build_kernels();
+ 
+     input_images.resize(n_input_images);
+@@ -438,7 +435,16 @@
+ //! Note that this method is necessarily called from build().
+ void BackConvolution2DModule::forget()
+ {
++    bias.clear();
++    if( !random_gen )
++    {
++        PLWARNING( &quot;BackConvolution2DModule: cannot forget() without&quot;
++                   &quot; random_gen&quot; );
++        return;
++    }
++
+     real scale_factor = 1./(kernel_length*kernel_width);
++    kernels.resize( n_input_images, n_output_images );
+     for( int i=0 ; i&lt;n_input_images ; i++ )
+         for( int j=0 ; j&lt;n_output_images ; j++ )
+         {
+@@ -452,7 +458,6 @@
+                                                  scale_factor );
+             }
+         }
+-    bias.clear();
+ }
+ 
+ /* THIS METHOD IS OPTIONAL
+
+Modified: trunk/plearn_learners/online/CombiningCostsModule.cc
+===================================================================
+--- trunk/plearn_learners/online/CombiningCostsModule.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/CombiningCostsModule.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -127,6 +127,17 @@
+ 
+     sub_costs_values.resize( n_sub_costs );
+     output_size = n_sub_costs+1;
++
++    // If we have a random_gen and some sub_costs do not, share it with them
++    if( random_gen )
++        for( int i=0; i&lt;sub_costs.length(); i++ )
++        {
++            if( !(sub_costs[i]-&gt;random_gen) )
++            {
++                sub_costs[i]-&gt;random_gen = random_gen;
++                sub_costs[i]-&gt;forget();
++            }
++        }
+ }
+ 
+ ///////////
+
+Modified: trunk/plearn_learners/online/Convolution2DModule.cc
+===================================================================
+--- trunk/plearn_learners/online/Convolution2DModule.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/Convolution2DModule.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -249,9 +249,6 @@
+         connection_matrix.fill(1);
+     }
+ 
+-    if( !random_gen )
+-        random_gen = new PRandom();
+-
+     build_kernels();
+ 
+     input_images.resize(n_input_images);
+@@ -442,8 +439,14 @@
+ //! Note that this method is necessarily called from build().
+ void Convolution2DModule::forget()
+ {
++    bias.clear();
++    if( !random_gen )
++    {
++        PLWARNING( &quot;Convolution2DModule: cannot forget() without random_gen&quot; );
++        return;
++    }
++
+     real scale_factor = 1./(kernel_length*kernel_width);
+-
+     kernels.resize( n_input_images, n_output_images );
+     for( int i=0 ; i&lt;n_input_images ; i++ )
+         for( int j=0 ; j&lt;n_output_images ; j++ )
+@@ -458,7 +461,6 @@
+                                                  scale_factor );
+             }
+         }
+-    bias.clear();
+ }
+ 
+ /* THIS METHOD IS OPTIONAL
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -79,7 +79,7 @@
+     final_cost_index( -1 ),
+     reconstruction_cost_index( -1 )
+ {
+-    random_gen = new PRandom( seed_ );
++    random_gen = new PRandom();
+ }
+ 
+ ////////////////////
+@@ -361,6 +361,14 @@
+                     cost_names.append(&quot;partial&quot;+tostring(i)+&quot;.&quot;+names[j]);
+                 partial_costs_indices[i] = current_index;
+                 current_index += n_partial_costs_i;
++
++                // Share random_gen with partial_costs[i], unless it already
++                // has one
++                if( !(partial_costs[i]-&gt;random_gen) )
++                {
++                    partial_costs[i]-&gt;random_gen = random_gen;
++                    partial_costs[i]-&gt;forget();
++                }
+             }
+             else
+                 partial_costs_indices[i] = -1;
+@@ -419,16 +427,27 @@
+                     &quot;connections[%i]-&gt;up_size (%d) != layers[%i]-&gt;size (%d).&quot;
+                     &quot;\n&quot;, i, connections[i]-&gt;up_size, i+1, layers[i+1]-&gt;size);
+ 
+-        layers[i]-&gt;random_gen = random_gen;
+-        layers[i]-&gt;build();
++        // Assign random_gen to layers[i] and connections[i], unless they
++        // already have one
++        if( !(layers[i]-&gt;random_gen) )
++        {
++            layers[i]-&gt;random_gen = random_gen;
++            layers[i]-&gt;forget();
++        }
++        if( !(connections[i]-&gt;random_gen) )
++        {
++            connections[i]-&gt;random_gen = random_gen;
++            connections[i]-&gt;forget();
++        }
+ 
+-        connections[i]-&gt;random_gen = random_gen;
+-        connections[i]-&gt;build();
+-
+         activation_gradients[i].resize( layers[i]-&gt;size );
+         expectation_gradients[i].resize( layers[i]-&gt;size );
+     }
+-    layers[n_layers-1]-&gt;random_gen = random_gen;
++    if( !(layers[n_layers-1]-&gt;random_gen) )
++    {
++        layers[n_layers-1]-&gt;random_gen = random_gen;
++        layers[n_layers-1]-&gt;forget();
++    }
+     int last_layer_size = layers[n_layers-1]-&gt;size;
+     PLASSERT_MSG(last_layer_size &gt;= 0,
+                  &quot;Size of last layer must be non-negative&quot;);
+@@ -511,6 +530,13 @@
+                     final_module-&gt;input_size);
+ 
+         final_module-&gt;setLearningRate( grad_learning_rate );
++
++        // Share random_gen with final_module, unless it already has one
++        if( !(final_module-&gt;random_gen) )
++        {
++            final_module-&gt;random_gen = random_gen;
++            final_module-&gt;forget();
++        }
+     }
+     else
+     {
+@@ -545,6 +571,12 @@
+                     targetsize());
+     }
+ 
++    // Share random_gen with final_cost, unless it already has one
++    if( !(final_cost-&gt;random_gen) )
++    {
++        final_cost-&gt;random_gen = random_gen;
++        final_cost-&gt;forget();
++    }
+ }
+ 
+ ///////////
+@@ -686,12 +718,15 @@
+         optimized_costs.resize(minibatch_size);
+     }
+ 
++    /* Why is it here???????
++       it's copy-pasted from build_()!!!!
+     layers[n_layers-1]-&gt;random_gen = random_gen;
+     int last_layer_size = layers[n_layers-1]-&gt;size;
+     PLASSERT_MSG(last_layer_size &gt;= 0,
+                  &quot;Size of last layer must be non-negative&quot;);
+     activation_gradients[n_layers-1].resize(last_layer_size);
+     expectation_gradients[n_layers-1].resize(last_layer_size);
++    */
+ 
+     Vec input( inputsize() );
+     Vec target( targetsize() );
+
+Modified: trunk/plearn_learners/online/GradNNetLayerModule.cc
+===================================================================
+--- trunk/plearn_learners/online/GradNNetLayerModule.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/GradNNetLayerModule.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -316,6 +316,9 @@
+ // Forget the bias and reinitialize the weights
+ void GradNNetLayerModule::forget()
+ {
++    learning_rate = start_learning_rate;
++    step_number = 0;
++
+     bias.resize( output_size );
+     if( init_bias.size() &gt; 0 )
+     {
+@@ -339,14 +342,17 @@
+     }
+     else if(init_weights_random_scale != 0. )
+     {
++        if( !random_gen )
++        {
++            PLWARNING( &quot;GradNNetLayerModule: cannot forget() without&quot;
++                       &quot; random_gen&quot; );
++            return;
++        }
+         real r = init_weights_random_scale / input_size;
+         random_gen-&gt;fill_random_uniform(weights, -r, r);
+     }
+     else
+         weights.clear();
+-
+-    learning_rate = start_learning_rate;
+-    step_number = 0;
+ }
+ 
+ void GradNNetLayerModule::setLearningRate( real dynamic_learning_rate )
+@@ -448,11 +454,6 @@
+                 &quot; you should set it to a positive integer (the number of&quot;
+                 &quot; neurons).\n&quot;, output_size);
+ 
+-    if (init_weights.size()==0 &amp;&amp; init_weights_random_scale!=0 &amp;&amp; !random_gen)
+-        // Default random number generator uses a fixed seed to ensure
+-        // reproducible experiments.
+-        random_gen = new PRandom(1827);
+-
+     if( weights.length() != output_size
+         || weights.width() != input_size
+         || bias.size() != output_size )
+
+Modified: trunk/plearn_learners/online/ModuleStackModule.cc
+===================================================================
+--- trunk/plearn_learners/online/ModuleStackModule.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/ModuleStackModule.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -89,8 +89,6 @@
+ ////////////
+ void ModuleStackModule::build_()
+ {
+-    // TODO: Do something with the random generator?
+-
+     n_modules = modules.length();
+ 
+     if( n_modules &gt; 0 )
+@@ -103,10 +101,21 @@
+ 
+         input_size = modules[0]-&gt;input_size;
+         output_size = modules[n_modules-1]-&gt;output_size;
+-    } else {
++    }
++    else
++    {
+         input_size = -1;
+         output_size = -1;
+     }
++
++    // If we have a random_gen and some modules do not, share it with them
++    if( random_gen )
++        for( int i=0; i&lt;n_modules; i++ )
++            if( !(modules[i]-&gt;random_gen) )
++            {
++                modules[i]-&gt;random_gen = random_gen;
++                modules[i]-&gt;forget();
++            }
+ }
+ 
+ ///////////
+
+Modified: trunk/plearn_learners/online/ModulesLearner.cc
+===================================================================
+--- trunk/plearn_learners/online/ModulesLearner.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/ModulesLearner.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -100,12 +100,18 @@
+     else
+         cost-&gt;estimate_simpler_diag_hessian = true;
+ 
+-    // initialize random generator from seed
+-    random_gen-&gt;manual_seed( seed_ );
++    // Assign random_gen to module and cost, unless they already have one
++    if( !(module-&gt;random_gen) )
++    {
++        module-&gt;random_gen = random_gen;
++        module-&gt;forget();
++    }
++    if( !(cost-&gt;random_gen) )
++    {
++        cost-&gt;random_gen = random_gen;
++        cost-&gt;forget();
++    }
+ 
+-    module-&gt;random_gen = random_gen;
+-    cost-&gt;random_gen = random_gen;
+-
+     // if train_set is not set, we don't know inputsize nor targetsize
+     if( inputsize_ &gt;= 0 ) // we don't use inputsize() because it crashes if &lt;0
+     {
+
+Modified: trunk/plearn_learners/online/ProcessInputCostModule.cc
+===================================================================
+--- trunk/plearn_learners/online/ProcessInputCostModule.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/ProcessInputCostModule.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -89,12 +89,24 @@
+     {
+         input_size = processing_module-&gt;input_size;
+         processed_size = processing_module-&gt;output_size;
++        // If we have a random_gen and processing_module does not, share it
++        if( random_gen &amp;&amp; !(processing_module-&gt;random_gen) )
++        {
++            processing_module-&gt;random_gen = random_gen;
++            processing_module-&gt;forget();
++        }
+     }
+ 
+     if( cost_module )
+     {
+         output_size = cost_module-&gt;output_size;
+         target_size = cost_module-&gt;target_size;
++        // If we have a random_gen and cost_module does not, share it
++        if( random_gen &amp;&amp; !(cost_module-&gt;random_gen) )
++        {
++            cost_module-&gt;random_gen = random_gen;
++            cost_module-&gt;forget();
++        }
+     }
+ 
+     if( processing_module &amp;&amp; cost_module )
+
+Modified: trunk/plearn_learners/online/RBMBinomialLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMBinomialLayer.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/RBMBinomialLayer.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -72,6 +72,9 @@
+ ////////////////////
+ void RBMBinomialLayer::generateSample()
+ {
++    PLASSERT_MSG(random_gen,
++                 &quot;random_gen should be initialized before generating samples&quot;);
++
+     computeExpectation();
+ 
+     for( int i=0 ; i&lt;size ; i++ )
+@@ -83,6 +86,9 @@
+ /////////////////////
+ void RBMBinomialLayer::generateSamples()
+ {
++    PLASSERT_MSG(random_gen,
++                 &quot;random_gen should be initialized before generating samples&quot;);
++
+     computeExpectations();
+     int mbatch_size = expectations.length();
+     samples.resize(mbatch_size, size);
+
+Modified: trunk/plearn_learners/online/RBMClassificationModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMClassificationModule.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/RBMClassificationModule.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -125,15 +125,42 @@
+ 
+     //! build joint_connection
+     if( !joint_connection )
+-    {
+         joint_connection = new RBMMixedConnection();
+-        joint_connection-&gt;random_gen = random_gen;
+-    }
+ 
+     joint_connection-&gt;sub_connections.resize(1,2);
+     joint_connection-&gt;sub_connections(0,0) = previous_to_last;
+     joint_connection-&gt;sub_connections(0,1) = last_to_target;
+     joint_connection-&gt;build();
++
++    // If we have a random_gen, share it with the ones who do not
++    if( random_gen )
++    {
++        if( !(previous_to_last-&gt;random_gen) )
++        {
++            previous_to_last-&gt;random_gen = random_gen;
++            previous_to_last-&gt;forget();
++        }
++        if( !(last_layer-&gt;random_gen) )
++        {
++            last_layer-&gt;random_gen = random_gen;
++            last_layer-&gt;forget();
++        }
++        if( !(last_to_target-&gt;random_gen) )
++        {
++            last_to_target-&gt;random_gen = random_gen;
++            last_to_target-&gt;forget();
++        }
++        if( !(target_layer-&gt;random_gen) )
++        {
++            target_layer-&gt;random_gen = random_gen;
++            target_layer-&gt;forget();
++        }
++        if( !(joint_connection-&gt;random_gen) )
++        {
++            joint_connection-&gt;random_gen = random_gen;
++            joint_connection-&gt;forget();
++        }
++    }
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+
+Modified: trunk/plearn_learners/online/RBMConv2DConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMConv2DConnection.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/RBMConv2DConnection.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -464,12 +464,17 @@
+ //! Note that this method is necessarily called from build().
+ void RBMConv2DConnection::forget()
+ {
++    clearStats();
+     if( initialization_method == &quot;zero&quot; )
+         kernel.clear();
+     else
+     {
+         if( !random_gen )
+-            random_gen = new PRandom();
++        {
++            PLWARNING( &quot;RBMConv2DConnection: cannot forget() without&quot;
++                       &quot; random_gen&quot; );
++            return;
++        }
+ 
+         real d = 1. / max( down_size, up_size );
+         if( initialization_method == &quot;uniform_sqrt&quot; )
+@@ -477,8 +482,6 @@
+ 
+         random_gen-&gt;fill_random_uniform( kernel, -d, d );
+     }
+-
+-    clearStats();
+ }
+ 
+ 
+
+Modified: trunk/plearn_learners/online/RBMGaussianLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMGaussianLayer.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/RBMGaussianLayer.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -77,6 +77,9 @@
+ 
+ void RBMGaussianLayer::generateSample()
+ {
++    PLASSERT_MSG(random_gen,
++                 &quot;random_gen should be initialized before generating samples&quot;);
++
+     computeExpectation();
+     computeStdDeviation();
+     for( int i=0 ; i&lt;size ; i++ )
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -495,12 +495,17 @@
+ // Note that this method is necessarily called from build().
+ void RBMMatrixConnection::forget()
+ {
++    clearStats();
+     if( initialization_method == &quot;zero&quot; )
+         weights.clear();
+     else
+     {
+         if( !random_gen )
+-            random_gen = new PRandom();
++        {
++            PLWARNING( &quot;RBMMatrixConnection: cannot forget() without&quot;
++                       &quot; random_gen&quot; );
++            return;
++        }
+ 
+         real d = 1. / max( down_size, up_size );
+         if( initialization_method == &quot;uniform_sqrt&quot; )
+@@ -508,7 +513,6 @@
+ 
+         random_gen-&gt;fill_random_uniform( weights, -d, d );
+     }
+-    clearStats();
+ }
+ 
+ 
+
+Modified: trunk/plearn_learners/online/RBMMatrixTransposeConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixTransposeConnection.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/RBMMatrixTransposeConnection.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -75,13 +75,16 @@
+ 
+ void RBMMatrixTransposeConnection::build_()
+ {
+-    
+     if( !rbm_matrix_connection )
+         PLERROR(&quot;In RBMMatrixTransposeConnection::build_(): &quot;
+             &quot;rbm_matrix_connection needs to be provided.&quot;);
+ 
+-
+-    rbm_matrix_connection-&gt;build();
++    // If we have a random_gen and rbm_matrix_connection does not, share it
++    if( random_gen &amp;&amp; !(rbm_matrix_connection-&gt;random_gen) )
++    {
++        rbm_matrix_connection-&gt;random_gen = random_gen;
++        rbm_matrix_connection-&gt;forget();
++    }
+     weights = rbm_matrix_connection-&gt;weights;
+     down_size = rbm_matrix_connection-&gt;up_size;
+     up_size = rbm_matrix_connection-&gt;down_size;
+
+Modified: trunk/plearn_learners/online/RBMMixedConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedConnection.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/RBMMixedConnection.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -152,7 +152,8 @@
+         col_of.append( TVec&lt;int&gt;( down_block_sizes[j], j ) );
+     }
+ 
+-    // assign random generator, learning rate and momentum to sub_connections
++    // Assign learning rate and momentum to sub_connections
++    // If we have a random_gen and they do not, share it with them
+     for( int i=0 ; i&lt;n_up_blocks ; i++ )
+         for( int j=0 ; j&lt;n_down_blocks ; j++ )
+         {
+@@ -164,7 +165,11 @@
+                 if( momentum &gt;= 0. )
+                     sub_connections(i,j)-&gt;setMomentum( momentum );
+ 
+-                sub_connections(i,j)-&gt;random_gen = random_gen;
++                if( random_gen &amp;&amp; !(sub_connections(i,j)-&gt;random_gen) )
++                {
++                    sub_connections(i,j)-&gt;random_gen = random_gen;
++                    sub_connections(i,j)-&gt;forget();
++                }
+             }
+         }
+ 
+
+Modified: trunk/plearn_learners/online/RBMMixedLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedLayer.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/RBMMixedLayer.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -437,7 +437,12 @@
+         if( momentum &gt;= 0. )
+             sub_layers[i]-&gt;setMomentum( momentum );
+ 
+-        sub_layers[i]-&gt;random_gen = random_gen;
++        // If we have a random_gen and sub_layers[i] does not, share it
++        if( random_gen &amp;&amp; !(sub_layers[i]-&gt;random_gen) )
++        {
++            sub_layers[i]-&gt;random_gen = random_gen;
++            sub_layers[i]-&gt;forget();
++        }
+     }
+ }
+ 
+
+Modified: trunk/plearn_learners/online/RBMMultinomialLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMultinomialLayer.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/RBMMultinomialLayer.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -88,6 +88,9 @@
+ 
+ void RBMMultinomialLayer::generateSample()
+ {
++    PLASSERT_MSG(random_gen,
++                 &quot;random_gen should be initialized before generating samples&quot;);
++
+     computeExpectation();
+ 
+     int i = random_gen-&gt;multinomial_sample( expectation );
+
+Modified: trunk/plearn_learners/online/RBMTruncExpLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMTruncExpLayer.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/RBMTruncExpLayer.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -89,6 +89,9 @@
+ 
+ void RBMTruncExpLayer::generateSample()
+ {
++    PLASSERT_MSG(random_gen,
++                 &quot;random_gen should be initialized before generating samples&quot;);
++
+     /* The cumulative is :
+      * C(U) = P(u&lt;U | x) = (1 - exp(-U a)) / (1 - exp(-a)) if 0 &lt; U &lt; 1,
+      *        0 if U &lt;= 0 and
+
+Modified: trunk/plearn_learners/online/Subsampling2DModule.cc
+===================================================================
+--- trunk/plearn_learners/online/Subsampling2DModule.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/Subsampling2DModule.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -199,9 +199,6 @@
+     scale.resize(n_input_images);
+     bias.resize(n_input_images);
+ 
+-    if( !random_gen )
+-        random_gen = new PRandom();
+-
+     input_images.resize(n_input_images);
+     output_images.resize(n_input_images);
+     kernel.resize(kernel_length, kernel_width);
+@@ -343,9 +340,15 @@
+ //! Note that this method is necessarily called from build().
+ void Subsampling2DModule::forget()
+ {
++    bias.clear();
++
++    if( !random_gen )
++    {
++        PLWARNING( &quot;Subsampling2DModule: cannot forget() without random_gen&quot; );
++        return;
++    }
+     real scale_factor = 1./(kernel_length*kernel_width);
+     random_gen-&gt;fill_random_uniform( scale, -scale_factor, scale_factor );
+-    bias.clear();
+ }
+ 
+ /* THIS METHOD IS OPTIONAL
+
+Modified: trunk/plearn_learners/online/Supersampling2DModule.cc
+===================================================================
+--- trunk/plearn_learners/online/Supersampling2DModule.cc	2007-05-04 02:18:24 UTC (rev 6998)
++++ trunk/plearn_learners/online/Supersampling2DModule.cc	2007-05-04 06:05:31 UTC (rev 6999)
+@@ -190,9 +190,6 @@
+     scale.resize(n_input_images);
+     bias.resize(n_input_images);
+ 
+-    if( !random_gen )
+-        random_gen = new PRandom();
+-
+     input_images.resize(n_input_images);
+     output_images.resize(n_input_images);
+     input_gradients.resize(n_input_images);
+@@ -334,9 +331,16 @@
+ //! Note that this method is necessarily called from build().
+ void Supersampling2DModule::forget()
+ {
++    bias.clear();
++
++    if( !random_gen )
++    {
++        PLWARNING( &quot;Supersampling2DModule: cannot forget() without random_gen&quot;
++                   );
++        return;
++    }
+     real scale_factor = 1./(kernel_length*kernel_width);
+     random_gen-&gt;fill_random_uniform( scale, -scale_factor, scale_factor );
+-    bias.clear();
+ }
+ 
+ /* THIS METHOD IS OPTIONAL
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000447.html">[Plearn-commits] r6998 - in	trunk/plearn_learners/online/test/DeepBeliefNet: .	.pytest/PL_DBN_SimpleRBM/expected_results	.pytest/PL_DBN_SimpleRBM/expected_results/expdir	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0/LearnerExpdir	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0/LearnerExpdir/Strat1results.pmat.metadata
+</A></li>
+	<LI>Next message: <A HREF="000449.html">[Plearn-commits] r7000 - in	trunk/plearn_learners/online/test/DeepBeliefNet: .	.pytest/PL_DBN_SimpleRBM/expected_results	.pytest/PL_DBN_SimpleRBM/expected_results/expdir	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0/LearnerExpdir
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#448">[ date ]</a>
+              <a href="thread.html#448">[ thread ]</a>
+              <a href="subject.html#448">[ subject ]</a>
+              <a href="author.html#448">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

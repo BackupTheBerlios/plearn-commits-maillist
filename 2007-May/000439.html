@@ -1,0 +1,503 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6990 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6990%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705032352.l43Nq5q8014111%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000438.html">
+   <LINK REL="Next"  HREF="000440.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6990 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6990%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705032352.l43Nq5q8014111%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6990 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Fri May  4 01:52:05 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000438.html">[Plearn-commits] r6989 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000440.html">[Plearn-commits] r6991 - trunk/commands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#439">[ date ]</a>
+              <a href="thread.html#439">[ thread ]</a>
+              <a href="subject.html#439">[ subject ]</a>
+              <a href="author.html#439">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-05-04 01:52:05 +0200 (Fri, 04 May 2007)
+New Revision: 6990
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+Log:
+Changed cost names, to avoid repetition :
+    - costs from the final_cost module are now prefixed by &quot;final.&quot;
+    - costs from the partial_costs[i] module are prefixed by &quot;partial$i.&quot;
+    - reconstruction cost of layer i is now &quot;layer$i.reconstruction_error&quot;.
+Changed the way the cost names are created, and the indexing of these names
+(cleaner now)
+
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-03 21:53:53 UTC (rev 6989)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-03 23:52:05 UTC (rev 6990)
+@@ -76,6 +76,7 @@
+     final_cost_has_learning_rate( false ),
+     nll_cost_index( -1 ),
+     class_cost_index( -1 ),
++    final_cost_index( -1 ),
+     reconstruction_cost_index( -1 )
+ {
+     random_gen = new PRandom( seed_ );
+@@ -293,18 +294,83 @@
+ 
+     build_layers_and_connections();
+ 
++    build_costs();
++}
++
++/////////////////
++// build_costs //
++/////////////////
++void DeepBeliefNet::build_costs()
++{
++    cost_names.resize(0);
++    int current_index = 0;
++
+     // build the classification module, its cost and the joint layer
+     if( use_classification_cost )
+     {
+         PLASSERT( n_classes &gt;= 2 );
+         build_classification_cost();
++
++        cost_names.append(&quot;NLL&quot;);
++        nll_cost_index = current_index;
++        current_index++;
++
++        cost_names.append(&quot;class_error&quot;);
++        class_cost_index = current_index;
++        current_index++;
+     }
+ 
+     if( final_cost )
++    {
+         build_final_cost();
+ 
+-    // build_costs(); /* ? */
+-    reconstruction_costs.resize(reconstruct_layerwise?n_layers-1:0);
++        TVec&lt;string&gt; final_names = final_cost-&gt;name();
++        int n_final_costs = final_names.length();
++
++        for( int i=0; i&lt;n_final_costs; i++ )
++            cost_names.append(&quot;final.&quot; + final_names[i]);
++
++        final_cost_index = current_index;
++        current_index += n_final_costs;
++    }
++
++    if( partial_costs )
++    {
++        int n_partial_costs = partial_costs.length();
++        partial_costs_indices.resize(n_partial_costs);
++
++        for( int i=0; i&lt;n_partial_costs; i++ )
++            if( partial_costs[i] )
++            {
++                TVec&lt;string&gt; names = partial_costs[i]-&gt;name();
++                int n_partial_costs_i = names.length();
++                for( int j=0; j&lt;n_partial_costs_i; j++ )
++                    cost_names.append(&quot;partial&quot;+tostring(i)+&quot;.&quot;+names[j]);
++                partial_costs_indices[i] = current_index;
++                current_index += n_partial_costs_i;
++            }
++            else
++                partial_costs_indices[i] = -1;
++    }
++    else
++        partial_costs_indices.resize(0);
++
++    if( reconstruct_layerwise )
++    {
++        reconstruction_costs.resize(n_layers-1);
++
++        cost_names.append(&quot;layerwise_reconstruction_error&quot;);
++        reconstruction_cost_index = current_index;
++        current_index++;
++
++        for( int i=0; i&lt;n_layers-1; i++ )
++            cost_names.append(&quot;layer&quot;+tostring(i)+&quot;.reconstruction_error&quot;);
++        current_index += n_layers-1;
++    }
++    else
++        reconstruction_costs.resize(0);
++
++    PLASSERT( current_index == cost_names.length() );
+ }
+ 
+ //////////////////////////////////
+@@ -518,8 +584,7 @@
+     deepCopyField(cd_neg_down_vals,         copies);
+     deepCopyField(gibbs_down_state,         copies);
+     deepCopyField(optimized_costs,          copies);
+-    deepCopyField(final_cost_indices,       copies);
+-    deepCopyField(partial_cost_indices,     copies);
++    deepCopyField(partial_costs_indices,    copies);
+ }
+ 
+ 
+@@ -613,37 +678,6 @@
+     train_costs.fill(MISSING_VALUE) ;
+     train_costs_m.fill(MISSING_VALUE);
+ 
+-    //give the indexes the right values
+-
+-    if ( classification_cost )
+-        nll_cost_index = train_cost_names.find(classification_cost-&gt;name()[0]);
+-    if ( final_cost )
+-    {
+-        TVec&lt;string&gt; names = final_cost-&gt;name();
+-        final_cost_indices.resize(names.length());
+-        for (int i=0;i&lt;names.length();i++)
+-            final_cost_indices[i] = train_cost_names.find(names[i]);
+-    }
+-    if ( partial_costs )
+-    {
+-        partial_cost_indices.resize(partial_costs.size());
+-        for (int i=0;i&lt;partial_costs.size();i++)
+-            if (partial_costs[i])
+-            {
+-                TVec&lt;string&gt; names = partial_costs[i]-&gt;name();
+-                partial_cost_indices[i].resize(names.length());
+-                for (int j=0;j&lt;names.length();j++)
+-                    partial_cost_indices[i][j] = 
+-                        train_cost_names.find( names[j] + &quot;_&quot; + tostring(i+1) );
+-            }
+-    }
+-
+-    if ( reconstruct_layerwise)
+-        reconstruction_cost_index = train_cost_names.find(&quot;layerwise_reconstruction_error&quot;);
+-
+-    class_cost_index = train_cost_names.find(&quot;class_error&quot;);
+-
+-
+     int nsamples = train_set-&gt;length();
+ 
+     if( !initTrain() )
+@@ -867,8 +901,8 @@
+                                              target, cost[i][0],
+                                              expectation_gradients[ i+1 ] );
+ 
+-            for (int j=0;j&lt;partial_cost_indices[i].length();j++)
+-                train_costs[partial_cost_indices[i][j]] = cost[i][j];
++            train_costs.subVec(partial_costs_indices[i], cost[i].length())
++                &lt;&lt; cost[i];
+         }
+         else
+             expectation_gradients[i+1].clear();
+@@ -907,8 +941,8 @@
+                         true);
+         }
+ 
+-        for (int j=0;j&lt;final_cost_indices.length();j++)
+-            train_costs[final_cost_indices[j]] = final_cost_value[j];
++        train_costs.subVec(final_cost_index, final_cost_value.length())
++            &lt;&lt; final_cost_value;
+     }
+ 
+     if ( final_cost || (partial_costs &amp;&amp; partial_costs[n_layers-2]) )
+@@ -1062,9 +1096,8 @@
+                                              targets, optimized_cost,
+                                              expectations_gradients[ i+1 ] );
+ 
+-            for (int k = 0; k &lt; inputs.length(); k++)
+-                for (int j=0;j&lt;partial_cost_indices[i].length();j++)
+-                    train_costs(k, partial_cost_indices[i][j]) = cost[i](k, j);
++            train_costs.subMatColumns(partial_costs_indices[i], cost[i].width())
++                &lt;&lt; cost[i];
+         }
+         else
+             expectations_gradients[i+1].clear();
+@@ -1105,9 +1138,8 @@
+                         true);
+         }
+ 
+-        for (int k = 0; k &lt; inputs.length(); k++)
+-            for (int j=0;j&lt;final_cost_indices.length();j++)
+-                train_costs(k, final_cost_indices[j]) = final_cost_values(k, j);
++        train_costs.subMatColumns(final_cost_index, final_cost_values.width())
++            &lt;&lt; final_cost_values;
+     }
+ 
+     if ( final_cost || (partial_costs &amp;&amp; partial_costs[n_layers-2]) )
+@@ -1469,8 +1501,8 @@
+                                      expectation_gradients[ n_layers-1 ] );
+         }
+ 
+-        for (int j=0;j&lt;final_cost_indices.length();j++)
+-            train_costs[final_cost_indices[j]] = final_cost_value[j];
++        train_costs.subVec(final_cost_index, final_cost_value.length())
++            &lt;&lt; final_cost_value;
+ 
+         layers[ n_layers-1 ]-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;activation,
+                                            layers[ n_layers-1 ]-&gt;expectation,
+@@ -1582,10 +1614,8 @@
+                                      expectations_gradients[ n_layers-1 ] );
+         }
+ 
+-        for (int k = 0; k &lt; minibatch_size; k++)
+-            for (int j=0;j&lt;final_cost_indices.length();j++)
+-                train_costs(k, final_cost_indices[j]) =
+-                    final_cost_values(k, j);
++        train_costs.subMatColumns(final_cost_index, final_cost_values.width())
++            &lt;&lt; final_cost_values;
+ 
+         layers[ n_layers-1 ]-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;activations,
+                                            layers[ n_layers-1 ]-&gt;getExpectations(),
+@@ -1895,31 +1925,19 @@
+                                            const Vec&amp; target, Vec&amp; costs) const
+ {
+     // Compute the costs from *already* computed output.
+-
+-    TVec&lt;string&gt; test_cost_names = getTestCostNames() ;
+-
+-    int test_class_cost_index = test_cost_names.find(&quot;class_error&quot;) ;
+-
+-    costs.resize( test_cost_names.length() );
++    costs.resize( cost_names.length() );
+     costs.fill( MISSING_VALUE );
+ 
+     // TO MAKE FOR CLEANER CODE INDEPENDENT OF ORDER OF CALLING THIS
+     // METHOD AND computeOutput, THIS SHOULD BE IN A REDEFINITION OF computeOutputAndCosts
+     if( use_classification_cost )
+     {
+-        int test_nll_cost_index =
+-            test_cost_names.find(classification_cost-&gt;name()[0]) ;
+-        real nll_cost;
+         classification_cost-&gt;CostModule::fprop( output.subVec(0, n_classes),
+-                target, nll_cost );
++                target, costs[nll_cost_index] );
+ 
+-        real class_error =
++        costs[class_cost_index] =
+             (argmax(output.subVec(0, n_classes)) == (int) round(target[0]))? 0
+             : 1;
+-        if ( test_nll_cost_index != -1 )
+-            costs[test_nll_cost_index] = nll_cost;
+-        if ( test_class_cost_index != -1 )
+-            costs[test_class_cost_index] = class_error;
+     }
+ 
+     if( final_cost )
+@@ -1927,8 +1945,9 @@
+         int init = use_classification_cost ? n_classes : 0;
+         final_cost-&gt;fprop( output.subVec( init, output.size() - init ),
+                            target, final_cost_value );
+-        for (int j=0;j&lt;final_cost_indices.length();j++)
+-            costs[final_cost_indices[j]] = final_cost_value[j];
++
++        costs.subVec(final_cost_index, final_cost_value.length())
++            &lt;&lt; final_cost_value;
+     }
+ 
+     if( partial_costs )
+@@ -1940,13 +1959,14 @@
+             {
+                 partial_costs[ i ]-&gt;fprop( layers[ i+1 ]-&gt;expectation,
+                                            target, pcosts);
+-                for (int j=0;j&lt;pcosts.length();j++)
+-                    costs[partial_cost_indices[i][j]] = pcosts[j];
++
++                costs.subVec(partial_costs_indices[i], pcosts.length())
++                    &lt;&lt; pcosts;
+             }
+     }
+ 
+     if (reconstruct_layerwise)
+-        costs.subVec(reconstruction_cost_index,reconstruction_costs.length()) 
++        costs.subVec(reconstruction_cost_index, reconstruction_costs.length())
+             &lt;&lt; reconstruction_costs;
+ 
+ }
+@@ -1957,40 +1977,11 @@
+     // (these may or may not be exactly the same as what's returned by
+     // getTrainCostNames).
+ 
+-    TVec&lt;string&gt; cost_names;
+-
+-    if( use_classification_cost )
+-    {
+-        cost_names.append( classification_cost-&gt;name() );
+-        cost_names.append( &quot;class_error&quot; );
+-    }
+-
+-    if( final_cost )
+-        cost_names.append( final_cost-&gt;name() );
+-
+-    if (partial_costs)
+-        for (int i=0;i&lt;n_layers-1;i++)
+-            if (partial_costs[i])
+-            {
+-                TVec&lt;string&gt; names = partial_costs[i]-&gt;name();
+-                for (int j=0;j&lt;names.length();j++)
+-                    cost_names.append( names[j] + &quot;_&quot; + tostring(i+1) );
+-            }
+-
+-    if (reconstruct_layerwise)
+-    {
+-        reconstruction_cost_index = cost_names.length();
+-        cost_names.append(&quot;layerwise_reconstruction_error&quot;);
+-        for (int i=0;i&lt;n_layers-1;i++)
+-            cost_names.append(&quot;layer&quot;+tostring(i+1)+&quot;_reconstruction_error&quot;);
+-    }
+-
+     return cost_names;
+ }
+ 
+ TVec&lt;string&gt; DeepBeliefNet::getTrainCostNames() const
+ {
+-    TVec&lt;string&gt; cost_names = getTestCostNames() ;
+     return cost_names;
+ }
+ 
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2007-05-03 21:53:53 UTC (rev 6989)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2007-05-03 23:52:05 UTC (rev 6990)
+@@ -137,15 +137,21 @@
+     //! Number of layers
+     int n_layers;
+ 
++    //! The computed cost names
++    TVec&lt;string&gt; cost_names;
++
+     //! whether to do things by stages, including fine-tuning, or on-line
+     bool online;
+ 
+-    // Coefficient between 0 and 1. If non-zero, run a background Gibbs chain and use 
+-    // the visible-hidden statistics to contribute in the negative phase update
+-    // (in proportion background_gibbs_update_ratio wrt the contrastive divergence
+-    // negative phase statistics). If = 1, then do not perform any contrastive
+-    // divergence negative phase (use only the Gibbs chain statistics).
++    // Coefficient between 0 and 1. If non-zero, run a background
++    // Gibbs chain and use the visible-hidden statistics to
++    // contribute in the negative phase update (in proportion
++    // background_gibbs_update_ratio wrt the contrastive divergence
++    // negative phase statistics). If = 1, then do not perform any
++    // contrastive divergence negative phase (use only the Gibbs chain
++    // statistics).
+     real background_gibbs_update_ratio;
++
+     // negative chain statistics are forgotten at this rate (a value of 0
+     // would only use the current sample, a value of .99 would use 1% of
+     // the new sample and 99% of the old statistics).
+@@ -156,7 +162,8 @@
+     bool top_layer_joint_cd;
+ 
+     //! after how many examples should we re-initialize the Gibbs chains
+-    //! (if == INT_MAX, the default then NEVER re-initialize except when stage==0)
++    //! (if == INT_MAX, the default then NEVER re-initialize except when
++    //! stage==0)
+     int gibbs_chain_reinit_freq;
+ 
+     //#####  Not Options  #####################################################
+@@ -278,7 +285,7 @@
+ protected:
+ 
+     int minibatch_size;
+-    
++
+     //#####  Not Options  #####################################################
+ 
+     // whether to re-initialize Gibbs chain next time around
+@@ -335,30 +342,31 @@
+     mutable Mat pos_up_vals;
+     mutable Mat cd_neg_down_vals;
+     mutable Mat cd_neg_up_vals;
+-    
++
+     //! Store the state of the Gibbs chain for each RBM
+     mutable TVec&lt;Mat&gt; gibbs_down_state;
+ 
+     //! Used to store the costs optimized by the final cost module.
+     Vec optimized_costs;
+ 
++    //! Stores reconstruction costs
++    mutable Vec reconstruction_costs;
++
+     //! Keeps the index of the NLL cost in train_costs
+     int nll_cost_index;
+ 
+-    //! Keeps the index of the CLASS cost in train_costs
++    //! Keeps the index of the class_error cost in train_costs
+     int class_cost_index;
+ 
+-    //! Keeps the indices of the final costs in train_costs
+-    TVec&lt;int&gt; final_cost_indices;
++    //! Keeps the beginning index of the final costs in train_costs
++    int final_cost_index;
+ 
+-    //! Keeps the index of the reconstruction cost in train_costs
+-    mutable int reconstruction_cost_index;
++    //! Keeps the beginning indices of the partial costs in train_costs
++    TVec&lt;int&gt; partial_costs_indices;
+ 
+-    //! indices of the partial costs in train_costs
+-    TVec&lt;TVec&lt;int&gt; &gt; partial_cost_indices;
++    //! Keeps the beginning index of the reconstruction costs in train_costs
++    int reconstruction_cost_index;
+ 
+-    Vec reconstruction_costs;
+-
+     mutable Vec layer_input;
+     mutable Mat layer_inputs;
+ 
+@@ -376,6 +384,8 @@
+ 
+     void build_layers_and_connections();
+ 
++    void build_costs();
++
+     void build_classification_cost();
+ 
+     void build_final_cost();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000438.html">[Plearn-commits] r6989 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000440.html">[Plearn-commits] r6991 - trunk/commands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#439">[ date ]</a>
+              <a href="thread.html#439">[ thread ]</a>
+              <a href="subject.html#439">[ subject ]</a>
+              <a href="author.html#439">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

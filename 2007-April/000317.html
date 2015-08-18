@@ -1,0 +1,216 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6868 - trunk/scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6868%20-%20trunk/scripts&In-Reply-To=%3C200704101212.l3ACCvtI001230%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000316.html">
+   <LINK REL="Next"  HREF="000318.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6868 - trunk/scripts</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6868%20-%20trunk/scripts&In-Reply-To=%3C200704101212.l3ACCvtI001230%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6868 - trunk/scripts">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Tue Apr 10 14:12:57 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000316.html">[Plearn-commits] r6867 - trunk/plearn_learners_experimental
+</A></li>
+        <LI>Next message: <A HREF="000318.html">[Plearn-commits] r6869 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#317">[ date ]</a>
+              <a href="thread.html#317">[ thread ]</a>
+              <a href="subject.html#317">[ subject ]</a>
+              <a href="author.html#317">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-04-10 14:12:56 +0200 (Tue, 10 Apr 2007)
+New Revision: 6868
+
+Modified:
+   trunk/scripts/collectres
+Log:
+Wrote but not tested the plot command.
+
+
+Modified: trunk/scripts/collectres
+===================================================================
+--- trunk/scripts/collectres	2007-04-09 22:42:52 UTC (rev 6867)
++++ trunk/scripts/collectres	2007-04-10 12:12:56 UTC (rev 6868)
+@@ -31,6 +31,8 @@
+ #  This file is part of the PLearn library. For more information on the PLearn
+ #  library, go to the PLearn Web site at www.plearn.org
+ 
++# see main below for help on using this script
++
+ import sys,string
+ from plearn.vmat.PMat import *
+ from numarray import *
+@@ -53,17 +55,22 @@
+       res.append(a[mrow,int(loc_specs[i])])
+       i+=1
+   elif loc_mode==&quot;cols&quot;:
+-    minrow = int(loc_specs[1])
+-    maxrow = int(loc_specs[2])
++    minrow = int(loc_specs[3])
++    maxrow = int(loc_specs[4])
+     if maxrow&lt;0:
+       maxrow = a.shape[0]+maxrow
+     maxrow += 1
+-    i=3
+-    res = zeros([maxrow-minrow,len(loc_specs[i:])])
++    i=5
++    b=[]
++    res = zeros([maxrow-minrow,0])
+     while len(loc_specs[i:])&gt;0:
+-      res[:,i-3]=a[minrow:maxrow,int(loc_specs[i])]
+-      i+=1
+-    print res.shape
++      col = int(loc_specs[i])
++      if col&lt;0:
++        b = array(range(minrow,maxrow))
++      else:
++        b=a[minrow:maxrow,col].copy()
++      res=concatenate([res,b.resize([maxrow-minrow,1])],1)
++      i+=2 # skip the column name
+   else:
+     raise ValueError(&quot;Invalid &lt;location-spec&gt; mode, expected 'pos', 'mincol', or 'col', got &quot;+loc_mode)    
+   return res
+@@ -85,8 +92,42 @@
+     return -1
+   else:
+     return 1
+-  
+-def outputres(f,mode,results):
++
++def write_array(f,a):
++  rows=a.shape[0]
++  cols=a.shape[1]
++  for r in range(0,rows):
++    for c in range(0,cols):
++      f.write(str(a[r,c])+&quot; &quot;)
++    f.write(&quot;\n&quot;)
++
++def sublist(liste,indices):
++  subliste=[]
++  l=len(liste)
++  for index in indices:
++    if index&lt;l:
++      subliste.append(liste[index])
++    
++def distinct_experiment_names(filenames):
++  splitted_filenames = map(lambda fname: string.split(fname,&quot;-&quot;), filenames)
++  distinct_parts = []
++  not_finished = True
++  lengths = map(len,splitted_filenames)
++  len0 = lengths[0]
++  maxlen = max(lengths)
++  minlen = min(lengths)
++  for i in range(0,minlen):
++    all_equal=True
++    for splitted_filename in splitted_filenames[1:]:
++      if splitted_filename[i]!=splitted_filenames[0][i]:
++        all_equal=False
++        break
++    if not all_equal:
++      distinct_parts.append(i)
++  distinct_parts.append(range(minlen,maxlen))
++  return map(lambda sname: string.join(sublist(sname,distinct_parts),&quot;-&quot;),splitted_filenames)
++
++def outputres(f,mode,speclist,results):
+   if mode==&quot;min&quot;:
+     minval = 1e36
+     minfile = &quot;&quot;
+@@ -108,11 +149,34 @@
+         f.write(str(v)+&quot; &quot;)
+       f.write(res[1]+&quot;\n&quot;)
+   elif mode==&quot;plot&quot;:
++    # &quot;plot cols &lt;xlabel&gt; &lt;ylabel&gt; &lt;minrow&gt; &lt;maxrow&gt; &lt;x&gt; &lt;col1&gt; &lt;name1&gt; &lt;col2&gt; &lt;name2&gt; ...&quot; : make a smartplot file with &lt;col1&gt; as y-columns (with legend label &lt;namei&gt;), &lt;x&gt; as x-column (-1 means use the row indices). Axes are labeled &lt;xlabel&gt; and &lt;ylabel&gt;. Use rows from &lt;minrow&gt; to &lt;maxrow&gt; (-1 means last) row inclusively.'
++    #
++    # build the gnuplot command in the smartplot file header
++    filenames = map(lambda res: res[1], results) # collect the filenames from the results list
++    distinct_expnames = distinct_experiment_names(filenames) # keep only the option=value parts that are distinct among experiments
++    f.write('# to set y on log-scale insert this at the beginning below: set logscale y;\n')
++    # speclist has the elements: cols &lt;xlabel&gt; &lt;ylabel&gt; &lt;minrow&gt; &lt;maxrow&gt; &lt;x&gt; &lt;col1&gt; &lt;name1&gt; &lt;col2&gt; &lt;name2&gt; ...
++    f.write('#: set xlabel &quot;'+speclist[1]+'&quot;; set ylabel &quot;'+speclist[2]+'&quot;; plot ')
++    ncoln=len(speclist)-6 
++    ncol=int(ncol/2)
++    if ncol*2!=ncoln:
++      ValueError(&quot;Invalid plot &lt;spec&gt;: there should be one &lt;name&gt; per &lt;col&gt; to plot&quot;)
++    ncol+=1 # add 1 for &lt;x&gt;, now this is the number of columns per experiment
++    j = 0
++    for expname in distinct_expnames:
++      for i in range(0,ncol-1):
++        name = speclist[6+i*2+1]
++        f.write('@ using '+str(1+j*ncol)+':'+str(1+j*ncol+i)+' with lines t &quot;'+name+'~'+expname'&quot;')
++        if (i+2)&lt;len(speclist):
++          f.write(&quot;,&quot;)
++    f.write(&quot;\n&quot;)
++    # concatenate vertically all the results from each experiment into one big array
+     arrays = []
+     for res in results:
+       arrays.append(res[0])
+     a = concatenate(arrays,1)
+-    f.write(array_str(a))
++    # write the array to file, without any []
++    write_array(f,a)
+   else:
+     raise ValueError(&quot;Invalid &lt;spec&gt; mode, expected 'min', 'sort', or 'plot', got &quot;+mode)
+ 
+@@ -125,11 +189,10 @@
+     print &quot;The &lt;spec&gt; can be the following:&quot;
+     print '  &quot;min &lt;location-spec&gt;&quot; : identify the mininum of &lt;location-spec&gt; over the &lt;file*.pmat&gt;' 
+     print '  &quot;sort &lt;location-spec&gt;&quot; : make a sorted table of all the values at each &lt;location-spec&gt; over the &lt;file*.pmat&gt;' 
+-    print '  &quot;plot &lt;location-spec&gt; &quot; : make a smarplot file for plotting of all the values at &lt;location-spec&gt; over the &lt;file*.pmat&gt;' 
++    print '  &quot;plot cols &lt;xlabel&gt; &lt;ylabel&gt; &lt;minrow&gt; &lt;maxrow&gt; &lt;x&gt; &lt;col1&gt; &lt;name1&gt; &lt;col2&gt; &lt;name2&gt; ...&quot; : make a smartplot file with &lt;col1&gt; as y-columns (with legend label &lt;namei&gt;), &lt;x&gt; as x-column (-1 means use the row indices). Axes are labeled &lt;xlabel&gt; and &lt;ylabel&gt;. Use rows from &lt;minrow&gt; to &lt;maxrow&gt; (-1 means last) row inclusively.'
+     print &quot;where &lt;location-spec&gt; can be the following:&quot;
+     print '  &quot;pos &lt;row&gt; &lt;col0&gt; [&lt;col1&gt; &lt;col2&gt;...]&quot;: keep only the value at positions (&lt;row&gt; &lt;col0&gt;) (&lt;row&gt; &lt;col1&gt;) ... in each pmat, and the first value may be used to minimize over files in the min command'
+     print '  &quot;mincol &lt;mcol&gt; [&lt;col1&gt; &lt;col2&gt;...] &quot;: keep only the minimum value in &lt;mcol&gt; of each pmat, keeping track of the &lt;coli&gt; values at the selected row'
+-    print '  &quot;cols &lt;minrow&gt; &lt;maxrow&gt; &lt;column-nb&gt; &lt;column-nb&gt;...&quot;: this is used with the plot command, to specify a column to plot, optionally from &lt;minrow&gt; to &lt;maxrow&gt; (-1 means mat.length-1) row inclusively'
+     sys.exit(1)
+   output = args[1]
+   filenames = args[3:]
+@@ -140,5 +203,5 @@
+   for file in filenames:
+     f.write(file+&quot; &quot;)
+   f.write(&quot;\n&quot;)
+-  outputres(f,mode,getres(speclist[1:],filenames))
++  outputres(f,mode,speclist[1:],getres(speclist[1:],filenames))
+   f.flush()
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000316.html">[Plearn-commits] r6867 - trunk/plearn_learners_experimental
+</A></li>
+	<LI>Next message: <A HREF="000318.html">[Plearn-commits] r6869 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#317">[ date ]</a>
+              <a href="thread.html#317">[ thread ]</a>
+              <a href="subject.html#317">[ subject ]</a>
+              <a href="author.html#317">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

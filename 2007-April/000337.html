@@ -1,0 +1,220 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6888 - trunk/plearn/ker
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6888%20-%20trunk/plearn/ker&In-Reply-To=%3C200704140239.l3E2dSeq009451%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000336.html">
+   <LINK REL="Next"  HREF="000338.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6888 - trunk/plearn/ker</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6888%20-%20trunk/plearn/ker&In-Reply-To=%3C200704140239.l3E2dSeq009451%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6888 - trunk/plearn/ker">chapados at mail.berlios.de
+       </A><BR>
+    <I>Sat Apr 14 04:39:28 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000336.html">[Plearn-commits] r6887 - trunk/plearn_learners/meta
+</A></li>
+        <LI>Next message: <A HREF="000338.html">[Plearn-commits] r6889 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#337">[ date ]</a>
+              <a href="thread.html#337">[ thread ]</a>
+              <a href="subject.html#337">[ subject ]</a>
+              <a href="author.html#337">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2007-04-14 04:39:27 +0200 (Sat, 14 Apr 2007)
+New Revision: 6888
+
+Modified:
+   trunk/plearn/ker/ARDBaseKernel.h
+   trunk/plearn/ker/KroneckerBaseKernel.cc
+   trunk/plearn/ker/KroneckerBaseKernel.h
+   trunk/plearn/ker/RationalQuadraticARDKernel.cc
+   trunk/plearn/ker/RationalQuadraticARDKernel.h
+   trunk/plearn/ker/SquaredExponentialARDKernel.cc
+Log:
+Improved robustness in case optimization tries to explore VERY SMALL values in the inverse softplus domain
+
+Modified: trunk/plearn/ker/ARDBaseKernel.h
+===================================================================
+--- trunk/plearn/ker/ARDBaseKernel.h	2007-04-13 13:57:13 UTC (rev 6887)
++++ trunk/plearn/ker/ARDBaseKernel.h	2007-04-14 02:39:27 UTC (rev 6888)
+@@ -77,13 +77,13 @@
+      *  fixed value (and not be varied during the optimization).  Default
+      *  value=0.0.
+      */
+-    real m_isp_global_sigma;
++    mutable real m_isp_global_sigma;
+ 
+     /**
+      *  If specified, contain input-specific length-scales that can be
+      *  individually optimized for (these are the ARD hyperparameters).
+      */
+-    Vec m_isp_input_sigma;
++    mutable Vec m_isp_input_sigma;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+
+Modified: trunk/plearn/ker/KroneckerBaseKernel.cc
+===================================================================
+--- trunk/plearn/ker/KroneckerBaseKernel.cc	2007-04-13 13:57:13 UTC (rev 6887)
++++ trunk/plearn/ker/KroneckerBaseKernel.cc	2007-04-14 02:39:27 UTC (rev 6888)
+@@ -177,6 +177,19 @@
+ }
+ 
+ 
++//#####  softplusFloor  #######################################################
++
++real KroneckerBaseKernel::softplusFloor(real&amp; value, real floor)
++{
++    real sp = softplus(value);
++    if (sp &lt; floor) {
++        value = pl_log(exp(floor)-1);           // inverse soft-plus
++        return floor;
++    }
++    return sp;
++}
++
++
+ //#####  makeDeepCopyFromShallowCopy  #########################################
+ 
+ void KroneckerBaseKernel::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+
+Modified: trunk/plearn/ker/KroneckerBaseKernel.h
+===================================================================
+--- trunk/plearn/ker/KroneckerBaseKernel.h	2007-04-13 13:57:13 UTC (rev 6887)
++++ trunk/plearn/ker/KroneckerBaseKernel.h	2007-04-14 02:39:27 UTC (rev 6888)
+@@ -121,6 +121,15 @@
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+ 
++    /**
++     *  Utility function for derived classes: return the softplus of its
++     *  argument, but if the softplus would fall below the given floor, then
++     *  return the floor AND MODIFY the original argument to represent the
++     *  inverse softplus of the floor.  This allows preventing some variables
++     *  from getting too small during optimization.
++     */
++    static real softplusFloor(real&amp; value, real floor=1e-6);
++
+ private:
+     //! This does the actual building.
+     void build_();
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.cc
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-04-13 13:57:13 UTC (rev 6887)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-04-14 02:39:27 UTC (rev 6888)
+@@ -187,16 +187,21 @@
+     // Compute Kronecker gram matrix.  No need to cache it.
+     inherited::computeGramMatrix(K);
+ 
+-    // Precompute some terms
++    // Precompute some terms. Make sure that the alpha and input sigmas don't
++    // get too small
+     real sf    = softplus(m_isp_signal_sigma);
+-    real alpha = softplus(m_isp_alpha);
++    real alpha = softplusFloor(m_isp_alpha, 1e-6);
+     m_input_sigma.resize(dataInputsize());
+-    m_input_sigma.fill(m_isp_global_sigma);
+-    if (m_isp_input_sigma.size() &gt; 0)
+-        m_input_sigma += m_isp_input_sigma;
+-    for (int i=0, n=m_input_sigma.size() ; i&lt;n ; ++i)
++    softplusFloor(m_isp_global_sigma, 1e-6);
++    m_input_sigma.fill(m_isp_global_sigma);  // Still in ISP domain
++    for (int i=0, n=m_input_sigma.size() ; i&lt;n ; ++i) {
++        if (m_isp_input_sigma.size() &gt; 0) {
++            softplusFloor(m_isp_input_sigma[i], 1e-6);
++            m_input_sigma[i] += m_isp_input_sigma[i];
++        }
+         m_input_sigma[i] = softplus(m_input_sigma[i]);
+-
++    }
++    
+     // Prepare the cache for the pow terms
+     m_pow_minus_alpha_minus_1.resize(K.length(), K.width());
+     int   pow_cache_mod = m_pow_minus_alpha_minus_1.mod();
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.h
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-04-13 13:57:13 UTC (rev 6887)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-04-14 02:39:27 UTC (rev 6888)
+@@ -93,7 +93,7 @@
+ 
+     //! Inverse softplus of the alpha parameter in the rational-quadratic kernel.
+     //! Default value=0.0
+-    real m_isp_alpha;
++    mutable real m_isp_alpha;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+
+Modified: trunk/plearn/ker/SquaredExponentialARDKernel.cc
+===================================================================
+--- trunk/plearn/ker/SquaredExponentialARDKernel.cc	2007-04-13 13:57:13 UTC (rev 6887)
++++ trunk/plearn/ker/SquaredExponentialARDKernel.cc	2007-04-14 02:39:27 UTC (rev 6888)
+@@ -170,14 +170,19 @@
+     // Compute Kronecker gram matrix
+     inherited::computeGramMatrix(K);
+ 
+-    // Precompute some terms
++    // Precompute some terms. Make sure that the input sigmas don't get too
++    // small
+     real sf    = softplus(m_isp_signal_sigma);
+     m_input_sigma.resize(dataInputsize());
+-    m_input_sigma.fill(m_isp_global_sigma);
+-    if (m_isp_input_sigma.size() &gt; 0)
+-        m_input_sigma += m_isp_input_sigma;
+-    for (int i=0, n=m_input_sigma.size() ; i&lt;n ; ++i)
++    softplusFloor(m_isp_global_sigma, 1e-6);
++    m_input_sigma.fill(m_isp_global_sigma);  // Still in ISP domain
++    for (int i=0, n=m_input_sigma.size() ; i&lt;n ; ++i) {
++        if (m_isp_input_sigma.size() &gt; 0) {
++            softplusFloor(m_isp_input_sigma[i], 1e-6);
++            m_input_sigma[i] += m_isp_input_sigma[i];
++        }
+         m_input_sigma[i] = softplus(m_input_sigma[i]);
++    }
+ 
+     // Compute Gram Matrix
+     int  l = data-&gt;length();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000336.html">[Plearn-commits] r6887 - trunk/plearn_learners/meta
+</A></li>
+	<LI>Next message: <A HREF="000338.html">[Plearn-commits] r6889 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#337">[ date ]</a>
+              <a href="thread.html#337">[ thread ]</a>
+              <a href="subject.html#337">[ subject ]</a>
+              <a href="author.html#337">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

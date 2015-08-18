@@ -1,0 +1,171 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8903 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8903%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200804262037.m3QKbJPN017756%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002350.html">
+   <LINK REL="Next"  HREF="002352.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8903 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8903%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200804262037.m3QKbJPN017756%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8903 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Sat Apr 26 22:37:19 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002350.html">[Plearn-commits] r8902 - trunk/python_modules/plearn/pymake
+</A></li>
+        <LI>Next message: <A HREF="002352.html">[Plearn-commits] r8904 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2351">[ date ]</a>
+              <a href="thread.html#2351">[ thread ]</a>
+              <a href="subject.html#2351">[ subject ]</a>
+              <a href="author.html#2351">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-04-26 22:37:19 +0200 (Sat, 26 Apr 2008)
+New Revision: 8903
+
+Modified:
+   trunk/plearn_learners/online/RBMBinomialLayer.cc
+   trunk/plearn_learners/online/RBMBinomialLayer.h
+   trunk/plearn_learners/online/RBMLayer.cc
+   trunk/plearn_learners/online/RBMLayer.h
+Log:
+Added a function that computes the gradient w/r to the free energy contribution...
+
+
+Modified: trunk/plearn_learners/online/RBMBinomialLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMBinomialLayer.cc	2008-04-25 20:58:22 UTC (rev 8902)
++++ trunk/plearn_learners/online/RBMBinomialLayer.cc	2008-04-26 20:37:19 UTC (rev 8903)
+@@ -487,6 +487,27 @@
+     return result;
+ }
+ 
++void RBMBinomialLayer::freeEnergyContributionGradient(
++    const Vec&amp; unit_activations,
++    Vec&amp; unit_activations_gradient,
++    real output_gradient, bool accumulate) const
++{
++    PLASSERT( unit_activations.size() == size );
++    unit_activations_gradient.resize( size );
++    if( !accumulate ) unit_activations_gradient.clear();
++    real* a = unit_activations.data();
++    real* ga = unit_activations_gradient.data();
++    for (int i=0; i&lt;size; i++)
++    {
++        if (use_fast_approximations)
++            ga[i] -= output_gradient *
++                fastsigmoid( a[i] );
++        else
++            ga[i] -= output_gradient *
++                sigmoid( a[i] );
++    }
++}
++
+ int RBMBinomialLayer::getConfigurationCount()
+ {
+     return size &lt; 31 ? 1&lt;&lt;size : INFINITE_CONFIGURATIONS;
+
+Modified: trunk/plearn_learners/online/RBMBinomialLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMBinomialLayer.h	2008-04-25 20:58:22 UTC (rev 8902)
++++ trunk/plearn_learners/online/RBMBinomialLayer.h	2008-04-26 20:37:19 UTC (rev 8903)
+@@ -125,6 +125,16 @@
+     //! the OTHER layer of an RBM, from which unit_activations was computed.
+     virtual real freeEnergyContribution(const Vec&amp; unit_activations) const;
+ 
++    //! Computes gradient of the result of freeEnergyContribution
++    //! -log(\sum_{possible values of h} exp(h' unit_activations))
++    //! with respect to unit_activations. Optionally, a gradient
++    //! with respect to freeEnergyContribution can be given
++    virtual void freeEnergyContributionGradient(const Vec&amp; unit_activations,
++                                                Vec&amp; unit_activations_gradient,
++                                                real output_gradient = 1,
++                                                bool accumulate = false) 
++        const;
++    
+     virtual int getConfigurationCount();
+ 
+     virtual void getConfiguration(int conf_index, Vec&amp; output);
+
+Modified: trunk/plearn_learners/online/RBMLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.cc	2008-04-25 20:58:22 UTC (rev 8902)
++++ trunk/plearn_learners/online/RBMLayer.cc	2008-04-26 20:37:19 UTC (rev 8903)
+@@ -761,6 +761,14 @@
+     return 0;
+ }
+ 
++void RBMLayer::freeEnergyContributionGradient(const Vec&amp; unit_activations,
++                                              Vec&amp; unit_activations_gradient,
++                                              real output_gradient,
++                                              bool accumulate ) const
++{
++    PLERROR(&quot;RBMLayer::freeEnergyContributionGradient(Vec, Vec) not implemented in subclass %s\n&quot;,classname().c_str());
++}
++
+ int RBMLayer::getConfigurationCount()
+ {
+     PLERROR(&quot;RBMLayer::getConfigurationCount() not implemented in subclass %s\n&quot;,classname().c_str());
+
+Modified: trunk/plearn_learners/online/RBMLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.h	2008-04-25 20:58:22 UTC (rev 8902)
++++ trunk/plearn_learners/online/RBMLayer.h	2008-04-26 20:37:19 UTC (rev 8903)
+@@ -289,6 +289,16 @@
+     //! the OTHER layer of an RBM, from which unit_activations was computed.
+     virtual real freeEnergyContribution(const Vec&amp; unit_activations) const;
+ 
++    //! Computes gradient of the result of freeEnergyContribution
++    //! -log(\sum_{possible values of h} exp(h' unit_activations))
++    //! with respect to unit_activations. Optionally, a gradient
++    //! with respect to freeEnergyContribution can be given
++    virtual void freeEnergyContributionGradient(const Vec&amp; unit_activations,
++                                                Vec&amp; unit_activations_gradient,
++                                                real output_gradient = 1,
++                                                bool accumulate = false ) 
++        const;
++
+     //! Returns a number of different configurations the layer can be in.
+     virtual int getConfigurationCount();
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002350.html">[Plearn-commits] r8902 - trunk/python_modules/plearn/pymake
+</A></li>
+	<LI>Next message: <A HREF="002352.html">[Plearn-commits] r8904 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2351">[ date ]</a>
+              <a href="thread.html#2351">[ thread ]</a>
+              <a href="subject.html#2351">[ subject ]</a>
+              <a href="author.html#2351">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

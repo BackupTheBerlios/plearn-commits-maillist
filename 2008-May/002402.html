@@ -1,0 +1,272 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8954 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8954%20-%20trunk/plearn/vmat&In-Reply-To=%3C200805081658.m48GwtaE006573%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002401.html">
+   <LINK REL="Next"  HREF="002403.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8954 - trunk/plearn/vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8954%20-%20trunk/plearn/vmat&In-Reply-To=%3C200805081658.m48GwtaE006573%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8954 - trunk/plearn/vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Thu May  8 18:58:55 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002401.html">[Plearn-commits] r8953 - trunk/plearn/io
+</A></li>
+        <LI>Next message: <A HREF="002403.html">[Plearn-commits] r8955 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2402">[ date ]</a>
+              <a href="thread.html#2402">[ thread ]</a>
+              <a href="subject.html#2402">[ subject ]</a>
+              <a href="author.html#2402">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-05-08 18:58:44 +0200 (Thu, 08 May 2008)
+New Revision: 8954
+
+Modified:
+   trunk/plearn/vmat/TextFilesVMatrix.cc
+   trunk/plearn/vmat/TextFilesVMatrix.h
+Log:
+Added the option partion_match.
+
+
+Modified: trunk/plearn/vmat/TextFilesVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/TextFilesVMatrix.cc	2008-05-08 16:54:02 UTC (rev 8953)
++++ trunk/plearn/vmat/TextFilesVMatrix.cc	2008-05-08 16:58:44 UTC (rev 8954)
+@@ -42,6 +42,7 @@
+ #include &lt;plearn/base/ProgressBar.h&gt;
+ #include &lt;plearn/base/stringutils.h&gt;
+ #include &lt;plearn/io/load_and_save.h&gt;
++#include &lt;plearn/io/fileutils.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -56,7 +57,8 @@
+     auto_build_map(false),
+     auto_extend_map(true),
+     build_vmatrix_stringmap(false),
+-    reorder_fieldspec_from_headers(false)
++    reorder_fieldspec_from_headers(false),
++    partial_match(false)
+ {}
+ 
+ PLEARN_IMPLEMENT_OBJECT(
+@@ -192,37 +194,77 @@
+ {
+     width_ = 0;
+     TVec&lt;string&gt; fnames;
+-    if(reorder_fieldspec_from_headers)
++    TVec&lt;string&gt; fnames_header;//field names take in the header of source file
++    if(reorder_fieldspec_from_headers || partial_match)
+     {
+         //read the fieldnames from the files.
+-        TVec&lt;string&gt; fn;
+         for(int i=0; i&lt;txtfiles.size(); i++)
+         {
+             FILE* f = txtfiles[i];
+             fseek(f,0,SEEK_SET);
+             if(!fgets(buf, sizeof(buf), f))
+                 PLERROR(&quot;In TextFilesVMatrix::setColumnNamesAndWidth() - &quot;
+-                        &quot;Couldn't read the fiedls names from file '%s'&quot;,
++                        &quot;Couldn't read the fields names from file '%s'&quot;,
+                         txtfilenames[i].c_str());
+             fseek(f,0,SEEK_SET);
+ 
+             TVec&lt;string&gt; fields = splitIntoFields(buf);
+             fields.append(removeblanks(fields.pop()));
+ 
+-            fn.append(fields);
++            fnames_header.append(fields);
+         }
+-        if(fn.size()!=fieldspec.size())
++    }
++    if(partial_match)
++    {
++        TVec&lt; pair&lt;string, string&gt; &gt; new_fieldspec;
++        PLCHECK_MSG(reorder_fieldspec_from_headers,
++                    &quot;In TextFilesVMatrix::setColumnNamesAndWidth - &quot;
++                    &quot;when partial_match is true, reorder_fieldspec_from_headers&quot;
++                    &quot; must be true.&quot;);
++        for(int i=0;i&lt;fieldspec.size();i++)
+         {
++            bool expended = false;
++            string fname=fieldspec[i].first;
++            if(fname[fname.size()-1]!='*')
++            {
++                new_fieldspec.append(fieldspec[i]);
++                continue;
++            }
++            fname.resize(fname.size()-1);//remove the last caracter (*)
++            for(int j=0;j&lt;fnames_header.size();j++)
++            {
++                if(string_begins_with(fnames_header[j],fname))
++                {
++                    pair&lt;string,string&gt; n=make_pair(fnames_header[j],
++                                                    fieldspec[i].second);
++//                    perr&lt;&lt;&quot;expanding &quot;&lt;&lt;fieldspec[i] &lt;&lt; &quot; to &quot; &lt;&lt; n &lt;&lt;endl;
++                    
++                    new_fieldspec.append(n);
++                    expended = true;
++                }
++            }
++            if(!expended)
++                PLERROR(&quot;In TextFilesVMatrix::setColumnNamesAndWidth - &quot;
++                        &quot;Don't have find any partial match to %s&quot;,
++                        fieldspec[i].first.c_str());
++        }
++        fieldspec = new_fieldspec;
++    }
++
++    if(reorder_fieldspec_from_headers)
++    {
++        if(fnames_header.size()!=fieldspec.size())
++        {
+             PLWARNING(&quot;In TextFilesVMatrix::setColumnNamesAndWidth() - &quot;
+                     &quot;We read %d field names from the header but have %d&quot;
+-                    &quot;fieldspec&quot;,fn.size(),fieldspec.size());
++                    &quot;fieldspec&quot;,fnames_header.size(),fieldspec.size());
+         }
+ 
+         //check that all field names from the header have a spec
+         TVec&lt;string&gt; not_used_fn;
+-        for(int i=0;i&lt;fn.size();i++)
++        for(int i=0;i&lt;fnames_header.size();i++)
+         {
+-            string name=fn[i];
++            string name=fnames_header[i];
+             int j=0;
+             for(;j&lt;fieldspec.size();j++)
+                 if(fieldspec[j].first==name)
+@@ -236,10 +278,10 @@
+         {
+             string name=fieldspec[i].first;
+             int j=0;
+-            for(;j&lt;fn.size();j++)
+-                if(fn[j]==name)
++            for(;j&lt;fnames_header.size();j++)
++                if(fnames_header[j]==name)
+                     break;
+-            if(j&gt;=fn.size())
++            if(j&gt;=fnames_header.size())
+                 not_used_fs.append(name);
+         }
+         if(not_used_fs.size()!=0)
+@@ -255,10 +297,10 @@
+     
+ 
+         //the new order for fieldspecs
+-        TVec&lt; pair&lt;string, string&gt; &gt; fs(fn.size());
+-        for(int i=0;i&lt;fn.size();i++)
++        TVec&lt; pair&lt;string, string&gt; &gt; fs(fnames_header.size());
++        for(int i=0;i&lt;fnames_header.size();i++)
+         {
+-            string name=fn[i];
++            string name=fnames_header[i];
+             int j=0;
+             for(;j&lt;fieldspec.size();j++)
+                 if(fieldspec[j].first==name)
+@@ -328,11 +370,13 @@
+     setColumnNamesAndWidth();
+ 
+     // open the index file
+-    if(!isUpToDate(idxfname))
++    if(!isUpToDate(idxfname) || isemptyFile(idxfname))
+         buildIdx(); // (re)build it first!
+     idxfile = fopen(idxfname.c_str(),&quot;rb&quot;);
+     if(fgetc(idxfile) != byte_order())
+-        PLERROR(&quot;In TextFilesVMatrix::build_ - Wrong endianness. Remove the index file for it to be automatically rebuilt&quot;);
++        PLERROR(&quot;In TextFilesVMatrix::build_ - Wrong endianness.&quot;
++                &quot; Remove the index file %s for it to be automatically rebuilt&quot;,
++                idxfname.c_str());
+     fread(&amp;length_, 4, 1, idxfile);
+ 
+     // Initialize some sizes
+@@ -841,6 +885,14 @@
+                   &quot;If true, will reorder the fieldspec in the order given &quot;
+                   &quot;by the field names taken from txtfilenames.&quot;);
+ 
++    declareOption(ol, &quot;partial_match&quot;, 
++                  &amp;TextFilesVMatrix::partial_match,
++                  OptionBase::buildoption,
++                  &quot;If true, will repeatedly expand all fieldspec name ending &quot;
++                  &quot;with * to the full name from header.&quot;
++                  &quot;The expansion is equivalent to the regex 'field_spec_name*'.&quot;
++                  &quot;The option reorder_fieldspec_from_headers must be true&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -886,7 +938,7 @@
+     inherited::makeDeepCopyFromShallowCopy(copies);
+     idxfile=0;
+     txtfiles.resize(0);
+-    //should be already build.
++    //the map should be already build.
+     auto_build_map=false;
+     build();
+ }
+
+Modified: trunk/plearn/vmat/TextFilesVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/TextFilesVMatrix.h	2008-05-08 16:54:02 UTC (rev 8953)
++++ trunk/plearn/vmat/TextFilesVMatrix.h	2008-05-08 16:58:44 UTC (rev 8954)
+@@ -127,6 +127,7 @@
+     bool build_vmatrix_stringmap;
+ 
+     bool reorder_fieldspec_from_headers;
++    bool partial_match;
+ 
+     // ****************
+     // * Constructors *
+@@ -149,8 +150,8 @@
+     void getFileAndPos(int i, unsigned char&amp; fileno, int&amp; pos) const;
+     void buildIdx();
+     static void readAndCheckOptionName(PStream&amp; in, const string&amp; optionname);
++    void closeCurrentFile();
+ 
+-
+ protected:
+     //! Declares this class' options
+     // (Please implement in .cc)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002401.html">[Plearn-commits] r8953 - trunk/plearn/io
+</A></li>
+	<LI>Next message: <A HREF="002403.html">[Plearn-commits] r8955 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2402">[ date ]</a>
+              <a href="thread.html#2402">[ thread ]</a>
+              <a href="subject.html#2402">[ subject ]</a>
+              <a href="author.html#2402">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

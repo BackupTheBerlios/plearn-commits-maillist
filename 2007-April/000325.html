@@ -1,0 +1,306 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6876 - trunk/plearn/ker
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6876%20-%20trunk/plearn/ker&In-Reply-To=%3C200704111357.l3BDvxIb027561%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000324.html">
+   <LINK REL="Next"  HREF="000326.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6876 - trunk/plearn/ker</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6876%20-%20trunk/plearn/ker&In-Reply-To=%3C200704111357.l3BDvxIb027561%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6876 - trunk/plearn/ker">chapados at mail.berlios.de
+       </A><BR>
+    <I>Wed Apr 11 15:57:59 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000324.html">[Plearn-commits] r6875 - trunk/plearn/ker
+</A></li>
+        <LI>Next message: <A HREF="000326.html">[Plearn-commits] r6877 - trunk/commands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#325">[ date ]</a>
+              <a href="thread.html#325">[ thread ]</a>
+              <a href="subject.html#325">[ subject ]</a>
+              <a href="author.html#325">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2007-04-11 15:57:59 +0200 (Wed, 11 Apr 2007)
+New Revision: 6876
+
+Modified:
+   trunk/plearn/ker/IIDNoiseKernel.cc
+   trunk/plearn/ker/RationalQuadraticARDKernel.cc
+   trunk/plearn/ker/RationalQuadraticARDKernel.h
+   trunk/plearn/ker/SquaredExponentialARDKernel.cc
+   trunk/plearn/ker/SquaredExponentialARDKernel.h
+   trunk/plearn/ker/SummationKernel.cc
+Log:
+Minor bug fixes in new kernels and further performance improvements in bprop
+
+Modified: trunk/plearn/ker/IIDNoiseKernel.cc
+===================================================================
+--- trunk/plearn/ker/IIDNoiseKernel.cc	2007-04-11 12:13:05 UTC (rev 6875)
++++ trunk/plearn/ker/IIDNoiseKernel.cc	2007-04-11 13:57:59 UTC (rev 6876)
+@@ -77,7 +77,7 @@
+ 
+ IIDNoiseKernel::IIDNoiseKernel()
+     : m_isp_noise_sigma(-100.0), /* very close to zero... */
+-      m_isp_kronecker_sigma(100.0)
++      m_isp_kronecker_sigma(-100.0)
+ { }
+ 
+ 
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.cc
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-04-11 12:13:05 UTC (rev 6875)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-04-11 13:57:59 UTC (rev 6876)
+@@ -276,9 +276,11 @@
+     static const string IAL(&quot;isp_alpha&quot;);
+ 
+     if (kernel_param == ISS) {
+-        computeGramMatrixDerivNV&lt;
+-            RationalQuadraticARDKernel,
+-            &amp;RationalQuadraticARDKernel::derivIspSignalSigma&gt;(KD, this, -1);
++        computeGramMatrixDerivIspSignalSigma(KD);
++
++        // computeGramMatrixDerivNV&lt;
++        //     RationalQuadraticARDKernel,
++        //     &amp;RationalQuadraticARDKernel::derivIspSignalSigma&gt;(KD, this, -1);
+     }
+     else if (kernel_param == IGS) {
+         computeGramMatrixDerivNV&lt;
+@@ -387,6 +389,22 @@
+ }
+ 
+ 
++//#####  computeGramMatrixDerivIspSignalSigma  ################################
++
++void RationalQuadraticARDKernel::computeGramMatrixDerivIspSignalSigma(Mat&amp; KD) const
++{
++    int l = data-&gt;length();
++    KD.resize(l,l);
++    PLASSERT_MSG(
++        gram_matrix.width() == l &amp;&amp; gram_matrix.length() == l,
++        &quot;To compute the derivative with respect to 'isp_signal_sigma', the\n&quot;
++        &quot;Gram matrix must be precomputed and cached in SquaredExponentialARDKernel.&quot;);
++    
++    KD &lt;&lt; gram_matrix;
++    KD *= sigmoid(m_isp_signal_sigma)/softplus(m_isp_signal_sigma);
++}
++
++
+ //#####  computeGramMatrixDerivIspInputSigma  #################################
+ 
+ void RationalQuadraticARDKernel::computeGramMatrixDerivIspInputSigma(Mat&amp; KD,
+@@ -449,9 +467,13 @@
+     
+     // Compute Gram Matrix derivative w.r.t. isp_alpha
+     int  l     = data-&gt;length();
+-    int  k_mod = gram_matrix.mod();
++    PLASSERT_MSG(
++        gram_matrix.width() == l &amp;&amp; gram_matrix.length() == l,
++        &quot;To compute the derivative with respect to 'isp_alpha', the\n&quot;
++        &quot;Gram matrix must be precomputed and cached in RationalQuadraticARDKernel.&quot;);
+ 
+     // Variables that walk over the pre-computed kernel matrix (K) 
++    int  k_mod = gram_matrix.mod();
+     real *Ki = &amp;gram_matrix(0,0);            // Current row of kernel matrix
+     real *Kij;                               // Current element of kernel matrix
+ 
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.h
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-04-11 12:13:05 UTC (rev 6875)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-04-11 13:57:59 UTC (rev 6876)
+@@ -144,6 +144,9 @@
+     //! Derivative function with respect to isp_alpha
+     real derivIspAlpha(int i, int j, int arg, real K) const;
+ 
++    // Compute derivative w.r.t. isp_signal_sigma for WHOLE MATRIX
++    void computeGramMatrixDerivIspSignalSigma(Mat&amp; KD) const;
++    
+     // Compute derivative w.r.t. isp_input_sigma[arg] for WHOLE MATRIX
+     void computeGramMatrixDerivIspInputSigma(Mat&amp; KD, int arg) const;
+     
+
+Modified: trunk/plearn/ker/SquaredExponentialARDKernel.cc
+===================================================================
+--- trunk/plearn/ker/SquaredExponentialARDKernel.cc	2007-04-11 12:13:05 UTC (rev 6875)
++++ trunk/plearn/ker/SquaredExponentialARDKernel.cc	2007-04-11 13:57:59 UTC (rev 6876)
+@@ -167,10 +167,8 @@
+     PLASSERT( !m_isp_input_sigma.size() || dataInputsize() == m_isp_input_sigma.size() );
+     PLASSERT( K.size() == 0 || m_data_cache.size() &gt; 0 );  // Ensure data cached OK
+ 
+-    // Compute Kronecker gram matrix and save it
++    // Compute Kronecker gram matrix
+     inherited::computeGramMatrix(K);
+-    m_kron_gram_cache.resize(K.length(), K.width());
+-    m_kron_gram_cache &lt;&lt; K;
+ 
+     // Precompute some terms
+     real sf    = softplus(m_isp_signal_sigma);
+@@ -248,9 +246,11 @@
+     static const string IIS(&quot;isp_input_sigma[&quot;);
+ 
+     if (kernel_param == ISS) {
+-        computeGramMatrixDerivNV&lt;
+-            SquaredExponentialARDKernel,
+-            &amp;SquaredExponentialARDKernel::derivIspSignalSigma&gt;(KD, this, -1);
++        computeGramMatrixDerivIspSignalSigma(KD);
++        
++        // computeGramMatrixDerivNV&lt;
++        //     SquaredExponentialARDKernel,
++        //     &amp;SquaredExponentialARDKernel::derivIspSignalSigma&gt;(KD, this, -1);
+     }
+     else if (kernel_param == IGS) {
+         computeGramMatrixDerivNV&lt;
+@@ -276,6 +276,7 @@
+ 
+ real SquaredExponentialARDKernel::derivIspSignalSigma(int i, int j, int arg, real K) const
+ {
++    // (No longer used; see computeGramMatrixDerivIspInputSigma below)
+     return K*sigmoid(m_isp_signal_sigma)/softplus(m_isp_signal_sigma);
+ }
+ 
+@@ -287,10 +288,9 @@
+     if (fast_is_equal(K,0.))
+         return 0.;
+ 
+-    // The norm term inside the exponential may be accessed as Log(K/(sf*kron))
+-    real kron  = m_kron_gram_cache(i,j);
+-    real inner = pl_log(K / (kron * softplus(m_isp_signal_sigma)));
+-    return K * inner * sigmoid(m_isp_global_sigma) / softplus(m_isp_global_sigma);
++    // The norm term inside the exponential may be accessed as Log(K/sf)
++    real inner = pl_log(K / softplus(m_isp_signal_sigma));
++    return - K * inner * sigmoid(m_isp_global_sigma) / softplus(m_isp_global_sigma);
+ 
+     // Note: in the above expression for 'inner' there is the implicit
+     // assumption that the input_sigma[i] are zero, which allows the
+@@ -298,6 +298,22 @@
+ }
+ 
+ 
++//#####  computeGramMatrixDerivIspSignalSigma  ################################
++
++void SquaredExponentialARDKernel::computeGramMatrixDerivIspSignalSigma(Mat&amp; KD) const
++{
++    int l = data-&gt;length();
++    KD.resize(l,l);
++    PLASSERT_MSG(
++        gram_matrix.width() == l &amp;&amp; gram_matrix.length() == l,
++        &quot;To compute the derivative with respect to 'isp_signal_sigma', the\n&quot;
++        &quot;Gram matrix must be precomputed and cached in SquaredExponentialARDKernel.&quot;);
++    
++    KD &lt;&lt; gram_matrix;
++    KD *= sigmoid(m_isp_signal_sigma)/softplus(m_isp_signal_sigma);
++}
++
++
+ //#####  computeGramMatrixDerivIspInputSigma  #################################
+ 
+ void SquaredExponentialARDKernel::computeGramMatrixDerivIspInputSigma(Mat&amp; KD,
+@@ -310,6 +326,10 @@
+     
+     // Compute Gram Matrix derivative w.r.t. isp_input_sigma[arg]
+     int  l = data-&gt;length();
++    PLASSERT_MSG(
++        gram_matrix.width() == l &amp;&amp; gram_matrix.length() == l,
++        &quot;To compute the derivative with respect to 'isp_input_sigma[i]', the\n&quot;
++        &quot;Gram matrix must be precomputed and cached in SquaredExponentialARDKernel.&quot;);
+ 
+     // Variables that walk over the data matrix
+     int  cache_mod = m_data_cache.mod();
+@@ -356,7 +376,6 @@
+ void SquaredExponentialARDKernel::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+-    deepCopyField(m_kron_gram_cache, copies);
+ }
+ 
+ } // end of namespace PLearn
+
+Modified: trunk/plearn/ker/SquaredExponentialARDKernel.h
+===================================================================
+--- trunk/plearn/ker/SquaredExponentialARDKernel.h	2007-04-11 12:13:05 UTC (rev 6875)
++++ trunk/plearn/ker/SquaredExponentialARDKernel.h	2007-04-11 13:57:59 UTC (rev 6876)
+@@ -139,13 +139,12 @@
+     //! Derivative function with respect to isp_global_sigma
+     real derivIspGlobalSigma(int i, int j, int arg, real K) const;
+     
++    // Compute derivative w.r.t. isp_signal_sigma for WHOLE MATRIX
++    void computeGramMatrixDerivIspSignalSigma(Mat&amp; KD) const;
++    
+     // Compute derivative w.r.t. isp_input_sigma[arg] for WHOLE MATRIX
+     void computeGramMatrixDerivIspInputSigma(Mat&amp; KD, int arg) const;
+     
+-protected:
+-    //! Cached version of Kronecker gram matrix
+-    mutable Mat m_kron_gram_cache;
+-
+ private:
+     //! This does the actual building.
+     void build_();
+
+Modified: trunk/plearn/ker/SummationKernel.cc
+===================================================================
+--- trunk/plearn/ker/SummationKernel.cc	2007-04-11 12:13:05 UTC (rev 6875)
++++ trunk/plearn/ker/SummationKernel.cc	2007-04-11 13:57:59 UTC (rev 6876)
+@@ -222,13 +222,13 @@
+         inherited::computeGramMatrixDerivative(KD, kernel_param, epsilon);
+ 
+     // Compare against finite differences
+-    // Mat KD1;
+-    // Kernel::computeGramMatrixDerivative(KD1, kernel_param, epsilon);
+-    // cerr &lt;&lt; &quot;Kernel hyperparameter: &quot; &lt;&lt; kernel_param &lt;&lt; endl;
+-    // cerr &lt;&lt; &quot;Analytic derivative (200th row):&quot; &lt;&lt; endl
+-    //      &lt;&lt; KD(200) &lt;&lt; endl
+-    //      &lt;&lt; &quot;Finite differences:&quot; &lt;&lt; endl
+-    //      &lt;&lt; KD1(200) &lt;&lt; endl;
++    Mat KD1;
++    Kernel::computeGramMatrixDerivative(KD1, kernel_param, epsilon);
++    cerr &lt;&lt; &quot;Kernel hyperparameter: &quot; &lt;&lt; kernel_param &lt;&lt; endl;
++    cerr &lt;&lt; &quot;Analytic derivative (200th row):&quot; &lt;&lt; endl
++         &lt;&lt; KD(200) &lt;&lt; endl
++         &lt;&lt; &quot;Finite differences:&quot; &lt;&lt; endl
++         &lt;&lt; KD1(200) &lt;&lt; endl;
+ }
+ 
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000324.html">[Plearn-commits] r6875 - trunk/plearn/ker
+</A></li>
+	<LI>Next message: <A HREF="000326.html">[Plearn-commits] r6877 - trunk/commands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#325">[ date ]</a>
+              <a href="thread.html#325">[ thread ]</a>
+              <a href="subject.html#325">[ subject ]</a>
+              <a href="author.html#325">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,184 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9803 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9803%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200812300546.mBU5krcK012875%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003242.html">
+   <LINK REL="Next"  HREF="003244.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9803 - trunk/plearn_learners_experimental</H1>
+    <B>laulysta at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9803%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200812300546.mBU5krcK012875%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9803 - trunk/plearn_learners_experimental">laulysta at mail.berlios.de
+       </A><BR>
+    <I>Tue Dec 30 06:46:53 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003242.html">[Plearn-commits] r9802 - trunk/plearn_learners_experimental
+</A></li>
+        <LI>Next message: <A HREF="003244.html">[Plearn-commits] r9804 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3243">[ date ]</a>
+              <a href="thread.html#3243">[ thread ]</a>
+              <a href="subject.html#3243">[ subject ]</a>
+              <a href="author.html#3243">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: laulysta
+Date: 2008-12-30 06:46:51 +0100 (Tue, 30 Dec 2008)
+New Revision: 9803
+
+Modified:
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.h
+Log:
+hidden reconstruction
+
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2008-12-20 00:43:12 UTC (rev 9802)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2008-12-30 05:46:51 UTC (rev 9803)
+@@ -683,7 +683,7 @@
+                 if(hidden_reconstruction_lr!=0){
+                     setLearningRate( hidden_reconstruction_lr );
+                     recurrentFprop(train_costs, train_n_items);
+-                    recurrentUpdate(0, hidden_reconstruction_cost_weight, 1);
++                    recurrentUpdate(0, hidden_reconstruction_cost_weight, 0);
+                 }
+ 
+                 // recurrent noisy phase
+@@ -1070,23 +1070,29 @@
+ }
+ 
+ 
+-double DenoisingRecurrentNet::fpropHiddenReconstructionFromLastHidden(Vec hidden, Mat reconstruction_weights, Vec hidden_reconstruction_activation_grad, Vec&amp; reconstruction_prob, 
++double DenoisingRecurrentNet::fpropHiddenReconstructionFromLastHidden(Vec hidden, Mat reconstruction_weights, Vec&amp; reconstruction_bias, Vec hidden_reconstruction_activation_grad, Vec&amp; reconstruction_prob, 
+                                                                  Vec hidden_target, Vec hidden_gradient, double hidden_reconstruction_cost_weight, double lr)
+ {
+     // set appropriate sizes
+-    int fullinputlength = hidden_target.length();
++    int fullhiddenlength = hidden_target.length();
+     Vec reconstruction_activation;
+-   
+-    reconstruction_activation.resize(fullinputlength);
+-    reconstruction_prob.resize(fullinputlength);
++    if(reconstruction_bias.length()==0)
++    {
++        reconstruction_bias.resize(fullhiddenlength);
++        reconstruction_bias.clear();
++    }
++    reconstruction_activation.resize(fullhiddenlength);
++    reconstruction_prob.resize(fullhiddenlength);
+ 
+     // predict (denoised) input_reconstruction 
+     transposeProduct(reconstruction_activation, reconstruction_weights, hidden); 
+-    //product(reconstruction_activation, reconstruction_weights, hidden); 
+-    //reconstruction_activation += hidden_layer-&gt;bias;
+-    
+-    hidden_layer-&gt;fprop(reconstruction_activation, reconstruction_prob);
++    reconstruction_activation += reconstruction_bias;
+ 
++    for( int j=0 ; j&lt;fullhiddenlength ; j++ )
++        reconstruction_prob[j] = fastsigmoid( reconstruction_activation[j] );
++
++    //hidden_layer-&gt;fprop(reconstruction_activation, reconstruction_prob);
++
+     /********************************************************************************/
+     // Vec hidden_reconstruction_activation_grad;
+     hidden_reconstruction_activation_grad.resize(reconstruction_prob.size());
+@@ -1341,7 +1347,7 @@
+ 
+         if(i!=0 &amp;&amp; dynamic_connections )
+         {   
+-
++            
+             // Add contribution of hidden reconstruction cost in hidden_gradient
+             Vec hidden_reconstruction_activation_grad;
+             hidden_reconstruction_activation_grad.resize(hidden_layer-&gt;size);
+@@ -1353,11 +1359,11 @@
+ 
+                 //truc stan
+                 //fpropHiddenSymmetricDynamicMatrix(hidden_list(i-1), reconstruction_weights, hidden_reconstruction_prob, hidden_list(i), hidden_gradient, hidden_reconstruction_weight, current_learning_rate);
+-                fpropHiddenReconstructionFromLastHidden(hidden_list(i), reconstruction_weights, hidden_reconstruction_activation_grad, hidden_reconstruction_prob, hidden_list(i-1), hidden_gradient, hidden_reconstruction_weight, dynamic_gradient_scale_factor*current_learning_rate);
++                fpropHiddenReconstructionFromLastHidden(hidden_list(i), reconstruction_weights, hidden_reconstruction_bias, hidden_reconstruction_activation_grad, hidden_reconstruction_prob, hidden_list(i-1), hidden_gradient, hidden_reconstruction_weight, dynamic_gradient_scale_factor*current_learning_rate);
+             
+             }
++            
+ 
+-
+             // add contribution to gradient of next time step hidden layer
+             if(temporal_gradient_contribution&gt;0)
+             { // add weighted contribution of hidden_temporal gradient to hidden_gradient
+@@ -1375,8 +1381,11 @@
+ 
+             if(hidden_reconstruction_weight!=0)
+             {
++                // update bias
++                multiplyAcc(hidden_reconstruction_bias, hidden_reconstruction_activation_grad, -dynamic_gradient_scale_factor*current_learning_rate);
+                 // update weight
+                 externalProductScaleAcc(reconstruction_weights, hidden_list(i), hidden_reconstruction_activation_grad, -dynamic_gradient_scale_factor*current_learning_rate);
++                
+             }
+ 
+             input_connections-&gt;bpropUpdate(
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.h
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.h	2008-12-20 00:43:12 UTC (rev 9802)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.h	2008-12-30 05:46:51 UTC (rev 9803)
+@@ -147,6 +147,9 @@
+ 
+     // learnt bias for input reconstruction
+     Vec input_reconstruction_bias;
++
++    // learnt bias for hidden reconstruction
++    Vec hidden_reconstruction_bias;
+     
+     double prediction_cost_weight;
+     double input_reconstruction_cost_weight;
+@@ -423,7 +426,7 @@
+     void updateInputReconstructionFromHidden(Vec hidden, Mat&amp; reconstruction_weights, Vec&amp; input_reconstruction_bias, Vec input_reconstruction_prob, 
+                                              Vec clean_input, Vec hidden_gradient, double input_reconstruction_cost_weight, double lr);
+ 
+-    double fpropHiddenReconstructionFromLastHidden(Vec hidden, Mat reconstruction_weights, Vec hidden_reconstruction_activation_grad, Vec&amp; reconstruction_prob, 
++    double fpropHiddenReconstructionFromLastHidden(Vec hidden, Mat reconstruction_weights, Vec&amp; reconstruction_bias, Vec hidden_reconstruction_activation_grad, Vec&amp; reconstruction_prob, 
+                                                                           Vec clean_input, Vec hidden_gradient, double hidden_reconstruction_cost_weight, double lr);
+     
+     double fpropHiddenSymmetricDynamicMatrix(Vec hidden, Mat reconstruction_weights, Vec&amp; reconstruction_prob, 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003242.html">[Plearn-commits] r9802 - trunk/plearn_learners_experimental
+</A></li>
+	<LI>Next message: <A HREF="003244.html">[Plearn-commits] r9804 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3243">[ date ]</a>
+              <a href="thread.html#3243">[ thread ]</a>
+              <a href="subject.html#3243">[ subject ]</a>
+              <a href="author.html#3243">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

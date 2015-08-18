@@ -1,0 +1,265 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10215 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10215%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200905261432.n4QEWfKN000368%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003654.html">
+   <LINK REL="Next"  HREF="003656.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10215 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10215%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200905261432.n4QEWfKN000368%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10215 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Tue May 26 16:32:41 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003654.html">[Plearn-commits] r10214 - trunk/python_modules/plearn/plotting
+</A></li>
+        <LI>Next message: <A HREF="003656.html">[Plearn-commits] r10216 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3655">[ date ]</a>
+              <a href="thread.html#3655">[ thread ]</a>
+              <a href="subject.html#3655">[ subject ]</a>
+              <a href="author.html#3655">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2009-05-26 16:32:40 +0200 (Tue, 26 May 2009)
+New Revision: 10215
+
+Modified:
+   trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc
+   trunk/plearn_learners_experimental/PseudolikelihoodRBM.h
+Log:
+Added support for weighted examples and semi-supervised learning.
+
+
+Modified: trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc
+===================================================================
+--- trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc	2009-05-23 23:30:55 UTC (rev 10214)
++++ trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc	2009-05-26 14:32:40 UTC (rev 10215)
+@@ -83,6 +83,7 @@
+     pseudolikelihood_context_type( &quot;uniform_random&quot; ),
+     k_most_correlated( -1 ),
+     generative_learning_weight( 0 ),
++    semi_sup_learning_weight( 0. ),
+     nll_cost_index( -1 ),
+     log_Z_cost_index( -1 ),
+     log_Z_ais_cost_index( -1 ),
+@@ -296,6 +297,13 @@
+                   &quot;Weight of generative learning.\n&quot;
+                   );
+ 
++    declareOption(ol, &quot;semi_sup_learning_weight&quot;, 
++                  &amp;PseudolikelihoodRBM::semi_sup_learning_weight,
++                  OptionBase::buildoption,
++                  &quot;Weight on unlabeled examples update during unsupervised learning.\n&quot;
++                  &quot;In other words, it's the same thing at generaitve_learning_weight,\n&quot;
++                  &quot;but for the unlabeled examples.\n&quot;);
++
+     declareOption(ol, &quot;input_layer&quot;, &amp;PseudolikelihoodRBM::input_layer,
+                   OptionBase::buildoption,
+                   &quot;The binomial input layer of the RBM.\n&quot;);
+@@ -810,6 +818,7 @@
+     int target_index;
+     real weight; // unused
+     real lr;
++    int weightsize = train_set-&gt;weightsize();
+ 
+     //real mean_pseudolikelihood = 0;
+ 
+@@ -878,9 +887,12 @@
+         else 
+             lr += denoising_learning_rate;
+ 
++        if( weightsize &gt; 0 )
++            lr *= weight;
++
+         setLearningRate(lr);
+ 
+-        if( targetsize() == 1 )
++        if( targetsize() == 1 &amp;&amp; !is_missing(target[0]) )
+         {
+             Vec target_act = target_layer-&gt;activation;
+             Vec hidden_act = hidden_layer-&gt;activation;
+@@ -1188,9 +1200,16 @@
+ 
+             if( targetsize() &gt; 0 )
+                 lr *= generative_learning_weight;
++            
++            if( weightsize &gt; 0 )
++                lr *= weight;
+ 
+             setLearningRate(lr);
+ 
++            if( is_missing(target[0]) )
++                PLERROR(&quot;In PseudolikelihoodRBM::train(): generative training with &quot;
++                        &quot;unlabeled examples not supported for pseudolikehood training.&quot;);
++
+             if( pseudolikelihood_context_size == 0 )
+             {
+                 // Compute input_probs
+@@ -2871,6 +2890,11 @@
+         {
+             if( input_is_sparse )
+             {
++                if( is_missing(target[0]) )
++                    PLERROR(&quot;In PseudolikelihoodRBM::train(): generative training with &quot;
++                            &quot;unlabeled examples not supported for CD training with &quot;
++                            &quot;sparse inputs.&quot;);
++
+                 // Randomly select inputs
+                 if( n_selected_inputs_cd &gt; inputsize() ||
+                     n_selected_inputs_cd &lt;= 0 )
+@@ -2921,6 +2945,9 @@
+                 if( targetsize() &gt; 0 )
+                     lr *= generative_learning_weight;
+ 
++                if( weightsize &gt; 0 )
++                    lr *= weight;
++
+                 setLearningRate(lr);
+ 
+                 // Positive phase
+@@ -3067,12 +3094,50 @@
+                     
+                     lr *= (1-persistent_cd_weight);
+ 
++                    if( weightsize &gt; 0 )
++                        lr *= weight;
++
+                     setLearningRate(lr);
+ 
+                     // Positive phase
+                     pos_input = input;
+-                    if( targetsize() &gt; 0 )
++                    if( targetsize() &gt; 0)
++                    {
++                        if( is_missing(target[0]) )
++                        {
++                            // Sample from p(y|x)
++                            lr *= semi_sup_learning_weight/generative_learning_weight;
++                            // Get output probabilities
++                            connection-&gt;setAsDownInput( input );
++                            hidden_layer-&gt;getAllActivations( 
++                                (RBMMatrixConnection*) connection );
++                            
++                            Vec target_act = target_layer-&gt;activation;
++                            Vec hidden_act = hidden_layer-&gt;activation;
++                            for( int i=0 ; i&lt;target_layer-&gt;size ; i++ )
++                            {
++                                target_act[i] = target_layer-&gt;bias[i];
++                                // LATERAL CONNECTIONS CODE HERE!!
++                                real *w = &amp;(target_connection-&gt;weights(0,i));
++                                // step from one row to the next in weights matrix
++                                int m = target_connection-&gt;weights.mod();                
++                                
++                                for( int j=0 ; j&lt;hidden_layer-&gt;size ; j++, w+=m )
++                                {
++                                    // *w = weights(j,i)
++                                    hidden_activation_pos_i[j] = hidden_act[j] + *w;
++                                }
++                                target_act[i] -= hidden_layer-&gt;freeEnergyContribution(
++                                    hidden_activation_pos_i);
++                            }
++                            
++                            target_layer-&gt;expectation_is_up_to_date = false;
++                            target_layer-&gt;computeExpectation();
++                            target_layer-&gt;generateSample();
++                            target_one_hot &lt;&lt; target_layer-&gt;sample;
++                        }
+                         pos_target = target_one_hot;
++                    }
+                     connection-&gt;setAsDownInput( input );
+                     hidden_layer-&gt;getAllActivations( 
+                         (RBMMatrixConnection*) connection );
+@@ -3186,6 +3251,9 @@
+ 
+                     lr *= persistent_cd_weight;
+ 
++                    if( weightsize &gt; 0 )
++                        lr *= weight;
++
+                     setLearningRate(lr);
+ 
+                     int chain_i = stage % n_gibbs_chains;
+@@ -3288,6 +3356,9 @@
+             if( targetsize() &gt; 0 )
+                 lr *= generative_learning_weight;
+ 
++            if( weightsize &gt; 0 )
++                lr *= weight;
++
+             setLearningRate(lr);
+             if( targetsize() &gt; 0 )
+                 PLERROR(&quot;In PseudolikelihoodRBM::train(): denoising &quot;
+@@ -3592,9 +3663,12 @@
+ 
+     if( targetsize() == 1 )
+     {
+-        costs[class_cost_index] =
+-            (argmax(output) == (int) round(target[0]))? 0 : 1;
+-        costs[nll_cost_index] = -pl_log(output[(int) round(target[0])]);
++        if( !is_missing(target[0]) )
++        {
++            costs[class_cost_index] =
++                (argmax(output) == (int) round(target[0]))? 0 : 1;
++            costs[nll_cost_index] = -pl_log(output[(int) round(target[0])]);
++        }
+     }
+     else if( targetsize() &gt; 1 )
+     {
+
+Modified: trunk/plearn_learners_experimental/PseudolikelihoodRBM.h
+===================================================================
+--- trunk/plearn_learners_experimental/PseudolikelihoodRBM.h	2009-05-23 23:30:55 UTC (rev 10214)
++++ trunk/plearn_learners_experimental/PseudolikelihoodRBM.h	2009-05-26 14:32:40 UTC (rev 10215)
+@@ -182,6 +182,11 @@
+     //! Weight of generative learning
+     real generative_learning_weight;
+ 
++    //! Weight on unlabeled examples update during unsupervised learning.
++    //! In other words, it's the same thing at generaitve_learning_weight,
++    //! but for the unlabeled examples.
++    real semi_sup_learning_weight;
++
+     //! The binomial input layer of the RBM
+     PP&lt;RBMLayer&gt; input_layer;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003654.html">[Plearn-commits] r10214 - trunk/python_modules/plearn/plotting
+</A></li>
+	<LI>Next message: <A HREF="003656.html">[Plearn-commits] r10216 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3655">[ date ]</a>
+              <a href="thread.html#3655">[ thread ]</a>
+              <a href="subject.html#3655">[ subject ]</a>
+              <a href="author.html#3655">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

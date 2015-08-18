@@ -1,0 +1,192 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7234 - in trunk: python_modules/plearn/parallel	scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7234%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200705221630.l4MGURFr002203%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000682.html">
+   <LINK REL="Next"  HREF="000684.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7234 - in trunk: python_modules/plearn/parallel	scripts</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7234%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200705221630.l4MGURFr002203%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7234 - in trunk: python_modules/plearn/parallel	scripts">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue May 22 18:30:27 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000682.html">[Plearn-commits] r7233 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000684.html">[Plearn-commits] r7235 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#683">[ date ]</a>
+              <a href="thread.html#683">[ thread ]</a>
+              <a href="subject.html#683">[ subject ]</a>
+              <a href="author.html#683">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-05-22 18:30:26 +0200 (Tue, 22 May 2007)
+New Revision: 7234
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/cdispatch
+Log:
+Added the posibility to pass requirement about the machine who will execute the job to condor.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2007-05-22 16:08:42 UTC (rev 7233)
++++ trunk/python_modules/plearn/parallel/dbi.py	2007-05-22 16:30:26 UTC (rev 7234)
+@@ -62,7 +62,9 @@
+         # Initialize the namespace
+         for key in args.keys():
+             self.__dict__[key] = args[key]
+-
++        if not 'requirements' in args.keys():
++            self.requirements = ''
++        
+         # If some arguments aren't lists, put them in a list
+         if not isinstance(commands, list):
+             commands = [commands]
+@@ -453,32 +455,32 @@
+         condor_file = os.path.join(self.tmp_dir, task.unique_id + &quot;.condor&quot;)
+         self.temp_files.append(condor_file)
+         condor_dat = open( condor_file, 'w' )
+-
++        
++        req=&quot;&quot;
+         u=get_username()
+         if self.targetcondorplatform == 'BOTH':
+-            tcplat1=&quot;INTEL&quot;
+-            tcplat2=&quot;X86_64&quot;
++            req=&quot;((Arch == \&quot;INTEL\&quot;)||(Arch == \&quot;X86_64\&quot;))&quot;
+         elif self.targetcondorplatform == 'INTEL':
+-            tcplat1=&quot;INTEL&quot;
+-            tcplat2=&quot;INTEL&quot;
++            req=&quot;(Arch == \&quot;INTEL\&quot;)&quot;
+         elif self.targetcondorplatform == 'X86_64':
+-            tcplat1=&quot;X86_64&quot;
+-            tcplat2=&quot;X86_64&quot;
++            req=&quot;(Arch == \&quot;X86_64\&quot;)&quot;
++            
++
+         tplat=self.targetplatform
++
++        if self.requirements != &quot;&quot;:
++            req = req+'&amp;&amp;('+self.requirements+')'
++
+         condor_dat.write( dedent('''\
+                 executable     = %s/launch.sh
+                 arguments      = sh %s $$(Arch) 
+                 universe       = vanilla
+-                requirements   = (Arch == &quot;%s&quot;)||(Arch == &quot;%s&quot;)
+-                #requirements   =  (Cpus == 2)
+-                #requirements   =  (Machine == paralisa.iro.umontreal.ca)
++                requirements   = %s
+                 output         = main.%s.%s.out
+                 error          = main.%s.%s.error
+                 log            = main.%s.log
+-#                environment    = 
+-                #getenv         = True
+                 queue
+-                ''' % (self.tmp_dir,condor_data, tcplat1,tcplat2,tcplat1,task.unique_id,tcplat1,task.unique_id,tcplat1)))
++                ''' % (self.tmp_dir,condor_data,req,self.targetcondorplatform,task.unique_id,self.targetcondorplatform,task.unique_id,self.targetcondorplatform)))
+ #                preBatch = ''' + pre_batch_command + '''
+ #                postBatch = ''' + post_batch_command +'''
+         condor_dat.close()
+@@ -695,10 +697,9 @@
+ 
+ 
+ # creates an object of type ('DBI' + launch_system) if it exists
+-def DBI(commands, launch_system):
++def DBI(commands, launch_system, **args):
+     try:
+-        str = 'DBI'+launch_system+'(commands)'
+-        jobs = eval('DBI'+launch_system+'(commands)')
++        jobs = eval('DBI'+launch_system+'(commands,**args)')
+     except NameError:
+         print 'The launch system ',launch_system, ' does not exists. Available systems are: Cluster, Ssh, bqtools and Condor'
+         traceback.print_exc()
+
+Modified: trunk/scripts/cdispatch
+===================================================================
+--- trunk/scripts/cdispatch	2007-05-22 16:08:42 UTC (rev 7233)
++++ trunk/scripts/cdispatch	2007-05-22 16:30:26 UTC (rev 7234)
+@@ -36,7 +36,7 @@
+ 
+ if (scalar(@ARGV) == 0) {
+     die &lt;&lt;EOUSAGE
+-Usage: dbidispatch &lt;command-template&gt;
++Usage: dbidispatch [--req=&quot;CONDOR_REQUIREMENT&quot;]&lt;command-template&gt;
+ Dispatches jobs on Condor with dbi.py.  
+ 
+ where &lt;command-template&gt; is interpreted as follows: the first argument
+@@ -71,6 +71,12 @@
+ EOUSAGE
+ }
+ 
++if (substr($ARGV[0],0,6) eq &quot;--req=&quot;) {
++    $REQ = substr($ARGV[0],6);
++    shift;
++} else {
++    $REQ = &quot;&quot;;
++}
+ $command_name = shift;
+ ### Find replacement lists in the arguments
+ my @repl = ();
+@@ -117,8 +123,16 @@
+     print SCRIPT &quot;'$cmdstr',\n&quot;;
+     
+ }
+-print SCRIPT &quot;   ],'Condor')\n&quot;.
++
++print SCRIPT &quot;   ],'Condor'&quot;;
++
++if ($REQ ne &quot;&quot;) {
++    print SCRIPT &quot;, requirements=\&quot;$REQ\&quot;&quot;;
++}
++
++print SCRIPT &quot;)\n&quot;.
+     &quot;jobs.run() \n&quot;;
++
+ close(SCRIPT);
+ system(&quot;chmod +x $ScriptName&quot;);
+ system(&quot;./$ScriptName&quot;);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000682.html">[Plearn-commits] r7233 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000684.html">[Plearn-commits] r7235 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#683">[ date ]</a>
+              <a href="thread.html#683">[ thread ]</a>
+              <a href="subject.html#683">[ subject ]</a>
+              <a href="author.html#683">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

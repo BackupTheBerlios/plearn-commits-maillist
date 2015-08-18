@@ -1,0 +1,511 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6566 - in trunk/plearn_learners: generic	regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6566%20-%20in%20trunk/plearn_learners%3A%20generic%0A%09regressors&In-Reply-To=%3C200701112002.l0BK2Z5E031577%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000014.html">
+   <LINK REL="Next"  HREF="000016.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6566 - in trunk/plearn_learners: generic	regressors</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6566%20-%20in%20trunk/plearn_learners%3A%20generic%0A%09regressors&In-Reply-To=%3C200701112002.l0BK2Z5E031577%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6566 - in trunk/plearn_learners: generic	regressors">chapados at mail.berlios.de
+       </A><BR>
+    <I>Thu Jan 11 21:02:35 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000014.html">[Plearn-commits] r6565 - trunk/plearn/ker
+</A></li>
+        <LI>Next message: <A HREF="000016.html">[Plearn-commits] r6567 -	trunk/plearn_learners/regressors/test/GaussianProcessRegressor
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15">[ date ]</a>
+              <a href="thread.html#15">[ thread ]</a>
+              <a href="subject.html#15">[ subject ]</a>
+              <a href="author.html#15">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2007-01-11 21:02:34 +0100 (Thu, 11 Jan 2007)
+New Revision: 6566
+
+Modified:
+   trunk/plearn_learners/generic/PLearner.cc
+   trunk/plearn_learners/generic/PLearner.h
+   trunk/plearn_learners/regressors/GaussianProcessRegressor.cc
+   trunk/plearn_learners/regressors/GaussianProcessRegressor.h
+Log:
+Added function computeOutputCovMat (remote-callable as well)
+
+Modified: trunk/plearn_learners/generic/PLearner.cc
+===================================================================
+--- trunk/plearn_learners/generic/PLearner.cc	2007-01-11 20:01:57 UTC (rev 6565)
++++ trunk/plearn_learners/generic/PLearner.cc	2007-01-11 20:02:34 UTC (rev 6566)
+@@ -46,6 +46,7 @@
+ #include &lt;plearn/base/stringutils.h&gt;
+ #include &lt;plearn/io/fileutils.h&gt;
+ #include &lt;plearn/io/pl_log.h&gt;
++#include &lt;plearn/math/pl_erf.h&gt;
+ #include &lt;plearn/vmat/FileVMatrix.h&gt;
+ #include &lt;plearn/misc/PLearnService.h&gt;
+ #include &lt;plearn/misc/RemotePLearnServer.h&gt;
+@@ -356,6 +357,32 @@
+                  &quot;know how to compute them.&quot;)));
+ 
+     declareMethod(
++        rmm, &quot;computeOutputCovMat&quot;, &amp;PLearner::remote_computeOutputCovMat,
++        (BodyDoc(&quot;Version of computeOutput that is capable of returning an output matrix\n&quot;
++                 &quot;given an input matrix (set of output vectors), as well as the complete\n&quot;
++                 &quot;covariance matrix between the outputs.\n&quot;
++                 &quot;\n&quot;
++                 &quot;A separate covariance matrix is returned for each output dimension, but\n&quot;
++                 &quot;these matrices are allowed to share the same storage.  This would be\n&quot;
++                 &quot;the case in situations where the output covariance really depends only\n&quot;
++                 &quot;on the location of the training inputs, as in, e.g.,\n&quot;
++                 &quot;GaussianProcessRegressor.\n&quot;
++                 &quot;\n&quot;
++                 &quot;The default implementation is to repeatedly call computeOutput,\n&quot;
++                 &quot;followed by computeConfidenceFromOutput (sampled with probability\n&quot;
++                 &quot;Erf[1/(2*Sqrt(2))], to extract 1*stddev given by subtraction of the two\n&quot;
++                 &quot;intervals, then squaring the stddev to obtain the variance), thereby\n&quot;
++                 &quot;filling a diagonal output covariance matrix.  If\n&quot;
++                 &quot;computeConfidenceFromOutput returns 'false' (confidence intervals not\n&quot;
++                 &quot;supported), the returned covariance matrix is filled with\n&quot;
++                 &quot;MISSING_VALUE.\n&quot;),
++         ArgDoc (&quot;inputs&quot;, &quot;Matrix containing the set of test points&quot;),
++         RetDoc (&quot;Two quantities are returned:\n&quot;
++                 &quot;- The matrix containing the expected output (as rows) for each input row.\n&quot;
++                 &quot;- A vector of covariance matrices between the outputs (one covariance\n&quot;
++                 &quot;  matrix per output dimension).\n&quot;)));
++    
++    declareMethod(
+         rmm, &quot;batchComputeOutputAndConfidencePMat&quot;,
+         &amp;PLearner::remote_batchComputeOutputAndConfidence,
+         (BodyDoc(&quot;Repeatedly calls computeOutput and computeConfidenceFromOutput with the\n&quot;
+@@ -553,6 +580,52 @@
+     return false;
+ }
+ 
++void PLearner::computeOutputCovMat(const Mat&amp; inputs, Mat&amp; outputs,
++                                   TVec&lt;Mat&gt;&amp; covariance_matrices) const
++{
++    PLASSERT( inputs.width() == inputsize() &amp;&amp; outputsize() &gt; 0 );
++    const int N = inputs.length();
++    const int M = outputsize();
++    outputs.resize(N, M);
++    covariance_matrices.resize(M);
++
++    bool has_confidence  = true;
++    bool init_covariance = 0;
++    Vec cur_input, cur_output;
++    TVec&lt; pair&lt;real,real&gt; &gt; intervals;
++    for (int i=0 ; i&lt;N ; ++i) {
++        cur_input  = inputs(i);
++        cur_output = outputs(i);
++        computeOutput(cur_input, cur_output);
++        if (has_confidence) {
++            static const real probability = pl_erf(1. / (2*sqrt(2)));
++            has_confidence = computeConfidenceFromOutput(cur_input, cur_output,
++                                                         probability, intervals);
++            if (has_confidence) {
++                // Create the covariance matrices only once; filled with zeros
++                if (! init_covariance) {
++                    for (int j=0 ; j&lt;M ; ++j)
++                        covariance_matrices[j] = Mat(N, N, 0.0);
++                    init_covariance = true;
++                }
++                
++                // Compute the variance for each output j, and set it on
++                // element i,i of the j-th covariance matrix
++                for (int j=0 ; j&lt;M ; ++j) {
++                    float stddev = intervals[j].second - intervals[j].first;
++                    float var = stddev*stddev;
++                    covariance_matrices[j](i,i) = var;
++                }
++            }
++        }
++    }
++
++    // If confidence intervals are not supported, fill the covariance matrices
++    // with missing values
++    for (int j=0 ; j&lt;M ; ++j)
++        covariance_matrices[j] = Mat(N, N, MISSING_VALUE);
++}
++
+ void PLearner::batchComputeOutputAndConfidence(VMat inputs, real probability, VMat outputs_and_confidence) const
+ {
+     Vec input(inputsize());
+@@ -901,6 +974,16 @@
+         return TVec&lt; pair&lt;real,real&gt; &gt;();
+ }
+ 
++//! Version of computeOutputCovMat that's called by RMI
++tuple&lt;Mat, TVec&lt;Mat&gt; &gt;
++PLearner::remote_computeOutputCovMat(const Mat&amp; inputs) const
++{
++    Mat outputs;
++    TVec&lt;Mat&gt; covmat;
++    computeOutputCovMat(inputs, outputs, covmat);
++    return make_tuple(outputs, covmat);
++}
++
+ //! Version of batchComputeOutputAndConfidence that's called by RMI
+ void PLearner::remote_batchComputeOutputAndConfidence(VMat inputs, real probability,
+                                                       string pmat_fname) const
+
+Modified: trunk/plearn_learners/generic/PLearner.h
+===================================================================
+--- trunk/plearn_learners/generic/PLearner.h	2007-01-11 20:01:57 UTC (rev 6565)
++++ trunk/plearn_learners/generic/PLearner.h	2007-01-11 20:02:34 UTC (rev 6566)
+@@ -464,6 +464,29 @@
+                                      TVec&lt; pair&lt;real,real&gt; &gt;&amp; intervals) const;
+ 
+     /**
++     *  Version of computeOutput that is capable of returning an output matrix
++     *  given an input matrix (set of output vectors), as well as the complete
++     *  covariance matrix between the outputs
++     *
++     *  A separate covariance matrix is returned for each output dimension, but
++     *  these matrices are allowed to share the same storage.  This would be
++     *  the case in situations where the output covariance really depends only
++     *  on the location of the training inputs, as in, e.g.,
++     *  GaussianProcessRegressor.
++     *
++     *  The default implementation is to repeatedly call computeOutput,
++     *  followed by computeConfidenceFromOutput (sampled with probability
++     *  Erf[1/(2*Sqrt(2))], to extract 1*stddev given by subtraction of the two
++     *  intervals, then squaring the stddev to obtain the variance), thereby
++     *  filling a diagonal output covariance matrix.  If
++     *  computeConfidenceFromOutput returns 'false' (confidence intervals not
++     *  supported), the returned covariance matrix is filled with
++     *  MISSING_VALUE.
++     */
++    virtual void computeOutputCovMat(const Mat&amp; inputs, Mat&amp; outputs,
++                                     TVec&lt;Mat&gt;&amp; covariance_matrices) const;
++    
++    /**
+      *  Repeatedly calls computeOutput and computeConfidenceFromOutput with the
+      *  rows of inputs.  Writes outputs_and_confidence rows (as a series of
+      *  triples (output, low, high), one for each output)
+@@ -598,6 +621,7 @@
+     TVec&lt; pair&lt;real,real&gt; &gt; remote_computeConfidenceFromOutput(const Vec&amp; input,
+                                                                const Vec&amp; output,
+                                                                real probability) const;
++    tuple&lt;Mat, TVec&lt;Mat&gt; &gt; remote_computeOutputCovMat(const Mat&amp; inputs) const;
+     void remote_batchComputeOutputAndConfidence(VMat inputs, real probability,
+                                                 string pmat_fname) const;
+     
+
+Modified: trunk/plearn_learners/regressors/GaussianProcessRegressor.cc
+===================================================================
+--- trunk/plearn_learners/regressors/GaussianProcessRegressor.cc	2007-01-11 20:01:57 UTC (rev 6565)
++++ trunk/plearn_learners/regressors/GaussianProcessRegressor.cc	2007-01-11 20:02:34 UTC (rev 6566)
+@@ -106,7 +106,8 @@
+ GaussianProcessRegressor::GaussianProcessRegressor() 
+     : m_weight_decay(0.0),
+       m_include_bias(true),
+-      m_compute_confidence(false)
++      m_compute_confidence(false),
++      m_confidence_epsilon(1e-8)
+ { }
+ 
+ 
+@@ -139,9 +140,17 @@
+         OptionBase::buildoption,
+         &quot;Whether to perform the additional train-time computations required\n&quot;
+         &quot;to compute confidence intervals.  This includes computing a separate\n&quot;
+-        &quot;inverse of the Gram matrix.\n&quot;);
++        &quot;inverse of the Gram matrix.  Specification of this option is necessary\n&quot;
++        &quot;for calling both computeConfidenceFromOutput and computeOutputCovMat.\n&quot;);
+ 
+     declareOption(
++        ol, &quot;confidence_epsilon&quot;, &amp;GaussianProcessRegressor::m_confidence_epsilon,
++        OptionBase::buildoption,
++        &quot;Small regularization to be added post-hoc to the computed output\n&quot;
++        &quot;covariance matrix and confidence intervals; this is mostly used as a\n&quot;
++        &quot;disaster prevention device, to avoid negative predictive variance\n&quot;);
++    
++    declareOption(
+         ol, &quot;hyperparameters&quot;, &amp;GaussianProcessRegressor::m_hyperparameters,
+         OptionBase::buildoption,
+         &quot;List of hyperparameters to optimize.  They must be specified in the\n&quot;
+@@ -209,6 +218,10 @@
+     if (! m_kernel)
+         PLERROR(&quot;GaussianProcessRegressor::build_: 'kernel' option must be specified&quot;);
+ 
++    if (! m_kernel-&gt;is_symmetric)
++        PLERROR(&quot;GaussianProcessRegressor::build_: the kernel (%s) must be symmetric&quot;,
++                m_kernel-&gt;classname().c_str());
++    
+     // If we are reloading the model, set the training inputs into the kernel
+     if (m_training_inputs)
+         m_kernel-&gt;setDataForKernelMatrix(m_training_inputs);
+@@ -220,6 +233,9 @@
+         PLERROR(&quot;GaussianProcessRegressor::build_: 'hyperparameters' are specified &quot;
+                 &quot;but no 'optimizer'; an optimizer is required in order to carry out &quot;
+                 &quot;hyperparameter optimization&quot;);
++
++    if (m_confidence_epsilon &lt; 0)
++        PLERROR(&quot;GaussianProcessRegressor::build_: 'confidence_epsilon' must be non-negative&quot;);
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+@@ -234,16 +250,19 @@
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+-    deepCopyField(m_kernel,               copies);
+-    deepCopyField(m_hyperparameters,      copies);
+-    deepCopyField(m_optimizer,            copies);
+-    deepCopyField(m_alpha,                copies);
+-    deepCopyField(m_gram_inverse,         copies);
+-    deepCopyField(m_target_mean,          copies);
+-    deepCopyField(m_training_inputs,      copies);
+-    deepCopyField(m_kernel_evaluations,   copies);
+-    deepCopyField(m_gram_inverse_product, copies);
+-    deepCopyField(m_intervals,            copies);
++    deepCopyField(m_kernel,                     copies);
++    deepCopyField(m_hyperparameters,            copies);
++    deepCopyField(m_optimizer,                  copies);
++    deepCopyField(m_alpha,                      copies);
++    deepCopyField(m_gram_inverse,               copies);
++    deepCopyField(m_target_mean,                copies);
++    deepCopyField(m_training_inputs,            copies);
++    deepCopyField(m_kernel_evaluations,         copies);
++    deepCopyField(m_gram_inverse_product,       copies);
++    deepCopyField(m_intervals,                  copies);
++    deepCopyField(m_gram_traintest_inputs,      copies);
++    deepCopyField(m_gram_inv_traintest_product, copies);
++    deepCopyField(m_sigma_reductor,             copies);
+ }
+ 
+ 
+@@ -346,15 +365,23 @@
+ void GaussianProcessRegressor::computeOutput(const Vec&amp; input, Vec&amp; output) const
+ {
+     PLASSERT( m_kernel &amp;&amp; m_alpha.isNotNull() &amp;&amp; m_training_inputs );
+-    PLASSERT( output.size() == m_alpha.width() );
+-    PLASSERT( input.size() == m_training_inputs.width() );
++    PLASSERT( m_alpha.width()  == output.size() );
++    PLASSERT( m_alpha.length() == m_training_inputs.length() );
++    PLASSERT( input.size()     == m_training_inputs.width()  );
+ 
+     m_kernel_evaluations.resize(m_alpha.length());
+-    m_kernel-&gt;evaluate_all_x_i(input, m_kernel_evaluations);
++    computeOutputAux(input, output, m_kernel_evaluations);
++}
+ 
++
++void GaussianProcessRegressor::computeOutputAux(
++    const Vec&amp; input, Vec&amp; output, Vec&amp; kernel_evaluations) const
++{
++    m_kernel-&gt;evaluate_all_x_i(input, kernel_evaluations);
++
+     // Finally compute k(x,x_i) * (M + \lambda I)^-1 y
+     product(Mat(1, output.size(), output),
+-            Mat(1, m_kernel_evaluations.size(), m_kernel_evaluations),
++            Mat(1, kernel_evaluations.size(), kernel_evaluations),
+             m_alpha);
+ 
+     if (m_include_bias)
+@@ -375,7 +402,7 @@
+     // the confidence bounds.  If impossible, simply set missing-value for the
+     // NLL cost.
+     if (m_compute_confidence) {
+-        static const float PROBABILITY = 0.3829;    // 0.5 stddev
++        static const float PROBABILITY = pl_erf(1. / (2*sqrt(2)));  // 0.5 stddev
+         bool confavail = computeConfidenceFromOutput(input, output, PROBABILITY,
+                                                      m_intervals);
+         assert( confavail &amp;&amp; m_intervals.size() == output.size() &amp;&amp;
+@@ -418,7 +445,7 @@
+     m_gram_inverse_product.resize(m_kernel_evaluations.size());
+     product(m_gram_inverse_product, m_gram_inverse, m_kernel_evaluations);
+     real sigma_reductor = dot(m_gram_inverse_product, m_kernel_evaluations);
+-    real sigma = sqrt(max(0., base_sigma_sq - sigma_reductor));
++    real sigma = sqrt(max(0., base_sigma_sq - sigma_reductor + m_confidence_epsilon));
+ 
+     // two-tailed
+     const real multiplier = gauss_01_quantile((1+probability)/2);
+@@ -431,6 +458,80 @@
+ }
+ 
+ 
++//#####  computeOutputCovMat  #################################################
++
++void GaussianProcessRegressor::computeOutputCovMat(
++    const Mat&amp; inputs, Mat&amp; outputs, TVec&lt;Mat&gt;&amp; covariance_matrices) const
++{
++    PLASSERT( m_kernel &amp;&amp; m_alpha.isNotNull() &amp;&amp; m_training_inputs );
++    PLASSERT( m_alpha.width()  == outputsize() );
++    PLASSERT( m_alpha.length() == m_training_inputs.length() );
++    PLASSERT( inputs.width()   == m_training_inputs.width()  );
++    PLASSERT( inputs.width()   == inputsize() );
++    const int N = inputs.length();
++    const int M = outputsize();
++    const int T = m_training_inputs.length();
++    outputs.resize(N, M);
++    covariance_matrices.resize(M);
++
++    // Preallocate space for the covariance matrix, and since all outputs share
++    // the same matrix, copy it into the remaining elements of
++    // covariance_matrices
++    Mat&amp; covmat = covariance_matrices[0];
++    covmat.resize(N, N);
++    for (int j=1 ; j&lt;M ; ++j)
++        covariance_matrices[j] = covmat;
++
++    // Start by computing the matrix of kernel evaluations between the train
++    // and test outputs, and compute the output
++    m_gram_traintest_inputs.resize(N, T);
++    for (int i=0 ; i&lt;N ; ++i) {
++        Vec cur_traintest_kereval = m_gram_traintest_inputs(i);
++        Vec cur_output = outputs(i);
++        computeOutputAux(inputs(i), cur_output, cur_traintest_kereval);
++    }
++
++    // Next compute the kernel evaluations between the test inputs; more or
++    // less lifted from Kernel.cc ==&gt; must see with Olivier how to better
++    // factor this code
++    Mat&amp; K = covmat;
++    K.resize(N,N);
++    const int mod = K.mod();
++    real Kij;
++    real* Ki;
++    real* Kji;
++    for (int i=0 ; i&lt;N ; ++i) {
++        Ki  = K[i];
++        Kji = &amp;K[0][i];
++        const Vec&amp; cur_input_i = inputs(i);
++        for (int j=0 ; j&lt;=i ; ++j, Kji += mod) {
++            Kij = m_kernel-&gt;evaluate(cur_input_i, inputs(j));
++            *Ki++ = Kij;
++            if (j&lt;i)
++                *Kji = Kij;    // Assume symmetry, checked at build
++        }
++    }
++
++    // The predictive covariance matrix is (c.f. Rasmussen and Williams):
++    //
++    //    cov(f*) = K(X*,X*) - K(X*,X) [K(X,X) + sigma*I]^-1 K(X,X*)
++    //
++    // where X are the training inputs, and X* are the test inputs.
++    m_gram_inv_traintest_product.resize(T,N);
++    m_sigma_reductor.resize(N,N);
++    productTranspose(m_gram_inv_traintest_product, m_gram_inverse,
++                     m_gram_traintest_inputs);
++    product(m_sigma_reductor, m_gram_traintest_inputs,
++            m_gram_inv_traintest_product);
++    covmat -= m_sigma_reductor;
++
++    // As a preventive measure, never output negative variance, even though
++    // this does not garantee the non-negative-definiteness of the matrix
++    for (int i=0 ; i&lt;N ; ++i)
++        covmat(i,i) = max(0.0, covmat(i,i) + m_confidence_epsilon);
++}
++
++
+ //#####  get*CostNames  #######################################################
+ 
+ TVec&lt;string&gt; GaussianProcessRegressor::getTestCostNames() const
+
+Modified: trunk/plearn_learners/regressors/GaussianProcessRegressor.h
+===================================================================
+--- trunk/plearn_learners/regressors/GaussianProcessRegressor.h	2007-01-11 20:01:57 UTC (rev 6565)
++++ trunk/plearn_learners/regressors/GaussianProcessRegressor.h	2007-01-11 20:02:34 UTC (rev 6566)
+@@ -129,11 +129,19 @@
+     /**
+      *  Whether to perform the additional train-time computations required
+      *  to compute confidence intervals.  This includes computing a separate
+-     *  inverse of the Gram matrix.
++     *  inverse of the Gram matrix.  Specification of this option is necessary
++     *  for calling both computeConfidenceFromOutput and computeOutputCovMat.
+      */
+     bool m_compute_confidence;
+ 
+     /**
++     *  Small regularization to be added post-hoc to the computed output
++     *  covariance matrix and confidence intervals; this is mostly used as a
++     *  disaster prevention device, to avoid negative predictive variance
++     */
++    real m_confidence_epsilon;
++    
++    /**
+      *  List of hyperparameters to optimize.  They must be specified in the
+      *  form &quot;option-name&quot;:initial-value, where 'option-name' is the name of an
+      *  option to set within the Kernel object (the array-index form
+@@ -204,6 +212,10 @@
+                                      real probability,
+                                      TVec&lt; pair&lt;real,real&gt; &gt;&amp; intervals) const;
+ 
++    /// Compute the posterior mean and covariance matrix of a set of inputs
++    virtual void computeOutputCovMat(const Mat&amp; inputs, Mat&amp; outputs,
++                                     TVec&lt;Mat&gt;&amp; covariance_matrices) const;
++    
+     /// Returns the names of the costs computed by computeCostsFromOutputs (and
+     /// thus the test method). 
+     virtual TVec&lt;std::string&gt; getTestCostNames() const;
+@@ -228,6 +240,12 @@
+     /// Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+ 
++    /// Utility internal function for computeOutput, which accepts the
++    /// destination for kernel evaluations in argument, and performs no error
++    /// checking nor vector resizes
++    void computeOutputAux(const Vec&amp; input, Vec&amp; output,
++                          Vec&amp; kernel_evaluations) const;
++    
+     /// Optimize the hyperparameters if any.  Return a Variable on which
+     /// train() carries out a final fprop for obtaining the final trained
+     /// learner parameters.
+@@ -273,6 +291,16 @@
+     //! Buffer to hold confidence intervals when computing costs from outputs
+     mutable TVec&lt; pair&lt;real,real&gt; &gt; m_intervals;
+ 
++    //! Buffer to hold the Gram matrix of train inputs with test inputs.
++    //! Element i,j contains K(test(i), train(j)).
++    mutable Mat m_gram_traintest_inputs;
++
++    //! Buffer to hold the product of the gram inverse with gram_traintest_inputs
++    mutable Mat m_gram_inv_traintest_product;
++
++    //! Buffer to hold the sigma reductor for m_gram_inverse_product
++    mutable Mat m_sigma_reductor;
++    
+ private: 
+     /// This does the actual building. 
+     void build_();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000014.html">[Plearn-commits] r6565 - trunk/plearn/ker
+</A></li>
+	<LI>Next message: <A HREF="000016.html">[Plearn-commits] r6567 -	trunk/plearn_learners/regressors/test/GaussianProcessRegressor
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#15">[ date ]</a>
+              <a href="thread.html#15">[ thread ]</a>
+              <a href="subject.html#15">[ subject ]</a>
+              <a href="author.html#15">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

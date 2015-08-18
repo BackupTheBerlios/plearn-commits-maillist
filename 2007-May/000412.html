@@ -1,0 +1,170 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6963 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6963%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705011819.l41IJtbo001069%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000411.html">
+   <LINK REL="Next"  HREF="000413.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6963 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6963%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705011819.l41IJtbo001069%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6963 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue May  1 20:19:55 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000411.html">[Plearn-commits] r6962 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000413.html">[Plearn-commits] r6964 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#412">[ date ]</a>
+              <a href="thread.html#412">[ thread ]</a>
+              <a href="subject.html#412">[ subject ]</a>
+              <a href="author.html#412">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-05-01 20:19:55 +0200 (Tue, 01 May 2007)
+New Revision: 6963
+
+Modified:
+   trunk/plearn_learners/online/SoftmaxModule.cc
+   trunk/plearn_learners/online/SoftmaxModule.h
+Log:
+Implementation of mini-batch version of fprop and bpropUpdate
+
+Modified: trunk/plearn_learners/online/SoftmaxModule.cc
+===================================================================
+--- trunk/plearn_learners/online/SoftmaxModule.cc	2007-05-01 18:18:54 UTC (rev 6962)
++++ trunk/plearn_learners/online/SoftmaxModule.cc	2007-05-01 18:19:55 UTC (rev 6963)
+@@ -97,7 +97,9 @@
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ }
+ 
+-//! given the input, compute the output (possibly resize it  appropriately)
++///////////
++// fprop //
++///////////
+ void SoftmaxModule::fprop(const Vec&amp; input, Vec&amp; output) const
+ {
+     PLASSERT( input.size() == input_size );
+@@ -106,6 +108,18 @@
+     softmax( input, output );
+ }
+ 
++void SoftmaxModule::fprop(const Mat&amp; inputs, Mat&amp; outputs)
++{
++    PLASSERT( inputs.width() == input_size );
++    int n = inputs.length();
++    outputs.resize(n, output_size );
++    for (int i = 0; i &lt; n; i++)
++        softmax(inputs(i), outputs(i));
++}
++
++/////////////////
++// bpropUpdate //
++/////////////////
+ void SoftmaxModule::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+                                 Vec&amp; input_gradient,
+                                 const Vec&amp; output_gradient,
+@@ -136,6 +150,37 @@
+     }
+ }
+ 
++void SoftmaxModule::bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             Mat&amp; input_gradients,
++                             const Mat&amp; output_gradients,
++                             bool accumulate)
++{
++    PLASSERT( inputs.width() == input_size );
++    PLASSERT( outputs.width() == output_size );
++    PLASSERT( output_gradients.width() == output_size );
++
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradients.width() == input_size &amp;&amp;
++                input_gradients.length() == inputs.length(),
++                &quot;Cannot resize input_gradients and accumulate into it&quot; );
++    }
++    else
++    {
++        input_gradients.resize(inputs.length(), input_size);
++        input_gradients.fill(0);
++    }
++
++    for (int j = 0; j &lt; inputs.length(); j++) {
++        // input_gradient[i] = output_gradient[i] * output[i]
++        //                  - (output_gradient . output ) output[i]
++        real outg_dot_out = dot(output_gradients(j), outputs(j));
++        for( int i=0 ; i&lt;input_size ; i++ )
++            input_gradients(j, i) +=
++                (output_gradients(j, i) - outg_dot_out) * outputs(j, i);
++    }
++}
++
+ ////////////
+ // forget //
+ ////////////
+
+Modified: trunk/plearn_learners/online/SoftmaxModule.h
+===================================================================
+--- trunk/plearn_learners/online/SoftmaxModule.h	2007-05-01 18:18:54 UTC (rev 6962)
++++ trunk/plearn_learners/online/SoftmaxModule.h	2007-05-01 18:19:55 UTC (rev 6963)
+@@ -66,12 +66,20 @@
+     //! given the input, compute the output (possibly resize it  appropriately)
+     virtual void fprop(const Vec&amp; input, Vec&amp; output) const;
+ 
++    //! Overridden.
++    virtual void fprop(const Mat&amp; inputs, Mat&amp; outputs);
++
+     //! this version allows to obtain the input gradient as well
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+                              Vec&amp; input_gradient,
+                              const Vec&amp; output_gradient,
+                              bool accumulate=false);
+ 
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             Mat&amp; input_gradients,
++                             const Mat&amp; output_gradients,
++                             bool accumulate = false);
++    
+     //! this version allows to obtain the input gradient and diag_hessian
+     virtual void bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
+                               Vec&amp; input_gradient,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000411.html">[Plearn-commits] r6962 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000413.html">[Plearn-commits] r6964 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#412">[ date ]</a>
+              <a href="thread.html#412">[ thread ]</a>
+              <a href="subject.html#412">[ subject ]</a>
+              <a href="author.html#412">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

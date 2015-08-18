@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9754 - trunk/python_modules/plearn/parallel
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9754%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200812091514.mB9FE3Cf028609%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003193.html">
+   <LINK REL="Next"  HREF="003195.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9754 - trunk/python_modules/plearn/parallel</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9754%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200812091514.mB9FE3Cf028609%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9754 - trunk/python_modules/plearn/parallel">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Dec  9 16:14:03 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003193.html">[Plearn-commits] r9753 - trunk/plearn_learners/meta
+</A></li>
+        <LI>Next message: <A HREF="003195.html">[Plearn-commits] r9755 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3194">[ date ]</a>
+              <a href="thread.html#3194">[ thread ]</a>
+              <a href="subject.html#3194">[ subject ]</a>
+              <a href="author.html#3194">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-12-09 16:14:02 +0100 (Tue, 09 Dec 2008)
+New Revision: 9754
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+small refactor. now the kerberos script file is build in its own fct for simplification.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2008-12-08 22:33:45 UTC (rev 9753)
++++ trunk/python_modules/plearn/parallel/dbi.py	2008-12-09 15:14:02 UTC (rev 9754)
+@@ -918,7 +918,12 @@
+                     out.write(line_header()+
+                               &quot;renew the launch file &quot;+self.launch_file+&quot;\n&quot;)
+                     out.flush()
+-                    self.make_launch_script(bash_exec, True)
++                    launch_tmp_file=self.launch_file+&quot;.tmp&quot;
++                    fd=open(launch_tmp_file,'w')
++                    self.make_kerb_script(fd,self.second_lauch_file)
++                    fd.close()
++                    os.chmod(launch_tmp_file, 0755)
++                    os.rename(launch_tmp_file, self.launch_file)
+                 out.flush()
+                 #we do this as in some case(with dagman) the log file can 
+                 #take a few second to be created. So we don't loop too fast
+@@ -932,16 +937,29 @@
+             
+             os.system(&quot;pkboost +d &quot;+str(pid))
+ 
+-    def make_launch_script(self, bash_exec, renew=False):
++    def make_kerb_script(self, fd, second_lauch_file):
++        fd.write(dedent('''\
++                    #!/bin/sh
++                    '''))
++        get=self.get_pkdilly_var()
+             
++        for g in get:
++            fd.write(&quot;export &quot;+g+&quot;\n&quot;)
++        fd.write(dedent('''
++                export KRVEXECUTE=%s
++                /usr/sbin/circus &quot;$@&quot;
++                '''%(os.path.abspath(second_lauch_file))))
++
++    def make_launch_script(self, bash_exec):
++            
+         #we write in a temp file then move it to be sure no jobs will 
+         # read a partially writed file when we renew the file.
+ 
+         dbi_file=get_plearndir()+'/python_modules/plearn/parallel/dbi.py'
+         overwrite_launch_file=False
+-        if not os.path.exists(dbi_file) and not renew:
++        if not os.path.exists(dbi_file):
+             print '[DBI] WARNING: Can\'t locate file &quot;dbi.py&quot;. Maybe the file &quot;'+self.launch_file+'&quot; is not up to date!'
+-        elif not renew:
++        else:
+             if os.path.exists(self.launch_file):
+                 mtimed=os.stat(dbi_file)[8]
+                 mtimel=os.stat(self.launch_file)[8]
+@@ -951,7 +969,7 @@
+         if self.pkdilly:
+             overwrite_launch_file = True
+                     
+-        if self.copy_local_source_file and not renew:
++        if self.copy_local_source_file:
+             source_file_dest = os.path.join(self.log_dir,
+                                             os.path.basename(self.source_file))
+             shutil.copy( self.source_file, source_file_dest)
+@@ -962,35 +980,28 @@
+         launch_tmp_file=self.launch_file+&quot;.tmp&quot;
+         if not os.path.exists(self.launch_file) or overwrite_launch_file:
+             self.temp_files.append(self.launch_file)
+-            launch_fd = open(launch_tmp_file,'w')
+-            fd=launch_fd
++            fd = open(launch_tmp_file,'w')
+             
+             if self.pkdilly:
+-                second_lauch_file = self.launch_file+&quot;2.sh&quot;
+-                    
++                self.second_lauch_file = self.launch_file+&quot;2.sh&quot;
++                self.make_kerb_script(fd, self.second_lauch_file)
++                fd.close()
++
++                fd = open(self.second_lauch_file,'w')
+                 fd.write(dedent('''\
+                     #!/bin/sh
+                     '''))
+-                get=self.get_pkdilly_var()
+ 
+-                for g in get:
+-                    launch_fd.write(&quot;export &quot;+g+&quot;\n&quot;)
+-                launch_fd.write(dedent('''
+-                export KRVEXECUTE=%s
+-                /usr/sbin/circus &quot;$@&quot;
+-                '''%(os.path.abspath(second_lauch_file))))
+-                if not renew:
+-                    fd=open(second_lauch_file,'w')
+             bash=not self.source_file or not self.source_file.endswith(&quot;.cshrc&quot;)
+-            if bash and not renew:
++            if bash:
+                 fd.write(dedent('''\
+                     #!/bin/sh
+                     '''))
+                 if self.condor_home:
+                     fd.write('export HOME=%s\n' % self.condor_home)
+-                fd.write('''
++                fd.write(dedent('''
+                     cd %s
+-                    '''%(os.path.abspath(&quot;.&quot;)))
++                    '''%(os.path.abspath(&quot;.&quot;))))
+                 if self.source_file:
+                     fd.write('source ' + self.source_file + '\n')
+ 
+@@ -1007,7 +1018,7 @@
+                     echo &quot;Running: command: \\&quot;$@\\&quot;&quot; 1&gt;&amp;2
+                     %s
+                     '''%(bash_exec)))
+-            elif not renew:
++            else:
+                 fd.write(dedent('''\
+                     #!/bin/tcsh
+                     '''))
+@@ -1031,11 +1042,10 @@
+                 echo &quot;Running command: $argv&quot;
+                 $argv
+                 '''))
+-            if self.pkdilly and not renew:
+-                fd.close()
+-                os.chmod(second_lauch_file, 0755)
++            fd.close()
++            if self.pkdilly:
++                os.chmod(self.second_lauch_file, 0755)
+ 
+-            launch_fd.close()
+             os.chmod(launch_tmp_file, 0755)
+             os.rename(launch_tmp_file, self.launch_file)
+ 
+@@ -1218,7 +1228,6 @@
+         condor_submit_fd.close()
+ 
+         self.make_launch_script('sh -c &quot;$@&quot;')
+-
+         time.sleep(5)#we do this in hope that the error 'launch.sh2.sh is not executable'
+ 
+         return self.condor_submit_exec + &quot; &quot; + self.condor_submit_file
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003193.html">[Plearn-commits] r9753 - trunk/plearn_learners/meta
+</A></li>
+	<LI>Next message: <A HREF="003195.html">[Plearn-commits] r9755 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3194">[ date ]</a>
+              <a href="thread.html#3194">[ thread ]</a>
+              <a href="subject.html#3194">[ subject ]</a>
+              <a href="author.html#3194">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

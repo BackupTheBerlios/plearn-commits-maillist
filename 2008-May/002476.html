@@ -1,0 +1,744 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9028 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9028%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200805200649.m4K6noaI021854%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002475.html">
+   <LINK REL="Next"  HREF="002477.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9028 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9028%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200805200649.m4K6noaI021854%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9028 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Tue May 20 08:49:50 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002475.html">[Plearn-commits] r9027 - trunk/plearn_learners_experimental
+</A></li>
+        <LI>Next message: <A HREF="002477.html">[Plearn-commits] r9029 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2476">[ date ]</a>
+              <a href="thread.html#2476">[ thread ]</a>
+              <a href="subject.html#2476">[ subject ]</a>
+              <a href="author.html#2476">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-05-20 08:49:49 +0200 (Tue, 20 May 2008)
+New Revision: 9028
+
+Modified:
+   trunk/plearn_learners/online/RBMBinomialLayer.cc
+   trunk/plearn_learners/online/RBMBinomialLayer.h
+Log:
+Added an option to have samples be in {-1,1} instead of {0,1}. This means fprop uses tanh() instead of sigmoid()...
+
+
+Modified: trunk/plearn_learners/online/RBMBinomialLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMBinomialLayer.cc	2008-05-20 02:20:00 UTC (rev 9027)
++++ trunk/plearn_learners/online/RBMBinomialLayer.cc	2008-05-20 06:49:49 UTC (rev 9028)
+@@ -51,12 +51,14 @@
+     &quot;&quot;);
+ 
+ RBMBinomialLayer::RBMBinomialLayer( real the_learning_rate ) :
+-    inherited( the_learning_rate )
++    inherited( the_learning_rate ),
++    use_signed_samples( false )
+ {
+ }
+ 
+ RBMBinomialLayer::RBMBinomialLayer( int the_size, real the_learning_rate ) :
+-    inherited( the_learning_rate )
++    inherited( the_learning_rate ),
++    use_signed_samples( false )
+ {
+     size = the_size;
+     activation.resize( the_size );
+@@ -80,8 +82,12 @@
+ 
+     //random_gen-&gt;manual_seed(1827);
+ 
+-    for( int i=0 ; i&lt;size ; i++ )
+-        sample[i] = random_gen-&gt;binomial_sample( expectation[i] );
++    if( use_signed_samples )
++        for( int i=0 ; i&lt;size ; i++ )
++            sample[i] = 2*random_gen-&gt;binomial_sample( (expectation[i]+1)/2 )-1;
++    else
++        for( int i=0 ; i&lt;size ; i++ )
++            sample[i] = random_gen-&gt;binomial_sample( expectation[i] );        
+ }
+ 
+ /////////////////////
+@@ -99,10 +105,17 @@
+ 
+     //random_gen-&gt;manual_seed(1827);
+ 
+-    for (int k = 0; k &lt; batch_size; k++) {
+-        for (int i=0 ; i&lt;size ; i++)
+-            samples(k, i) = random_gen-&gt;binomial_sample( expectations(k, i) );
+-    }
++    if( use_signed_samples )
++        for (int k = 0; k &lt; batch_size; k++) {
++            for (int i=0 ; i&lt;size ; i++)
++                samples(k, i) = 2*random_gen-&gt;binomial_sample( (expectations(k, i)+1)/2 )-1;
++        }
++    else
++        for (int k = 0; k &lt; batch_size; k++) {
++            for (int i=0 ; i&lt;size ; i++)
++                samples(k, i) = random_gen-&gt;binomial_sample( expectations(k, i) );
++        }
++        
+ }
+ 
+ ////////////////////////
+@@ -113,12 +126,20 @@
+     if( expectation_is_up_to_date )
+         return;
+ 
+-    if (use_fast_approximations)
+-        for( int i=0 ; i&lt;size ; i++ )
+-            expectation[i] = fastsigmoid( activation[i] );
++    if( use_signed_samples )
++        if (use_fast_approximations)
++            for( int i=0 ; i&lt;size ; i++ )
++                expectation[i] = fasttanh( activation[i] );
++        else
++            for( int i=0 ; i&lt;size ; i++ )
++                expectation[i] = tanh( activation[i] );
+     else
+-        for( int i=0 ; i&lt;size ; i++ )
+-            expectation[i] = sigmoid( activation[i] );
++        if (use_fast_approximations)
++            for( int i=0 ; i&lt;size ; i++ )
++                expectation[i] = fastsigmoid( activation[i] );
++        else
++            for( int i=0 ; i&lt;size ; i++ )
++                expectation[i] = sigmoid( activation[i] );
+ 
+     expectation_is_up_to_date = true;
+ }
+@@ -133,14 +154,24 @@
+ 
+     PLASSERT( expectations.width() == size
+               &amp;&amp; expectations.length() == batch_size );
+-    if (use_fast_approximations)
+-        for (int k = 0; k &lt; batch_size; k++)
+-            for (int i = 0 ; i &lt; size ; i++)
+-                expectations(k, i) = fastsigmoid(activations(k, i));
++    if( use_signed_samples )
++        if (use_fast_approximations)
++            for (int k = 0; k &lt; batch_size; k++)
++                for (int i = 0 ; i &lt; size ; i++)
++                    expectations(k, i) = fasttanh(activations(k, i));
++        else
++            for (int k = 0; k &lt; batch_size; k++)
++                for (int i = 0 ; i &lt; size ; i++)
++                    expectations(k, i) = tanh(activations(k, i));
+     else
+-        for (int k = 0; k &lt; batch_size; k++)
+-            for (int i = 0 ; i &lt; size ; i++)
+-                expectations(k, i) = sigmoid(activations(k, i));
++        if (use_fast_approximations)
++            for (int k = 0; k &lt; batch_size; k++)
++                for (int i = 0 ; i &lt; size ; i++)
++                    expectations(k, i) = fastsigmoid(activations(k, i));
++        else
++            for (int k = 0; k &lt; batch_size; k++)
++                for (int i = 0 ; i &lt; size ; i++)
++                    expectations(k, i) = sigmoid(activations(k, i));
+ 
+     expectations_are_up_to_date = true;
+ }
+@@ -153,12 +184,21 @@
+     PLASSERT( input.size() == input_size );
+     output.resize( output_size );
+ 
+-    if (use_fast_approximations)
+-        for( int i=0 ; i&lt;size ; i++ )
+-            output[i] = fastsigmoid( input[i] + bias[i] );
++    if( use_signed_samples )
++        if (use_fast_approximations)
++            for( int i=0 ; i&lt;size ; i++ )
++                output[i] = fasttanh( input[i] + bias[i] );
++        else
++            for( int i=0 ; i&lt;size ; i++ )
++                output[i] = tanh( input[i] + bias[i] );
+     else
+-        for( int i=0 ; i&lt;size ; i++ )
+-            output[i] = sigmoid( input[i] + bias[i] );
++        if (use_fast_approximations)
++            for( int i=0 ; i&lt;size ; i++ )
++                output[i] = fastsigmoid( input[i] + bias[i] );
++        else
++            for( int i=0 ; i&lt;size ; i++ )
++                output[i] = sigmoid( input[i] + bias[i] );
++
+ }
+ 
+ void RBMBinomialLayer::fprop( const Mat&amp; inputs, Mat&amp; outputs ) const
+@@ -167,14 +207,25 @@
+     PLASSERT( inputs.width() == size );
+     outputs.resize( mbatch_size, size );
+ 
+-    if (use_fast_approximations)
+-        for( int k = 0; k &lt; mbatch_size; k++ )
+-            for( int i = 0; i &lt; size; i++ )
+-                outputs(k,i) = fastsigmoid( inputs(k,i) + bias[i] );
++    if( use_signed_samples )
++        if (use_fast_approximations)
++            for( int k = 0; k &lt; mbatch_size; k++ )
++                for( int i = 0; i &lt; size; i++ )
++                    outputs(k,i) = fasttanh( inputs(k,i) + bias[i] );
++        else
++            for( int k = 0; k &lt; mbatch_size; k++ )
++                for( int i = 0; i &lt; size; i++ )
++                    outputs(k,i) = tanh( inputs(k,i) + bias[i] );
+     else
+-        for( int k = 0; k &lt; mbatch_size; k++ )
+-            for( int i = 0; i &lt; size; i++ )
+-                outputs(k,i) = sigmoid( inputs(k,i) + bias[i] );
++        if (use_fast_approximations)
++            for( int k = 0; k &lt; mbatch_size; k++ )
++                for( int i = 0; i &lt; size; i++ )
++                    outputs(k,i) = fastsigmoid( inputs(k,i) + bias[i] );
++        else
++            for( int k = 0; k &lt; mbatch_size; k++ )
++                for( int i = 0; i &lt; size; i++ )
++                    outputs(k,i) = sigmoid( inputs(k,i) + bias[i] );
++
+ }
+ 
+ void RBMBinomialLayer::fprop( const Vec&amp; input, const Vec&amp; rbm_bias,
+@@ -184,12 +235,20 @@
+     PLASSERT( rbm_bias.size() == input_size );
+     output.resize( output_size );
+ 
+-    if (use_fast_approximations)
+-        for( int i=0 ; i&lt;size ; i++ )
+-            output[i] = fastsigmoid( input[i] + rbm_bias[i]);
++    if( use_signed_samples )
++        if (use_fast_approximations)
++            for( int i=0 ; i&lt;size ; i++ )
++                output[i] = fasttanh( input[i] + rbm_bias[i]);
++        else
++            for( int i=0 ; i&lt;size ; i++ )
++                output[i] =tanh( input[i] + rbm_bias[i]);
+     else
+-        for( int i=0 ; i&lt;size ; i++ )
+-            output[i] = sigmoid( input[i] + rbm_bias[i]);
++        if (use_fast_approximations)
++            for( int i=0 ; i&lt;size ; i++ )
++                output[i] = fastsigmoid( input[i] + rbm_bias[i]);
++        else
++            for( int i=0 ; i&lt;size ; i++ )
++                output[i] = sigmoid( input[i] + rbm_bias[i]);
+ }
+ 
+ /////////////////
+@@ -218,27 +277,54 @@
+     if( momentum != 0. )
+         bias_inc.resize( size );
+ 
+-    for( int i=0 ; i&lt;size ; i++ )
++    if( use_signed_samples )
+     {
+-        real output_i = output[i];
+-        real in_grad_i = output_i * (1-output_i) * output_gradient[i];
+-        input_gradient[i] += in_grad_i;
+-
+-        if( momentum == 0. )
++        for( int i=0 ; i&lt;size ; i++ )
+         {
+-            // update the bias: bias -= learning_rate * input_gradient
+-            bias[i] -= learning_rate * in_grad_i;
++            real output_i = output[i];
++            real in_grad_i;
++            in_grad_i = (1 -  output_i * output_i) * output_gradient[i];
++            input_gradient[i] += in_grad_i;
++            
++            if( momentum == 0. )
++            {
++                // update the bias: bias -= learning_rate * input_gradient
++                bias[i] -= learning_rate * in_grad_i;
++            }
++            else
++            {
++                // The update rule becomes:
++                // bias_inc = momentum * bias_inc - learning_rate * input_gradient
++                // bias += bias_inc
++                bias_inc[i] = momentum * bias_inc[i] - learning_rate * in_grad_i;
++                bias[i] += bias_inc[i];
++            }
+         }
+-        else
++    }
++    else
++    {
++        for( int i=0 ; i&lt;size ; i++ )
+         {
+-            // The update rule becomes:
+-            // bias_inc = momentum * bias_inc - learning_rate * input_gradient
+-            // bias += bias_inc
+-            bias_inc[i] = momentum * bias_inc[i] - learning_rate * in_grad_i;
+-            bias[i] += bias_inc[i];
++            real output_i = output[i];
++            real in_grad_i;
++            in_grad_i = output_i * (1-output_i) * output_gradient[i];
++            input_gradient[i] += in_grad_i;
++            
++            if( momentum == 0. )
++            {
++                // update the bias: bias -= learning_rate * input_gradient
++                bias[i] -= learning_rate * in_grad_i;
++            }
++            else
++            {
++                // The update rule becomes:
++                // bias_inc = momentum * bias_inc - learning_rate * input_gradient
++                // bias += bias_inc
++                bias_inc[i] = momentum * bias_inc[i] - learning_rate * in_grad_i;
++                bias[i] += bias_inc[i];
++            }
+         }
+     }
+-
+     applyBiasDecay();
+ }
+ 
+@@ -275,32 +361,64 @@
+     // We use the average gradient over the mini-batch.
+     real avg_lr = learning_rate / inputs.length();
+ 
+-    for (int j = 0; j &lt; mbatch_size; j++)
++    if( use_signed_samples )
+     {
+-        for( int i=0 ; i&lt;size ; i++ )
++        for (int j = 0; j &lt; mbatch_size; j++)
+         {
+-            real output_i = outputs(j, i);
+-            real in_grad_i = output_i * (1-output_i) * output_gradients(j, i);
+-            input_gradients(j, i) += in_grad_i;
+-
+-            if( momentum == 0. )
++            for( int i=0 ; i&lt;size ; i++ )
+             {
+-                // update the bias: bias -= learning_rate * input_gradient
+-                bias[i] -= avg_lr * in_grad_i;
++                real output_i = outputs(j, i);
++                real in_grad_i;
++                in_grad_i = (1 - output_i * output_i) * output_gradients(j, i);
++                input_gradients(j, i) += in_grad_i;
++                
++                if( momentum == 0. )
++                {
++                    // update the bias: bias -= learning_rate * input_gradient
++                    bias[i] -= avg_lr * in_grad_i;
++                }
++                else
++                {
++                    PLERROR(&quot;In RBMBinomialLayer:bpropUpdate - Not implemented for &quot;
++                            &quot;momentum with mini-batches&quot;);
++                    // The update rule becomes:
++                    // bias_inc = momentum * bias_inc - learning_rate * input_gradient
++                    // bias += bias_inc
++                    bias_inc[i] = momentum * bias_inc[i] - learning_rate * in_grad_i;
++                    bias[i] += bias_inc[i];
++                }
+             }
+-            else
++        }
++    }
++    else
++    {
++        for (int j = 0; j &lt; mbatch_size; j++)
++        {
++            for( int i=0 ; i&lt;size ; i++ )
+             {
+-                PLERROR(&quot;In RBMBinomialLayer:bpropUpdate - Not implemented for &quot;
+-                        &quot;momentum with mini-batches&quot;);
+-                // The update rule becomes:
+-                // bias_inc = momentum * bias_inc - learning_rate * input_gradient
+-                // bias += bias_inc
+-                bias_inc[i] = momentum * bias_inc[i] - learning_rate * in_grad_i;
+-                bias[i] += bias_inc[i];
++                real output_i = outputs(j, i);
++                real in_grad_i;
++                in_grad_i = output_i * (1-output_i) * output_gradients(j, i);
++                input_gradients(j, i) += in_grad_i;
++                
++                if( momentum == 0. )
++                {
++                    // update the bias: bias -= learning_rate * input_gradient
++                    bias[i] -= avg_lr * in_grad_i;
++                }
++                else
++                {
++                    PLERROR(&quot;In RBMBinomialLayer:bpropUpdate - Not implemented for &quot;
++                            &quot;momentum with mini-batches&quot;);
++                    // The update rule becomes:
++                    // bias_inc = momentum * bias_inc - learning_rate * input_gradient
++                    // bias += bias_inc
++                    bias_inc[i] = momentum * bias_inc[i] - learning_rate * in_grad_i;
++                    bias[i] += bias_inc[i];
++                }
+             }
+         }
+     }
+-
+     applyBiasDecay();
+ }
+ 
+@@ -318,11 +436,23 @@
+     input_gradient.resize( size );
+     rbm_bias_gradient.resize( size );
+ 
+-    for( int i=0 ; i&lt;size ; i++ )
++    if( use_signed_samples )
+     {
+-        real output_i = output[i];
+-        input_gradient[i] = output_i * (1-output_i) * output_gradient[i];
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            real output_i = output[i];
++            
++            input_gradient[i] = ( 1 - output_i * output_i ) * output_gradient[i];
++        }
+     }
++    else
++    {
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            real output_i = output[i];
++            input_gradient[i] = output_i * (1-output_i) * output_gradient[i];
++        }   
++    }
+ 
+     rbm_bias_gradient &lt;&lt; input_gradient;
+ }
+@@ -330,29 +460,57 @@
+ real RBMBinomialLayer::fpropNLL(const Vec&amp; target)
+ {
+     PLASSERT( target.size() == input_size );
+-
++    //I'm here!!!
+     real ret = 0;
+     real target_i, activation_i;
+-    if(use_fast_approximations){
+-        for( int i=0 ; i&lt;size ; i++ )
+-        {
+-            target_i = target[i];
+-            activation_i = activation[i];
+-            ret += tabulated_softplus(activation_i) - target_i * activation_i;
+-            // nll = - target*log(sigmoid(act)) -(1-target)*log(1-sigmoid(act))
+-            // but it is numerically unstable, so use instead the following identity:
+-            //     = target*softplus(-act) +(1-target)*(act+softplus(-act))
+-            //     = act + softplus(-act) - target*act 
+-            //     = softplus(act) - target*act
++    if( use_signed_samples )
++    {
++        if(use_fast_approximations){
++            for( int i=0 ; i&lt;size ; i++ )
++            {
++                target_i = (target[i]+1)/2;
++                activation_i = 2*activation[i];
++                
++                ret += tabulated_softplus(activation_i) - target_i * activation_i;
++                // nll = - target*log(sigmoid(act)) -(1-target)*log(1-sigmoid(act))
++                // but it is numerically unstable, so use instead the following identity:
++                //     = target*softplus(-act) +(1-target)*(act+softplus(-act))
++                //     = act + softplus(-act) - target*act 
++                //     = softplus(act) - target*act
++            }
++        } else {
++            for( int i=0 ; i&lt;size ; i++ )
++            {
++                target_i = (target[i]+1)/2;
++                activation_i = 2*activation[i];                
++                ret += softplus(activation_i) - target_i * activation_i;
++            }
+         }
+-    } else {
+-        for( int i=0 ; i&lt;size ; i++ )
+-        {
+-            target_i = target[i];
+-            activation_i = activation[i];
+-            ret += softplus(activation_i) - target_i * activation_i;
++    }
++    else
++    {
++        if(use_fast_approximations){
++            for( int i=0 ; i&lt;size ; i++ )
++            {
++                target_i = target[i];
++                activation_i = activation[i];
++                ret += tabulated_softplus(activation_i) - target_i * activation_i;
++                // nll = - target*log(sigmoid(act)) -(1-target)*log(1-sigmoid(act))
++                // but it is numerically unstable, so use instead the following identity:
++                //     = target*softplus(-act) +(1-target)*(act+softplus(-act))
++                //     = act + softplus(-act) - target*act 
++                //     = softplus(act) - target*act
++            }
++        } else {
++            for( int i=0 ; i&lt;size ; i++ )
++            {
++                target_i = target[i];
++                activation_i = activation[i];
++                ret += softplus(activation_i) - target_i * activation_i;
++            }
+         }
+     }
++
+     return ret;
+ }
+ 
+@@ -365,45 +523,49 @@
+     PLASSERT( costs_column.width() == 1 );
+     PLASSERT( costs_column.length() == batch_size );
+ 
+-    for (int k=0;k&lt;batch_size;k++) // loop over minibatch
++    if( use_signed_samples )
+     {
+-        real nll = 0;
+-        real* activation = activations[k];
+-        real* target = targets[k];
+-        if(use_fast_approximations){
+-            for( int i=0 ; i&lt;size ; i++ ) // loop over outputs
+-            {
+-                if(!fast_exact_is_equal(target[i],0.0))
+-                    // nll -= target[i] * pl_log(expectations[i]); 
+-                    // but it is numerically unstable, so use instead
+-                    // log (1/(1+exp(-x))) = -log(1+exp(-x)) = -softplus(-x)
+-                    nll += target[i] * tabulated_softplus(-activation[i]);
+-                if(!fast_exact_is_equal(target[i],1.0))
+-                    // nll -= (1-target[i]) * pl_log(1-output[i]);
+-                    // log (1 - 1/(1+exp(-x))) = log(exp(-x)/(1+exp(-x)))
+-                    //                         = log(1/(1+exp(x)))
+-                    //                         = -log(1+exp(x))
+-                    //                         = -softplus(x)
+-                    nll += (1-target[i]) * tabulated_softplus(activation[i]);
++        for (int k=0;k&lt;batch_size;k++) // loop over minibatch
++        {
++            real nll = 0;
++            real* activation = activations[k];
++            real* target = targets[k];
++            if(use_fast_approximations){
++                for( int i=0 ; i&lt;size ; i++ ) // loop over outputs
++                {
++                    nll += tabulated_softplus(2*activation[i])
++                        - (target[i]+1) * activation[i] ;
++                }
++            } else {
++                for( int i=0 ; i&lt;size ; i++ ) // loop over outputs
++                {
++                    nll += softplus(2*activation[i]) - (target[i]+1)*activation[i] ;
++                }
+             }
+-        } else {
+-            for( int i=0 ; i&lt;size ; i++ ) // loop over outputs
+-            {
+-                if(!fast_exact_is_equal(target[i],0.0))
+-                    // nll -= target[i] * pl_log(expectations[i]); 
+-                    // but it is numerically unstable, so use instead
+-                    // log (1/(1+exp(-x))) = -log(1+exp(-x)) = -softplus(-x)
+-                    nll += target[i] * softplus(-activation[i]);
+-                if(!fast_exact_is_equal(target[i],1.0))
+-                    // nll -= (1-target[i]) * pl_log(1-output[i]);
+-                    // log (1 - 1/(1+exp(-x))) = log(exp(-x)/(1+exp(-x)))
+-                    //                         = log(1/(1+exp(x)))
+-                    //                         = -log(1+exp(x))
+-                    //                         = -softplus(x)
+-                    nll += (1-target[i]) * softplus(activation[i]);
++            costs_column(k,0) = nll;
++        }
++    }
++    else
++    {
++        for (int k=0;k&lt;batch_size;k++) // loop over minibatch
++        {
++            real nll = 0;
++            real* activation = activations[k];
++            real* target = targets[k];
++            if(use_fast_approximations){
++                for( int i=0 ; i&lt;size ; i++ ) // loop over outputs
++                {
++                    nll += tabulated_softplus(activation[i])
++                        -target[i] * activation[i] ;
++                }
++            } else {
++                for( int i=0 ; i&lt;size ; i++ ) // loop over outputs
++                {
++                    nll += softplus(activation[i]) - target[i] * activation[i] ;
++                }
+             }
++            costs_column(k,0) = nll;
+         }
+-        costs_column(k,0) = nll;
+     }
+ }
+ 
+@@ -435,11 +597,11 @@
+ 
+ void RBMBinomialLayer::declareOptions(OptionList&amp; ol)
+ {
+-/*
+-    declareOption(ol, &quot;size&quot;, &amp;RBMBinomialLayer::size,
++
++    declareOption(ol, &quot;use_signed_samples&quot;, &amp;RBMBinomialLayer::use_signed_samples,
+                   OptionBase::buildoption,
+-                  &quot;Number of units.&quot;);
+-*/
++                  &quot;Indication that samples should be in {-1,1}, not {0,1}.\n&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -473,13 +635,26 @@
+     // result = -\sum_{i=0}^{size-1} softplus(a_i)
+     real result = 0;
+     real* a = unit_activations.data();
+-    for (int i=0; i&lt;size; i++)
++    if( use_signed_samples )
+     {
+-        if (use_fast_approximations)
+-            result -= tabulated_softplus(a[i]);
+-        else
+-            result -= softplus(a[i]);
++        for (int i=0; i&lt;size; i++)
++        {
++            if (use_fast_approximations)
++                result -= tabulated_softplus(2*a[i]) - a[i];
++            else
++                result -= softplus(2*a[i]) - a[i];
++        }
+     }
++    else
++    {
++        for (int i=0; i&lt;size; i++)
++        {
++            if (use_fast_approximations)
++                result -= tabulated_softplus(a[i]);
++            else
++                result -= softplus(a[i]);
++        }
++    }
+     return result;
+ }
+ 
+@@ -493,15 +668,30 @@
+     if( !accumulate ) unit_activations_gradient.clear();
+     real* a = unit_activations.data();
+     real* ga = unit_activations_gradient.data();
+-    for (int i=0; i&lt;size; i++)
++    if( use_signed_samples )
+     {
+-        if (use_fast_approximations)
+-            ga[i] -= output_gradient *
+-                fastsigmoid( a[i] );
+-        else
+-            ga[i] -= output_gradient *
+-                sigmoid( a[i] );
++        for (int i=0; i&lt;size; i++)
++        {
++            if (use_fast_approximations)
++                ga[i] -= output_gradient *
++                    ( fasttanh( a[i] ) );
++            else
++                ga[i] -= output_gradient *
++                    ( tanh( a[i] ) );
++        }
+     }
++    else
++    {
++        for (int i=0; i&lt;size; i++)
++        {
++            if (use_fast_approximations)
++                ga[i] -= output_gradient *
++                    fastsigmoid( a[i] );
++            else
++                ga[i] -= output_gradient *
++                    sigmoid( a[i] );
++        }
++    }
+ }
+ 
+ int RBMBinomialLayer::getConfigurationCount()
+@@ -513,11 +703,21 @@
+ {
+     PLASSERT( output.length() == size );
+     PLASSERT( conf_index &gt;= 0 &amp;&amp; conf_index &lt; getConfigurationCount() );
+-
+-    for ( int i = 0; i &lt; size; ++i ) {
+-        output[i] = conf_index &amp; 1;
+-        conf_index &gt;&gt;= 1;
++    
++    if( use_signed_samples )
++    {
++        for ( int i = 0; i &lt; size; ++i ) {
++            output[i] = 2 * (conf_index &amp; 1) - 1;
++            conf_index &gt;&gt;= 1;
++        }        
+     }
++    else
++    {
++        for ( int i = 0; i &lt; size; ++i ) {
++            output[i] = conf_index &amp; 1;
++            conf_index &gt;&gt;= 1;
++        }
++    }
+ }
+ 
+ } // end of namespace PLearn
+
+Modified: trunk/plearn_learners/online/RBMBinomialLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMBinomialLayer.h	2008-05-20 02:20:00 UTC (rev 9027)
++++ trunk/plearn_learners/online/RBMBinomialLayer.h	2008-05-20 06:49:49 UTC (rev 9028)
+@@ -56,8 +56,9 @@
+ public:
+     //#####  Public Build Options  ############################################
+ 
++    // Indication that samples should be in {-1,1}, not {0,1}
++    bool use_signed_samples;
+ 
+-
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002475.html">[Plearn-commits] r9027 - trunk/plearn_learners_experimental
+</A></li>
+	<LI>Next message: <A HREF="002477.html">[Plearn-commits] r9029 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2476">[ date ]</a>
+              <a href="thread.html#2476">[ thread ]</a>
+              <a href="subject.html#2476">[ subject ]</a>
+              <a href="author.html#2476">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

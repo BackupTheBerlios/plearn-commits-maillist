@@ -1,0 +1,419 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8266 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-November/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8266%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200711192108.lAJL8TgZ012359%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001713.html">
+   <LINK REL="Next"  HREF="001715.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8266 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8266%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200711192108.lAJL8TgZ012359%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8266 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Mon Nov 19 22:08:29 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001713.html">[Plearn-commits] r8265 - trunk/plearn_learners/regressors
+</A></li>
+        <LI>Next message: <A HREF="001715.html">[Plearn-commits] r8267 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1714">[ date ]</a>
+              <a href="thread.html#1714">[ thread ]</a>
+              <a href="subject.html#1714">[ subject ]</a>
+              <a href="author.html#1714">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2007-11-19 22:08:28 +0100 (Mon, 19 Nov 2007)
+New Revision: 8266
+
+Modified:
+   trunk/plearn_learners_experimental/StackedFocusedAutoassociatorsNet.cc
+Log:
+Making code more efficient when not using knn...
+
+
+Modified: trunk/plearn_learners_experimental/StackedFocusedAutoassociatorsNet.cc
+===================================================================
+--- trunk/plearn_learners_experimental/StackedFocusedAutoassociatorsNet.cc	2007-11-16 15:43:38 UTC (rev 8265)
++++ trunk/plearn_learners_experimental/StackedFocusedAutoassociatorsNet.cc	2007-11-19 21:08:28 UTC (rev 8266)
+@@ -683,11 +683,14 @@
+         reconstruction_activation_gradients.resize(layers[i]-&gt;size);
+         reconstruction_expectation_gradients.resize(layers[i]-&gt;size);
+ 
+-        similar_example_representation.resize(layers[i+1]-&gt;size);
+-        dissimilar_example_representation.resize(layers[i+1]-&gt;size);
+-        dissimilar_gradient_contribution.resize(layers[i+1]-&gt;size);
+-        input_representation.resize(layers[i+1]-&gt;size);
+-
++        if( !fast_exact_is_equal( supervised_greedy_learning_rate, 0 ) )
++        {
++            similar_example_representation.resize(layers[i+1]-&gt;size);
++            dissimilar_example_representation.resize(layers[i+1]-&gt;size);
++            dissimilar_gradient_contribution.resize(layers[i+1]-&gt;size);
++            input_representation.resize(layers[i+1]-&gt;size);
++        }
++        
+         greedy_activation.resize(greedy_layers[i]-&gt;size);
+         greedy_expectation.resize(greedy_layers[i]-&gt;size);
+         greedy_activation_gradient.resize(greedy_layers[i]-&gt;size);
+@@ -703,32 +706,34 @@
+             
+             sample = *this_stage % nsamples;
+             train_set-&gt;getExample(sample, input, target, weight);
+-            // Find similar example
++            if( !fast_exact_is_equal( supervised_greedy_learning_rate, 0 ) )
++            {
++                // Find similar example
++                
++                int sim_index = random_gen-&gt;uniform_multinomial_sample(k_neighbors);
++                class_datasets[(int)round(target[0])]-&gt;getExample(
++                    nearest_neighbors_indices(sample,sim_index),
++                    similar_example, target2, weight2);
++                
++                if(round(target[0]) != round(target2[0]))
++                    PLERROR(&quot;StackedFocusedAutoassociatorsNet::train(): similar&quot;
++                            &quot; example is not from same class!&quot;);
++                
++                // Find dissimilar example
++                
++                int dissim_class_index = random_gen-&gt;multinomial_sample(
++                    other_classes_proportions((int)round(target[0])));
++                
++                int dissim_index = random_gen-&gt;uniform_multinomial_sample(
++                    class_datasets[dissim_class_index]-&gt;length());
++                
++                class_datasets[dissim_class_index]-&gt;getExample(dissim_index,
++                                                               dissimilar_example, target2, weight2);
+ 
+-            int sim_index = random_gen-&gt;uniform_multinomial_sample(k_neighbors);
+-            class_datasets[(int)round(target[0])]-&gt;getExample(
+-                nearest_neighbors_indices(sample,sim_index),
+-                similar_example, target2, weight2);
+-
+-            if(round(target[0]) != round(target2[0]))
+-                PLERROR(&quot;StackedFocusedAutoassociatorsNet::train(): similar&quot;
+-                    &quot; example is not from same class!&quot;);
+-
+-            // Find dissimilar example
+-
+-            int dissim_class_index = random_gen-&gt;multinomial_sample(
+-                other_classes_proportions((int)round(target[0])));
+-
+-            int dissim_index = random_gen-&gt;uniform_multinomial_sample(
+-                class_datasets[dissim_class_index]-&gt;length());
+-
+-            class_datasets[dissim_class_index]-&gt;getExample(dissim_index,
+-                                  dissimilar_example, target2, weight2);
+-
+-            if(((int)round(target[0])) == ((int)round(target2[0])))
+-                PLERROR(&quot;StackedFocusedAutoassociatorsNet::train(): dissimilar&quot;
+-                    &quot; example is from same class!&quot;);
+-
++                if(((int)round(target[0])) == ((int)round(target2[0])))
++                    PLERROR(&quot;StackedFocusedAutoassociatorsNet::train(): dissimilar&quot;
++                            &quot; example is from same class!&quot;);
++            }
+             greedyStep( input, target, i, train_costs, *this_stage,
+                         similar_example, dissimilar_example);
+             train_stats-&gt;update( train_costs );
+@@ -757,14 +762,17 @@
+         setLearningRate( fine_tuning_learning_rate );
+         train_costs.fill(MISSING_VALUE);
+ 
+-        similar_example_representation.resize(
+-            layers[n_layers-1]-&gt;size);
+-        dissimilar_example_representation.resize(
+-            layers[n_layers-1]-&gt;size);
+-        dissimilar_gradient_contribution.resize(
+-            layers[n_layers-1]-&gt;size);
+-        similar_example.resize(inputsize());
+-        dissimilar_example.resize(inputsize());
++        if( !do_not_use_knn_classifier )
++        {
++            similar_example_representation.resize(
++                layers[n_layers-1]-&gt;size);
++            dissimilar_example_representation.resize(
++                layers[n_layers-1]-&gt;size);
++            dissimilar_gradient_contribution.resize(
++                layers[n_layers-1]-&gt;size);
++            similar_example.resize(inputsize());
++            dissimilar_example.resize(inputsize());
++        }
+ 
+         final_cost_input.resize(n_classes);
+         final_cost_value.resize(2); // Should be resized anyways
+@@ -779,32 +787,35 @@
+ 
+             train_set-&gt;getExample( sample, input, target, weight );
+ 
+-            // Find similar example
++            if( !do_not_use_knn_classifier )
++            {
++                // Find similar example
++                
++                int sim_index = random_gen-&gt;uniform_multinomial_sample(k_neighbors);
++                class_datasets[(int)round(target[0])]-&gt;getExample(
++                    nearest_neighbors_indices(sample,sim_index),
++                    similar_example, target2, weight2);
++                
++                if(((int)round(target[0])) != ((int)round(target2[0])))
++                    PLERROR(&quot;StackedFocusedAutoassociatorsNet::train(): similar&quot;
++                            &quot; example is not from same class!&quot;);
++                
++                // Find dissimilar example
++                
++                int dissim_class_index = random_gen-&gt;multinomial_sample(
++                    other_classes_proportions((int)round(target[0])));
+ 
+-            int sim_index = random_gen-&gt;uniform_multinomial_sample(k_neighbors);
+-            class_datasets[(int)round(target[0])]-&gt;getExample(
+-                nearest_neighbors_indices(sample,sim_index),
+-                similar_example, target2, weight2);
+-
+-            if(((int)round(target[0])) != ((int)round(target2[0])))
+-                PLERROR(&quot;StackedFocusedAutoassociatorsNet::train(): similar&quot;
+-                    &quot; example is not from same class!&quot;);
+-
+-            // Find dissimilar example
+-
+-            int dissim_class_index = random_gen-&gt;multinomial_sample(
+-                other_classes_proportions((int)round(target[0])));
+-
+-            int dissim_index = random_gen-&gt;uniform_multinomial_sample(
+-                class_datasets[dissim_class_index]-&gt;length());
+-
+-            class_datasets[dissim_class_index]-&gt;getExample(dissim_index,
++                int dissim_index = random_gen-&gt;uniform_multinomial_sample(
++                    class_datasets[dissim_class_index]-&gt;length());
++                
++                class_datasets[dissim_class_index]-&gt;getExample(dissim_index,
+                                   dissimilar_example, target2, weight2);
++                
++                if(((int)round(target[0])) == ((int)round(target2[0])))
++                    PLERROR(&quot;StackedFocusedAutoassociatorsNet::train(): dissimilar&quot;
++                            &quot; example is from same class!&quot;);
++            }
+ 
+-            if(((int)round(target[0])) == ((int)round(target2[0])))
+-                PLERROR(&quot;StackedFocusedAutoassociatorsNet::train(): dissimilar&quot;
+-                    &quot; example is from same class!&quot;);
+-
+             fineTuningStep( input, target, train_costs, 
+                             similar_example, dissimilar_example);
+             train_stats-&gt;update( train_costs );
+@@ -846,16 +857,19 @@
+     real lr;
+     train_set_representations_up_to_date = false;
+ 
+-    // Get similar example representation
++    if( !fast_exact_is_equal( supervised_greedy_learning_rate, 0 ) )
++    {
++        // Get similar example representation
+     
+-    computeRepresentation(similar_example, similar_example_representation, 
+-                          index+1);
++        computeRepresentation(similar_example, similar_example_representation, 
++                              index+1);
++        
++        // Get dissimilar example representation
++        
++        computeRepresentation(dissimilar_example, dissimilar_example_representation, 
++                              index+1);
++    }
+ 
+-    // Get dissimilar example representation
+-
+-    computeRepresentation(dissimilar_example, dissimilar_example_representation, 
+-                          index+1);
+-
+     // Get example representation
+ 
+     computeRepresentation(input, previous_input_representation, 
+@@ -895,33 +909,36 @@
+                                   reconstruction_activation_gradients);
+     }
+ 
+-    // Compute supervised gradient
+-    
+-    // Similar example contribution
+-    substract(input_representation,similar_example_representation,
+-              expectation_gradients[index+1]);
+-    expectation_gradients[index+1] *= 4/sqrt(layers[index+1]-&gt;size);
+-    
+-    // Dissimilar example contribution
+-    real dist = sqrt(powdistance(input_representation,
+-                                 dissimilar_example_representation,
+-                                 2));
+-
+-    //if( dist == 0 )
+-    //    PLWARNING(&quot;StackedFocusedAutoassociatorsNet::fineTuningStep(): dissimilar&quot;
+-    //              &quot; example representation is exactly the sample as the&quot;
+-    //              &quot; input example. Gradient would be infinite! Skipping this&quot;
+-    //              &quot; example...&quot;);
+-    //else
+-    //{
+-    substract(input_representation,dissimilar_example_representation,
+-              dissimilar_gradient_contribution);
+-    
+-    dissimilar_gradient_contribution *= -2* dissimilar_example_cost_precision*
+-        safeexp(-dissimilar_example_cost_precision*dist/sqrt(layers[index+1]-&gt;size));
+-    
+-    expectation_gradients[index+1] += dissimilar_gradient_contribution;
++    if( !fast_exact_is_equal( supervised_greedy_learning_rate, 0 ) )
++    {
++        // Compute supervised gradient
++        
++        // Similar example contribution
++        substract(input_representation,similar_example_representation,
++                  expectation_gradients[index+1]);
++        expectation_gradients[index+1] *= 4/sqrt((real)layers[index+1]-&gt;size);
++        
++        // Dissimilar example contribution
++        real dist = sqrt(powdistance(input_representation,
++                                     dissimilar_example_representation,
++                                     2));
++        
++        //if( dist == 0 )
++        //    PLWARNING(&quot;StackedFocusedAutoassociatorsNet::fineTuningStep(): dissimilar&quot;
++        //              &quot; example representation is exactly the sample as the&quot;
++        //              &quot; input example. Gradient would be infinite! Skipping this&quot;
++        //              &quot; example...&quot;);
++        //else
++        //{
++        substract(input_representation,dissimilar_example_representation,
++                  dissimilar_gradient_contribution);
++        
++        dissimilar_gradient_contribution *= -2* dissimilar_example_cost_precision*
++            safeexp(-dissimilar_example_cost_precision*dist/sqrt((real)layers[index+1]-&gt;size));
++        
++        expectation_gradients[index+1] += dissimilar_gradient_contribution;
+         //}
++    }
+ 
+     // RBM learning
+     if( !fast_exact_is_equal( cd_learning_rate, 0 ) )
+@@ -978,27 +995,30 @@
+     }
+      
+ 
+-    if( !fast_exact_is_equal( supervised_greedy_decrease_ct , 0 ) )
+-        lr = supervised_greedy_learning_rate/(1 + supervised_greedy_decrease_ct 
+-                               * this_stage); 
+-    else
+-        lr = supervised_greedy_learning_rate;
+-    
+-    layers[index]-&gt;setLearningRate( lr );
+-    connections[index]-&gt;setLearningRate( lr );
+-    layers[index+1]-&gt;setLearningRate( lr );
+-    
+-    layers[ index+1 ]-&gt;bpropUpdate( 
+-        greedy_activation.subVec(0,layers[index+1]-&gt;size),
+-        greedy_expectation.subVec(0,layers[index+1]-&gt;size),
+-        activation_gradients[index+1], 
+-        expectation_gradients[index+1]);
+-    
+-    connections[ index ]-&gt;bpropUpdate( 
+-        previous_input_representation,
+-        greedy_activation.subVec(0,layers[index+1]-&gt;size),
+-        expectation_gradients[index],
+-        activation_gradients[index+1]);
++    if( !fast_exact_is_equal( supervised_greedy_learning_rate, 0 ) )
++    {
++        if( !fast_exact_is_equal( supervised_greedy_decrease_ct , 0 ) )
++            lr = supervised_greedy_learning_rate/(1 + supervised_greedy_decrease_ct 
++                                                  * this_stage); 
++        else
++            lr = supervised_greedy_learning_rate;
++        
++        layers[index]-&gt;setLearningRate( lr );
++        connections[index]-&gt;setLearningRate( lr );
++        layers[index+1]-&gt;setLearningRate( lr );
++        
++        layers[ index+1 ]-&gt;bpropUpdate( 
++            greedy_activation.subVec(0,layers[index+1]-&gt;size),
++            greedy_expectation.subVec(0,layers[index+1]-&gt;size),
++            activation_gradients[index+1], 
++            expectation_gradients[index+1]);
++        
++        connections[ index ]-&gt;bpropUpdate( 
++            previous_input_representation,
++            greedy_activation.subVec(0,layers[index+1]-&gt;size),
++            expectation_gradients[index],
++            activation_gradients[index+1]);
++    }
+ 
+     // RBM updates
+ 
+@@ -1053,12 +1073,12 @@
+         // Similar example contribution
+         substract(previous_input_representation,similar_example_representation,
+                   expectation_gradients[n_layers-1]);
+-        expectation_gradients[n_layers-1] *= 4/sqrt(layers[n_layers-1]-&gt;size);
++        expectation_gradients[n_layers-1] *= 4/sqrt((real)layers[n_layers-1]-&gt;size);
+     
+         train_costs[train_costs.length()-3] = 
+             2 * sqrt(powdistance(previous_input_representation,
+                                  similar_example_representation,
+-                                 2)) / sqrt(layers[n_layers-1]-&gt;size);
++                                 2)) / sqrt((real)layers[n_layers-1]-&gt;size);
+         
+         // Dissimilar example contribution
+         real dist = sqrt(powdistance(previous_input_representation,
+@@ -1066,8 +1086,8 @@
+                                      2));
+ 
+         train_costs[train_costs.length()-2] = 
+-            2 * sqrt(layers[n_layers-1]-&gt;size) * safeexp( -dissimilar_example_cost_precision
+-                                                          *dist/sqrt(layers[n_layers-1]-&gt;size));
++            2 * sqrt((real)layers[n_layers-1]-&gt;size) * safeexp( -dissimilar_example_cost_precision
++                                                          *dist/sqrt((real)layers[n_layers-1]-&gt;size));
+         train_costs.last() = train_costs[train_costs.length()-3] + 
+             train_costs[train_costs.length()-2];
+         //if( dist == 0 )
+@@ -1083,7 +1103,7 @@
+                   dissimilar_gradient_contribution);
+         
+         dissimilar_gradient_contribution *= -2 * dissimilar_example_cost_precision*
+-            safeexp(-dissimilar_example_cost_precision*dist/sqrt(layers[n_layers-1]-&gt;size));
++            safeexp(-dissimilar_example_cost_precision*dist/sqrt((real)layers[n_layers-1]-&gt;size));
+         
+         expectation_gradients[n_layers-1] += dissimilar_gradient_contribution;
+         //}
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001713.html">[Plearn-commits] r8265 - trunk/plearn_learners/regressors
+</A></li>
+	<LI>Next message: <A HREF="001715.html">[Plearn-commits] r8267 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1714">[ date ]</a>
+              <a href="thread.html#1714">[ thread ]</a>
+              <a href="subject.html#1714">[ subject ]</a>
+              <a href="author.html#1714">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

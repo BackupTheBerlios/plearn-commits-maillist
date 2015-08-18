@@ -1,0 +1,166 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8862 - trunk/plearn/opt
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8862%20-%20trunk/plearn/opt&In-Reply-To=%3C200804221406.m3ME6WvT007906%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002309.html">
+   <LINK REL="Next"  HREF="002311.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8862 - trunk/plearn/opt</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8862%20-%20trunk/plearn/opt&In-Reply-To=%3C200804221406.m3ME6WvT007906%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8862 - trunk/plearn/opt">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue Apr 22 16:06:32 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002309.html">[Plearn-commits] r8861 - in trunk/plearn_learners: classifiers	online
+</A></li>
+        <LI>Next message: <A HREF="002311.html">[Plearn-commits] r8863 -	trunk/plearn_learners/regressors/test/GaussianProcessRegressor/.pytest/PL_GaussianProcessRegressor_Hyperopt/expected_results
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2310">[ date ]</a>
+              <a href="thread.html#2310">[ thread ]</a>
+              <a href="subject.html#2310">[ subject ]</a>
+              <a href="author.html#2310">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-04-22 16:06:32 +0200 (Tue, 22 Apr 2008)
+New Revision: 8862
+
+Modified:
+   trunk/plearn/opt/Optimizer.cc
+   trunk/plearn/opt/Optimizer.h
+Log:
+- Added early_stop as a learnt option
+- Added setToOptimize and optimizeN as remote methods
+
+
+Modified: trunk/plearn/opt/Optimizer.cc
+===================================================================
+--- trunk/plearn/opt/Optimizer.cc	2008-04-22 04:05:51 UTC (rev 8861)
++++ trunk/plearn/opt/Optimizer.cc	2008-04-22 14:06:32 UTC (rev 8862)
+@@ -94,9 +94,35 @@
+ {
+     declareOption(ol, &quot;nstages&quot;, &amp;Optimizer::nstages, OptionBase::buildoption, 
+         &quot;Number of iterations to perform on the next call to optimizeN(..).&quot;);
++
++    declareOption(ol, &quot;early_stop&quot;, &amp;Optimizer::early_stop,
++                  OptionBase::learntoption, 
++        &quot;Whether an early stopping criterion has been met.&quot;);
++
+     inherited::declareOptions(ol);
+ }
+ 
++////////////////////
++// declareMethods //
++////////////////////
++void Optimizer::declareMethods(RemoteMethodMap&amp; rmm)
++{
++    // Insert a backpointer to remote methods; note that this
++    // different than for declareOptions()
++    rmm.inherited(inherited::_getRemoteMethodMap_());
++        
++    declareMethod(rmm, &quot;setToOptimize&quot;, &amp;Optimizer::remote_setToOptimize,
++            (BodyDoc(&quot;Set cost to minimize with respect to given parameters&quot;),
++             ArgDoc(&quot;params&quot;, &quot;List of parameters (variables) to optimize&quot;),
++             ArgDoc(&quot;cost&quot;, &quot;Cost to be minimized&quot;)));
++
++    declareMethod(rmm, &quot;optimizeN&quot;, &amp;Optimizer::remote_optimizeN,
++            (BodyDoc(&quot;Launch nstages steps of optimization.&quot;),
++             ArgDoc(&quot;stats&quot;, &quot;VecStatsCollector to collect training statistics&quot;),
++             RetDoc(&quot;Boolean value indicating whether a stopping criterion &quot;
++                    &quot;has been met.&quot;)));
++}
++
+ ///////////////////
+ // setToOptimize //
+ ///////////////////
+@@ -118,6 +144,14 @@
+     other_weight = the_other_weight;
+ }
+ 
++//////////////////////////
++// remote_setToOptimize //
++//////////////////////////
++void Optimizer::remote_setToOptimize(const VarArray&amp; params, Var cost)
++{
++    setToOptimize(params, cost);
++}
++
+ /*
+ void Optimizer::setVarArrayOption(const string&amp; optionname, VarArray value)
+ {
+
+Modified: trunk/plearn/opt/Optimizer.h
+===================================================================
+--- trunk/plearn/opt/Optimizer.h	2008-04-22 04:05:51 UTC (rev 8861)
++++ trunk/plearn/opt/Optimizer.h	2008-04-22 14:06:32 UTC (rev 8862)
+@@ -104,6 +104,9 @@
+ 
+     virtual void setToOptimize(const VarArray&amp; the_params, Var the_cost, VarArray the_other_costs = VarArray(0), TVec&lt;VarArray&gt; the_other_params = TVec&lt;VarArray&gt;(0), real the_other_weight = 1);
+ 
++    //! Remote version of setToOptimize.
++    void remote_setToOptimize(const VarArray&amp; params, Var cost);
++
+     /*
+     virtual void setVarArrayOption(const string&amp; optionname,
+                                    const VarArray&amp; value);
+@@ -126,6 +129,11 @@
+      * }
+      * return false
+      */
++
++    bool remote_optimizeN(PP&lt;VecStatsCollector&gt; stats_coll) {
++        PLASSERT( stats_coll.isNotNull() );
++        return optimizeN(*stats_coll);
++    }
+       
+     //!  verify gradient with uniform random initialization of parameters
+     //!  using step for the finite difference approximation of the gradient
+@@ -144,6 +152,9 @@
+ 
+     static void declareOptions(OptionList&amp; ol);
+ 
++    //! Declare the methods that are remote-callable.
++    static void declareMethods(RemoteMethodMap&amp; rmm);
++
+ public:
+ 
+     //--------------------------- UTILITY FUNCTIONS ----------------------------
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002309.html">[Plearn-commits] r8861 - in trunk/plearn_learners: classifiers	online
+</A></li>
+	<LI>Next message: <A HREF="002311.html">[Plearn-commits] r8863 -	trunk/plearn_learners/regressors/test/GaussianProcessRegressor/.pytest/PL_GaussianProcessRegressor_Hyperopt/expected_results
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2310">[ date ]</a>
+              <a href="thread.html#2310">[ thread ]</a>
+              <a href="subject.html#2310">[ subject ]</a>
+              <a href="author.html#2310">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

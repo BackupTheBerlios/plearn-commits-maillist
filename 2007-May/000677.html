@@ -1,0 +1,223 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7228 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7228%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705221558.l4MFw7qK029769%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000676.html">
+   <LINK REL="Next"  HREF="000678.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7228 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7228%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705221558.l4MFw7qK029769%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7228 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue May 22 17:58:07 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000676.html">[Plearn-commits] r7227 - trunk/commands/PLearnCommands
+</A></li>
+        <LI>Next message: <A HREF="000678.html">[Plearn-commits] r7229 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#677">[ date ]</a>
+              <a href="thread.html#677">[ thread ]</a>
+              <a href="subject.html#677">[ subject ]</a>
+              <a href="author.html#677">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-05-22 17:58:06 +0200 (Tue, 22 May 2007)
+New Revision: 7228
+
+Modified:
+   trunk/plearn_learners/online/CombiningCostsModule.cc
+   trunk/plearn_learners/online/CombiningCostsModule.h
+Log:
+Implementation of bpropAccUpdate
+
+Modified: trunk/plearn_learners/online/CombiningCostsModule.cc
+===================================================================
+--- trunk/plearn_learners/online/CombiningCostsModule.cc	2007-05-22 15:45:46 UTC (rev 7227)
++++ trunk/plearn_learners/online/CombiningCostsModule.cc	2007-05-22 15:58:06 UTC (rev 7228)
+@@ -51,13 +51,20 @@
+     &quot;back-propagated gradient will be a weighted sum of the modules'&quot;
+     &quot; gradients.\n&quot;
+     &quot;The first output is the weighted sum of the cost, the following ones\n&quot;
+-    &quot;are the original costs.\n&quot;);
++    &quot;are the original costs.\n&quot;
++);
+ 
++//////////////////////////
++// CombiningCostsModule //
++//////////////////////////
+ CombiningCostsModule::CombiningCostsModule() :
+     n_sub_costs( 0 )
+ {
+ }
+ 
++////////////////////
++// declareOptions //
++////////////////////
+ void CombiningCostsModule::declareOptions(OptionList&amp; ol)
+ {
+     declareOption(ol, &quot;sub_costs&quot;, &amp;CombiningCostsModule::sub_costs,
+@@ -72,10 +79,6 @@
+                   OptionBase::learntoption,
+                   &quot;Number of sub_costs&quot;);
+ 
+-    // declareOption(ol, &quot;&quot;, &amp;CombiningCostsModule::,
+-    //               OptionBase::buildoption,
+-    //               &quot;&quot;);
+-
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+     
+@@ -87,6 +90,9 @@
+                     &quot;Is set to sub_costs[0]-&gt;target_size.&quot;);
+ }
+ 
++////////////
++// build_ //
++////////////
+ void CombiningCostsModule::build_()
+ {
+     n_sub_costs = sub_costs.length();
+@@ -208,6 +214,45 @@
+     }
+ }
+ 
++////////////////////
++// bpropAccUpdate //
++////////////////////
++void CombiningCostsModule::bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                          const TVec&lt;Mat*&gt;&amp; ports_gradient)
++{
++    Mat* inputs = ports_value[0];
++    Mat* targets = ports_value[1];
++    Mat* costs = ports_value[2];
++    PLASSERT( costs &amp;&amp; costs-&gt;width() == n_sub_costs + 1 );
++    Mat* input_gradients = ports_gradient[0];
++    PLASSERT( input_gradients &amp;&amp; input_gradients-&gt;isEmpty() &amp;&amp;
++              input_gradients-&gt;width() &gt; 0 );
++    input_gradients-&gt;resize(inputs-&gt;length(), input_gradients-&gt;width());
++    sub_costs_values.resize(costs-&gt;length());
++    for( int i=0 ; i&lt;n_sub_costs ; i++ )
++    {
++        sub_costs_values &lt;&lt; costs-&gt;column(i + 1);
++        if (fast_exact_is_equal(cost_weights[i], 0))
++        {
++            // Do not compute input_gradients.
++            sub_costs[i]-&gt;bpropUpdate( *inputs, *targets, sub_costs_values);
++        }
++        else if (fast_exact_is_equal(cost_weights[i], 1))
++        {
++            // Accumulate directly into input_gradients.
++            sub_costs[i]-&gt;bpropUpdate(*inputs, *targets, sub_costs_values,
++                                      *input_gradients, true);
++        }
++        else
++        {
++            // Put the result into partial_gradients, then accumulate into
++            // input_gradients with the appropriate weight.
++            sub_costs[i]-&gt;bpropUpdate(*inputs, *targets, sub_costs_values,
++                                      partial_gradients, false);
++            multiplyAcc(*input_gradients, partial_gradients, cost_weights[i]);
++        }
++    }
++}
+ 
+ /////////////////
+ // bpropUpdate //
+@@ -311,6 +356,9 @@
+         sub_costs[i]-&gt;bpropUpdate( input, target, sub_costs_values[i] );
+ }
+ 
++//////////////////
++// bbpropUpdate //
++//////////////////
+ void CombiningCostsModule::bbpropUpdate(const Vec&amp; input, const Vec&amp; target,
+                                         real cost,
+                                         Vec&amp; input_gradient,
+@@ -375,8 +423,9 @@
+ }
+ 
+ 
+-//! Reset the parameters to the state they would be BEFORE starting training.
+-//! Note that this method is necessarily called from build().
++////////////
++// forget //
++////////////
+ void CombiningCostsModule::forget()
+ {
+     if( !random_gen )
+@@ -393,6 +442,9 @@
+     }
+ }
+ 
++/////////////////////
++// setLearningRate //
++/////////////////////
+ //! Sets the sub_costs' learning rates
+ void CombiningCostsModule::setLearningRate(real dynamic_learning_rate)
+ {
+@@ -400,6 +452,9 @@
+         sub_costs[i]-&gt;setLearningRate(dynamic_learning_rate);
+ }
+ 
++//////////////
++// finalize //
++//////////////
+ //! reset the parameters to the state they would be BEFORE starting training.
+ //! Note that this method is necessarily called from build().
+ void CombiningCostsModule::finalize()
+
+Modified: trunk/plearn_learners/online/CombiningCostsModule.h
+===================================================================
+--- trunk/plearn_learners/online/CombiningCostsModule.h	2007-05-22 15:45:46 UTC (rev 7227)
++++ trunk/plearn_learners/online/CombiningCostsModule.h	2007-05-22 15:58:06 UTC (rev 7228)
+@@ -75,6 +75,10 @@
+ 
+     // Your other public member functions go here
+ 
++    //! Overridden so that sub-costs values can be taken into account.
++    virtual void bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                const TVec&lt;Mat*&gt;&amp; ports_gradient);
++
+     //! given the input and target, compute the cost
+     virtual void fprop(const Vec&amp; input, const Vec&amp; target, Vec&amp; cost) const;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000676.html">[Plearn-commits] r7227 - trunk/commands/PLearnCommands
+</A></li>
+	<LI>Next message: <A HREF="000678.html">[Plearn-commits] r7229 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#677">[ date ]</a>
+              <a href="thread.html#677">[ thread ]</a>
+              <a href="subject.html#677">[ subject ]</a>
+              <a href="author.html#677">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

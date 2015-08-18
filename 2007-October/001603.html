@@ -1,0 +1,267 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8155 - trunk/python_modules/plearn/learners
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8155%20-%20trunk/python_modules/plearn/learners&In-Reply-To=%3C200710062007.l96K7utU009889%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001602.html">
+   <LINK REL="Next"  HREF="001604.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8155 - trunk/python_modules/plearn/learners</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8155%20-%20trunk/python_modules/plearn/learners&In-Reply-To=%3C200710062007.l96K7utU009889%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8155 - trunk/python_modules/plearn/learners">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Sat Oct  6 22:07:56 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001602.html">[Plearn-commits] r8154 - trunk/plearn/math
+</A></li>
+        <LI>Next message: <A HREF="001604.html">[Plearn-commits] r8156 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1603">[ date ]</a>
+              <a href="thread.html#1603">[ thread ]</a>
+              <a href="subject.html#1603">[ subject ]</a>
+              <a href="author.html#1603">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-10-06 22:07:56 +0200 (Sat, 06 Oct 2007)
+New Revision: 8155
+
+Modified:
+   trunk/python_modules/plearn/learners/AdaBoostMultiClasses.py
+Log:
+-weaklearner function now take the sub class as parameter
+-added train stats
+-added computeOutput_at_stage()
+-forward weaklearner cost
+
+
+Modified: trunk/python_modules/plearn/learners/AdaBoostMultiClasses.py
+===================================================================
+--- trunk/python_modules/plearn/learners/AdaBoostMultiClasses.py	2007-10-06 20:01:14 UTC (rev 8154)
++++ trunk/python_modules/plearn/learners/AdaBoostMultiClasses.py	2007-10-06 20:07:56 UTC (rev 8155)
+@@ -8,18 +8,21 @@
+ #        Initialize a AdaBoost for 3 classes learner
+ #        trainSet1 is used for the first sub AdaBoost learner,
+ #        trainSet2 is used for the second sub learner
+-#        weakLearner should be a function that return a new weak learner
++#        weakLearner should be a function that take the class number for the one vs other
++#                and should return a new weak learner
+ #        &quot;&quot;&quot;
+         self.trainSet1=trainSet1
+         self.trainSet2=trainSet2
++
++        if weakLearner:
++            self.learner1 = self.myAdaBoostLearner(weakLearner(0),trainSet1)
++            self.learner1.setExperimentDirectory(plargs.expdirr+&quot;/learner1&quot;)
++            self.learner1.setTrainingSet(trainSet1,True)
+             
+-        self.learner1 = self.myAdaBoostLearner(weakLearner(),trainSet1)
+-        self.learner1.setExperimentDirectory(plargs.expdirr+&quot;/learner1&quot;)
+-        self.learner1.setTrainingSet(trainSet1,True)
+-        
+-        self.learner2 = self.myAdaBoostLearner(weakLearner(),trainSet2)
+-        self.learner2.setExperimentDirectory(plargs.expdirr+&quot;/learner2&quot;)
+-        self.learner2.setTrainingSet(trainSet2,True)
++            self.learner2 = self.myAdaBoostLearner(weakLearner(2),trainSet2)
++            self.learner2.setExperimentDirectory(plargs.expdirr+&quot;/learner2&quot;)
++            self.learner2.setTrainingSet(trainSet2,True)
++
+         self.nstages = 0
+         self.stage = 0
+         self.train_time = 0
+@@ -31,13 +34,14 @@
+         l.pseudo_loss_adaboost=plargs.pseudo_loss_adaboost
+         l.weight_by_resampling=plargs.weight_by_resampling
+         l.setTrainingSet(trainSet,True)
+-        tmp=VecStatsCollector()
+-        tmp.setFieldNames(l.getTrainCostNames())
+-        l.setTrainStatsCollector(tmp)
+         l.early_stopping=False
+         l.compute_training_error=True
+         l.forward_sub_learner_test_costs=True
+         l.provide_learner_expdir=True
++#        l.save_often=True
++        tmp=VecStatsCollector()
++        tmp.setFieldNames(l.getTrainCostNames())
++        l.setTrainStatsCollector(tmp)
+         return l
+ 
+     def train(self):
+@@ -49,6 +53,12 @@
+         self.stage=self.learner1.stage
+         t2=time.time()
+         self.train_time+=t2-t1
++        self.train_stats=VecStatsCollector()
++        self.train_stats.append(self.learner1.getTrainStatsCollector(),
++                                &quot;sublearner1.&quot;,[])
++        self.train_stats.append(self.learner2.getTrainStatsCollector(),
++                                &quot;sublearner2.&quot;,[])
++
+         
+     def getTestCostNames(self):
+         costnames = [&quot;class_error&quot;,&quot;linear_class_error&quot;,&quot;square_class_error&quot;]
+@@ -65,13 +75,18 @@
+             costnames.append(&quot;subweaklearner2.&quot;+c)
+         return costnames
+     
+-    def computeOutput(self,example):
+-        &quot;&quot;&quot; compute the output for the example in the parameter
++    def getTrainCostNames(self):
++        costnames = [&quot;sublearner1.&quot;+x for x in self.learner1.getTrainCostNames()]
++        costnames += [&quot;sublearner2.&quot;+x for x in self.learner2.getTrainCostNames()]                                
++        return costnames
++
++    def computeOutput_at_stage(self,input,stage):
++        &quot;&quot;&quot; compute the output for the input with the first stage weak learner
+         
+         return a tuple: (predicted result, output of sub learner1,output of sub learner2)
+         &quot;&quot;&quot;
+-        out1=self.learner1.computeOutput(example)[0]
+-        out2=self.learner2.computeOutput(example)[0]
++        out1=self.learner1.computeOutput_at_stage(input,stage)[0]
++        out2=self.learner2.computeOutput_at_stage(input,stage)[0]
+         ind1=int(round(out1))
+         ind2=int(round(out2))
+         if ind1==ind2==0:
+@@ -83,8 +98,28 @@
+         else:
+             ind=self.confusion_target
+         return (ind,out1,out2)
++
++    def computeOutput(self,input):
++        &quot;&quot;&quot; compute the output for the input
++        
++        return a tuple: (predicted result, output of sub learner1,output of sub learner2)
++        &quot;&quot;&quot;
++        out1=self.learner1.computeOutput(input)[0]
++        out2=self.learner2.computeOutput(input)[0]
++        ind1=int(round(out1))
++        ind2=int(round(out2))
++        if ind1==ind2==0:
++            ind=0
++        elif ind1==1 and ind2==0:
++            ind=1
++        elif ind1==ind2==1:
++            ind=2
++        else:
++            ind=self.confusion_target
++        return (ind,out1,out2)
+     
+-    def computeCostsFromOutput(self,input,output,target,costs=[]):
++    def computeCostsFromOutput(self,input,output,target_,costs=[],forward_sub_learner_costs=True):
++        target=int(target_)
+         del costs[:]
+         class_error=int(output[0] != target)
+         linear_class_error=abs(output[0]-target)
+@@ -118,10 +153,11 @@
+             t2=array([0.])
+         o1=array([output[1]])
+         o2=[output[2]]
+-        c1=self.learner1.computeCostsFromOutputs(input,o1,t1)
+-        c2=self.learner2.computeCostsFromOutputs(input,o2,t2)
+-        costs.extend(c1)
+-        costs.extend(c2)
++        if forward_sub_learner_costs:
++            c1=self.learner1.computeCostsFromOutputs(input,o1,t1)
++            c2=self.learner2.computeCostsFromOutputs(input,o2,t2)
++            costs.extend(c1)
++            costs.extend(c2)
+         return costs
+ 
+     def computeOutputAndCosts(self,input,target):
+@@ -129,19 +165,25 @@
+         costs=self.computeCostsFromOutput(input,output,target)
+         return (output,costs)
+ 
+-    def test(self,testset,test_stats,return_outputs,return_costs):
+-        print &quot;In AdaBoostMultiClasses.py::test Not implemented&quot;
+-        sys.exit(1)
+-        
++    def test(self,testSet,test_stats,return_outputs,return_costs):
++        testSet1=pl.ProcessingVMatrix(source=testSet,
++                               prg = &quot;[%0:%&quot;+str(testSet.inputsize-1)+&quot;] @CLASSE_REEL 1 0 ifelse :CLASSE_REEL&quot;)
++        testSet2=pl.ProcessingVMatrix(source=testSet,
++                               prg = &quot;[%0:%&quot;+str(testSet.inputsize-1)+&quot;] @CLASSE_REEL 2 - 0 1 ifelse :CLASSE_REEL&quot;)
++
+         stats1=pl.VecStatsCollector()
+         stats2=pl.VecStatsCollector()
+-        (test_stats1, testoutputs1, testcosts1)=self.learner1.test(test_stats,stats1,True,return_costs)
+-        (test_stats2, testoutputs2, testcosts2)=self.learner2.test(test_stats,stats2,True,return_costs)
++        (test_stats1, testoutputs1, testcosts1)=self.learner1.test(testSet1,
++                                                                   stats1,
++                                                                   True,True)
++        (test_stats2, testoutputs2, testcosts2)=self.learner2.test(testSet2,
++                                                                   stats2,
++                                                                   True,True)
+         outputs=[]
+         costs=[]
+         #calculate stats, outputs, costs
+-        test_mat=testset.getMat()
+-        for i in range(testset.length()):
++        test_mat=testSet.getMat()
++        for i in range(len(test_mat)):
+             out1=testoutputs1[i][0]
+             out2=testoutputs2[i][0]
+             ind1=int(round(out1))
+@@ -154,9 +196,20 @@
+                 ind=2
+             else:
+                 ind=self.confusion_target
+-            outputs.append([ind,out1,out2])
+-            self.computeCostsFromOutput(test_mat[i][:-2],ind,test_mat[i][-1])
+-        
++            output=[ind,out1,out2]
++            if return_outputs:
++                outputs.append(output)
++            input=test_mat[i][:-1]
++            target=test_mat[i][-1]
++            cost=self.computeCostsFromOutput(input,output,target,
++                                             forward_sub_learner_costs=False)
++            cost.extend(testcosts1[i])
++            cost.extend(testcosts2[i])
++            test_stats.update(cost,1)
++            if return_costs:
++                costs.append(cost)
++        return(test_stats,outputs,costs)
++    
+     def outputsize(self):
+         return len(self.getTestCostNames())
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001602.html">[Plearn-commits] r8154 - trunk/plearn/math
+</A></li>
+	<LI>Next message: <A HREF="001604.html">[Plearn-commits] r8156 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1603">[ date ]</a>
+              <a href="thread.html#1603">[ thread ]</a>
+              <a href="subject.html#1603">[ subject ]</a>
+              <a href="author.html#1603">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

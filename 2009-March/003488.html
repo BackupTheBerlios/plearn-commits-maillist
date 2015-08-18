@@ -1,0 +1,162 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10048 - trunk/plearn_learners/meta
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10048%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200903231806.n2NI6tGB024677%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003487.html">
+   <LINK REL="Next"  HREF="003489.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10048 - trunk/plearn_learners/meta</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10048%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200903231806.n2NI6tGB024677%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10048 - trunk/plearn_learners/meta">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Mar 23 19:06:55 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003487.html">[Plearn-commits] r10047 - in trunk/plearn_learners/meta: .	test/MultiClassAdaBoost/.pytest/PL_MultiClassAdaBoost/expected_results/expdir/Split0
+</A></li>
+        <LI>Next message: <A HREF="003489.html">[Plearn-commits] r10049 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3488">[ date ]</a>
+              <a href="thread.html#3488">[ thread ]</a>
+              <a href="subject.html#3488">[ subject ]</a>
+              <a href="author.html#3488">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-03-23 19:06:53 +0100 (Mon, 23 Mar 2009)
+New Revision: 10048
+
+Modified:
+   trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+   trunk/plearn_learners/meta/MultiClassAdaBoost.h
+Log:
+-Made the test() fct of MultiClassAdaBoost parallel
+-Made the option forward_test==2 of MultiClassAdaBoost be more resistent to the sublearner timing of the test() fct. In some case the first time it is executed, it take more then then the following one. So we don't consider the first.
+
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2009-03-23 17:57:35 UTC (rev 10047)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2009-03-23 18:06:53 UTC (rev 10048)
+@@ -71,6 +71,7 @@
+     time_last_stage(0),
+     time_last_stage_ft(0),
+     last_stage(0),
++    nb_sequential_ft(0),
+     forward_sub_learner_test_costs(false),
+     forward_test(0)
+ /* ### Initialize all fields to their default value here */
+@@ -189,7 +190,13 @@
+                   &amp;MultiClassAdaBoost::last_stage, 
+                   OptionBase::learntoption |OptionBase::nosave,
+                   &quot;The stage at witch time_sum or time_sum_ft was used&quot;);
+-}
++    declareOption(ol, &quot;nb_sequential_ft&quot;,
++                  &amp;MultiClassAdaBoost::nb_sequential_ft, 
++                  OptionBase::learntoption |OptionBase::nosave,
++                  &quot;The number of sequential time that we forward the test()&quot;
++                  &quot; fct. We must do that as the first time we forward it, the&quot;
++                  &quot; time is higher then the following ones.&quot;);
++ }
+ 
+ void MultiClassAdaBoost::build_()
+ {
+@@ -244,8 +251,10 @@
+     deepCopyField(output2,           copies);
+     deepCopyField(subcosts1,         copies);
+     deepCopyField(subcosts2,         copies);
++    deepCopyField(timer,             copies);
+     deepCopyField(learner1,          copies);
+     deepCopyField(learner2,          copies);
++
+     //not needed as we only read it.
+     //deepCopyField(learner_template,  copies);
+ }
+@@ -666,7 +675,9 @@
+         time_sum=0;
+     }
+     if(last_stage&lt;stage &amp;&amp; time_sum_ft&gt;0){
++        if(nb_sequential_ft&gt;0)
+             time_last_stage_ft=time_sum_ft;
++        nb_sequential_ft++;
+         time_sum_ft=0;
+     }
+ 
+@@ -681,6 +692,7 @@
+         Profiler::pl_profile_end(&quot;MultiClassAdaBoost::test()&quot;);
+         time_sum += timer-&gt;getTimer(&quot;MultiClassAdaBoost::test() current&quot;);
+         last_stage=stage;
++        nb_sequential_ft = 0;
+         EXTREME_MODULE_LOG&lt;&lt;&quot;inherited end time_sum=&quot;&lt;&lt;time_sum&lt;&lt;&quot; time_sum_ft=&quot;&lt;&lt;time_sum_ft&lt;&lt;&quot; last_stage=&quot;&lt;&lt;last_stage &lt;&lt;&quot; stage=&quot; &lt;&lt;stage &lt;&lt;&quot; time_last_stage=&quot; &lt;&lt;time_last_stage&lt;&lt;&quot; time_last_stage_ft=&quot; &lt;&lt;time_last_stage_ft&lt;&lt;endl;
+         return;
+     }
+@@ -730,8 +742,18 @@
+ 
+     //Profiler::pl_profile_end(&quot;MultiClassAdaBoost::test() part1&quot;);//cheap
+     Profiler::pl_profile_start(&quot;MultiClassAdaBoost::test() subtest&quot;);
++#ifdef _OPENMP
++#pragma omp parallel sections
++{
++#pragma omp section 
+     learner1-&gt;test(testset1,test_stats1,testoutputs1,testcosts1);
++#pragma omp section 
+     learner2-&gt;test(testset2,test_stats2,testoutputs2,testcosts2);
++}
++#else
++    learner1-&gt;test(testset1,test_stats1,testoutputs1,testcosts1);
++    learner2-&gt;test(testset2,test_stats2,testoutputs2,testcosts2);
++#endif
+     Profiler::pl_profile_end(&quot;MultiClassAdaBoost::test() subtest&quot;);
+ 
+     VMat my_outputs = 0;
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.h	2009-03-23 17:57:35 UTC (rev 10047)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.h	2009-03-23 18:06:53 UTC (rev 10048)
+@@ -97,6 +97,7 @@
+     mutable real time_last_stage;
+     mutable real time_last_stage_ft;
+     mutable int last_stage;
++    mutable int nb_sequential_ft;
+ 
+ public:
+     //#####  Public Build Options  ############################################
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003487.html">[Plearn-commits] r10047 - in trunk/plearn_learners/meta: .	test/MultiClassAdaBoost/.pytest/PL_MultiClassAdaBoost/expected_results/expdir/Split0
+</A></li>
+	<LI>Next message: <A HREF="003489.html">[Plearn-commits] r10049 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3488">[ date ]</a>
+              <a href="thread.html#3488">[ thread ]</a>
+              <a href="subject.html#3488">[ subject ]</a>
+              <a href="author.html#3488">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

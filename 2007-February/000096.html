@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6647 - trunk/plearn/var
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6647%20-%20trunk/plearn/var&In-Reply-To=%3C200702110019.l1B0Jgsa000819%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000095.html">
+   <LINK REL="Next"  HREF="000097.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6647 - trunk/plearn/var</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6647%20-%20trunk/plearn/var&In-Reply-To=%3C200702110019.l1B0Jgsa000819%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6647 - trunk/plearn/var">chapados at mail.berlios.de
+       </A><BR>
+    <I>Sun Feb 11 01:19:42 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000095.html">[Plearn-commits] r6646 - trunk/plearn/math
+</A></li>
+        <LI>Next message: <A HREF="000097.html">[Plearn-commits] r6648 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#96">[ date ]</a>
+              <a href="thread.html#96">[ thread ]</a>
+              <a href="subject.html#96">[ subject ]</a>
+              <a href="author.html#96">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2007-02-11 01:19:42 +0100 (Sun, 11 Feb 2007)
+New Revision: 6647
+
+Modified:
+   trunk/plearn/var/GaussianProcessNLLVariable.cc
+Log:
+Use LAPACK if available (for the cholesky)
+
+Modified: trunk/plearn/var/GaussianProcessNLLVariable.cc
+===================================================================
+--- trunk/plearn/var/GaussianProcessNLLVariable.cc	2007-02-11 00:18:56 UTC (rev 6646)
++++ trunk/plearn/var/GaussianProcessNLLVariable.cc	2007-02-11 00:19:42 UTC (rev 6647)
+@@ -39,6 +39,10 @@
+ #include &lt;plearn/math/TMat_maths.h&gt;
+ #include &quot;GaussianProcessNLLVariable.h&quot;
+ 
++#ifdef USE_BLAS_SPECIALISATIONS
++#include &lt;plearn/math/plapack.h&gt;
++#endif
++
+ namespace PLearn {
+ using namespace std;
+ 
+@@ -205,8 +209,9 @@
+ }
+ 
+ 
+-//#####  fbpropFragments  #####################################################
++//#####  fbpropFragments (NO LAPACK)  #########################################
+ 
++#ifndef USE_BLAS_SPECIALISATIONS
+ void GaussianProcessNLLVariable::fbpropFragments(
+     Kernel* kernel, real noise, const Mat&amp; inputs, const Mat&amp; targets,
+     bool compute_inverse, Mat&amp; gram, Mat&amp; L, Mat&amp; alpha, Mat&amp; inv,
+@@ -246,7 +251,55 @@
+         alpha = alpha.subMatColumns(0, targetsize);
+     }
+ }
++#endif
+ 
++//#####  fbpropFragments (LAPACK)  ############################################
++
++#ifdef USE_BLAS_SPECIALISATIONS
++void GaussianProcessNLLVariable::fbpropFragments(
++    Kernel* kernel, real noise, const Mat&amp; inputs, const Mat&amp; targets,
++    bool compute_inverse, Mat&amp; gram, Mat&amp; L, Mat&amp; alpha, Mat&amp; inv,
++    Vec&amp; tmp_chol, Mat&amp; tmp_rhs)
++{
++    PLASSERT( kernel );
++    PLASSERT( inputs.length() == targets.length() );
++    const int trainlength = inputs.length();
++    const int targetsize  = targets.width();
++    
++    // The RHS matrix (when solving the linear system Gram*Params=RHS) is made
++    // up of two parts: the regression targets themselves, and the identity
++    // matrix if we requested them (for confidence intervals).  After solving
++    // the linear system, set the gram-inverse appropriately.
++    int rhs_width = targetsize + (compute_inverse? trainlength : 0);
++    tmp_rhs.resize(trainlength, rhs_width);
++    tmp_rhs.subMatColumns(0, targetsize) &lt;&lt; targets;
++    if (compute_inverse) {
++        Mat rhs_identity = tmp_rhs.subMatColumns(targetsize, trainlength);
++        identityMatrix(rhs_identity);
++    }
++
++    // Compute Gram Matrix and add weight decay to diagonal
++    kernel-&gt;setDataForKernelMatrix(inputs);
++    gram.resize(trainlength, trainlength);
++    kernel-&gt;computeGramMatrix(gram);
++    addToDiagonal(gram, noise);
++
++    // Compute Cholesky decomposition and solve the linear system.  LAPACK
++    // solves in-place, but luckily we don't need either the Gram and RHS
++    // matrices after solving.  Note that for now we don't bother to create an
++    // appropriately transposed RHS (will come later).
++    lapackCholeskyDecompositionInPlace(gram);
++    lapackCholeskySolveInPlace(gram, tmp_rhs);
++    alpha = tmp_rhs;                         // LAPACK solves in-place
++    L     = gram;                            // LAPACK solves in-place
++    
++    if (compute_inverse) {
++        inv   = alpha.subMatColumns(targetsize, trainlength);
++        alpha = alpha.subMatColumns(0, targetsize);
++    }
++}
++#endif
++
+ } // end of namespace PLearn
+ 
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000095.html">[Plearn-commits] r6646 - trunk/plearn/math
+</A></li>
+	<LI>Next message: <A HREF="000097.html">[Plearn-commits] r6648 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#96">[ date ]</a>
+              <a href="thread.html#96">[ thread ]</a>
+              <a href="subject.html#96">[ subject ]</a>
+              <a href="author.html#96">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

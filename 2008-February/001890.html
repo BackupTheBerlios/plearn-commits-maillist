@@ -1,0 +1,779 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8442 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8442%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200802010446.m114kvrr003142%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="001891.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8442 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8442%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200802010446.m114kvrr003142%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8442 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Fri Feb  1 05:46:57 CET 2008</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="001891.html">[Plearn-commits] r8443 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1890">[ date ]</a>
+              <a href="thread.html#1890">[ thread ]</a>
+              <a href="subject.html#1890">[ subject ]</a>
+              <a href="author.html#1890">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-02-01 05:46:56 +0100 (Fri, 01 Feb 2008)
+New Revision: 8442
+
+Modified:
+   trunk/plearn_learners_experimental/DiscriminativeRBM.cc
+   trunk/plearn_learners_experimental/DiscriminativeRBM.h
+Log:
+Added an option to do multitask learning.
+
+
+Modified: trunk/plearn_learners_experimental/DiscriminativeRBM.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DiscriminativeRBM.cc	2008-01-31 18:46:06 UTC (rev 8441)
++++ trunk/plearn_learners_experimental/DiscriminativeRBM.cc	2008-02-01 04:46:56 UTC (rev 8442)
+@@ -69,7 +69,8 @@
+     target_weights_L2_penalty_factor( 0. ),
+     do_not_use_discriminative_learning( false ),
+     unlabeled_class_index_begin( 0 ),
+-    n_classes_at_test_time( -1 )
++    n_classes_at_test_time( -1 ),
++    n_mean_field_iterations( 1 )
+ 
+ {
+     random_gen = new PRandom();
+@@ -155,12 +156,24 @@
+                   &quot;The classes that will be discriminated are indexed\n&quot;
+                   &quot;from 0 to n_classes_at_test_time.\n&quot;);
+ 
++    declareOption(ol, &quot;n_mean_field_iterations&quot;, 
++                  &amp;DiscriminativeRBM::n_mean_field_iterations,
++                  OptionBase::buildoption,
++                  &quot;Number of mean field iterations for the approximate computation of p(y|x)\n&quot;
++                  &quot;for multitask learning.\n&quot;);
++
+     declareOption(ol, &quot;classification_module&quot;,
+                   &amp;DiscriminativeRBM::classification_module,
+                   OptionBase::learntoption,
+                   &quot;The module computing the class probabilities.\n&quot;
+                   );
+ 
++    declareOption(ol, &quot;multitask_classification_module&quot;,
++                  &amp;DiscriminativeRBM::multitask_classification_module,
++                  OptionBase::learntoption,
++                  &quot;The module approximating the multitask class probabilities.\n&quot;
++                  );
++
+     declareOption(ol, &quot;classification_cost&quot;,
+                   &amp;DiscriminativeRBM::classification_cost,
+                   OptionBase::nosave,
+@@ -208,14 +221,30 @@
+     build_classification_cost();
+ 
+     int current_index = 0;
+-    //cost_names.append(&quot;NLL&quot;);
+-    //nll_cost_index = current_index;
+-    //current_index++;
++    if( targetsize() &gt; 1 )
++    {
++        cost_names.append(&quot;NLL&quot;);
++        nll_cost_index = current_index;
++        current_index++;
++    }
+     
+     cost_names.append(&quot;class_error&quot;);
+     class_cost_index = current_index;
+     current_index++;
+ 
++    if( targetsize() &gt; 1 )
++    {
++        cost_names.append(&quot;hamming_loss&quot;);
++        hamming_loss_index = current_index;
++        current_index++;
++    }
++    
++    for( int i=0; i&lt;targetsize(); i++ )
++    {
++        cost_names.append(&quot;class_error_&quot; + tostring(i));
++        current_index++;
++    }
++
+     PLASSERT( current_index == cost_names.length() );
+ }
+ 
+@@ -249,6 +278,7 @@
+ 
+     input_gradient.resize( inputsize() );
+     class_output.resize( n_classes );
++    before_class_output.resize( n_classes );
+     class_gradient.resize( n_classes );
+ 
+     target_one_hot.resize( n_classes );
+@@ -296,110 +326,177 @@
+ {
+     MODULE_LOG &lt;&lt; &quot;build_classification_cost() called&quot; &lt;&lt; endl;
+ 
+-    if (!classification_module ||
+-        classification_module-&gt;target_layer-&gt;size != n_classes ||
+-        classification_module-&gt;last_layer != hidden_layer || 
+-        classification_module-&gt;previous_to_last != connection )
++    if( targetsize() == 1 )
+     {
+-        // We need to (re-)create 'last_to_target', and thus the classification
+-        // module too.
+-        // This is not systematically done so that the learner can be
+-        // saved and loaded without losing learned parameters.
+-        last_to_target = new RBMMatrixConnection();
+-        last_to_target-&gt;up_size = hidden_layer-&gt;size;
+-        last_to_target-&gt;down_size = n_classes;
+-        last_to_target-&gt;L1_penalty_factor = target_weights_L1_penalty_factor;
+-        last_to_target-&gt;L2_penalty_factor = target_weights_L2_penalty_factor;
+-        last_to_target-&gt;random_gen = random_gen;
+-        last_to_target-&gt;build();
++        if (!classification_module ||
++            classification_module-&gt;target_layer-&gt;size != n_classes ||
++            classification_module-&gt;last_layer != hidden_layer || 
++            classification_module-&gt;previous_to_last != connection )
++        {
++            // We need to (re-)create 'last_to_target', and thus the classification
++            // module too.
++            // This is not systematically done so that the learner can be
++            // saved and loaded without losing learned parameters.
++            last_to_target = new RBMMatrixConnection();
++            last_to_target-&gt;up_size = hidden_layer-&gt;size;
++            last_to_target-&gt;down_size = n_classes;
++            last_to_target-&gt;L1_penalty_factor = target_weights_L1_penalty_factor;
++            last_to_target-&gt;L2_penalty_factor = target_weights_L2_penalty_factor;
++            last_to_target-&gt;random_gen = random_gen;
++            last_to_target-&gt;build();
++            
++            target_layer = new RBMMultinomialLayer();
++            target_layer-&gt;size = n_classes;
++            target_layer-&gt;random_gen = random_gen;
++            target_layer-&gt;build();
++            
++            classification_module = new RBMClassificationModule();
++            classification_module-&gt;previous_to_last = connection;
++            classification_module-&gt;last_layer = hidden_layer;
++            classification_module-&gt;last_to_target = last_to_target;
++            classification_module-&gt;target_layer = 
++                dynamic_cast&lt;RBMMultinomialLayer*&gt;((RBMLayer*) target_layer);
++            classification_module-&gt;random_gen = random_gen;
++            classification_module-&gt;build();
++        }
+ 
+-        target_layer = new RBMMultinomialLayer();
+-        target_layer-&gt;size = n_classes;
+-        target_layer-&gt;random_gen = random_gen;
+-        target_layer-&gt;build();
++        classification_cost = new NLLCostModule();
++        classification_cost-&gt;input_size = n_classes;
++        classification_cost-&gt;target_size = 1;
++        classification_cost-&gt;build();
++        
++        last_to_target = classification_module-&gt;last_to_target;
++        last_to_target_connection = 
++            (RBMMatrixConnection*) classification_module-&gt;last_to_target;
++        target_layer = classification_module-&gt;target_layer;
++        joint_connection = classification_module-&gt;joint_connection;
++        
++        joint_layer = new RBMMixedLayer();
++        joint_layer-&gt;sub_layers.resize( 2 );
++        joint_layer-&gt;sub_layers[0] = input_layer;
++        joint_layer-&gt;sub_layers[1] = target_layer;
++        joint_layer-&gt;random_gen = random_gen;
++        joint_layer-&gt;build();
++        
++        if( unlabeled_class_index_begin != 0 )
++        {
++            unlabeled_class_output.resize( n_classes - unlabeled_class_index_begin );
++            PP&lt;RBMMultinomialLayer&gt; sub_layer = new RBMMultinomialLayer();
++            sub_layer-&gt;bias = target_layer-&gt;bias.subVec(
++                unlabeled_class_index_begin,
++                n_classes - unlabeled_class_index_begin);
++            sub_layer-&gt;size = n_classes - unlabeled_class_index_begin;
++            sub_layer-&gt;random_gen = random_gen;
++            sub_layer-&gt;build();
++            
++            PP&lt;RBMMatrixConnection&gt; sub_connection = new RBMMatrixConnection();
++            sub_connection-&gt;weights = last_to_target-&gt;weights.subMatColumns(
++                unlabeled_class_index_begin,
++                n_classes - unlabeled_class_index_begin);
++            sub_connection-&gt;up_size = hidden_layer-&gt;size;
++            sub_connection-&gt;down_size = n_classes - unlabeled_class_index_begin;
++            sub_connection-&gt;random_gen = random_gen;
++            sub_connection-&gt;build();
++            
++            unlabeled_classification_module = new RBMClassificationModule();
++            unlabeled_classification_module-&gt;previous_to_last = connection;
++            unlabeled_classification_module-&gt;last_layer = hidden_layer;
++            unlabeled_classification_module-&gt;last_to_target = sub_connection;
++            unlabeled_classification_module-&gt;target_layer = sub_layer;
++            unlabeled_classification_module-&gt;random_gen = random_gen;
++            unlabeled_classification_module-&gt;build();
++        }
++        
++        if( n_classes_at_test_time &gt; 0 &amp;&amp; n_classes_at_test_time != n_classes )
++        {
++            test_time_class_output.resize( n_classes_at_test_time ); 
++            PP&lt;RBMMultinomialLayer&gt; sub_layer = new RBMMultinomialLayer();
++            sub_layer-&gt;bias = target_layer-&gt;bias.subVec(
++                0, n_classes_at_test_time );
++            sub_layer-&gt;size = n_classes_at_test_time;
++            sub_layer-&gt;random_gen = random_gen;
++            sub_layer-&gt;build();
++            
++            PP&lt;RBMMatrixConnection&gt; sub_connection = new RBMMatrixConnection();
++            sub_connection-&gt;weights = last_to_target-&gt;weights.subMatColumns(
++                0, n_classes_at_test_time );
++            sub_connection-&gt;up_size = hidden_layer-&gt;size;
++            sub_connection-&gt;down_size = n_classes_at_test_time;
++            sub_connection-&gt;random_gen = random_gen;
++            sub_connection-&gt;build();
+ 
+-        classification_module = new RBMClassificationModule();
+-        classification_module-&gt;previous_to_last = connection;
+-        classification_module-&gt;last_layer = hidden_layer;
+-        classification_module-&gt;last_to_target = last_to_target;
+-        classification_module-&gt;target_layer = target_layer;
+-        classification_module-&gt;random_gen = random_gen;
+-        classification_module-&gt;build();
++            test_time_classification_module = new RBMClassificationModule();
++            test_time_classification_module-&gt;previous_to_last = connection;
++            test_time_classification_module-&gt;last_layer = hidden_layer;
++            test_time_classification_module-&gt;last_to_target = sub_connection;
++            test_time_classification_module-&gt;target_layer = sub_layer;
++            test_time_classification_module-&gt;random_gen = random_gen;
++            test_time_classification_module-&gt;build();
++        }
+     }
+-
+-    classification_cost = new NLLCostModule();
+-    classification_cost-&gt;input_size = n_classes;
+-    classification_cost-&gt;target_size = 1;
+-    classification_cost-&gt;build();
+-
+-    last_to_target = classification_module-&gt;last_to_target;
+-    last_to_target_connection = 
+-        (RBMMatrixConnection*) classification_module-&gt;last_to_target;
+-    target_layer = classification_module-&gt;target_layer;
+-    joint_connection = classification_module-&gt;joint_connection;
+-
+-    joint_layer = new RBMMixedLayer();
+-    joint_layer-&gt;sub_layers.resize( 2 );
+-    joint_layer-&gt;sub_layers[0] = input_layer;
+-    joint_layer-&gt;sub_layers[1] = target_layer;
+-    joint_layer-&gt;random_gen = random_gen;
+-    joint_layer-&gt;build();
+-
+-    if( unlabeled_class_index_begin != 0 )
++    else
+     {
+-        unlabeled_class_output.resize( n_classes - unlabeled_class_index_begin );
+-        PP&lt;RBMMultinomialLayer&gt; sub_layer = new RBMMultinomialLayer();
+-        sub_layer-&gt;bias = target_layer-&gt;bias.subVec(
+-            unlabeled_class_index_begin,
+-            n_classes - unlabeled_class_index_begin);
+-        sub_layer-&gt;size = n_classes - unlabeled_class_index_begin;
+-        sub_layer-&gt;random_gen = random_gen;
+-        sub_layer-&gt;build();
++        if( n_classes != targetsize() )
++            PLERROR(&quot;In DiscriminativeRBM::build_classification_cost(): &quot;
++                    &quot;n_classes should be equal to targetsize()&quot;);
++        
++        // Multitask setting
++        if (!multitask_classification_module ||
++            multitask_classification_module-&gt;target_layer-&gt;size != n_classes ||
++            multitask_classification_module-&gt;last_layer != hidden_layer || 
++            multitask_classification_module-&gt;previous_to_last != connection )
++        {
++            // We need to (re-)create 'last_to_target', and thus the 
++            // multitask_classification module too.
++            // This is not systematically done so that the learner can be
++            // saved and loaded without losing learned parameters.
++            last_to_target = new RBMMatrixConnection();
++            last_to_target-&gt;up_size = hidden_layer-&gt;size;
++            last_to_target-&gt;down_size = n_classes;
++            last_to_target-&gt;L1_penalty_factor = target_weights_L1_penalty_factor;
++            last_to_target-&gt;L2_penalty_factor = target_weights_L2_penalty_factor;
++            last_to_target-&gt;random_gen = random_gen;
++            last_to_target-&gt;build();
++            
++            target_layer = new RBMBinomialLayer();
++            target_layer-&gt;size = n_classes;
++            target_layer-&gt;random_gen = random_gen;
++            target_layer-&gt;build();
++            
++            multitask_classification_module = 
++                new RBMMultitaskClassificationModule();
++            multitask_classification_module-&gt;previous_to_last = connection;
++            multitask_classification_module-&gt;last_layer = hidden_layer;
++            multitask_classification_module-&gt;last_to_target = last_to_target;
++            multitask_classification_module-&gt;target_layer = 
++                dynamic_cast&lt;RBMBinomialLayer*&gt;((RBMLayer*) target_layer);
++            multitask_classification_module-&gt;fprop_outputs_activation = true;
++            multitask_classification_module-&gt;n_mean_field_iterations = n_mean_field_iterations;
++            multitask_classification_module-&gt;random_gen = random_gen;
++            multitask_classification_module-&gt;build();
++        }
+ 
+-        PP&lt;RBMMatrixConnection&gt; sub_connection = new RBMMatrixConnection();
+-        sub_connection-&gt;weights = last_to_target-&gt;weights.subMatColumns(
+-            unlabeled_class_index_begin,
+-            n_classes - unlabeled_class_index_begin);
+-        sub_connection-&gt;up_size = hidden_layer-&gt;size;
+-        sub_connection-&gt;down_size = n_classes - unlabeled_class_index_begin;
+-        sub_connection-&gt;random_gen = random_gen;
+-        sub_connection-&gt;build();
+-
+-        unlabeled_classification_module = new RBMClassificationModule();
+-        unlabeled_classification_module-&gt;previous_to_last = connection;
+-        unlabeled_classification_module-&gt;last_layer = hidden_layer;
+-        unlabeled_classification_module-&gt;last_to_target = sub_connection;
+-        unlabeled_classification_module-&gt;target_layer = sub_layer;
+-        unlabeled_classification_module-&gt;random_gen = random_gen;
+-        unlabeled_classification_module-&gt;build();
++        last_to_target = multitask_classification_module-&gt;last_to_target;
++        last_to_target_connection = 
++            (RBMMatrixConnection*) multitask_classification_module-&gt;last_to_target;
++        target_layer = multitask_classification_module-&gt;target_layer;
++        joint_connection = multitask_classification_module-&gt;joint_connection;
++        
++        joint_layer = new RBMMixedLayer();
++        joint_layer-&gt;sub_layers.resize( 2 );
++        joint_layer-&gt;sub_layers[0] = input_layer;
++        joint_layer-&gt;sub_layers[1] = target_layer;
++        joint_layer-&gt;random_gen = random_gen;
++        joint_layer-&gt;build();
++        
++        if( unlabeled_class_index_begin != 0 )
++            PLERROR(&quot;In DiscriminativeRBM::build_classification_cost(): &quot;
++                &quot;can't use unlabeled_class_index_begin != 0 in multitask setting&quot;);
++        
++        if( n_classes_at_test_time &gt; 0 &amp;&amp; n_classes_at_test_time != n_classes )
++            PLERROR(&quot;In DiscriminativeRBM::build_classification_cost(): &quot;
++                &quot;can't use n_classes_at_test_time in multitask setting&quot;);
+     }
+-
+-    if( n_classes_at_test_time &gt; 0 &amp;&amp; n_classes_at_test_time != n_classes )
+-    {
+-        test_time_class_output.resize( n_classes_at_test_time ); 
+-        PP&lt;RBMMultinomialLayer&gt; sub_layer = new RBMMultinomialLayer();
+-        sub_layer-&gt;bias = target_layer-&gt;bias.subVec(
+-            0, n_classes_at_test_time );
+-        sub_layer-&gt;size = n_classes_at_test_time;
+-        sub_layer-&gt;random_gen = random_gen;
+-        sub_layer-&gt;build();
+-
+-        PP&lt;RBMMatrixConnection&gt; sub_connection = new RBMMatrixConnection();
+-        sub_connection-&gt;weights = last_to_target-&gt;weights.subMatColumns(
+-            0, n_classes_at_test_time );
+-        sub_connection-&gt;up_size = hidden_layer-&gt;size;
+-        sub_connection-&gt;down_size = n_classes_at_test_time;
+-        sub_connection-&gt;random_gen = random_gen;
+-        sub_connection-&gt;build();
+-
+-        test_time_classification_module = new RBMClassificationModule();
+-        test_time_classification_module-&gt;previous_to_last = connection;
+-        test_time_classification_module-&gt;last_layer = hidden_layer;
+-        test_time_classification_module-&gt;last_to_target = sub_connection;
+-        test_time_classification_module-&gt;target_layer = sub_layer;
+-        test_time_classification_module-&gt;random_gen = random_gen;
+-        test_time_classification_module-&gt;build();
+-    }
+ }
+ 
+ ///////////
+@@ -422,6 +519,7 @@
+     deepCopyField(hidden_layer, copies);
+     deepCopyField(connection, copies);
+     deepCopyField(classification_module, copies);
++    deepCopyField(multitask_classification_module, copies);
+     deepCopyField(cost_names, copies);
+     deepCopyField(classification_cost, copies);
+     deepCopyField(joint_layer, copies);
+@@ -446,6 +544,7 @@
+     deepCopyField(semi_sup_neg_up_val, copies);
+     deepCopyField(input_gradient, copies);
+     deepCopyField(class_output, copies);
++    deepCopyField(before_class_output, copies);
+     deepCopyField(unlabeled_class_output, copies);
+     deepCopyField(test_time_class_output, copies);
+     deepCopyField(class_gradient, copies);
+@@ -470,8 +569,15 @@
+     input_layer-&gt;forget();
+     hidden_layer-&gt;forget();
+     connection-&gt;forget();
+-    classification_cost-&gt;forget();
+-    classification_module-&gt;forget();
++    if( targetsize() &gt; 1 )
++    {
++        multitask_classification_module-&gt;forget();
++    }
++    else
++    {
++        classification_cost-&gt;forget();
++        classification_module-&gt;forget();
++    }
+ }
+ 
+ ///////////
+@@ -523,16 +629,26 @@
+         if( pb )
+             pb-&gt;update( stage - init_stage + 1 );
+ 
+-        // Get CD stats...
+-        target_one_hot.clear();
+-        if( !is_missing(target[0]) )
++        if( targetsize() == 1 )
+         {
+-            target_index = (int)round( target[0] );
+-            target_one_hot[ target_index ] = 1;
++            target_one_hot.clear();
++            if( !is_missing(target[0]) )
++            {
++                target_index = (int)round( target[0] );
++                target_one_hot[ target_index ] = 1;
++            }
+         }
++        else
++        {
++            target_one_hot &lt;&lt; target;
++        }
++
++        // Get CD stats...
++
+         // ... for discriminative learning
+         if( !do_not_use_discriminative_learning &amp;&amp; 
+-            !use_exact_disc_gradient &amp;&amp; !is_missing(target[0]) )
++            !use_exact_disc_gradient &amp;&amp; 
++            ( !is_missing(target[0]) || targetsize() &gt; 1 ) )
+         {
+             // Positive phase
+ 
+@@ -567,7 +683,8 @@
+         }
+ 
+         // ... for generative learning        
+-        if( !is_missing(target[0]) &amp;&amp; gen_learning_weight &gt; 0 )
++        if( ( !is_missing(target[0]) || targetsize() &gt; 1 ) &amp;&amp; 
++            gen_learning_weight &gt; 0 )
+         {
+             // Positive phase
+             if( !use_exact_disc_gradient &amp;&amp; !do_not_use_discriminative_learning )
+@@ -631,7 +748,11 @@
+ 
+         }
+ 
+-        // ... and for semi-supervised learning        
++        // ... and for semi-supervised learning
++        if( targetsize() &gt; 1 &amp;&amp; semi_sup_learning_weight &gt; 0 )
++            PLERROR(&quot;DiscriminativeRBM::train(): semi-supervised learning &quot;
++                &quot;is not implemented yet for multi-task learning.&quot;);
++
+         if( is_missing(target[0]) &amp;&amp; semi_sup_learning_weight &gt; 0 )
+         {
+             // Positive phase
+@@ -686,25 +807,82 @@
+         // Get gradient and update
+ 
+         if( !do_not_use_discriminative_learning &amp;&amp; 
+-            use_exact_disc_gradient &amp;&amp; !is_missing(target[0]) )
++            use_exact_disc_gradient &amp;&amp; 
++            ( !is_missing(target[0]) || targetsize() &gt; 1 ) )
+         {
+-            classification_module-&gt;fprop( input, class_output );
+-            // This doesn't work. gcc bug?
+-            //classification_cost-&gt;fprop( class_output, target, nll_cost );
+-            classification_cost-&gt;CostModule::fprop( class_output, target,
+-                                                    nll_cost );
++            if( targetsize() == 1)
++            {
++                classification_module-&gt;fprop( input, class_output );
++                // This doesn't work. gcc bug?
++                //classification_cost-&gt;fprop( class_output, target, nll_cost );
++                classification_cost-&gt;CostModule::fprop( class_output, target,
++                                                        nll_cost );
++                
++                class_error =  ( argmax(class_output) == target_index ) ? 0: 1;  
++                //train_costs[nll_cost_index] = nll_cost;
++                train_costs[class_cost_index] = class_error;
++                
++                classification_cost-&gt;bpropUpdate( class_output, target, nll_cost,
++                                                  class_gradient );
++                
++                classification_module-&gt;bpropUpdate( input,  class_output,
++                                                    input_gradient, class_gradient );
++                
++                train_stats-&gt;update( train_costs );
++            }
++            else
++            {
++                multitask_classification_module-&gt;fprop( input, before_class_output );
++                // This doesn't work. gcc bug?
++                //multitask_classification_cost-&gt;fprop( class_output, target, 
++                //                                      nll_cost );
++                //multitask_classification_cost-&gt;CostModule::fprop( class_output, 
++                //                                                  target,
++                //                                                  nll_cost );
++                
++                target_layer-&gt;fprop( before_class_output, class_output );
++                target_layer-&gt;activation &lt;&lt; before_class_output;
++                target_layer-&gt;activation += target_layer-&gt;bias;
++                target_layer-&gt;setExpectation( class_output );
++                nll_cost = target_layer-&gt;fpropNLL( target );
++                
++                train_costs.clear();
++                train_costs[nll_cost_index] = nll_cost;
+ 
+-            class_error =  ( argmax(class_output) == target_index ) ? 0: 1;  
+-            //train_costs[nll_cost_index] = nll_cost;
+-            train_costs[class_cost_index] = class_error;
++                for( int task=0; task&lt;targetsize(); task++)
++                {
++                    if( class_output[task] &gt; 0.5 &amp;&amp; target[task] != 1)
++                    {
++                        train_costs[ hamming_loss_index ]++;
++                        train_costs[ hamming_loss_index + task + 1 ] = 1;
++                    }
++                    
++                    if( class_output[task] &lt;= 0.5 &amp;&amp; target[task] != 0)
++                    {
++                        train_costs[ hamming_loss_index ]++;
++                        train_costs[ hamming_loss_index + task + 1 ] = 1;
++                    }
++                }
+ 
+-            classification_cost-&gt;bpropUpdate( class_output, target, nll_cost,
+-                                              class_gradient );
++                if( train_costs[ hamming_loss_index ] &gt; 0 )
++                    train_costs[ class_cost_index ] = 1;
+ 
+-            classification_module-&gt;bpropUpdate( input,  class_output,
+-                                                input_gradient, class_gradient );
++                train_costs[ hamming_loss_index ] /= targetsize();
++                
++                //multitask_classification_cost-&gt;bpropUpdate( 
++                //    class_output, target, nll_cost,
++                //    class_gradient );
++                
++                class_gradient.clear();
++                target_layer-&gt;bpropNLL( target, nll_cost, class_gradient );
++                target_layer-&gt;update( class_gradient );
+ 
+-            train_stats-&gt;update( train_costs );
++                multitask_classification_module-&gt;bpropUpdate( 
++                    input,  before_class_output,
++                    input_gradient, class_gradient );
++                
++                train_stats-&gt;update( train_costs );
++            }
+         }
+ 
+         // CD Updates
+@@ -751,15 +929,23 @@
+ {
+     // Compute the output from the input.
+     output.resize(0);
+-    if( test_time_classification_module )
++    if( targetsize() == 1 )
+     {
+-        test_time_classification_module-&gt;fprop( input,
+-                                                output );
++        if( test_time_classification_module )
++        {
++            test_time_classification_module-&gt;fprop( input,
++                                                    output );
++        }
++        else
++        {
++            classification_module-&gt;fprop( input,
++                                          output );
++        }
+     }
+     else
+     {
+-        classification_module-&gt;fprop( input,
+-                                      output );
++        multitask_classification_module-&gt;fprop( input,
++                                                output );
+     }
+ }
+ 
+@@ -771,14 +957,55 @@
+     // Compute the costs from *already* computed output.
+     costs.resize( cost_names.length() );
+     costs.fill( MISSING_VALUE );
+-    
+-    if( !is_missing(target[0]) )
++
++    if( targetsize() == 1 )
+     {
+-        //classification_cost-&gt;fprop( output, target, costs[nll_cost_index] );
+-        //classification_cost-&gt;CostModule::fprop( output, target, costs[nll_cost_index] );
+-        costs[class_cost_index] =
+-            (argmax(output) == (int) round(target[0]))? 0 : 1;
++        if( !is_missing(target[0]) )
++        {
++            //classification_cost-&gt;fprop( output, target, costs[nll_cost_index] );
++            //classification_cost-&gt;CostModule::fprop( output, target, costs[nll_cost_index] );
++            costs[class_cost_index] =
++                (argmax(output) == (int) round(target[0]))? 0 : 1;
++        }
+     }
++    else
++    {
++        costs.clear();
++
++        // This doesn't work. gcc bug?
++        //multitask_classification_cost-&gt;fprop( output, target, 
++        //                                      costs[nll_cost_index] );
++        //multitask_classification_cost-&gt;CostModule::fprop( output, 
++        //                                                  target,
++        //                                                  nll_cost );
++
++        target_layer-&gt;fprop( output, class_output );
++        target_layer-&gt;activation &lt;&lt; output;
++        target_layer-&gt;activation += target_layer-&gt;bias;
++        target_layer-&gt;setExpectation( class_output );
++        costs[ nll_cost_index ] = target_layer-&gt;fpropNLL( target );
++
++
++        for( int task=0; task&lt;targetsize(); task++)
++        {
++            if( class_output[task] &gt; 0.5 &amp;&amp; target[task] != 1)
++            {
++                costs[ hamming_loss_index ]++;
++                costs[ hamming_loss_index + task + 1 ] = 1;
++            }
++            
++            if( class_output[task] &lt;= 0.5 &amp;&amp; target[task] != 0)
++            {
++                costs[ hamming_loss_index ]++;
++                costs[ hamming_loss_index + task + 1 ] = 1;
++            }
++        }
++        
++        if( costs[ hamming_loss_index ] &gt; 0 )
++            costs[ class_cost_index ] = 1;
++        
++        costs[ hamming_loss_index ] /= targetsize();
++    }
+ }
+ 
+ TVec&lt;string&gt; DiscriminativeRBM::getTestCostNames() const
+@@ -805,7 +1032,10 @@
+     connection-&gt;setLearningRate( the_learning_rate );
+     target_layer-&gt;setLearningRate( the_learning_rate );
+     last_to_target-&gt;setLearningRate( the_learning_rate );
+-    classification_cost-&gt;setLearningRate( the_learning_rate );
++    if( targetsize() == 1)
++        classification_cost-&gt;setLearningRate( the_learning_rate );
++    //else
++    //    multitask_classification_cost-&gt;setLearningRate( the_learning_rate );
+     //classification_module-&gt;setLearningRate( the_learning_rate );
+ }
+ 
+
+Modified: trunk/plearn_learners_experimental/DiscriminativeRBM.h
+===================================================================
+--- trunk/plearn_learners_experimental/DiscriminativeRBM.h	2008-01-31 18:46:06 UTC (rev 8441)
++++ trunk/plearn_learners_experimental/DiscriminativeRBM.h	2008-02-01 04:46:56 UTC (rev 8442)
+@@ -42,8 +42,10 @@
+ #include &lt;plearn_learners/generic/PLearner.h&gt;
+ #include &lt;plearn_learners/online/OnlineLearningModule.h&gt;
+ #include &lt;plearn_learners/online/CostModule.h&gt;
++#include &lt;plearn_learners/online/CrossEntropyCostModule.h&gt;
+ #include &lt;plearn_learners/online/NLLCostModule.h&gt;
+ #include &lt;plearn_learners/online/RBMClassificationModule.h&gt;
++#include &lt;plearn_learners/online/RBMMultitaskClassificationModule.h&gt;
+ #include &lt;plearn_learners/online/RBMLayer.h&gt;
+ #include &lt;plearn_learners/online/RBMMixedLayer.h&gt;
+ #include &lt;plearn_learners/online/RBMConnection.h&gt;
+@@ -114,10 +116,18 @@
+     //! from 0 to n_classes_at_test_time.
+     int n_classes_at_test_time;
+ 
++    //! Number of mean field iterations for the approximate computation of p(y|x)
++    //! for multitask learning.
++    int n_mean_field_iterations;
++
+     //#####  Public Learnt Options  ###########################################
+     //! The module computing the probabilities of the different classes.
+     PP&lt;RBMClassificationModule&gt; classification_module;
+ 
++    //! The module for approximate computation of the probabilities 
++    //! of the different classes.
++    PP&lt;RBMMultitaskClassificationModule&gt; multitask_classification_module;
++
+     //! The computed cost names
+     TVec&lt;string&gt; cost_names;
+ 
+@@ -222,7 +232,7 @@
+ 
+     //! Part of the RBM visible layer corresponding to the target
+     //! (pointer to classification_module-&gt;target_layer)
+-    PP&lt;RBMMultinomialLayer&gt; target_layer;
++    PP&lt;RBMLayer&gt; target_layer;
+ 
+     //! Classification module for when unlabeled_class_index_begin != 0
+     PP&lt;RBMClassificationModule&gt; unlabeled_classification_module;
+@@ -251,6 +261,7 @@
+     //! Temporary variables for gradient descent
+     mutable Vec input_gradient;
+     mutable Vec class_output;
++    mutable Vec before_class_output;
+     mutable Vec unlabeled_class_output;
+     mutable Vec test_time_class_output;
+     mutable Vec class_gradient;
+@@ -261,6 +272,9 @@
+     //! Keeps the index of the class_error cost in train_costs
+     int class_cost_index;
+ 
++    //! Keeps the index of the hamming_loss cost in train_costs
++    int hamming_loss_index;
++
+ protected:
+     //#####  Protected Member Functions  ######################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="001891.html">[Plearn-commits] r8443 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1890">[ date ]</a>
+              <a href="thread.html#1890">[ thread ]</a>
+              <a href="subject.html#1890">[ subject ]</a>
+              <a href="author.html#1890">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

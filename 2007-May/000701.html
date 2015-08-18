@@ -1,0 +1,415 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7252 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7252%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705222004.l4MK4Ndw003234%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000700.html">
+   <LINK REL="Next"  HREF="000702.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7252 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7252%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705222004.l4MK4Ndw003234%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7252 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue May 22 22:04:23 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000700.html">[Plearn-commits] r7251 - trunk/scripts/Skeletons
+</A></li>
+        <LI>Next message: <A HREF="000702.html">[Plearn-commits] r7253 - trunk/scripts/Skeletons
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#701">[ date ]</a>
+              <a href="thread.html#701">[ thread ]</a>
+              <a href="subject.html#701">[ subject ]</a>
+              <a href="author.html#701">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-05-22 22:04:22 +0200 (Tue, 22 May 2007)
+New Revision: 7252
+
+Modified:
+   trunk/plearn_learners/online/ForwardModule.cc
+   trunk/plearn_learners/online/ForwardModule.h
+Log:
+- Can now forward to a single module among a list of modules (warning: this change is not backward-compatible)
+- Removed non virtual methods
+
+
+Modified: trunk/plearn_learners/online/ForwardModule.cc
+===================================================================
+--- trunk/plearn_learners/online/ForwardModule.cc	2007-05-22 19:51:21 UTC (rev 7251)
++++ trunk/plearn_learners/online/ForwardModule.cc	2007-05-22 20:04:22 UTC (rev 7252)
+@@ -45,16 +45,18 @@
+ 
+ PLEARN_IMPLEMENT_OBJECT(
+     ForwardModule,
+-    &quot;Module to refer to a module that may be used in different places of a network.&quot;,
+-    &quot;Module to refer to a module that may be used in different places of a network.\n&quot;
+-    &quot;This wrapper allows to duplicate a same module in a network.&quot;);
++    &quot;Module that simply forwards all calls to an underlying module.&quot;,
++    &quot;The underlying module may be chosen among a list of different modules,\n&quot;
++    &quot;through the option 'forward_to'.\n&quot;
++);
+ 
+ ///////////////////
+ // ForwardModule //
+ ///////////////////
+ ForwardModule::ForwardModule(const string&amp; the_name, bool call_build_):
+-               inherited(the_name.empty() &amp;&amp; call_build_ ? classname() : the_name,
+-                         call_build_)
++    inherited(the_name.empty() &amp;&amp; call_build_ ? classname() : the_name,
++              call_build_),
++    current(-1)
+ {
+     if (call_build_)
+         build_();
+@@ -63,21 +65,42 @@
+ void ForwardModule::declareOptions(OptionList&amp; ol)
+ {
+ 
+-    declareOption(ol, &quot;module&quot;, &amp;ForwardModule::module,
++    declareOption(ol, &quot;modules&quot;, &amp;ForwardModule::modules,
+                   OptionBase::buildoption,
+-        &quot;The module pointed by this module.&quot;);
++        &quot;The list of modules that can be used to forward calls.&quot;);
+ 
++    declareOption(ol, &quot;forward_to&quot;, &amp;ForwardModule::forward_to,
++                  OptionBase::buildoption,
++        &quot;Name of the module currently being used. If empty, the first module\n&quot;
++        &quot;in 'modules' will be used.&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ 
+ }
+ 
++////////////
++// build_ //
++////////////
+ void ForwardModule::build_()
+ {
+-    module-&gt;build();
++    current = -1;
++    if (forward_to.empty())
++        current = 0;
++    else {
++        for (int i = 0; i &lt; modules.length(); i++) {
++            if (modules[i]-&gt;name == forward_to) {
++                current = i;
++                break;
++            }
++        }
++    }
++    PLCHECK( current &gt;= 0 );
+ }
+ 
+-// ### Nothing to add here, simply calls build_
++///////////
++// build //
++///////////
+ void ForwardModule::build()
+ {
+     inherited::build();
+@@ -85,11 +108,14 @@
+ }
+ 
+ 
++/////////////////////////////////
++// makeDeepCopyFromShallowCopy //
++/////////////////////////////////
+ void ForwardModule::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+-    deepCopyField(module,	copies);
++    deepCopyField(modules, copies);
+ }
+ 
+ ///////////
+@@ -97,40 +123,24 @@
+ ///////////
+ void ForwardModule::fprop(const TVec&lt;Mat*&gt;&amp; ports_value)
+ {
+-    //PLASSERT( ports_value.length() == module-&gt;nPorts() );
+- 
+-    module-&gt;fprop(ports_value);
++    modules[current]-&gt;fprop(ports_value);
+ }
+ 
+-/////////////////
+-// bpropUpdate //
+-/////////////////
+-
+-
++////////////////////
++// bpropAccUpdate //
++////////////////////
+ void ForwardModule::bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
+-                                          const TVec&lt;Mat*&gt;&amp; ports_gradient)
++                                   const TVec&lt;Mat*&gt;&amp; ports_gradient)
+ {
+-    //PLASSERT( ports_value.length() == module-&gt;nPorts() &amp;&amp; ports_gradient.length() == module-&gt;nPorts());
+-	    
+-    module-&gt;bpropAccUpdate(ports_value, ports_gradient);
+-	    
++    modules[current]-&gt;bpropAccUpdate(ports_value, ports_gradient);
+ }
+ 
+-// This version is similar to bpropAccUpdate but it does not accumulate
+-// in the input ports gradient 
+-void ForwardModule::bpropUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
+-                                       const TVec&lt;Mat*&gt;&amp; ports_gradient)
+-{
+-    module-&gt;bpropUpdate(ports_value, ports_gradient);
+-}
+-
+-
+ ////////////
+ // forget //
+ ////////////
+ void ForwardModule::forget()
+ {
+-     module-&gt;forget();
++     modules[current]-&gt;forget();
+ }
+ 
+ //////////////
+@@ -138,104 +148,41 @@
+ //////////////
+ void ForwardModule::finalize()
+ {
+-     module-&gt;finalize();
++     modules[current]-&gt;finalize();
+ }
+ 
+-
+ //////////////////////
+ // bpropDoesNothing //
+ //////////////////////
+-// the default implementation returns false
+ bool ForwardModule::bpropDoesNothing()
+ {
+-     return module-&gt;bpropDoesNothing();
++     return modules[current]-&gt;bpropDoesNothing();
+ }
+ 
+-
+ /////////////////////
+ // setLearningRate //
+ /////////////////////
+-// The default implementation raises a warning and does not do anything.
+ void ForwardModule::setLearningRate(real dynamic_learning_rate)
+ {
+-     module-&gt;setLearningRate(dynamic_learning_rate);
++     modules[current]-&gt;setLearningRate(dynamic_learning_rate);
+ }
+ 
+-
+ ////////////////////////
+ // getPortDescription //
+ ////////////////////////
+-// The default implementation is probably appropriate
+ TVec&lt;string&gt; ForwardModule::getPortDescription(const string&amp; port)
+ {
+-    return module-&gt;getPortDescription(port);
++    return modules[current]-&gt;getPortDescription(port);
+ } 
+ 
+-//////////////////
+-// getPortIndex //
+-//////////////////
+-// The default implementation is probably appropriate
+-int ForwardModule::getPortIndex(const string&amp; port)
+-{
+-    return module-&gt;getPortIndex(port);
+-}
+-
+-
+-/////////////////
+-// getPortName //
+-/////////////////
+-// The default implementation is probably appropriate
+-string ForwardModule::getPortName(int i)
+-{
+-       return module-&gt;getPortName(i);
+-}
+-
+-
+ //////////////
+ // getPorts //
+ //////////////
+ const TVec&lt;string&gt;&amp; ForwardModule::getPorts() {
+-      return module-&gt;getPorts();
++      return modules[current]-&gt;getPorts();
+ }
+ 
+-//////////////////
+-// getPortSizes //
+-//////////////////
+-const TMat&lt;int&gt;&amp; ForwardModule::getPortSizes() {
+-      return module-&gt;getPortSizes();
+ }
+-  
+-
+-///////////////////
+-// getPortLength //
+-///////////////////
+-// The default implementation is probably appropriate
+-int ForwardModule::getPortLength(const string&amp; port)
+-{
+-    return module-&gt;getPortLength(port);
+-}
+-
+-
+-//////////////////
+-// getPortWidth //
+-//////////////////
+-// The default implementation is probably appropriate
+-int ForwardModule::getPortWidth(const string&amp; port)
+-{
+-    return module-&gt;getPortWidth(port);
+-}
+-
+-////////////
+-// nPorts //
+-////////////
+-// The default implementation is probably appropriate
+-int ForwardModule::nPorts()
+-{
+-    return module-&gt;nPorts();
+-}
+-
+-
+-}
+ // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/online/ForwardModule.h
+===================================================================
+--- trunk/plearn_learners/online/ForwardModule.h	2007-05-22 19:51:21 UTC (rev 7251)
++++ trunk/plearn_learners/online/ForwardModule.h	2007-05-22 20:04:22 UTC (rev 7252)
+@@ -44,35 +44,21 @@
+ 
+ namespace PLearn {
+ 
+-/**
+- * The first sentence should be a BRIEF DESCRIPTION of what the class does.
+- * Place the rest of the class programmer documentation here.  Doxygen supports
+- * Javadoc-style comments.  See <A HREF="http://www.doxygen.org/manual.html">http://www.doxygen.org/manual.html</A>
+- *
+- * @todo Write class to-do's here if there are any.
+- *
+- * @deprecated Write deprecated stuff here if there is any.  Indicate what else
+- * should be used instead.
+- */
+ class ForwardModule : public OnlineLearningModule
+ {
+     typedef OnlineLearningModule inherited;
+ 
+ public:
++
+     //#####  Public Build Options  ############################################
+ 
+-    //! ### declare public option fields (such as build options) here
+-    //! Start your comments with Doxygen-compatible comments such as //!
+-    
+-    PP&lt;OnlineLearningModule&gt; module;
+-    string name;
++    TVec&lt; PP&lt;OnlineLearningModule&gt; &gt; modules;
++    string forward_to;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+-    //! Default constructor
+-    // ### Make sure the implementation in the .cc
+-    // ### initializes all fields to reasonable default values.
++    //! Constructor.
+     ForwardModule(const string&amp; the_name = &quot;&quot;, bool call_build_ = false);
+ 
+     // Your other public member functions go here
+@@ -115,11 +101,6 @@
+     virtual void bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
+                                 const TVec&lt;Mat*&gt;&amp; ports_gradient);
+ 
+-
+-    virtual void bpropUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
+-                             const TVec&lt;Mat*&gt;&amp; ports_gradient);
+-
+-
+     //! Reset the parameters to the state they would be BEFORE starting
+     //! training.  Note that this method is necessarily called from
+     //! build().
+@@ -156,23 +137,6 @@
+     //!           are respectively 'input' and 'output')
+     virtual const TMat&lt;int&gt;&amp; getPortSizes();
+ 
+-    //! Return the width of a specific port.
+-    int getPortWidth(const string&amp; port);
+-
+-    //! Return the length of a specific port.
+-    int getPortLength(const string&amp; port);
+-
+-    //! Return the number of ports in the module.
+-    int nPorts();
+-
+-    //! Return the index (as in the list of ports returned by getPorts()) of
+-    //! a given port.
+-    //! If 'port' does not exist, -1 is returned.
+-    int getPortIndex(const string&amp; port);
+-
+-    //! Return name of the i-th port.
+-    string getPortName(int i);
+-
+     //! Return a list of strings, that represents the description of the values
+     //! taken by a given port: the i-th string is the name for the i-th column
+     //! value computed in 'port'.
+@@ -195,6 +159,10 @@
+ 
+ 
+ protected:
++
++    //! Index of the module currently being used in the 'modules' list.
++    int current;
++    
+     //#####  Protected Member Functions  ######################################
+ 
+     //! Declares the class options.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000700.html">[Plearn-commits] r7251 - trunk/scripts/Skeletons
+</A></li>
+	<LI>Next message: <A HREF="000702.html">[Plearn-commits] r7253 - trunk/scripts/Skeletons
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#701">[ date ]</a>
+              <a href="thread.html#701">[ thread ]</a>
+              <a href="subject.html#701">[ subject ]</a>
+              <a href="author.html#701">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

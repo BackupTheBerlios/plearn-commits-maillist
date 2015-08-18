@@ -1,0 +1,2897 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7282 - trunk/plearn_learners/online/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7282%20-%20trunk/plearn_learners/online/EXPERIMENTAL&In-Reply-To=%3C200705241355.l4ODttXQ023948%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000730.html">
+   <LINK REL="Next"  HREF="000732.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7282 - trunk/plearn_learners/online/EXPERIMENTAL</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7282%20-%20trunk/plearn_learners/online/EXPERIMENTAL&In-Reply-To=%3C200705241355.l4ODttXQ023948%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7282 - trunk/plearn_learners/online/EXPERIMENTAL">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Thu May 24 15:55:55 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000730.html">[Plearn-commits] r7281 - trunk/scripts
+</A></li>
+        <LI>Next message: <A HREF="000732.html">[Plearn-commits] r7283 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#731">[ date ]</a>
+              <a href="thread.html#731">[ thread ]</a>
+              <a href="subject.html#731">[ subject ]</a>
+              <a href="author.html#731">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-05-24 15:55:54 +0200 (Thu, 24 May 2007)
+New Revision: 7282
+
+Added:
+   trunk/plearn_learners/online/EXPERIMENTAL/SubsamplingDBN.cc
+   trunk/plearn_learners/online/EXPERIMENTAL/SubsamplingDBN.h
+Log:
+First attempt for a DBN with subsampling layers.  It will probably be
+use for testing only because NetworkModule and ModuleLearner can do the
+same job.
+
+
+Added: trunk/plearn_learners/online/EXPERIMENTAL/SubsamplingDBN.cc
+===================================================================
+--- trunk/plearn_learners/online/EXPERIMENTAL/SubsamplingDBN.cc	2007-05-24 13:55:05 UTC (rev 7281)
++++ trunk/plearn_learners/online/EXPERIMENTAL/SubsamplingDBN.cc	2007-05-24 13:55:54 UTC (rev 7282)
+@@ -0,0 +1,2355 @@
++// -*- C++ -*-
++
++// SubsamplingDBN.cc
++//
++// Copyright (C) 2006 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file SubsamplingDBN.cc */
++
++
++#define PL_LOG_MODULE_NAME &quot;SubsamplingDBN&quot;
++#include &lt;plearn/io/pl_log.h&gt;
++
++#include &quot;SubsamplingDBN.h&quot;
++
++#define minibatch_hack 0 // Do we force the minibatch setting? (debug hack)
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    SubsamplingDBN,
++    &quot;Neural network, learned layer-wise in a greedy fashion.&quot;,
++    &quot;This version supports different unit types, different connection types,\n&quot;
++    &quot;and different cost functions, including the NLL in classification.\n&quot;);
++
++///////////////////
++// SubsamplingDBN //
++///////////////////
++SubsamplingDBN::SubsamplingDBN() :
++    cd_learning_rate( 0. ),
++    grad_learning_rate( 0. ),
++    batch_size( 1 ),
++    grad_decrease_ct( 0. ),
++    // grad_weight_decay( 0. ),
++    n_classes( -1 ),
++    use_classification_cost( true ),
++    reconstruct_layerwise( false ),
++    independent_biases( false ),
++    n_layers( 0 ),
++    online ( false ),
++    background_gibbs_update_ratio(0),
++    gibbs_chain_reinit_freq( INT_MAX ),
++    minibatch_size( 0 ),
++    initialize_gibbs_chain( false ),
++    final_module_has_learning_rate( false ),
++    final_cost_has_learning_rate( false ),
++    nll_cost_index( -1 ),
++    class_cost_index( -1 ),
++    final_cost_index( -1 ),
++    reconstruction_cost_index( -1 ),
++    training_cpu_time_cost_index ( -1 ),
++    cumulative_training_time_cost_index ( -1 ),
++    cumulative_testing_time_cost_index ( -1 ),
++    cumulative_training_time( 0 ),
++    cumulative_testing_time( 0 )
++{
++    random_gen = new PRandom();
++}
++
++////////////////////
++// declareOptions //
++////////////////////
++void SubsamplingDBN::declareOptions(OptionList&amp; ol)
++{
++    declareOption(ol, &quot;cd_learning_rate&quot;, &amp;SubsamplingDBN::cd_learning_rate,
++                  OptionBase::buildoption,
++                  &quot;The learning rate used during contrastive divergence&quot;
++                  &quot; learning&quot;);
++
++    declareOption(ol, &quot;grad_learning_rate&quot;, &amp;SubsamplingDBN::grad_learning_rate,
++                  OptionBase::buildoption,
++                  &quot;The learning rate used during gradient descent&quot;);
++
++    declareOption(ol, &quot;grad_decrease_ct&quot;, &amp;SubsamplingDBN::grad_decrease_ct,
++                  OptionBase::buildoption,
++                  &quot;The decrease constant of the learning rate used during&quot;
++                  &quot;gradient descent&quot;);
++
++    declareOption(ol, &quot;batch_size&quot;, &amp;SubsamplingDBN::batch_size,
++                  OptionBase::buildoption,
++        &quot;Training batch size (1=stochastic learning, 0=full batch learning).&quot;);
++
++    /* NOT IMPLEMENTED YET
++    declareOption(ol, &quot;grad_weight_decay&quot;, &amp;SubsamplingDBN::grad_weight_decay,
++                  OptionBase::buildoption,
++                  &quot;The weight decay used during the gradient descent&quot;);
++    */
++
++    declareOption(ol, &quot;n_classes&quot;, &amp;SubsamplingDBN::n_classes,
++                  OptionBase::buildoption,
++                  &quot;Number of classes in the training set:\n&quot;
++                  &quot;  - 0 means we are doing regression,\n&quot;
++                  &quot;  - 1 means we have two classes, but only one output,\n&quot;
++                  &quot;  - 2 means we also have two classes, but two outputs&quot;
++                  &quot; summing to 1,\n&quot;
++                  &quot;  - &gt;2 is the usual multiclass case.\n&quot;
++                  );
++
++    declareOption(ol, &quot;training_schedule&quot;, &amp;SubsamplingDBN::training_schedule,
++                  OptionBase::buildoption,
++                  &quot;Number of examples to use during each phase of learning:\n&quot;
++                  &quot;first the greedy phases, and then the fine-tuning phase.\n&quot;
++                  &quot;However, the learning will stop as soon as we reach nstages.\n&quot;
++                  &quot;For example for 2 hidden layers, with 1000 examples in each\n&quot;
++                  &quot;greedy phase, and 500 in the fine-tuning phase, this option\n&quot;
++                  &quot;should be [1000 1000 500], and nstages should be at least 2500.\n&quot;
++                  &quot;When online = true, this vector is ignored and should be empty.\n&quot;);
++
++    declareOption(ol, &quot;use_classification_cost&quot;,
++                  &amp;SubsamplingDBN::use_classification_cost,
++                  OptionBase::buildoption,
++                  &quot;Put the class target as an extra input of the top-level RBM\n&quot;
++                  &quot;and compute and maximize conditional class probability in that\n&quot;
++                  &quot;top layer (probability of the correct class given the other input\n&quot;
++                  &quot;of the top-level RBM, which is the output of the rest of the network.\n&quot;);
++
++    declareOption(ol, &quot;reconstruct_layerwise&quot;,
++                  &amp;SubsamplingDBN::reconstruct_layerwise,
++                  OptionBase::buildoption,
++                  &quot;Compute reconstruction error of each layer as an auto-encoder.\n&quot;
++                  &quot;This is done using cross-entropy between actual and reconstructed.\n&quot;
++                  &quot;This option automatically adds the following cost names:\n&quot;
++                  &quot;   layerwise_reconstruction_error (sum over all layers)\n&quot;
++                  &quot;   layer0.reconstruction_error (only layers[0])\n&quot;
++                  &quot;   layer1.reconstruction_error (only layers[1])\n&quot;
++                  &quot;   etc.\n&quot;);
++
++    declareOption(ol, &quot;layers&quot;, &amp;SubsamplingDBN::layers,
++                  OptionBase::buildoption,
++                  &quot;The layers of units in the network (including the input layer).&quot;);
++
++    declareOption(ol, &quot;connections&quot;, &amp;SubsamplingDBN::connections,
++                  OptionBase::buildoption,
++                  &quot;The weights of the connections between the layers&quot;);
++
++    declareOption(ol, &quot;classification_module&quot;,
++                  &amp;SubsamplingDBN::classification_module,
++                  OptionBase::learntoption,
++                  &quot;The module computing the class probabilities (if&quot;
++                  &quot; use_classification_cost)\n&quot;
++                  );
++
++    declareOption(ol, &quot;classification_cost&quot;,
++                  &amp;SubsamplingDBN::classification_cost,
++                  OptionBase::nosave,
++                  &quot;The module computing the classification cost function (NLL)&quot;
++                  &quot; on top\n&quot;
++                  &quot;of classification_module.\n&quot;
++                  );
++
++    declareOption(ol, &quot;joint_layer&quot;, &amp;SubsamplingDBN::joint_layer,
++                  OptionBase::nosave,
++                  &quot;Concatenation of layers[n_layers-2] and the target layer\n&quot;
++                  &quot;(that is inside classification_module), if&quot;
++                  &quot; use_classification_cost.\n&quot;
++                 );
++
++    declareOption(ol, &quot;final_module&quot;, &amp;SubsamplingDBN::final_module,
++                  OptionBase::buildoption,
++                  &quot;Optional module that takes as input the output of the last&quot;
++                  &quot; layer\n&quot;
++                  &quot;layers[n_layers-1), and its output is fed to final_cost,&quot;
++                  &quot; and\n&quot;
++                  &quot;concatenated with the one of classification_cost (if&quot;
++                  &quot; present)\n&quot;
++                  &quot;as output of the learner.\n&quot;
++                  &quot;If it is not provided, then the last layer will directly be&quot;
++                  &quot; put as\n&quot;
++                  &quot;input of final_cost.\n&quot;
++                 );
++
++    declareOption(ol, &quot;final_cost&quot;, &amp;SubsamplingDBN::final_cost,
++                  OptionBase::buildoption,
++                  &quot;The cost function to be applied on top of the DBN (or of\n&quot;
++                  &quot;final_module if provided). Its gradients will be&quot;
++                  &quot; backpropagated\n&quot;
++                  &quot;to final_module, then combined with the one of&quot;
++                  &quot; classification_cost and\n&quot;
++                  &quot;backpropagated to the layers.\n&quot;
++                  );
++
++    declareOption(ol, &quot;partial_costs&quot;, &amp;SubsamplingDBN::partial_costs,
++                  OptionBase::buildoption,
++                  &quot;The different cost functions to be applied on top of each&quot;
++                  &quot; layer\n&quot;
++                  &quot;(except the first one) of the RBM. These costs are not\n&quot;
++                  &quot;back-propagated to previous layers.\n&quot;);
++
++    declareOption(ol, &quot;independent_biases&quot;,
++                  &amp;SubsamplingDBN::independent_biases,
++                  OptionBase::buildoption,
++                  &quot;In an RBMLayer, do we want the bias during up and down\n&quot;
++                  &quot;propagations to be potentially different?\n&quot;);
++
++    declareOption(ol, &quot;subsampling_modules&quot;,
++                  &amp;SubsamplingDBN::subsampling_modules,
++                  OptionBase::buildoption,
++                  &quot;Different subsampling modules, to be applied on top of\n&quot;
++                  &quot;RBMs when they're already learned. subsampling_modules[0]\n&quot;
++                  &quot;is null.\n&quot;);
++
++    declareOption(ol, &quot;reduced_layers&quot;, &amp;SubsamplingDBN::reduced_layers,
++                  OptionBase::learntoption,
++                  &quot;Layers of reduced size, to be put on top of subsampling\n&quot;
++                  &quot;modules If the subsampling module is null, it will be\n&quot;
++                  &quot;either the same that the one in 'layers' (default), or a\n&quot;
++                  &quot;copy of it (with independant biases) if\n&quot;
++                  &quot;'independent_biases' is true.\n&quot;);
++
++    declareOption(ol, &quot;online&quot;, &amp;SubsamplingDBN::online,
++                  OptionBase::buildoption,
++                  &quot;If true then all unsupervised training stages (as well as\n&quot;
++                  &quot;the fine-tuning stage) are done simultaneously.\n&quot;);
++
++    declareOption(ol, &quot;background_gibbs_update_ratio&quot;, &amp;SubsamplingDBN::background_gibbs_update_ratio,
++                  OptionBase::buildoption,
++                  &quot;Coefficient between 0 and 1. If non-zero, run a background Gibbs chain and use\n&quot;
++                  &quot;the visible-hidden statistics to contribute in the negative phase update\n&quot;
++                  &quot;(in proportion background_gibbs_update_ratio wrt the contrastive divergence\n&quot;
++                  &quot;negative phase statistics). If = 1, then do not perform any contrastive\n&quot;
++                  &quot;divergence negative phase (use only the Gibbs chain statistics).\n&quot;);
++
++    declareOption(ol, &quot;gibbs_chain_reinit_freq&quot;,
++                  &amp;SubsamplingDBN::gibbs_chain_reinit_freq,
++                  OptionBase::buildoption,
++                  &quot;After how many training examples to re-initialize the Gibbs chains.\n&quot;
++                  &quot;If == INT_MAX, the default value of this option, then NEVER\n&quot;
++                  &quot;re-initialize except at the beginning, when stage==0.\n&quot;);
++
++    declareOption(ol, &quot;top_layer_joint_cd&quot;, &amp;SubsamplingDBN::top_layer_joint_cd,
++                  OptionBase::buildoption,
++                  &quot;Wether we do a step of joint contrastive divergence on&quot;
++                  &quot; top-layer.\n&quot;
++                  &quot;Only used if online for the moment.\n&quot;);
++
++    declareOption(ol, &quot;n_layers&quot;, &amp;SubsamplingDBN::n_layers,
++                  OptionBase::learntoption,
++                  &quot;Number of layers&quot;);
++
++    declareOption(ol, &quot;minibatch_size&quot;, &amp;SubsamplingDBN::minibatch_size,
++                  OptionBase::learntoption,
++                  &quot;Size of a mini-batch.&quot;);
++
++    declareOption(ol, &quot;gibbs_down_state&quot;, &amp;SubsamplingDBN::gibbs_down_state,
++                  OptionBase::learntoption,
++                  &quot;State of visible units of RBMs at each layer in background Gibbs chain.&quot;);
++
++    declareOption(ol, &quot;cumulative_training_time&quot;, &amp;SubsamplingDBN::cumulative_training_time,
++                  OptionBase::learntoption | OptionBase::nosave,
++                  &quot;Cumulative training time since age=0, in seconds.\n&quot;);
++
++    declareOption(ol, &quot;cumulative_testing_time&quot;, &amp;SubsamplingDBN::cumulative_testing_time,
++                  OptionBase::learntoption | OptionBase::nosave,
++                  &quot;Cumulative testing time since age=0, in seconds.\n&quot;);
++
++
++    /*
++    declareOption(ol, &quot;n_final_costs&quot;, &amp;SubsamplingDBN::n_final_costs,
++                  OptionBase::learntoption,
++                  &quot;Number of final costs&quot;);
++     */
++
++    /*
++    declareOption(ol, &quot;&quot;, &amp;SubsamplingDBN::,
++                  OptionBase::learntoption,
++                  &quot;&quot;);
++     */
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++////////////
++// build_ //
++////////////
++void SubsamplingDBN::build_()
++{
++    PLASSERT( batch_size &gt;= 0 );
++
++    MODULE_LOG &lt;&lt; &quot;build_() called&quot; &lt;&lt; endl;
++
++    // Initialize some learnt variables
++    if (layers.isEmpty())
++        PLERROR(&quot;In SubsamplingDBN::build_ - You must provide at least one RBM &quot;
++                &quot;layer through the 'layers' option&quot;);
++    else
++        n_layers = layers.length();
++
++    if( !online )
++    {
++        if( training_schedule.length() != n_layers )
++        {
++            PLWARNING(&quot;In SubsamplingDBN::build_ - training_schedule.length() &quot;
++                    &quot;!= n_layers, resizing and zeroing&quot;);
++            training_schedule.resize( n_layers );
++            training_schedule.fill( 0 );
++        }
++
++        cumulative_schedule.resize( n_layers+1 );
++        cumulative_schedule[0] = 0;
++        for( int i=0 ; i&lt;n_layers ; i++ )
++        {
++            cumulative_schedule[i+1] = cumulative_schedule[i] +
++                training_schedule[i];
++        }
++    }
++
++    build_layers_and_connections();
++
++    // Activate the profiler
++    Profiler::activate();
++
++    build_costs();
++}
++
++/////////////////
++// build_costs //
++/////////////////
++void SubsamplingDBN::build_costs()
++{
++    cost_names.resize(0);
++    int current_index = 0;
++
++    // build the classification module, its cost and the joint layer
++    if( use_classification_cost )
++    {
++        PLASSERT( n_classes &gt;= 2 );
++        build_classification_cost();
++
++        cost_names.append(&quot;NLL&quot;);
++        nll_cost_index = current_index;
++        current_index++;
++
++        cost_names.append(&quot;class_error&quot;);
++        class_cost_index = current_index;
++        current_index++;
++    }
++
++    if( final_cost )
++    {
++        build_final_cost();
++
++        TVec&lt;string&gt; final_names = final_cost-&gt;name();
++        int n_final_costs = final_names.length();
++
++        for( int i=0; i&lt;n_final_costs; i++ )
++            cost_names.append(&quot;final.&quot; + final_names[i]);
++
++        final_cost_index = current_index;
++        current_index += n_final_costs;
++    }
++
++    if( partial_costs )
++    {
++        int n_partial_costs = partial_costs.length();
++        partial_costs_indices.resize(n_partial_costs);
++
++        for( int i=0; i&lt;n_partial_costs; i++ )
++            if( partial_costs[i] )
++            {
++                TVec&lt;string&gt; names = partial_costs[i]-&gt;name();
++                int n_partial_costs_i = names.length();
++                for( int j=0; j&lt;n_partial_costs_i; j++ )
++                    cost_names.append(&quot;partial&quot;+tostring(i)+&quot;.&quot;+names[j]);
++                partial_costs_indices[i] = current_index;
++                current_index += n_partial_costs_i;
++
++                // Share random_gen with partial_costs[i], unless it already
++                // has one
++                if( !(partial_costs[i]-&gt;random_gen) )
++                {
++                    partial_costs[i]-&gt;random_gen = random_gen;
++                    partial_costs[i]-&gt;forget();
++                }
++            }
++            else
++                partial_costs_indices[i] = -1;
++    }
++    else
++        partial_costs_indices.resize(0);
++
++    if( reconstruct_layerwise )
++    {
++        reconstruction_costs.resize(n_layers);
++
++        cost_names.append(&quot;layerwise_reconstruction_error&quot;);
++        reconstruction_cost_index = current_index;
++        current_index++;
++
++        for( int i=0; i&lt;n_layers-1; i++ )
++            cost_names.append(&quot;layer&quot;+tostring(i)+&quot;.reconstruction_error&quot;);
++        current_index += n_layers-1;
++    }
++    else
++        reconstruction_costs.resize(0);
++
++
++    cost_names.append(&quot;cpu_time&quot;);
++    cost_names.append(&quot;cumulative_train_time&quot;);
++    cost_names.append(&quot;cumulative_test_time&quot;);
++
++    training_cpu_time_cost_index = current_index;
++    current_index++;
++    cumulative_training_time_cost_index = current_index;
++    current_index++;
++    cumulative_testing_time_cost_index = current_index;
++    current_index++;
++
++    PLASSERT( current_index == cost_names.length() );
++}
++
++//////////////////////////////////
++// build_layers_and_connections //
++//////////////////////////////////
++void SubsamplingDBN::build_layers_and_connections()
++{
++    MODULE_LOG &lt;&lt; &quot;build_layers_and_connections() called&quot; &lt;&lt; endl;
++
++    if( connections.length() != n_layers-1 )
++        PLERROR(&quot;SubsamplingDBN::build_layers_and_connections() - \n&quot;
++                &quot;connections.length() (%d) != n_layers-1 (%d).\n&quot;,
++                connections.length(), n_layers-1);
++
++    if( subsampling_modules.length() == 0 )
++        subsampling_modules.resize(n_layers-1);
++    if( subsampling_modules.length() != n_layers-1 )
++        PLERROR(&quot;SubsamplingDBN::build_layers_and_connections() - \n&quot;
++                &quot;subsampling_modules.length() (%d) != n_layers-1 (%d).\n&quot;,
++                subsampling_modules.length(), n_layers-1);
++
++    if( inputsize_ &gt;= 0 )
++        PLASSERT( layers[0]-&gt;size == inputsize() );
++
++    activation_gradients.resize( n_layers );
++    activations_gradients.resize( n_layers );
++    expectation_gradients.resize( n_layers );
++    expectations_gradients.resize( n_layers );
++    subsampling_gradients.resize( n_layers );
++    gibbs_down_state.resize( n_layers-1 );
++
++    reduced_layers.resize(n_layers-1);
++
++    for( int i=0 ; i&lt;n_layers-1 ; i++ )
++    {
++        if( !(reduced_layers[i]) )
++        {
++            if( (independent_biases || subsampling_modules[i]) &amp;&amp; i!=0 )
++            {
++                CopiesMap map;
++                reduced_layers[i] = layers[i]-&gt;deepCopy(map);
++
++                if( subsampling_modules[i] )
++                {
++                    reduced_layers[i]-&gt;size =
++                        subsampling_modules[i]-&gt;output_size;
++                    reduced_layers[i]-&gt;build();
++                }
++            }
++            else
++                reduced_layers[i] = layers[i];
++        }
++
++        if( subsampling_modules[i] )
++        {
++            if( layers[i]-&gt;size != subsampling_modules[i]-&gt;input_size )
++                PLERROR(&quot;SubsamplingDBN::build_layers_and_connections() - \n&quot;
++                        &quot;layers[%i]-&gt;size (%d) != subsampling_modules[%i]-&gt;input_size (%d).&quot;
++                        &quot;\n&quot;, i, layers[i]-&gt;size, i,
++                        subsampling_modules[i]-&gt;input_size);
++        }
++        else
++        {
++            if( layers[i]-&gt;size != reduced_layers[i]-&gt;size )
++                PLERROR(&quot;SubsamplingDBN::build_layers_and_connections() - \n&quot;
++                        &quot;layers[%i]-&gt;size (%d) != reduced_layers[%i]-&gt;size (%d).&quot;
++                        &quot;\n&quot;, i, layers[i]-&gt;size, i, reduced_layers[i]-&gt;size);
++        }
++
++        if( reduced_layers[i]-&gt;size != connections[i]-&gt;down_size )
++            PLERROR(&quot;SubsamplingDBN::build_layers_and_connections() - \n&quot;
++                    &quot;reduced_layers[%i]-&gt;size (%d) != connections[%i]-&gt;down_size (%d).&quot;
++                    &quot;\n&quot;, i, reduced_layers[i]-&gt;size, i, connections[i]-&gt;down_size);
++
++        if( connections[i]-&gt;up_size != layers[i+1]-&gt;size )
++            PLERROR(&quot;SubsamplingDBN::build_layers_and_connections() - \n&quot;
++                    &quot;connections[%i]-&gt;up_size (%d) != layers[%i]-&gt;size (%d).&quot;
++                    &quot;\n&quot;, i, connections[i]-&gt;up_size, i+1, layers[i+1]-&gt;size);
++
++        // Assign random_gen to layers[i] and connections[i], unless they
++        // already have one
++        if( !(layers[i]-&gt;random_gen) )
++        {
++            layers[i]-&gt;random_gen = random_gen;
++            layers[i]-&gt;forget();
++        }
++        if( !(reduced_layers[i]-&gt;random_gen) )
++        {
++            reduced_layers[i]-&gt;random_gen = random_gen;
++            reduced_layers[i]-&gt;forget();
++        }
++        if( !(connections[i]-&gt;random_gen) )
++        {
++            connections[i]-&gt;random_gen = random_gen;
++            connections[i]-&gt;forget();
++        }
++
++        activation_gradients[i].resize( layers[i]-&gt;size );
++        expectation_gradients[i].resize( layers[i]-&gt;size );
++        subsampling_gradients[i].resize( reduced_layers[i]-&gt;size );
++    }
++    if( !(layers[n_layers-1]-&gt;random_gen) )
++    {
++        layers[n_layers-1]-&gt;random_gen = random_gen;
++        layers[n_layers-1]-&gt;forget();
++    }
++    int last_layer_size = layers[n_layers-1]-&gt;size;
++    PLASSERT_MSG(last_layer_size &gt;= 0,
++                 &quot;Size of last layer must be non-negative&quot;);
++    activation_gradients[n_layers-1].resize(last_layer_size);
++    expectation_gradients[n_layers-1].resize(last_layer_size);
++}
++
++///////////////////////////////
++// build_classification_cost //
++///////////////////////////////
++void SubsamplingDBN::build_classification_cost()
++{
++    MODULE_LOG &lt;&lt; &quot;build_classification_cost() called&quot; &lt;&lt; endl;
++
++    PLERROR( &quot;classification_cost doesn't work with subsampling yet&quot; );
++    PLASSERT_MSG(batch_size == 1, &quot;SubsamplingDBN::build_classification_cost - &quot;
++            &quot;This method has not been verified yet for minibatch &quot;
++            &quot;compatibility&quot;);
++
++    PP&lt;RBMMatrixConnection&gt; last_to_target = new RBMMatrixConnection();
++    last_to_target-&gt;up_size = layers[n_layers-1]-&gt;size;
++    last_to_target-&gt;down_size = n_classes;
++    last_to_target-&gt;random_gen = random_gen;
++    last_to_target-&gt;build();
++
++    PP&lt;RBMMultinomialLayer&gt; target_layer = new RBMMultinomialLayer();
++    target_layer-&gt;size = n_classes;
++    target_layer-&gt;random_gen = random_gen;
++    target_layer-&gt;build();
++
++    PLASSERT_MSG(n_layers &gt;= 2, &quot;You must specify at least two layers (the &quot;
++            &quot;input layer and one hidden layer)&quot;);
++
++    classification_module = new RBMClassificationModule();
++    classification_module-&gt;previous_to_last = connections[n_layers-2];
++    classification_module-&gt;last_layer =
++        (RBMBinomialLayer*) (RBMLayer*) layers[n_layers-1];
++    classification_module-&gt;last_to_target = last_to_target;
++    classification_module-&gt;target_layer = target_layer;
++    classification_module-&gt;random_gen = random_gen;
++    classification_module-&gt;build();
++
++    classification_cost = new NLLCostModule();
++    classification_cost-&gt;input_size = n_classes;
++    classification_cost-&gt;target_size = 1;
++    classification_cost-&gt;build();
++
++    joint_layer = new RBMMixedLayer();
++    joint_layer-&gt;sub_layers.resize( 2 );
++    joint_layer-&gt;sub_layers[0] = layers[ n_layers-2 ];
++    joint_layer-&gt;sub_layers[1] = target_layer;
++    joint_layer-&gt;random_gen = random_gen;
++    joint_layer-&gt;build();
++}
++
++//////////////////////
++// build_final_cost //
++//////////////////////
++void SubsamplingDBN::build_final_cost()
++{
++    MODULE_LOG &lt;&lt; &quot;build_final_cost() called&quot; &lt;&lt; endl;
++
++    PLASSERT_MSG(final_cost-&gt;input_size &gt;= 0, &quot;The input size of the final &quot;
++            &quot;cost must be non-negative&quot;);
++
++    final_cost_gradient.resize( final_cost-&gt;input_size );
++    final_cost-&gt;setLearningRate( grad_learning_rate );
++
++    if( final_module )
++    {
++        if( layers[n_layers-1]-&gt;size != final_module-&gt;input_size )
++            PLERROR(&quot;SubsamplingDBN::build_final_cost() - &quot;
++                    &quot;layers[%i]-&gt;size (%d) != final_module-&gt;input_size (%d).&quot;
++                    &quot;\n&quot;, n_layers-1, layers[n_layers-1]-&gt;size,
++                    final_module-&gt;input_size);
++
++        if( final_module-&gt;output_size != final_cost-&gt;input_size )
++            PLERROR(&quot;SubsamplingDBN::build_final_cost() - &quot;
++                    &quot;final_module-&gt;output_size (%d) != final_cost-&gt;input_size.&quot;
++                    &quot;\n&quot;, n_layers-1, layers[n_layers-1]-&gt;size,
++                    final_module-&gt;input_size);
++
++        final_module-&gt;setLearningRate( grad_learning_rate );
++
++        // Share random_gen with final_module, unless it already has one
++        if( !(final_module-&gt;random_gen) )
++        {
++            final_module-&gt;random_gen = random_gen;
++            final_module-&gt;forget();
++        }
++    }
++    else
++    {
++        if( layers[n_layers-1]-&gt;size != final_cost-&gt;input_size )
++            PLERROR(&quot;SubsamplingDBN::build_final_cost() - &quot;
++                    &quot;layers[%i]-&gt;size (%d) != final_cost-&gt;input_size (%d).&quot;
++                    &quot;\n&quot;, n_layers-1, layers[n_layers-1]-&gt;size,
++                    final_cost-&gt;input_size);
++    }
++
++    // check target size and final_cost-&gt;input_size
++    if( n_classes == 0 ) // regression
++    {
++        if( final_cost-&gt;input_size != targetsize() )
++            PLERROR(&quot;SubsamplingDBN::build_final_cost() - &quot;
++                    &quot;final_cost-&gt;input_size (%d) != targetsize() (%d), &quot;
++                    &quot;although we are doing regression (n_classes == 0).\n&quot;,
++                    final_cost-&gt;input_size, targetsize());
++    }
++    else
++    {
++        if( final_cost-&gt;input_size != n_classes )
++            PLERROR(&quot;SubsamplingDBN::build_final_cost() - &quot;
++                    &quot;final_cost-&gt;input_size (%d) != n_classes (%d), &quot;
++                    &quot;although we are doing classification (n_classes != 0).\n&quot;,
++                    final_cost-&gt;input_size, n_classes);
++
++        if( targetsize_ &gt;= 0 &amp;&amp; targetsize() != 1 )
++            PLERROR(&quot;SubsamplingDBN::build_final_cost() - &quot;
++                    &quot;targetsize() (%d) != 1, &quot;
++                    &quot;although we are doing classification (n_classes != 0).\n&quot;,
++                    targetsize());
++    }
++
++    // Share random_gen with final_cost, unless it already has one
++    if( !(final_cost-&gt;random_gen) )
++    {
++        final_cost-&gt;random_gen = random_gen;
++        final_cost-&gt;forget();
++    }
++}
++
++///////////
++// build //
++///////////
++void SubsamplingDBN::build()
++{
++    inherited::build();
++    build_();
++}
++
++/////////////////////////////////
++// makeDeepCopyFromShallowCopy //
++/////////////////////////////////
++void SubsamplingDBN::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    deepCopyField(training_schedule,        copies);
++    deepCopyField(layers,                   copies);
++    deepCopyField(connections,              copies);
++    deepCopyField(final_module,             copies);
++    deepCopyField(final_cost,               copies);
++    deepCopyField(partial_costs,            copies);
++    deepCopyField(subsampling_modules,      copies);
++    deepCopyField(classification_module,    copies);
++    deepCopyField(cost_names,               copies);
++    deepCopyField(reduced_layers,           copies);
++    deepCopyField(timer,                    copies);
++    deepCopyField(classification_cost,      copies);
++    deepCopyField(joint_layer,              copies);
++    deepCopyField(activation_gradients,     copies);
++    deepCopyField(activations_gradients,    copies);
++    deepCopyField(expectation_gradients,    copies);
++    deepCopyField(expectations_gradients,   copies);
++    deepCopyField(subsampling_gradients,    copies);
++    deepCopyField(final_cost_input,         copies);
++    deepCopyField(final_cost_inputs,        copies);
++    deepCopyField(final_cost_value,         copies);
++    deepCopyField(final_cost_values,        copies);
++    deepCopyField(final_cost_output,        copies);
++    deepCopyField(class_output,             copies);
++    deepCopyField(class_gradient,           copies);
++    deepCopyField(final_cost_gradient,      copies);
++    deepCopyField(final_cost_gradients,     copies);
++    deepCopyField(save_layer_activation,    copies);
++    deepCopyField(save_layer_expectation,   copies);
++    deepCopyField(save_layer_activations,   copies);
++    deepCopyField(save_layer_expectations,  copies);
++    deepCopyField(pos_down_val,             copies);
++    deepCopyField(pos_up_val,               copies);
++    deepCopyField(cd_neg_up_vals,           copies);
++    deepCopyField(cd_neg_down_vals,         copies);
++    deepCopyField(gibbs_down_state,         copies);
++    deepCopyField(optimized_costs,          copies);
++    deepCopyField(reconstruction_costs,     copies);
++    deepCopyField(partial_costs_indices,    copies);
++    deepCopyField(cumulative_schedule,      copies);
++    deepCopyField(layer_input,              copies);
++    deepCopyField(layer_inputs,             copies);
++}
++
++
++////////////////
++// outputsize //
++////////////////
++int SubsamplingDBN::outputsize() const
++{
++    int out_size = 0;
++    if( use_classification_cost )
++        out_size += n_classes;
++
++    if( final_module )
++        out_size += final_module-&gt;output_size;
++    else
++        out_size += layers[n_layers-1]-&gt;size;
++
++    return out_size;
++}
++
++////////////
++// forget //
++////////////
++void SubsamplingDBN::forget()
++{
++    inherited::forget();
++
++    for( int i=0 ; i&lt;n_layers ; i++ )
++        layers[i]-&gt;forget();
++
++    for( int i=0 ; i&lt;n_layers-1 ; i++ )
++    {
++        reduced_layers[i]-&gt;forget();
++        connections[i]-&gt;forget();
++    }
++
++    if( use_classification_cost )
++    {
++        classification_cost-&gt;forget();
++        classification_module-&gt;forget();
++    }
++
++    if( final_module )
++        final_module-&gt;forget();
++
++    if( final_cost )
++        final_cost-&gt;forget();
++
++    if( !partial_costs.isEmpty() )
++        for( int i=0 ; i&lt;n_layers-1 ; i++ )
++            if( partial_costs[i] )
++                partial_costs[i]-&gt;forget();
++
++    cumulative_training_time = 0;
++    cumulative_testing_time = 0;
++}
++
++///////////
++// train //
++///////////
++void SubsamplingDBN::train()
++{
++    MODULE_LOG &lt;&lt; &quot;train() called &quot; &lt;&lt; endl;
++
++    if (!online)
++    {
++        // Enforce value of cumulative_schedule because build_() might
++        // not be called if we change training_schedule inside a HyperLearner
++        for( int i=0 ; i&lt;n_layers ; i++ )
++            cumulative_schedule[i+1] = cumulative_schedule[i] +
++                training_schedule[i];
++    }
++
++    MODULE_LOG &lt;&lt; &quot;  training_schedule = &quot; &lt;&lt; training_schedule &lt;&lt; endl;
++    MODULE_LOG &lt;&lt; &quot;  cumulative_schedule = &quot; &lt;&lt; cumulative_schedule &lt;&lt; endl;
++    MODULE_LOG &lt;&lt; &quot;stage = &quot; &lt;&lt; stage
++        &lt;&lt; &quot;, target nstages = &quot; &lt;&lt; nstages &lt;&lt; endl;
++
++    PLASSERT( train_set );
++    if (stage == 0) {
++        // Training set-dependent initialization.
++        minibatch_size = batch_size &gt; 0 ? batch_size : train_set-&gt;length();
++        for (int i = 0 ; i &lt; n_layers; i++) {
++            activations_gradients[i].resize(minibatch_size, layers[i]-&gt;size);
++            expectations_gradients[i].resize(minibatch_size, layers[i]-&gt;size);
++
++            if (background_gibbs_update_ratio&gt;0 &amp;&amp; i&lt;n_layers-1)
++                gibbs_down_state[i].resize(minibatch_size, layers[i]-&gt;size);
++        }
++        if (final_cost)
++            final_cost_gradients.resize(minibatch_size, final_cost-&gt;input_size);
++        optimized_costs.resize(minibatch_size);
++    }
++
++    Vec input( inputsize() );
++    Vec target( targetsize() );
++    real weight; // unused
++    Mat inputs(minibatch_size, inputsize());
++    Mat targets(minibatch_size, targetsize());
++    Vec weights;
++
++    TVec&lt;string&gt; train_cost_names = getTrainCostNames() ;
++    Vec train_costs( train_cost_names.length() );
++    Mat train_costs_m(minibatch_size, train_cost_names.length());
++    train_costs.fill(MISSING_VALUE) ;
++    train_costs_m.fill(MISSING_VALUE);
++
++    int nsamples = train_set-&gt;length();
++
++    if( !initTrain() )
++    {
++        MODULE_LOG &lt;&lt; &quot;train() aborted&quot; &lt;&lt; endl;
++        return;
++    }
++
++    PP&lt;ProgressBar&gt; pb;
++
++    // Start the actual time counting
++    Profiler::reset(&quot;training&quot;);
++    Profiler::start(&quot;training&quot;);
++
++    // clear stats of previous epoch
++    train_stats-&gt;forget();
++
++    if (online)
++    {
++        PLERROR( &quot;subsampling is not working yet with online&quot; );
++        // Train all layers simultaneously AND fine-tuning as well!
++        if( report_progress &amp;&amp; stage &lt; nstages )
++            pb = new ProgressBar( &quot;Training &quot;+classname(),
++                                  nstages - stage );
++
++        for( ; stage&lt;nstages; stage++)
++        {
++            initialize_gibbs_chain=(stage%gibbs_chain_reinit_freq==0);
++            // Do a step every 'minibatch_size' examples.
++            if (stage % minibatch_size == 0) {
++                int sample_start = stage % nsamples;
++                if (batch_size &gt; 1 || minibatch_hack) {
++                    train_set-&gt;getExamples(sample_start, minibatch_size,
++                                           inputs, targets, weights, NULL, true);
++                    train_costs_m.fill(MISSING_VALUE);
++                    if (reconstruct_layerwise)
++                        train_costs_m.column(reconstruction_cost_index).clear();
++                    onlineStep( inputs, targets, train_costs_m );
++                } else {
++                    train_set-&gt;getExample(sample_start, input, target, weight);
++                    onlineStep( input, target, train_costs );
++                }
++            }
++            if( pb )
++                pb-&gt;update( stage + 1 );
++        }
++    }
++    else // Greedy learning, one layer at a time.
++    {
++        /***** initial greedy training *****/
++        for( int i=0 ; i&lt;n_layers-1 ; i++ )
++        {
++            if( use_classification_cost &amp;&amp; i == n_layers-2 )
++                break; // we will do a joint supervised learning instead
++
++            int end_stage = min(cumulative_schedule[i+1], nstages);
++            if( stage &gt;= end_stage )
++                continue;
++
++            MODULE_LOG &lt;&lt; &quot;Training connection weights between layers &quot; &lt;&lt; i
++                       &lt;&lt; &quot; and &quot; &lt;&lt; i+1 &lt;&lt; endl;
++            MODULE_LOG &lt;&lt; &quot;  stage = &quot; &lt;&lt; stage &lt;&lt; endl;
++            MODULE_LOG &lt;&lt; &quot;  end_stage = &quot; &lt;&lt; end_stage &lt;&lt; endl;
++            MODULE_LOG &lt;&lt; &quot;  cd_learning_rate = &quot; &lt;&lt; cd_learning_rate &lt;&lt; endl;
++
++            if( report_progress )
++                pb = new ProgressBar( &quot;Training layer &quot;+tostring(i)
++                                      +&quot; of &quot;+classname(),
++                                      end_stage - stage );
++
++            reduced_layers[i]-&gt;setLearningRate( cd_learning_rate );
++            connections[i]-&gt;setLearningRate( cd_learning_rate );
++            layers[i+1]-&gt;setLearningRate( cd_learning_rate );
++
++            for( ; stage&lt;end_stage ; stage++ )
++            {
++                initialize_gibbs_chain=(stage%gibbs_chain_reinit_freq==0);
++                // Do a step every 'minibatch_size' examples.
++                if (stage % minibatch_size == 0) {
++                    int sample_start = stage % nsamples;
++                    if (batch_size &gt; 1 || minibatch_hack) {
++                        train_set-&gt;getExamples(sample_start, minibatch_size,
++                                inputs, targets, weights, NULL, true);
++                        train_costs_m.fill(MISSING_VALUE);
++                        if (reconstruct_layerwise)
++                            train_costs_m.column(reconstruction_cost_index).clear();
++                        greedyStep( inputs, targets, i , train_costs_m);
++                        for (int k = 0; k &lt; minibatch_size; k++)
++                            train_stats-&gt;update(train_costs_m(k));
++                    } else {
++                        train_set-&gt;getExample(sample_start, input, target, weight);
++                        greedyStep( input, target, i );
++                    }
++
++                }
++                if( pb )
++                    pb-&gt;update( stage - cumulative_schedule[i] + 1 );
++            }
++        }
++
++        // possible supervised part
++        int end_stage = min(cumulative_schedule[n_layers-1], nstages);
++        if( use_classification_cost &amp;&amp; (stage &lt; end_stage) )
++        {
++            PLASSERT_MSG(batch_size == 1, &quot;'use_classification_cost' code not &quot;
++                    &quot;verified with mini-batch learning yet&quot;);
++
++            MODULE_LOG &lt;&lt; &quot;Training the classification module&quot; &lt;&lt; endl;
++            MODULE_LOG &lt;&lt; &quot;  stage = &quot; &lt;&lt; stage &lt;&lt; endl;
++            MODULE_LOG &lt;&lt; &quot;  end_stage = &quot; &lt;&lt; end_stage &lt;&lt; endl;
++            MODULE_LOG &lt;&lt; &quot;  cd_learning_rate = &quot; &lt;&lt; cd_learning_rate &lt;&lt; endl;
++
++            if( report_progress )
++                pb = new ProgressBar( &quot;Training the classification module&quot;,
++                                      end_stage - stage );
++
++            // set appropriate learning rate
++            joint_layer-&gt;setLearningRate( cd_learning_rate );
++            classification_module-&gt;joint_connection-&gt;setLearningRate(
++                cd_learning_rate );
++            layers[ n_layers-1 ]-&gt;setLearningRate( cd_learning_rate );
++
++            int previous_stage = cumulative_schedule[n_layers-2];
++            for( ; stage&lt;end_stage ; stage++ )
++            {
++                initialize_gibbs_chain=(stage%gibbs_chain_reinit_freq==0);
++                int sample = stage % nsamples;
++                train_set-&gt;getExample( sample, input, target, weight );
++                jointGreedyStep( input, target );
++
++                if( pb )
++                    pb-&gt;update( stage - previous_stage + 1 );
++            }
++        }
++
++
++        /***** fine-tuning by gradient descent *****/
++        end_stage = min(cumulative_schedule[n_layers], nstages);
++        if( stage &gt;= end_stage )
++            return;
++        MODULE_LOG &lt;&lt; &quot;Fine-tuning all parameters, by gradient descent&quot; &lt;&lt; endl;
++        MODULE_LOG &lt;&lt; &quot;  stage = &quot; &lt;&lt; stage &lt;&lt; endl;
++        MODULE_LOG &lt;&lt; &quot;  end_stage = &quot; &lt;&lt; end_stage &lt;&lt; endl;
++        MODULE_LOG &lt;&lt; &quot;  grad_learning_rate = &quot; &lt;&lt; grad_learning_rate &lt;&lt; endl;
++
++        int init_stage = stage;
++        if( report_progress )
++            pb = new ProgressBar( &quot;Fine-tuning parameters of all layers of &quot;
++                                  + classname(),
++                                  end_stage - init_stage );
++
++        setLearningRate( grad_learning_rate );
++
++        train_stats-&gt;forget();
++        bool update_stats = false;
++        for( ; stage&lt;end_stage ; stage++ )
++        {
++
++            // Update every 'minibatch_size' samples.
++            if (stage % minibatch_size == 0) {
++                int sample_start = stage % nsamples;
++                // Only update train statistics for the last 'epoch', i.e. last
++                // 'nsamples' seen.
++                update_stats = update_stats || stage &gt;= end_stage - nsamples;
++
++                if( !fast_exact_is_equal( grad_decrease_ct, 0. ) )
++                    setLearningRate( grad_learning_rate
++                            / (1. + grad_decrease_ct * (stage - init_stage) ) );
++
++                if (minibatch_size &gt; 1 || minibatch_hack) {
++                    train_set-&gt;getExamples(sample_start, minibatch_size, inputs,
++                            targets, weights, NULL, true);
++                    train_costs_m.fill(MISSING_VALUE);
++                    fineTuningStep(inputs, targets, train_costs_m);
++                } else {
++                    train_set-&gt;getExample( sample_start, input, target, weight );
++                    fineTuningStep( input, target, train_costs );
++                }
++                if (update_stats)
++                    if (minibatch_size &gt; 1 || minibatch_hack)
++                        for (int k = 0; k &lt; minibatch_size; k++)
++                            train_stats-&gt;update(train_costs_m(k));
++                    else
++                        train_stats-&gt;update( train_costs );
++
++            }
++            if( pb )
++                pb-&gt;update( stage - init_stage + 1 );
++        }
++    }
++
++    Profiler::end(&quot;training&quot;);
++    // The report is pretty informative and therefore quite verbose.
++    if (verbosity &gt; 1)
++        Profiler::report(cout);
++
++    const Profiler::Stats&amp; stats = Profiler::getStats(&quot;training&quot;);
++    real ticksPerSec = Profiler::ticksPerSecond();
++    real cpu_time = (stats.user_duration+stats.system_duration)/ticksPerSec;
++    cumulative_training_time += cpu_time;
++
++    if (verbosity &gt; 1)
++        cout &lt;&lt; &quot;The cumulative time spent in train() up until now is &quot; &lt;&lt; cumulative_training_time &lt;&lt; &quot; cpu seconds&quot; &lt;&lt; endl;
++
++    train_costs_m.column(training_cpu_time_cost_index).fill(cpu_time);
++    train_costs_m.column(cumulative_training_time_cost_index).fill(cumulative_training_time);
++    train_stats-&gt;update( train_costs_m );
++    train_stats-&gt;finalize();
++
++}
++
++////////////////
++// onlineStep //
++////////////////
++void SubsamplingDBN::onlineStep( const Vec&amp; input, const Vec&amp; target,
++                                Vec&amp; train_costs)
++{
++    PLASSERT(batch_size == 1);
++
++    TVec&lt;Vec&gt; cost;
++    if (!partial_costs.isEmpty())
++        cost.resize(n_layers-1);
++
++    layers[0]-&gt;expectation &lt;&lt; input;
++    // FORWARD PHASE
++    //Vec layer_input;
++    for( int i=0 ; i&lt;n_layers-1 ; i++ )
++    {
++        // mean-field fprop from layer i to layer i+1
++        connections[i]-&gt;setAsDownInput( layers[i]-&gt;expectation );
++        // this does the actual matrix-vector computation
++        layers[i+1]-&gt;getAllActivations( connections[i] );
++        layers[i+1]-&gt;computeExpectation();
++
++        // propagate into local cost associated to output of layer i+1
++        if( !partial_costs.isEmpty() &amp;&amp; partial_costs[ i ] )
++        {
++            partial_costs[ i ]-&gt;fprop( layers[ i+1 ]-&gt;expectation,
++                                       target, cost[i] );
++
++            // Backward pass
++            // first time we set these gradients: do not accumulate
++            partial_costs[ i ]-&gt;bpropUpdate( layers[ i+1 ]-&gt;expectation,
++                                             target, cost[i][0],
++                                             expectation_gradients[ i+1 ] );
++
++            train_costs.subVec(partial_costs_indices[i], cost[i].length())
++                &lt;&lt; cost[i];
++        }
++        else
++            expectation_gradients[i+1].clear();
++    }
++
++    // top layer may be connected to a final_module followed by a
++    // final_cost and / or may be used to predict class probabilities
++    // through a joint classification_module
++
++    if ( final_cost )
++    {
++        if( final_module )
++        {
++                final_module-&gt;fprop( layers[ n_layers-1 ]-&gt;expectation,
++                        final_cost_input );
++                final_cost-&gt;fprop( final_cost_input, target,
++                        final_cost_value );
++                final_cost-&gt;bpropUpdate( final_cost_input, target,
++                        final_cost_value[0],
++                        final_cost_gradient );
++
++                final_module-&gt;bpropUpdate(
++                        layers[ n_layers-1 ]-&gt;expectation,
++                        final_cost_input,
++                        expectation_gradients[ n_layers-1 ],
++                        final_cost_gradient, true );
++        }
++        else
++        {
++                final_cost-&gt;fprop( layers[ n_layers-1 ]-&gt;expectation,
++                        target,
++                        final_cost_value );
++                final_cost-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;expectation,
++                        target, final_cost_value[0],
++                        expectation_gradients[n_layers-1],
++                        true);
++        }
++
++        train_costs.subVec(final_cost_index, final_cost_value.length())
++            &lt;&lt; final_cost_value;
++    }
++
++    if (final_cost || (!partial_costs.isEmpty() &amp;&amp; partial_costs[n_layers-2]))
++    {
++        layers[n_layers-1]-&gt;setLearningRate( grad_learning_rate );
++        connections[n_layers-2]-&gt;setLearningRate( grad_learning_rate );
++
++        layers[ n_layers-1 ]-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;activation,
++                                           layers[ n_layers-1 ]-&gt;expectation,
++                                           activation_gradients[ n_layers-1 ],
++                                           expectation_gradients[ n_layers-1 ],
++                                           false);
++
++        connections[ n_layers-2 ]-&gt;bpropUpdate(
++            layers[ n_layers-2 ]-&gt;expectation,
++            layers[ n_layers-1 ]-&gt;activation,
++            expectation_gradients[ n_layers-2 ],
++            activation_gradients[ n_layers-1 ],
++            true);
++        // accumulate into expectation_gradients[n_layers-2]
++        // because a partial cost may have already put a gradient there
++    }
++
++    if( use_classification_cost )
++    {
++        classification_module-&gt;fprop( layers[ n_layers-2 ]-&gt;expectation,
++                                      class_output );
++        real nll_cost;
++
++        // This doesn't work. gcc bug?
++        // classification_cost-&gt;fprop( class_output, target, cost );
++        classification_cost-&gt;CostModule::fprop( class_output, target,
++                                                nll_cost );
++
++        real class_error =
++            ( argmax(class_output) == (int) round(target[0]) ) ? 0: 1;
++
++        train_costs[nll_cost_index] = nll_cost;
++        train_costs[class_cost_index] = class_error;
++
++        classification_cost-&gt;bpropUpdate( class_output, target, nll_cost,
++                                          class_gradient );
++
++        classification_module-&gt;bpropUpdate( layers[ n_layers-2 ]-&gt;expectation,
++                                            class_output,
++                                            expectation_gradients[n_layers-2],
++                                            class_gradient,
++                                            true );
++        if( top_layer_joint_cd )
++        {
++            // set the input of the joint layer
++            Vec target_exp = classification_module-&gt;target_layer-&gt;expectation;
++            fill_one_hot( target_exp, (int) round(target[0]), real(0.), real(1.) );
++
++            joint_layer-&gt;setLearningRate( cd_learning_rate );
++            layers[ n_layers-1 ]-&gt;setLearningRate( cd_learning_rate );
++            classification_module-&gt;joint_connection-&gt;setLearningRate(
++                cd_learning_rate );
++
++            save_layer_activation.resize(layers[ n_layers-2 ]-&gt;size);
++            save_layer_activation &lt;&lt; layers[ n_layers-2 ]-&gt;activation;
++            save_layer_expectation.resize(layers[ n_layers-2 ]-&gt;size);
++            save_layer_expectation &lt;&lt; layers[ n_layers-2 ]-&gt;expectation;
++
++            contrastiveDivergenceStep(
++                get_pointer(joint_layer),
++                get_pointer(classification_module-&gt;joint_connection),
++                layers[ n_layers-1 ], n_layers-2);
++
++            layers[ n_layers-2 ]-&gt;activation &lt;&lt; save_layer_activation;
++            layers[ n_layers-2 ]-&gt;expectation &lt;&lt; save_layer_expectation;
++        }
++    }
++
++    // DOWNWARD PHASE (the downward phase for top layer is already done above,
++    // except for the contrastive divergence step in the case where either
++    // 'use_classification_cost' or 'top_layer_joint_cd' is false).
++    for( int i=n_layers-2 ; i&gt;=0 ; i-- )
++    {
++        if (i &lt;= n_layers - 3) {
++        connections[ i ]-&gt;setLearningRate( grad_learning_rate );
++        layers[ i+1 ]-&gt;setLearningRate( grad_learning_rate );
++
++        layers[i+1]-&gt;bpropUpdate( layers[i+1]-&gt;activation,
++                                  layers[i+1]-&gt;expectation,
++                                  activation_gradients[i+1],
++                                  expectation_gradients[i+1] );
++
++        connections[i]-&gt;bpropUpdate( layers[i]-&gt;expectation,
++                                     layers[i+1]-&gt;activation,
++                                     expectation_gradients[i],
++                                     activation_gradients[i+1],
++                                     true);
++        }
++
++        if (i &lt;= n_layers - 3 || !use_classification_cost ||
++                                 !top_layer_joint_cd) {
++
++        // N.B. the contrastiveDivergenceStep changes the activation and
++        // expectation fields of top layer of the RBM, so it must be
++        // done last
++        layers[i]-&gt;setLearningRate( cd_learning_rate );
++        layers[i+1]-&gt;setLearningRate( cd_learning_rate );
++        connections[i]-&gt;setLearningRate( cd_learning_rate );
++
++        if( i &gt; 0 )
++        {
++            save_layer_activation.resize(layers[i]-&gt;size);
++            save_layer_activation &lt;&lt; layers[i]-&gt;activation;
++            save_layer_expectation.resize(layers[i]-&gt;size);
++            save_layer_expectation &lt;&lt; layers[i]-&gt;expectation;
++        }
++        contrastiveDivergenceStep( layers[ i ],
++                                   connections[ i ],
++                                   layers[ i+1 ] ,
++                                   i, true);
++        if( i &gt; 0 )
++        {
++            layers[i]-&gt;activation &lt;&lt; save_layer_activation;
++            layers[i]-&gt;expectation &lt;&lt; save_layer_expectation;
++        }
++        }
++    }
++
++
++
++}
++
++void SubsamplingDBN::onlineStep(const Mat&amp; inputs, const Mat&amp; targets,
++                               Mat&amp; train_costs)
++{
++    // TODO Can we avoid this memory allocation?
++    TVec&lt;Mat&gt; cost;
++    Vec optimized_cost(inputs.length());
++    if (partial_costs) {
++        cost.resize(n_layers-1);
++    }
++
++    layers[0]-&gt;setExpectations(inputs);
++    // FORWARD PHASE
++    //Vec layer_input;
++    for( int i=0 ; i&lt;n_layers-1 ; i++ )
++    {
++        // mean-field fprop from layer i to layer i+1
++        connections[i]-&gt;setAsDownInputs( layers[i]-&gt;getExpectations() );
++        // this does the actual matrix-vector computation
++        layers[i+1]-&gt;getAllActivations( connections[i], 0, true );
++        layers[i+1]-&gt;computeExpectations();
++
++        // propagate into local cost associated to output of layer i+1
++        if( partial_costs &amp;&amp; partial_costs[ i ] )
++        {
++            partial_costs[ i ]-&gt;fprop( layers[ i+1 ]-&gt;getExpectations(),
++                                       targets, cost[i] );
++
++            // Backward pass
++            // first time we set these gradients: do not accumulate
++            optimized_cost &lt;&lt; cost[i].column(0); // TODO Can we optimize?
++            partial_costs[ i ]-&gt;bpropUpdate( layers[ i+1 ]-&gt;getExpectations(),
++                                             targets, optimized_cost,
++                                             expectations_gradients[ i+1 ] );
++
++            train_costs.subMatColumns(partial_costs_indices[i], cost[i].width())
++                &lt;&lt; cost[i];
++        }
++        else
++            expectations_gradients[i+1].clear();
++    }
++
++    // top layer may be connected to a final_module followed by a
++    // final_cost and / or may be used to predict class probabilities
++    // through a joint classification_module
++
++    if ( final_cost )
++    {
++        if( final_module )
++        {
++                final_module-&gt;fprop( layers[ n_layers-1 ]-&gt;getExpectations(),
++                        final_cost_inputs );
++                final_cost-&gt;fprop( final_cost_inputs, targets,
++                        final_cost_values );
++                optimized_cost &lt;&lt; final_cost_values.column(0); // TODO optimize
++                final_cost-&gt;bpropUpdate( final_cost_inputs, targets,
++                        optimized_cost,
++                        final_cost_gradients );
++
++                final_module-&gt;bpropUpdate(
++                        layers[ n_layers-1 ]-&gt;getExpectations(),
++                        final_cost_inputs,
++                        expectations_gradients[ n_layers-1 ],
++                        final_cost_gradients, true );
++        }
++        else
++        {
++                final_cost-&gt;fprop( layers[ n_layers-1 ]-&gt;getExpectations(),
++                        targets,
++                        final_cost_values );
++                optimized_cost &lt;&lt; final_cost_values.column(0); // TODO optimize
++                final_cost-&gt;bpropUpdate( layers[n_layers-1]-&gt;getExpectations(),
++                        targets, optimized_cost,
++                        expectations_gradients[n_layers-1],
++                        true);
++        }
++
++        train_costs.subMatColumns(final_cost_index, final_cost_values.width())
++            &lt;&lt; final_cost_values;
++    }
++
++    if (final_cost || (!partial_costs.isEmpty() &amp;&amp; partial_costs[n_layers-2]))
++    {
++        layers[n_layers-1]-&gt;setLearningRate( grad_learning_rate );
++        connections[n_layers-2]-&gt;setLearningRate( grad_learning_rate );
++
++        layers[ n_layers-1 ]-&gt;bpropUpdate(
++                layers[ n_layers-1 ]-&gt;activations,
++                layers[ n_layers-1 ]-&gt;getExpectations(),
++                activations_gradients[ n_layers-1 ],
++                expectations_gradients[ n_layers-1 ],
++                false);
++
++        connections[ n_layers-2 ]-&gt;bpropUpdate(
++                layers[ n_layers-2 ]-&gt;getExpectations(),
++                layers[ n_layers-1 ]-&gt;activations,
++                expectations_gradients[ n_layers-2 ],
++                activations_gradients[ n_layers-1 ],
++                true);
++        // accumulate into expectations_gradients[n_layers-2]
++        // because a partial cost may have already put a gradient there
++    }
++
++    if( use_classification_cost )
++    {
++        PLERROR(&quot;In SubsamplingDBN::onlineStep - 'use_classification_cost' not &quot;
++                &quot;implemented for mini-batches&quot;);
++
++        /*
++        classification_module-&gt;fprop( layers[ n_layers-2 ]-&gt;expectation,
++                                      class_output );
++        real nll_cost;
++
++        // This doesn't work. gcc bug?
++        // classification_cost-&gt;fprop( class_output, target, cost );
++        classification_cost-&gt;CostModule::fprop( class_output, target,
++                                                nll_cost );
++
++        real class_error =
++            ( argmax(class_output) == (int) round(target[0]) ) ? 0: 1;
++
++        train_costs[nll_cost_index] = nll_cost;
++        train_costs[class_cost_index] = class_error;
++
++        classification_cost-&gt;bpropUpdate( class_output, target, nll_cost,
++                                          class_gradient );
++
++        classification_module-&gt;bpropUpdate( layers[ n_layers-2 ]-&gt;expectation,
++                                            class_output,
++                                            expectation_gradients[n_layers-2],
++                                            class_gradient,
++                                            true );
++        if( top_layer_joint_cd )
++        {
++            // set the input of the joint layer
++            Vec target_exp = classification_module-&gt;target_layer-&gt;expectation;
++            fill_one_hot( target_exp, (int) round(target[0]), real(0.), real(1.) );
++
++            joint_layer-&gt;setLearningRate( cd_learning_rate );
++            layers[ n_layers-1 ]-&gt;setLearningRate( cd_learning_rate );
++            classification_module-&gt;joint_connection-&gt;setLearningRate(
++                cd_learning_rate );
++
++            save_layer_activation.resize(layers[ n_layers-2 ]-&gt;size);
++            save_layer_activation &lt;&lt; layers[ n_layers-2 ]-&gt;activation;
++            save_layer_expectation.resize(layers[ n_layers-2 ]-&gt;size);
++            save_layer_expectation &lt;&lt; layers[ n_layers-2 ]-&gt;expectation;
++
++            contrastiveDivergenceStep(
++                get_pointer(joint_layer),
++                get_pointer(classification_module-&gt;joint_connection),
++                layers[ n_layers-1 ], n_layers-2);
++
++            layers[ n_layers-2 ]-&gt;activation &lt;&lt; save_layer_activation;
++            layers[ n_layers-2 ]-&gt;expectation &lt;&lt; save_layer_expectation;
++        }
++        */
++    }
++
++    Mat rc;
++    if (reconstruct_layerwise)
++    {
++        rc = train_costs.column(reconstruction_cost_index);
++        rc.clear();
++    }
++
++    // DOWNWARD PHASE (the downward phase for top layer is already done above,
++    // except for the contrastive divergence step in the case where either
++    // 'use_classification_cost' or 'top_layer_joint_cd' is false).
++
++    for( int i=n_layers-2 ; i&gt;=0 ; i-- )
++    {
++        if (i &lt;= n_layers - 3) {
++            connections[ i ]-&gt;setLearningRate( grad_learning_rate );
++            layers[ i+1 ]-&gt;setLearningRate( grad_learning_rate );
++
++            layers[i+1]-&gt;bpropUpdate( layers[i+1]-&gt;activations,
++                                      layers[i+1]-&gt;getExpectations(),
++                                      activations_gradients[i+1],
++                                      expectations_gradients[i+1] );
++
++            connections[i]-&gt;bpropUpdate( layers[i]-&gt;getExpectations(),
++                                         layers[i+1]-&gt;activations,
++                                         expectations_gradients[i],
++                                         activations_gradients[i+1],
++                                         true);
++
++        }
++
++        if (i &lt;= n_layers - 3 || !use_classification_cost ||
++                !top_layer_joint_cd)
++        {
++
++            // N.B. the contrastiveDivergenceStep changes the activation and
++            // expectation fields of top layer of the RBM, so it must be
++            // done last
++            layers[i]-&gt;setLearningRate( cd_learning_rate );
++            layers[i+1]-&gt;setLearningRate( cd_learning_rate );
++            connections[i]-&gt;setLearningRate( cd_learning_rate );
++
++            if( i &gt; 0 )
++            {
++                const Mat&amp; source_act = layers[i]-&gt;activations;
++                save_layer_activations.resize(source_act.length(),
++                                              source_act.width());
++                save_layer_activations &lt;&lt; source_act;
++                const Mat&amp; source_exp = layers[i]-&gt;getExpectations();
++                save_layer_expectations.resize(source_exp.length(),
++                                               source_exp.width());
++                save_layer_expectations &lt;&lt; source_exp;
++            }
++
++            if (reconstruct_layerwise)
++            {
++                connections[i]-&gt;setAsUpInputs(layers[i+1]-&gt;getExpectations());
++                layers[i]-&gt;getAllActivations(connections[i], 0, true);
++                layers[i]-&gt;fpropNLL(
++                        save_layer_expectations,
++                        train_costs.column(reconstruction_cost_index+i+1));
++                rc += train_costs.column(reconstruction_cost_index+i+1);
++            }
++
++            contrastiveDivergenceStep( layers[ i ],
++                                       connections[ i ],
++                                       layers[ i+1 ] ,
++                                       i, true);
++            if( i &gt; 0 )
++            {
++                layers[i]-&gt;activations &lt;&lt; save_layer_activations;
++                layers[i]-&gt;getExpectations() &lt;&lt; save_layer_expectations;
++            }
++        }
++    }
++
++}
++
++////////////////
++// greedyStep //
++////////////////
++void SubsamplingDBN::greedyStep( const Vec&amp; input, const Vec&amp; target, int index )
++{
++    PLASSERT( index &lt; n_layers );
++
++    reduced_layers[0]-&gt;expectation &lt;&lt; input;
++    for( int i=0 ; i&lt;=index ; i++ )
++    {
++        connections[i]-&gt;setAsDownInput( reduced_layers[i]-&gt;expectation );
++        layers[i+1]-&gt;getAllActivations( connections[i] );
++        layers[i+1]-&gt;computeExpectation();
++
++        if( i+1&lt;n_layers-1 )
++        {
++            if( subsampling_modules[i+1] )
++            {
++                subsampling_modules[i+1]-&gt;fprop(layers[i+1]-&gt;expectation,
++                                                reduced_layers[i+1]-&gt;expectation);
++                reduced_layers[i+1]-&gt;expectation_is_up_to_date = true;
++            }
++            else if( independent_biases )
++            {
++                reduced_layers[i+1]-&gt;expectation &lt;&lt; layers[i+1]-&gt;expectation;
++                reduced_layers[i+1]-&gt;expectation_is_up_to_date = true;
++            }
++        }
++    }
++
++    // TODO: add another learning rate?
++    if( !partial_costs.isEmpty() &amp;&amp; partial_costs[ index ] )
++    {
++        PLERROR(&quot;partial_costs doesn't work with subsampling yet&quot;);
++        // put appropriate learning rate
++        connections[ index ]-&gt;setLearningRate( grad_learning_rate );
++        layers[ index+1 ]-&gt;setLearningRate( grad_learning_rate );
++
++        // Backward pass
++        real cost;
++        partial_costs[ index ]-&gt;fprop( layers[ index+1 ]-&gt;expectation,
++                                       target, cost );
++
++        partial_costs[ index ]-&gt;bpropUpdate( layers[ index+1 ]-&gt;expectation,
++                                             target, cost,
++                                             expectation_gradients[ index+1 ]
++                                             );
++
++        layers[ index+1 ]-&gt;bpropUpdate( layers[ index+1 ]-&gt;activation,
++                                        layers[ index+1 ]-&gt;expectation,
++                                        activation_gradients[ index+1 ],
++                                        expectation_gradients[ index+1 ] );
++
++        connections[ index ]-&gt;bpropUpdate( layers[ index ]-&gt;expectation,
++                                           layers[ index+1 ]-&gt;activation,
++                                           expectation_gradients[ index ],
++                                           activation_gradients[ index+1 ] );
++
++        // put back old learning rate
++        connections[ index ]-&gt;setLearningRate( cd_learning_rate );
++        layers[ index+1 ]-&gt;setLearningRate( cd_learning_rate );
++    }
++
++    contrastiveDivergenceStep( reduced_layers[ index ],
++                               connections[ index ],
++                               layers[ index+1 ],
++                               index, true);
++}
++
++/////////////////
++// greedySteps //
++/////////////////
++void SubsamplingDBN::greedyStep( const Mat&amp; inputs, const Mat&amp; targets, int index, Mat&amp; train_costs_m )
++{
++    PLERROR(&quot;minibatch doesn't work with subsampling yet&quot;);
++    PLASSERT( index &lt; n_layers );
++
++    layers[0]-&gt;setExpectations(inputs);
++    for( int i=0 ; i&lt;=index ; i++ )
++    {
++        connections[i]-&gt;setAsDownInputs( layers[i]-&gt;getExpectations() );
++        layers[i+1]-&gt;getAllActivations( connections[i], 0, true );
++        layers[i+1]-&gt;computeExpectations();
++    }
++
++    // TODO: add another learning rate?
++    if( !partial_costs.isEmpty() &amp;&amp; partial_costs[ index ] )
++    {
++        // put appropriate learning rate
++        connections[ index ]-&gt;setLearningRate( grad_learning_rate );
++        layers[ index+1 ]-&gt;setLearningRate( grad_learning_rate );
++
++        // Backward pass
++        Vec costs;
++        partial_costs[ index ]-&gt;fprop( layers[ index+1 ]-&gt;getExpectations(),
++                                       targets, costs );
++
++        partial_costs[ index ]-&gt;bpropUpdate(layers[index+1]-&gt;getExpectations(),
++                targets, costs,
++                expectations_gradients[ index+1 ]
++                );
++
++        layers[ index+1 ]-&gt;bpropUpdate( layers[ index+1 ]-&gt;activations,
++                                        layers[ index+1 ]-&gt;getExpectations(),
++                                        activations_gradients[ index+1 ],
++                                        expectations_gradients[ index+1 ] );
++
++        connections[ index ]-&gt;bpropUpdate( layers[ index ]-&gt;getExpectations(),
++                                           layers[ index+1 ]-&gt;activations,
++                                           expectations_gradients[ index ],
++                                           activations_gradients[ index+1 ] );
++
++        // put back old learning rate
++        connections[ index ]-&gt;setLearningRate( cd_learning_rate );
++        layers[ index+1 ]-&gt;setLearningRate( cd_learning_rate );
++    }
++
++    if (reconstruct_layerwise)
++    {
++        layer_inputs.resize(minibatch_size,layers[index]-&gt;size);
++        layer_inputs &lt;&lt; layers[index]-&gt;getExpectations(); // we will perturb these, so save them
++        connections[index]-&gt;setAsUpInputs(layers[index+1]-&gt;getExpectations());
++        layers[index]-&gt;getAllActivations(connections[index], 0, true);
++        layers[index]-&gt;fpropNLL(layer_inputs, train_costs_m.column(reconstruction_cost_index+index+1));
++        Mat rc = train_costs_m.column(reconstruction_cost_index);
++        rc += train_costs_m.column(reconstruction_cost_index+index+1);
++        layers[index]-&gt;setExpectations(layer_inputs); // and restore them here
++    }
++
++    contrastiveDivergenceStep( layers[ index ],
++                               connections[ index ],
++                               layers[ index+1 ],
++                               index, true);
++
++}
++
++/////////////////////
++// jointGreedyStep //
++/////////////////////
++void SubsamplingDBN::jointGreedyStep( const Vec&amp; input, const Vec&amp; target )
++{
++    PLERROR(&quot;classification_module doesn't work with subsampling yet&quot;);
++    PLASSERT( joint_layer );
++    PLASSERT_MSG(batch_size == 1, &quot;Not implemented for mini-batches&quot;);
++
++    layers[0]-&gt;expectation &lt;&lt; input;
++    for( int i=0 ; i&lt;n_layers-2 ; i++ )
++    {
++        connections[i]-&gt;setAsDownInput( layers[i]-&gt;expectation );
++        layers[i+1]-&gt;getAllActivations( connections[i] );
++        layers[i+1]-&gt;computeExpectation();
++    }
++
++    if( !partial_costs.isEmpty() &amp;&amp; partial_costs[ n_layers-2 ] )
++    {
++        // Deterministic forward pass
++        connections[ n_layers-2 ]-&gt;setAsDownInput(
++            layers[ n_layers-2 ]-&gt;expectation );
++        layers[ n_layers-1 ]-&gt;getAllActivations( connections[ n_layers-2 ] );
++        layers[ n_layers-1 ]-&gt;computeExpectation();
++
++        // put appropriate learning rate
++        connections[ n_layers-2 ]-&gt;setLearningRate( grad_learning_rate );
++        layers[ n_layers-1 ]-&gt;setLearningRate( grad_learning_rate );
++
++        // Backward pass
++        real cost;
++        partial_costs[ n_layers-2 ]-&gt;fprop( layers[ n_layers-1 ]-&gt;expectation,
++                                            target, cost );
++
++        partial_costs[ n_layers-2 ]-&gt;bpropUpdate(
++            layers[ n_layers-1 ]-&gt;expectation, target, cost,
++            expectation_gradients[ n_layers-1 ] );
++
++        layers[ n_layers-1 ]-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;activation,
++                                           layers[ n_layers-1 ]-&gt;expectation,
++                                           activation_gradients[ n_layers-1 ],
++                                           expectation_gradients[ n_layers-1 ]
++                                         );
++
++        connections[ n_layers-2 ]-&gt;bpropUpdate(
++            layers[ n_layers-2 ]-&gt;expectation,
++            layers[ n_layers-1 ]-&gt;activation,
++            expectation_gradients[ n_layers-2 ],
++            activation_gradients[ n_layers-1 ] );
++
++        // put back old learning rate
++        connections[ n_layers-2 ]-&gt;setLearningRate( cd_learning_rate );
++        layers[ n_layers-1 ]-&gt;setLearningRate( cd_learning_rate );
++    }
++
++    Vec target_exp = classification_module-&gt;target_layer-&gt;expectation;
++    fill_one_hot( target_exp, (int) round(target[0]), real(0.), real(1.) );
++
++    contrastiveDivergenceStep(
++        get_pointer( joint_layer ),
++        get_pointer( classification_module-&gt;joint_connection ),
++        layers[ n_layers-1 ], n_layers-2);
++}
++
++////////////////////
++// fineTuningStep //
++////////////////////
++void SubsamplingDBN::fineTuningStep( const Vec&amp; input, const Vec&amp; target,
++                                    Vec&amp; train_costs )
++{
++    final_cost_value.resize(0);
++    // fprop
++    reduced_layers[0]-&gt;expectation &lt;&lt; input;
++    for( int i=0 ; i&lt;n_layers-2 ; i++ )
++    {
++        connections[i]-&gt;setAsDownInput( reduced_layers[i]-&gt;expectation );
++        layers[i+1]-&gt;getAllActivations( connections[i] );
++        layers[i+1]-&gt;computeExpectation();
++
++        if( subsampling_modules[i+1] )
++        {
++            subsampling_modules[i+1]-&gt;fprop(layers[i+1]-&gt;expectation,
++                                            reduced_layers[i+1]-&gt;expectation);
++            reduced_layers[i+1]-&gt;expectation_is_up_to_date = true;
++        }
++        else if( independent_biases )
++        {
++            reduced_layers[i+1]-&gt;expectation &lt;&lt; layers[i+1]-&gt;expectation;
++            reduced_layers[i+1]-&gt;expectation_is_up_to_date = true;
++        }
++    }
++
++    if( final_cost )
++    {
++        connections[ n_layers-2 ]-&gt;setAsDownInput(
++            reduced_layers[ n_layers-2 ]-&gt;expectation );
++        layers[ n_layers-1 ]-&gt;getAllActivations( connections[ n_layers-2 ] );
++        layers[ n_layers-1 ]-&gt;computeExpectation();
++
++        if( final_module )
++        {
++            final_module-&gt;fprop( layers[ n_layers-1 ]-&gt;expectation,
++                                 final_cost_input );
++            final_cost-&gt;fprop( final_cost_input, target, final_cost_value );
++
++            final_cost-&gt;bpropUpdate( final_cost_input, target,
++                                     final_cost_value[0],
++                                     final_cost_gradient );
++            final_module-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;expectation,
++                                       final_cost_input,
++                                       expectation_gradients[ n_layers-1 ],
++                                       final_cost_gradient );
++        }
++        else
++        {
++            final_cost-&gt;fprop( layers[ n_layers-1 ]-&gt;expectation, target,
++                               final_cost_value );
++
++            final_cost-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;expectation,
++                                     target, final_cost_value[0],
++                                     expectation_gradients[ n_layers-1 ] );
++        }
++
++        train_costs.subVec(final_cost_index, final_cost_value.length())
++            &lt;&lt; final_cost_value;
++
++        layers[ n_layers-1 ]-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;activation,
++                                           layers[ n_layers-1 ]-&gt;expectation,
++                                           activation_gradients[ n_layers-1 ],
++                                           expectation_gradients[ n_layers-1 ]
++                                         );
++
++        connections[ n_layers-2 ]-&gt;bpropUpdate(
++            reduced_layers[ n_layers-2 ]-&gt;expectation,
++            layers[ n_layers-1 ]-&gt;activation,
++            subsampling_gradients[ n_layers-2 ],
++            activation_gradients[ n_layers-1 ] );
++    }
++    else  {
++        subsampling_gradients[ n_layers-2 ].clear();
++    }
++
++    if( use_classification_cost )
++    {
++        PLERROR(&quot;classification_cost doesn't work with subsampling yet&quot;);
++        classification_module-&gt;fprop( layers[ n_layers-2 ]-&gt;expectation,
++                                      class_output );
++        real nll_cost;
++
++        // This doesn't work. gcc bug?
++        // classification_cost-&gt;fprop( class_output, target, cost );
++        classification_cost-&gt;CostModule::fprop( class_output, target,
++                                                nll_cost );
++
++        real class_error =
++            ( argmax(class_output) == (int) round(target[0]) ) ? 0
++                                                               : 1;
++
++        train_costs[nll_cost_index] = nll_cost;
++        train_costs[class_cost_index] = class_error;
++
++        classification_cost-&gt;bpropUpdate( class_output, target, nll_cost,
++                                          class_gradient );
++
++        classification_module-&gt;bpropUpdate( layers[ n_layers-2 ]-&gt;expectation,
++                                            class_output,
++                                            expectation_gradients[n_layers-2],
++                                            class_gradient,
++                                            true );
++    }
++
++    for( int i=n_layers-2 ; i&gt;0 ; i-- )
++    {
++        if( subsampling_modules[i] )
++        {
++            subsampling_modules[i]-&gt;bpropUpdate( layers[i]-&gt;expectation,
++                                                 reduced_layers[i]-&gt;expectation,
++                                                 expectation_gradients[i],
++                                                 subsampling_gradients[i] );
++            layers[i]-&gt;bpropUpdate( layers[i]-&gt;activation,
++                                    layers[i]-&gt;expectation,
++                                    activation_gradients[i],
++                                    expectation_gradients[i] );
++        }
++        else
++        {
++            layers[i]-&gt;bpropUpdate( layers[i]-&gt;activation,
++                                    reduced_layers[i]-&gt;expectation,
++                                    activation_gradients[i],
++                                    subsampling_gradients[i] );
++        }
++        connections[i-1]-&gt;bpropUpdate( reduced_layers[i-1]-&gt;expectation,
++                                       layers[i]-&gt;activation,
++                                       expectation_gradients[i-1],
++                                       activation_gradients[i] );
++    }
++}
++
++void SubsamplingDBN::fineTuningStep(const Mat&amp; inputs, const Mat&amp; targets,
++                                   Mat&amp; train_costs )
++{
++    PLERROR(&quot;minibatch doesn't work with subsampling yet&quot;);
++    final_cost_values.resize(0, 0);
++    // fprop
++    layers[0]-&gt;getExpectations() &lt;&lt; inputs;
++    for( int i=0 ; i&lt;n_layers-2 ; i++ )
++    {
++        connections[i]-&gt;setAsDownInputs( layers[i]-&gt;getExpectations() );
++        layers[i+1]-&gt;getAllActivations( connections[i], 0, true );
++        layers[i+1]-&gt;computeExpectations();
++    }
++
++    if( final_cost )
++    {
++        connections[ n_layers-2 ]-&gt;setAsDownInputs(
++            layers[ n_layers-2 ]-&gt;getExpectations() );
++        // TODO Also ensure getAllActivations fills everything.
++        layers[ n_layers-1 ]-&gt;getAllActivations(connections[n_layers-2],
++                                                0, true);
++        layers[ n_layers-1 ]-&gt;computeExpectations();
++
++        if( final_module )
++        {
++            final_cost_inputs.resize(minibatch_size,
++                                     final_module-&gt;output_size);
++            final_module-&gt;fprop( layers[ n_layers-1 ]-&gt;getExpectations(),
++                                 final_cost_inputs );
++            final_cost-&gt;fprop( final_cost_inputs, targets, final_cost_values );
++
++            // TODO This extra memory copy is annoying: how can we avoid it?
++            optimized_costs &lt;&lt; final_cost_values.column(0);
++            final_cost-&gt;bpropUpdate( final_cost_inputs, targets,
++                                     optimized_costs,
++                                     final_cost_gradients );
++            final_module-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;getExpectations(),
++                                       final_cost_inputs,
++                                       expectations_gradients[ n_layers-1 ],
++                                       final_cost_gradients );
++        }
++        else
++        {
++            final_cost-&gt;fprop( layers[ n_layers-1 ]-&gt;getExpectations(), targets,
++                               final_cost_values );
++
++            optimized_costs &lt;&lt; final_cost_values.column(0);
++            final_cost-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;getExpectations(),
++                                     targets, optimized_costs,
++                                     expectations_gradients[ n_layers-1 ] );
++        }
++
++        train_costs.subMatColumns(final_cost_index, final_cost_values.width())
++            &lt;&lt; final_cost_values;
++
++        layers[ n_layers-1 ]-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;activations,
++                                           layers[ n_layers-1 ]-&gt;getExpectations(),
++                                           activations_gradients[ n_layers-1 ],
++                                           expectations_gradients[ n_layers-1 ]
++                                         );
++
++        connections[ n_layers-2 ]-&gt;bpropUpdate(
++            layers[ n_layers-2 ]-&gt;getExpectations(),
++            layers[ n_layers-1 ]-&gt;activations,
++            expectations_gradients[ n_layers-2 ],
++            activations_gradients[ n_layers-1 ] );
++    }
++    else  {
++        expectations_gradients[ n_layers-2 ].clear();
++    }
++
++    if( use_classification_cost )
++    {
++        PLERROR(&quot;SubsamplingDBN::fineTuningStep - Not implemented for &quot;
++                &quot;mini-batches&quot;);
++        /*
++        classification_module-&gt;fprop( layers[ n_layers-2 ]-&gt;expectation,
++                                      class_output );
++        real nll_cost;
++
++        // This doesn't work. gcc bug?
++        // classification_cost-&gt;fprop( class_output, target, cost );
++        classification_cost-&gt;CostModule::fprop( class_output, target,
++                                                nll_cost );
++
++        real class_error =
++            ( argmax(class_output) == (int) round(target[0]) ) ? 0
++                                                               : 1;
++
++        train_costs[nll_cost_index] = nll_cost;
++        train_costs[class_cost_index] = class_error;
++
++        classification_cost-&gt;bpropUpdate( class_output, target, nll_cost,
++                                          class_gradient );
++
++        classification_module-&gt;bpropUpdate( layers[ n_layers-2 ]-&gt;expectation,
++                                            class_output,
++                                            expectation_gradients[n_layers-2],
++                                            class_gradient,
++                                            true );
++        */
++    }
++
++    for( int i=n_layers-2 ; i&gt;0 ; i-- )
++    {
++        layers[i]-&gt;bpropUpdate( layers[i]-&gt;activations,
++                                layers[i]-&gt;getExpectations(),
++                                activations_gradients[i],
++                                expectations_gradients[i] );
++
++        connections[i-1]-&gt;bpropUpdate( layers[i-1]-&gt;getExpectations(),
++                                       layers[i]-&gt;activations,
++                                       expectations_gradients[i-1],
++                                       activations_gradients[i] );
++    }
++
++    // do it AFTER the bprop to avoid interfering with activations used in bprop
++    // (and do not worry that the weights have changed a bit). This is incoherent
++    // with the current implementation in the greedy stage.
++    if (reconstruct_layerwise)
++    {
++        Mat rc = train_costs.column(reconstruction_cost_index);
++        rc.clear();
++        for( int index=0 ; index&lt;n_layers-1 ; index++ )
++        {
++            layer_inputs.resize(minibatch_size,layers[index]-&gt;size);
++            layer_inputs &lt;&lt; layers[index]-&gt;getExpectations();
++            connections[index]-&gt;setAsUpInputs(layers[index+1]-&gt;getExpectations());
++            layers[index]-&gt;getAllActivations(connections[index], 0, true);
++            layers[index]-&gt;fpropNLL(layer_inputs, train_costs.column(reconstruction_cost_index+index+1));
++            rc += train_costs.column(reconstruction_cost_index+index+1);
++        }
++    }
++
++
++}
++
++///////////////////////////////
++// contrastiveDivergenceStep //
++///////////////////////////////
++void SubsamplingDBN::contrastiveDivergenceStep(
++    const PP&lt;RBMLayer&gt;&amp; down_layer,
++    const PP&lt;RBMConnection&gt;&amp; connection,
++    const PP&lt;RBMLayer&gt;&amp; up_layer,
++    int layer_index, bool nofprop)
++{
++    bool mbatch = minibatch_size &gt; 1 || minibatch_hack;
++
++    // positive phase
++    if (!nofprop)
++    {
++        if (mbatch) {
++            connection-&gt;setAsDownInputs( down_layer-&gt;getExpectations() );
++            up_layer-&gt;getAllActivations( connection, 0, true );
++            up_layer-&gt;computeExpectations();
++        } else {
++            connection-&gt;setAsDownInput( down_layer-&gt;expectation );
++            up_layer-&gt;getAllActivations( connection );
++            up_layer-&gt;computeExpectation();
++        }
++    }
++
++    if (mbatch) {
++        // accumulate positive stats using the expectation
++        // we deep-copy because the value will change during negative phase
++        pos_down_vals.resize(minibatch_size, down_layer-&gt;size);
++        pos_up_vals.resize(minibatch_size, up_layer-&gt;size);
++
++        pos_down_vals &lt;&lt; down_layer-&gt;getExpectations();
++        pos_up_vals &lt;&lt; up_layer-&gt;getExpectations();
++
++        // down propagation, starting from a sample of up_layer
++        if (background_gibbs_update_ratio&lt;1)
++            // then do some contrastive divergence, o/w only background Gibbs
++        {
++            up_layer-&gt;generateSamples();
++            connection-&gt;setAsUpInputs( up_layer-&gt;samples );
++            down_layer-&gt;getAllActivations( connection, 0, true );
++            down_layer-&gt;generateSamples();
++            // negative phase
++            connection-&gt;setAsDownInputs( down_layer-&gt;samples );
++            up_layer-&gt;getAllActivations( connection, 0, mbatch );
++            up_layer-&gt;computeExpectations();
++
++            // accumulate negative stats
++            // no need to deep-copy because the values won't change before update
++            Mat neg_down_vals = down_layer-&gt;samples;
++            Mat neg_up_vals = up_layer-&gt;getExpectations();
++
++            if (background_gibbs_update_ratio==0)
++            // update here only if there is ONLY contrastive divergence
++            {
++                down_layer-&gt;update( pos_down_vals, neg_down_vals );
++                connection-&gt;update( pos_down_vals, pos_up_vals,
++                                    neg_down_vals, neg_up_vals );
++                up_layer-&gt;update( pos_up_vals, neg_up_vals );
++            }
++            else
++            {
++                connection-&gt;accumulatePosStats(pos_down_vals,pos_up_vals);
++                cd_neg_down_vals.resize(minibatch_size, down_layer-&gt;size);
++                cd_neg_up_vals.resize(minibatch_size, up_layer-&gt;size);
++                cd_neg_down_vals &lt;&lt; neg_down_vals;
++                cd_neg_up_vals &lt;&lt; neg_up_vals;
++            }
++        }
++        //
++        if (background_gibbs_update_ratio&gt;0)
++        {
++            Mat down_state = gibbs_down_state[layer_index];
++
++            if (initialize_gibbs_chain) // initializing or re-initializing the chain
++            {
++                if (background_gibbs_update_ratio==1) // if &lt;1 just use the CD state
++                {
++                    up_layer-&gt;generateSamples();
++                    connection-&gt;setAsUpInputs(up_layer-&gt;samples);
++                    down_layer-&gt;getAllActivations(connection, 0, true);
++                    down_layer-&gt;generateSamples();
++                    down_state &lt;&lt; down_layer-&gt;samples;
++                }
++                initialize_gibbs_chain=false;
++            }
++            // sample up state given down state
++            connection-&gt;setAsDownInputs(down_state);
++            up_layer-&gt;getAllActivations(connection, 0, true);
++            up_layer-&gt;generateSamples();
++
++            // sample down state given up state, to prepare for next time
++            connection-&gt;setAsUpInputs(up_layer-&gt;samples);
++            down_layer-&gt;getAllActivations(connection, 0, true);
++            down_layer-&gt;generateSamples();
++
++            // update using the down_state and up_layer-&gt;expectations for moving average in negative phase
++            // (and optionally
++            if (background_gibbs_update_ratio&lt;1)
++            {
++                down_layer-&gt;updateCDandGibbs(pos_down_vals,cd_neg_down_vals,
++                                             down_state,
++                                             background_gibbs_update_ratio);
++                connection-&gt;updateCDandGibbs(pos_down_vals,pos_up_vals,
++                                             cd_neg_down_vals, cd_neg_up_vals,
++                                             down_state,
++                                             up_layer-&gt;getExpectations(),
++                                             background_gibbs_update_ratio);
++                up_layer-&gt;updateCDandGibbs(pos_up_vals,cd_neg_up_vals,
++                                           up_layer-&gt;getExpectations(),
++                                           background_gibbs_update_ratio);
++            }
++            else
++            {
++                down_layer-&gt;updateGibbs(pos_down_vals,down_state);
++                connection-&gt;updateGibbs(pos_down_vals,pos_up_vals,down_state,
++                                        up_layer-&gt;getExpectations());
++                up_layer-&gt;updateGibbs(pos_up_vals,up_layer-&gt;getExpectations());
++            }
++
++            // Save Gibbs chain's state.
++            down_state &lt;&lt; down_layer-&gt;samples;
++        }
++    } else {
++        up_layer-&gt;generateSample();
++
++        // accumulate positive stats using the expectation
++        // we deep-copy because the value will change during negative phase
++        pos_down_val.resize( down_layer-&gt;size );
++        pos_up_val.resize( up_layer-&gt;size );
++
++        pos_down_val &lt;&lt; down_layer-&gt;expectation;
++        pos_up_val &lt;&lt; up_layer-&gt;expectation;
++
++        // down propagation, starting from a sample of up_layer
++        connection-&gt;setAsUpInput( up_layer-&gt;sample );
++
++        down_layer-&gt;getAllActivations( connection );
++
++        down_layer-&gt;generateSample();
++        // negative phase
++        connection-&gt;setAsDownInput( down_layer-&gt;sample );
++        up_layer-&gt;getAllActivations( connection, 0, mbatch );
++        up_layer-&gt;computeExpectation();
++        // accumulate negative stats
++        // no need to deep-copy because the values won't change before update
++        Vec neg_down_val = down_layer-&gt;sample;
++        Vec neg_up_val = up_layer-&gt;expectation;
++
++        // update
++        down_layer-&gt;update( pos_down_val, neg_down_val );
++        connection-&gt;update( pos_down_val, pos_up_val,
++                neg_down_val, neg_up_val );
++        up_layer-&gt;update( pos_up_val, neg_up_val );
++    }
++}
++
++
++///////////////////
++// computeOutput //
++///////////////////
++void SubsamplingDBN::computeOutput(const Vec&amp; input, Vec&amp; output) const
++{
++
++    // Compute the output from the input.
++    output.resize(0);
++
++    // fprop
++    reduced_layers[0]-&gt;expectation &lt;&lt; input;
++
++    if(reconstruct_layerwise)
++        reconstruction_costs[0]=0;
++
++    for( int i=0 ; i&lt;n_layers-2 ; i++ )
++    {
++        connections[i]-&gt;setAsDownInput( reduced_layers[i]-&gt;expectation );
++        layers[i+1]-&gt;getAllActivations( connections[i] );
++        layers[i+1]-&gt;computeExpectation();
++
++        if( subsampling_modules[i+1] )
++        {
++            subsampling_modules[i+1]-&gt;fprop(layers[i+1]-&gt;expectation,
++                                            reduced_layers[i+1]-&gt;expectation);
++            reduced_layers[i+1]-&gt;expectation_is_up_to_date = true;
++        }
++        else if( independent_biases )
++        {
++            reduced_layers[i+1]-&gt;expectation &lt;&lt; layers[i+1]-&gt;expectation;
++            reduced_layers[i+1]-&gt;expectation_is_up_to_date = true;
++        }
++
++        if (reconstruct_layerwise)
++        {
++            PLERROR( &quot;reconstruct_layerwise and subsampling don't work yet&quot; );
++            layer_input.resize(layers[i]-&gt;size);
++            layer_input &lt;&lt; layers[i]-&gt;expectation;
++            connections[i]-&gt;setAsUpInput(layers[i+1]-&gt;expectation);
++            layers[i]-&gt;getAllActivations(connections[i]);
++            real rc = reconstruction_costs[i+1] = layers[i]-&gt;fpropNLL( layer_input );
++            reconstruction_costs[0] += rc;
++        }
++    }
++
++
++    if( use_classification_cost )
++        classification_module-&gt;fprop( layers[ n_layers-2 ]-&gt;expectation,
++                                      output );
++
++    if( final_cost || (!partial_costs.isEmpty() &amp;&amp; partial_costs[n_layers-2] ))
++    {
++        connections[ n_layers-2 ]-&gt;setAsDownInput(
++            reduced_layers[ n_layers-2 ]-&gt;expectation );
++        layers[ n_layers-1 ]-&gt;getAllActivations( connections[ n_layers-2 ] );
++        layers[ n_layers-1 ]-&gt;computeExpectation();
++
++        if( final_module )
++        {
++            final_module-&gt;fprop( layers[ n_layers-1 ]-&gt;expectation,
++                                 final_cost_input );
++            output.append( final_cost_input );
++        }
++        else
++        {
++            output.append( layers[ n_layers-1 ]-&gt;expectation );
++        }
++
++        if (reconstruct_layerwise)
++        {
++            PLERROR( &quot;reconstruct_layerwise and subsampling don't work yet&quot; );
++            layer_input.resize(layers[n_layers-2]-&gt;size);
++            layer_input &lt;&lt; layers[n_layers-2]-&gt;expectation;
++            connections[n_layers-2]-&gt;setAsUpInput(layers[n_layers-1]-&gt;expectation);
++            layers[n_layers-2]-&gt;getAllActivations(connections[n_layers-2]);
++            real rc = reconstruction_costs[n_layers-1] = layers[n_layers-2]-&gt;fpropNLL( layer_input );
++            reconstruction_costs[0] += rc;
++        }
++    }
++
++}
++
++void SubsamplingDBN::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                           const Vec&amp; target, Vec&amp; costs) const
++{
++
++    // Compute the costs from *already* computed output.
++    costs.resize( cost_names.length() );
++    costs.fill( MISSING_VALUE );
++
++    // TO MAKE FOR CLEANER CODE INDEPENDENT OF ORDER OF CALLING THIS
++    // METHOD AND computeOutput, THIS SHOULD BE IN A REDEFINITION OF computeOutputAndCosts
++    if( use_classification_cost )
++    {
++        classification_cost-&gt;CostModule::fprop( output.subVec(0, n_classes),
++                target, costs[nll_cost_index] );
++
++        costs[class_cost_index] =
++            (argmax(output.subVec(0, n_classes)) == (int) round(target[0]))? 0
++            : 1;
++    }
++
++    if( final_cost )
++    {
++        int init = use_classification_cost ? n_classes : 0;
++        final_cost-&gt;fprop( output.subVec( init, output.size() - init ),
++                           target, final_cost_value );
++
++        costs.subVec(final_cost_index, final_cost_value.length())
++            &lt;&lt; final_cost_value;
++    }
++
++    if( !partial_costs.isEmpty() )
++    {
++        Vec pcosts;
++        for( int i=0 ; i&lt;n_layers-1 ; i++ )
++            // propagate into local cost associated to output of layer i+1
++            if( partial_costs[ i ] )
++            {
++                partial_costs[ i ]-&gt;fprop( layers[ i+1 ]-&gt;expectation,
++                                           target, pcosts);
++
++                costs.subVec(partial_costs_indices[i], pcosts.length())
++                    &lt;&lt; pcosts;
++            }
++    }
++
++    if (reconstruct_layerwise)
++        costs.subVec(reconstruction_cost_index, reconstruction_costs.length())
++            &lt;&lt; reconstruction_costs;
++
++}
++
++void SubsamplingDBN::test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats, VMat testoutputs, VMat testcosts) const
++{
++
++    //  Re-implementing simply because we want to measure the time it takes to
++    //  do the testing. The reset is there for two purposes:
++    //  1. to have fine-grained statistics at each call of test()
++    //  2. to be able to have a more meaningful cumulative_testing_time
++    //
++    //  BIG Nota Bene:
++    //  Get the statistics by E[testN.E[cumulative_test_time], where N is the
++    //  index of the last split that you're testing.
++    //  E[testN-1.E[cumulative_test_time] will basically be the cumulative test
++    //  time until (and including) the N-1th split! So it's a pretty
++    //  meaningless number (more or less).
++      
++    Profiler::reset(&quot;testing&quot;);
++    Profiler::start(&quot;testing&quot;);
++
++    inherited::test(testset, test_stats, testoutputs, testcosts);
++
++    Profiler::end(&quot;testing&quot;);
++
++    const Profiler::Stats&amp; stats = Profiler::getStats(&quot;testing&quot;);
++
++    real ticksPerSec = Profiler::ticksPerSecond();
++    real cpu_time = (stats.user_duration+stats.system_duration)/ticksPerSec;
++    cumulative_testing_time += cpu_time;
++
++    if (testcosts)
++        // if it is used (usually not) testcosts is a VMat that is of size
++        // nexamples x ncosts. The last column will have missing values.
++        // We just need to put a value in one of the rows of that column.
++        testcosts-&gt;put(0,cumulative_testing_time_cost_index,cumulative_testing_time);
++
++    if (test_stats) {
++        // Here we simply update the corresponding stat index
++        Vec test_time_stats(test_stats-&gt;length(), MISSING_VALUE);
++        test_time_stats[cumulative_testing_time_cost_index] =
++            cumulative_testing_time;
++        test_stats-&gt;update(test_time_stats);
++        test_stats-&gt;finalize();
++    }
++}
++
++
++TVec&lt;string&gt; SubsamplingDBN::getTestCostNames() const
++{
++    // Return the names of the costs computed by computeCostsFromOutputs
++    // (these may or may not be exactly the same as what's returned by
++    // getTrainCostNames).
++
++    return cost_names;
++}
++
++TVec&lt;string&gt; SubsamplingDBN::getTrainCostNames() const
++{
++    return cost_names;
++}
++
++
++//#####  Helper functions  ##################################################
++
++void SubsamplingDBN::setLearningRate( real the_learning_rate )
++{
++    for( int i=0 ; i&lt;n_layers-1 ; i++ )
++    {
++        layers[i]-&gt;setLearningRate( the_learning_rate );
++        connections[i]-&gt;setLearningRate( the_learning_rate );
++    }
++    layers[n_layers-1]-&gt;setLearningRate( the_learning_rate );
++
++    if( use_classification_cost )
++    {
++        classification_module-&gt;joint_connection-&gt;setLearningRate(
++            the_learning_rate );
++        joint_layer-&gt;setLearningRate( the_learning_rate );
++    }
++
++    if( final_module )
++        final_module-&gt;setLearningRate( the_learning_rate );
++
++    if( final_cost )
++        final_cost-&gt;setLearningRate( the_learning_rate );
++}
++
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/online/EXPERIMENTAL/SubsamplingDBN.h
+===================================================================
+--- trunk/plearn_learners/online/EXPERIMENTAL/SubsamplingDBN.h	2007-05-24 13:55:05 UTC (rev 7281)
++++ trunk/plearn_learners/online/EXPERIMENTAL/SubsamplingDBN.h	2007-05-24 13:55:54 UTC (rev 7282)
+@@ -0,0 +1,456 @@
++// -*- C++ -*-
++
++// SubsamplingDBN.h
++//
++// Copyright (C) 2006 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file SubsamplingDBN.h */
++
++
++#ifndef SubsamplingDBN_INC
++#define SubsamplingDBN_INC
++
++#include &lt;plearn_learners/generic/PLearner.h&gt;
++#include &lt;plearn_learners/online/OnlineLearningModule.h&gt;
++#include &lt;plearn_learners/online/CostModule.h&gt;
++#include &lt;plearn_learners/online/NLLCostModule.h&gt;
++#include &lt;plearn_learners/online/RBMClassificationModule.h&gt;
++#include &lt;plearn_learners/online/RBMLayer.h&gt;
++#include &lt;plearn_learners/online/RBMMixedLayer.h&gt;
++#include &lt;plearn_learners/online/RBMConnection.h&gt;
++#include &lt;plearn/misc/PTimer.h&gt;
++#include &lt;plearn/sys/Profiler.h&gt;
++
++namespace PLearn {
++
++/**
++ * Neural net, learned layer-wise in a greedy fashion.
++ * This version support different unit types, different connection types,
++ * and different cost functions, including the NLL in classification.
++ */
++class SubsamplingDBN : public PLearner
++{
++    typedef PLearner inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! The learning rate used during contrastive divergence learning
++    real cd_learning_rate;
++
++    //! The learning rate used during the gradient descent
++    real grad_learning_rate;
++
++    int batch_size;
++
++    //! The decrease constant of the learning rate used during gradient descent
++    real grad_decrease_ct;
++
++    /* NOT IMPLEMENTED YET
++    //! The weight decay used during the gradient descent
++    real grad_weight_decay;
++    */
++
++    //! Number of classes in the training set
++    //!   - 0 means we are doing regression,
++    //!   - 1 means we have two classes, but only one output,
++    //!   - 2 means we also have two classes, but two outputs summing to 1,
++    //!   - &gt;2 is the usual multiclass case.
++    int n_classes;
++
++    //! Number of examples to use during each phase of learning:
++    //! first the greedy phases, and then the fine-tuning phase.
++    //! However, the learning will stop as soon as we reach nstages.
++    //! For example for 2 hidden layers, with 1000 examples in each
++    //! greedy phase, and 500 in the fine-tuning phase, this option
++    //! should be [1000 1000 500], and nstages should be at least 2500.
++    //! When online = true, this vector is ignored and should be empty.
++    TVec&lt;int&gt; training_schedule;
++
++    //! If the first cost function is the NLL in classification,
++    //! pre-trained with CD, and using the last *two* layers to get a better
++    //! approximation (undirected softmax) than layer-wise mean-field.
++    bool use_classification_cost;
++
++    //! Minimize reconstruction error of each layer as an auto-encoder.
++    //! This is done using cross-entropy between actual and reconstructed.
++    //! This option automatically adds the following cost names:
++    //! layerwise_reconstruction_error (sum over all layers)
++    //!   layer0.reconstruction_error (only layers[0])
++    //!   layer1.reconstruction_error (only layers[1])
++    //!   etc.
++    bool reconstruct_layerwise;
++
++    //! The layers of units in the network
++    TVec&lt; PP&lt;RBMLayer&gt; &gt; layers;
++
++    //! The weights of the connections between the layers
++    TVec&lt; PP&lt;RBMConnection&gt; &gt; connections;
++
++    //! Optional module that takes as input the output of the last layer
++    //! (layers[n_layers-1), and its output is fed to final_cost, and
++    //! concatenated with the one of classification_cost (if present) as output
++    //! of the learner.
++    //! If it is not provided, then the last layer will directly be put as
++    //! input of final_cost.
++    PP&lt;OnlineLearningModule&gt; final_module;
++
++    //! The cost function to be applied on top of the DBN (or of final_module
++    //! if provided). Its gradients will be backpropagated to final_module,
++    //! then combined with the one of classification_cost and backpropagated to
++    //! the layers.
++    PP&lt;CostModule&gt; final_cost;
++
++    //! The different cost function to be applied on top of each layer
++    //! (except the first one, which has to be null) of the RBM. These
++    //! costs are not back-propagated to previous layers.
++    TVec&lt; PP&lt;CostModule&gt; &gt; partial_costs;
++
++    //! In an RBMLayer, do we want the bias during up and down propagations to
++    //! be potentially different?
++    bool independent_biases;
++
++    //! Different subsampling modules, to be applied on top of RBMs when
++    //! they're already learned. subsampling_modules[0] is null.
++    TVec&lt; PP&lt;OnlineLearningModule&gt; &gt; subsampling_modules;
++
++    //#####  Public Learnt Options  ###########################################
++    //! The module computing the probabilities of the different classes.
++    PP&lt;RBMClassificationModule&gt; classification_module;
++
++    //! Number of layers
++    int n_layers;
++
++    //! The computed cost names
++    TVec&lt;string&gt; cost_names;
++
++    //! whether to do things by stages, including fine-tuning, or on-line
++    bool online;
++
++    // Coefficient between 0 and 1. If non-zero, run a background
++    // Gibbs chain and use the visible-hidden statistics to
++    // contribute in the negative phase update (in proportion
++    // background_gibbs_update_ratio wrt the contrastive divergence
++    // negative phase statistics). If = 1, then do not perform any
++    // contrastive divergence negative phase (use only the Gibbs chain
++    // statistics).
++    real background_gibbs_update_ratio;
++
++    //! Wether we do a step of joint contrastive divergence on top-layer
++    //! Only used if online for the moment
++    bool top_layer_joint_cd;
++
++    //! after how many examples should we re-initialize the Gibbs chains
++    //! (if == INT_MAX, the default then NEVER re-initialize except when
++    //! stage==0)
++    int gibbs_chain_reinit_freq;
++
++    //! Layers of reduced size, to be put on top of subsampling modules
++    //! If the subsampling module is null, it will be either the same that the
++    //! one in 'layers' (default), or a copy of it (with independant biases)
++    //! if 'independent_biases' is true.
++    TVec&lt; PP&lt;RBMLayer&gt; &gt; reduced_layers;
++
++    //#####  Not Options  #####################################################
++
++    //! Timer for monitoring the speed
++    PP&lt;PTimer&gt; timer;
++
++    //! The module computing the classification cost function (NLL) on top of
++    //! classification_module.
++    PP&lt;NLLCostModule&gt; classification_cost;
++
++    //! Concatenation of layers[n_layers-2] and the target layer (that is
++    //! inside classification_module), if use_classification_cost
++    PP&lt;RBMMixedLayer&gt; joint_layer;
++
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    SubsamplingDBN();
++
++
++    //#####  PLearner Member Functions  #######################################
++
++    //! Returns the size of this learner's output, (which typically
++    //! may depend on its inputsize(), targetsize() and set options).
++    virtual int outputsize() const;
++
++    //! (Re-)initializes the PLearner in its fresh state (that state may depend
++    //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
++    //! a fresh learner!).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void forget();
++
++    //! The role of the train method is to bring the learner up to
++    //! stage==nstages, updating the train_stats collector with training costs
++    //! measured on-line in the process.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void train();
++
++    //! Re-implementation of the PLearner test() for profiling purposes
++    virtual void test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
++                      VMat testoutputs=0, VMat testcosts=0) const;
++
++    //! Computes the output from the input.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
++
++    //! Computes the costs from already computed output.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                         const Vec&amp; target, Vec&amp; costs) const;
++
++    //! Returns the names of the costs computed by computeCostsFromOutpus (and
++    //! thus the test method).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual TVec&lt;std::string&gt; getTestCostNames() const;
++
++    //! Returns the names of the objective costs that the train method computes
++    //! and  for which it updates the VecStatsCollector train_stats.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual TVec&lt;std::string&gt; getTrainCostNames() const;
++
++
++    void onlineStep( const Vec&amp; input, const Vec&amp; target, Vec&amp; train_costs );
++
++    void onlineStep( const Mat&amp; inputs, const Mat&amp; targets, Mat&amp; train_costs );
++
++    void greedyStep( const Vec&amp; input, const Vec&amp; target, int index );
++
++    //! Greedy step with mini-batches.
++    void greedyStep(const Mat&amp; inputs, const Mat&amp; targets, int index, Mat&amp; train_costs_m);
++
++    void jointGreedyStep( const Vec&amp; input, const Vec&amp; target );
++
++    void fineTuningStep( const Vec&amp; input, const Vec&amp; target,
++                         Vec&amp; train_costs );
++
++    //! Fine tuning step with mini-batches.
++    void fineTuningStep( const Mat&amp; inputs, const Mat&amp; targets,
++                         Mat&amp; train_costs );
++
++    //! Perform a step of contrastive divergence, assuming that
++    //! down_layer-&gt;expectation(s) is set.
++    void contrastiveDivergenceStep( const PP&lt;RBMLayer&gt;&amp; down_layer,
++                                    const PP&lt;RBMConnection&gt;&amp; connection,
++                                    const PP&lt;RBMLayer&gt;&amp; up_layer,
++                                    int layer_index,
++                                    bool nofprop=false);
++
++
++    // *** SUBCLASS WRITING: ***
++    // While in general not necessary, in case of particular needs
++    // (efficiency concerns for ex) you may also want to overload
++    // some of the following methods:
++    // virtual void computeOutputAndCosts(const Vec&amp; input, const Vec&amp; target,
++    //                                    Vec&amp; output, Vec&amp; costs) const;
++    // virtual void computeCostsOnly(const Vec&amp; input, const Vec&amp; target,
++    //                               Vec&amp; costs) const;
++    // virtual void test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
++    //                   VMat testoutputs=0, VMat testcosts=0) const;
++    // virtual int nTestCosts() const;
++    // virtual int nTrainCosts() const;
++    // virtual void resetInternalState();
++    // virtual bool isStatefulLearner() const;
++
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    // ### If your class is not instantiatable (it has pure virtual methods)
++    // ### you should replace this by PLEARN_DECLARE_ABSTRACT_OBJECT_METHODS
++    PLEARN_DECLARE_OBJECT(SubsamplingDBN);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++
++    int minibatch_size;
++
++    //#####  Not Options  #####################################################
++
++    // whether to re-initialize Gibbs chain next time around
++    bool initialize_gibbs_chain;
++
++    //! Stores the gradient of the cost wrt the activations
++    //! (at the input of the layers)
++    mutable TVec&lt;Vec&gt; activation_gradients;
++    mutable TVec&lt;Mat&gt; activations_gradients; //!&lt; For mini-batch.
++
++    //! Stores the gradient of the cost wrt the expectations
++    //! (at the output of the layers)
++    mutable TVec&lt;Vec&gt; expectation_gradients;
++    mutable TVec&lt;Mat&gt; expectations_gradients; //!&lt; For mini-batch.
++
++    mutable TVec&lt;Vec&gt; subsampling_gradients;
++
++    mutable Vec final_cost_input;
++    mutable Mat final_cost_inputs; //!&lt; For mini-batch.
++
++    mutable Vec final_cost_value;
++    mutable Mat final_cost_values; //!&lt; For mini-batch.
++
++    mutable Vec final_cost_output;
++
++    mutable Vec class_output;
++
++    mutable Vec class_gradient;
++
++    //! Stores the gradient of the cost at the input of final_cost
++    mutable Vec final_cost_gradient;
++    mutable Mat final_cost_gradients; //!&lt; For mini-batch.
++
++    //! buffers bottom layer activation during onlineStep 
++    mutable Vec save_layer_activation;
++
++    Mat save_layer_activations; //!&lt; For mini-batches.
++
++    //! buffers bottom layer expectation during onlineStep 
++    mutable Vec save_layer_expectation;
++
++    Mat save_layer_expectations; //!&lt; For mini-batches.
++
++    //! Does final_module exist and have a &quot;learning_rate&quot; option
++    bool final_module_has_learning_rate;
++
++    //! Does final_cost exist and have a &quot;learning_rate&quot; option
++    bool final_cost_has_learning_rate;
++
++    //! Store a copy of the positive phase values
++    mutable Vec pos_down_val;
++    mutable Vec pos_up_val;
++    mutable Mat pos_down_vals;
++    mutable Mat pos_up_vals;
++    mutable Mat cd_neg_down_vals;
++    mutable Mat cd_neg_up_vals;
++
++    //! Store the state of the Gibbs chain for each RBM
++    mutable TVec&lt;Mat&gt; gibbs_down_state;
++
++    //! Used to store the costs optimized by the final cost module.
++    Vec optimized_costs;
++
++    //! Stores reconstruction costs
++    mutable Vec reconstruction_costs;
++
++    //! Keeps the index of the NLL cost in train_costs
++    int nll_cost_index;
++
++    //! Keeps the index of the class_error cost in train_costs
++    int class_cost_index;
++
++    //! Keeps the beginning index of the final costs in train_costs
++    int final_cost_index;
++
++    //! Keeps the beginning indices of the partial costs in train_costs
++    TVec&lt;int&gt; partial_costs_indices;
++
++    //! Keeps the beginning index of the reconstruction costs in train_costs
++    int reconstruction_cost_index;
++
++    //! Index of the cpu time cost (per each call of train())
++    int training_cpu_time_cost_index;
++
++    //! The index of the cumulative training time cost 
++    int cumulative_training_time_cost_index;
++
++    //! The index of the cumulative testing time cost
++    int cumulative_testing_time_cost_index;
++
++    //! Holds the total training (cpu)time
++    real cumulative_training_time;
++
++    //! Holds the total testing (cpu)time 
++    mutable real cumulative_testing_time;
++
++    //! Cumulative training schedule
++    TVec&lt;int&gt; cumulative_schedule;
++
++    mutable Vec layer_input;
++    mutable Mat layer_inputs;
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++
++    void build_layers_and_connections();
++
++    void build_costs();
++
++    void build_classification_cost();
++
++    void build_final_cost();
++
++    void setLearningRate( real the_learning_rate );
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(SubsamplingDBN);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000730.html">[Plearn-commits] r7281 - trunk/scripts
+</A></li>
+	<LI>Next message: <A HREF="000732.html">[Plearn-commits] r7283 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#731">[ date ]</a>
+              <a href="thread.html#731">[ thread ]</a>
+              <a href="subject.html#731">[ subject ]</a>
+              <a href="author.html#731">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

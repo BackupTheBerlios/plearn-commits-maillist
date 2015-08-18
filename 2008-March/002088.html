@@ -1,0 +1,155 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8640 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8640%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200803071615.m27GFAPZ030219%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002087.html">
+   <LINK REL="Next"  HREF="002089.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8640 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8640%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200803071615.m27GFAPZ030219%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8640 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Fri Mar  7 17:15:10 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002087.html">[Plearn-commits] r8639 - trunk/plearn_learners/classifiers
+</A></li>
+        <LI>Next message: <A HREF="002089.html">[Plearn-commits] r8641 - trunk/plearn/base
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2088">[ date ]</a>
+              <a href="thread.html#2088">[ thread ]</a>
+              <a href="subject.html#2088">[ subject ]</a>
+              <a href="author.html#2088">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-03-07 17:15:10 +0100 (Fri, 07 Mar 2008)
+New Revision: 8640
+
+Modified:
+   trunk/plearn_learners_experimental/DeepNonLocalManifoldParzen.cc
+Log:
+Corrected some bugs...
+
+
+Modified: trunk/plearn_learners_experimental/DeepNonLocalManifoldParzen.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DeepNonLocalManifoldParzen.cc	2008-03-07 15:54:11 UTC (rev 8639)
++++ trunk/plearn_learners_experimental/DeepNonLocalManifoldParzen.cc	2008-03-07 16:15:10 UTC (rev 8640)
+@@ -544,9 +544,9 @@
+         reconstruction_expectation_gradients.resize(layers[i]-&gt;size);
+ 
+         pos_down_val.resize(layers[i]-&gt;size);
+-        pos_up_val.resize(layers[i]-&gt;size);
++        pos_up_val.resize(layers[i+1]-&gt;size);
+         neg_down_val.resize(layers[i]-&gt;size);
+-        neg_up_val.resize(layers[i]-&gt;size);
++        neg_up_val.resize(layers[i+1]-&gt;size);
+ 
+         for( ; *this_stage&lt;end_stage ; (*this_stage)++ )
+         {
+@@ -569,6 +569,7 @@
+             MODULE_LOG &lt;&lt; &quot;Finding the nearest neighbors&quot; &lt;&lt; endl;
+             // Find training nearest neighbors
+             TVec&lt;int&gt; nearest_neighbors_indices_row;
++            nearest_neighbors_indices.resize(train_set-&gt;length(), k_neighbors);
+             for(int k=0; k&lt;n_classes; k++)
+             {
+                 for(int i=0; i&lt;class_datasets[k]-&gt;length(); i++)
+@@ -711,7 +712,7 @@
+         
+         // negative phase
+         connections[index]-&gt;setAsDownInput( layers[index]-&gt;sample );
+-        layers[index+1]-&gt;getAllActivations( connections[index+1] );
++        layers[index+1]-&gt;getAllActivations( connections[index] );
+         layers[index+1]-&gt;computeExpectation();
+         // accumulate negative stats
+         // no need to deep-copy because the values won't change before update
+@@ -784,7 +785,7 @@
+     F &lt;&lt; all_outputs.subVec(0,n_components * inputsize()).toMat(
+         n_components, inputsize());
+     mu &lt;&lt; all_outputs.subVec(n_components * inputsize(),inputsize());
+-    pre_sigma_noise &lt;&lt; all_outputs.subVec( n_components * (inputsize() + 1), 1 );
++    pre_sigma_noise &lt;&lt; all_outputs.subVec( (n_components+1) * inputsize(), 1 );
+ 
+     F_copy.resize(F.length(),F.width());
+     sm_svd.resize(n_components);
+@@ -815,6 +816,8 @@
+     real dotp = 0;
+     real coef = 0;
+     real n = inputsize();
++    z.resize(k_neighbors,inputsize());
++    temp_ncomp.resize(n_components);
+     inv_Sigma_z.resize(k_neighbors,inputsize());
+     inv_Sigma_z.clear();
+     real tr_inv_Sigma = 0;
+@@ -870,7 +873,8 @@
+     }
+ 
+     all_outputs_gradient.clear();
+-    coef = 1/train_set-&gt;length();
++    coef = 1.0/train_set-&gt;length();
++    all_outputs_gradient.resize((n_components+1) * inputsize()+1);
+     for(int neighbor=0; neighbor&lt;k_neighbors; neighbor++)
+     {
+         // dNLL/dF
+@@ -1101,10 +1105,12 @@
+     }
+     else
+     {
+-        if( ((int)round(output[0])) == ((int)round(target[0])) )
++        int target_class = ((int)round(target[0]));
++        if( ((int)round(output[0])) == target_class )
+             costs[n_layers-1] = 0;
+         else
+             costs[n_layers-1] = 1;
++        costs[n_layers] = - test_votes[target_class]+pl_log(class_datasets[target_class]-&gt;length());
+     }
+ }
+ 
+@@ -1158,6 +1164,7 @@
+         cost_names.push_back(&quot;reconstruction_error_&quot; + tostring(i+1));
+     
+     cost_names.append( &quot;class_error&quot; );
++    cost_names.append( &quot;NLL&quot; );
+ 
+     return cost_names;
+ }
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002087.html">[Plearn-commits] r8639 - trunk/plearn_learners/classifiers
+</A></li>
+	<LI>Next message: <A HREF="002089.html">[Plearn-commits] r8641 - trunk/plearn/base
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2088">[ date ]</a>
+              <a href="thread.html#2088">[ thread ]</a>
+              <a href="subject.html#2088">[ subject ]</a>
+              <a href="author.html#2088">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,523 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8665 - trunk/plearn_learners/testers
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8665%20-%20trunk/plearn_learners/testers&In-Reply-To=%3C200803121529.m2CFT63L020123%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002112.html">
+   <LINK REL="Next"  HREF="002114.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8665 - trunk/plearn_learners/testers</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8665%20-%20trunk/plearn_learners/testers&In-Reply-To=%3C200803121529.m2CFT63L020123%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8665 - trunk/plearn_learners/testers">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Wed Mar 12 16:29:06 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002112.html">[Plearn-commits] r8664 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="002114.html">[Plearn-commits] r8666 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2113">[ date ]</a>
+              <a href="thread.html#2113">[ thread ]</a>
+              <a href="subject.html#2113">[ subject ]</a>
+              <a href="author.html#2113">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-03-12 16:29:06 +0100 (Wed, 12 Mar 2008)
+New Revision: 8665
+
+Modified:
+   trunk/plearn_learners/testers/PTester.cc
+   trunk/plearn_learners/testers/PTester.h
+Log:
+- Removed deprecated 'oldperform' method
+- Fixed problem introduced in r8654 caused by extra calls to setTrainingSet, which are not really needed: now the cost names are saved during the first split once the training set has been provided to the learner. This fixes test PL_DBN_SimpleRBM.
+
+
+Modified: trunk/plearn_learners/testers/PTester.cc
+===================================================================
+--- trunk/plearn_learners/testers/PTester.cc	2008-03-11 20:48:52 UTC (rev 8664)
++++ trunk/plearn_learners/testers/PTester.cc	2008-03-12 15:29:06 UTC (rev 8665)
+@@ -80,8 +80,12 @@
+     return res;
+ }
+ 
+-PTester::PTester()
+-    :  provide_learner_expdir(false),
++/////////////
++// PTester //
++/////////////
++PTester::PTester():
++       need_to_save_test_names(false),
++       provide_learner_expdir(false),
+        report_stats(true),
+        save_data_sets(false),
+        save_initial_learners(false),
+@@ -437,347 +441,9 @@
+     expdir = the_expdir / &quot;&quot;;
+ }
+ 
+-////////////////
+-// oldperform //
+-////////////////
+-// DEPRECATED -- USE PTester::perform
+-Vec PTester::oldperform(bool call_forget)
+-{
+-    if (!learner)
+-        PLERROR(&quot;No learner specified for PTester.&quot;);
+-    if (!splitter)
+-        PLERROR(&quot;No splitter specified for PTester&quot;);
+-
+-    const int nstats = statnames_processed.length();
+-    Vec global_result(nstats);
+-
+-    if (expdir != &quot;&quot;)
+-    {
+-        if (pathexists(expdir) &amp;&amp; enforce_clean_expdir)
+-            PLERROR(&quot;Directory (or file) %s already exists.\n&quot;
+-                    &quot;First move it out of the way.&quot;, expdir.c_str());
+-        // This code looks like it's guaranteeing that we get an expdir that we
+-        // create when enforce_clean_expdir is True, but this is not the case. 
+-        // Let's say some other process (from a parallel dispatch of many
+-        // PLearn processes, say) is trying to create an expdir with the same
+-        // name, and that other process succeeds in creating it when we are
+-        // here. Then, given that force_mkdir() returns true if the directory
+-        // already exists, this is a textbook example of a race condition.
+-        if (!force_mkdir(expdir))
+-            PLERROR(&quot;In PTester Could not create experiment directory %s&quot;,expdir.c_str());
+-        expdir = expdir.absolute() / &quot;&quot;;
+-
+-        // Save this tester description in the expdir
+-        if (save_initial_tester)
+-            PLearn::save(expdir / &quot;tester.psave&quot;, *this);
+-    }
+-
+-    splitter-&gt;setDataSet(dataset);
+-
+-    const int nsplits = splitter-&gt;nsplits();
+-    if (nsplits &gt; 1)
+-        call_forget = true;
+-
+-    TVec&lt;string&gt; testcostnames = learner-&gt;getTestCostNames();
+-    TVec&lt;string&gt; traincostnames = learner-&gt;getTrainCostNames();
+-
+-    const int nsets = splitter-&gt;nSetsPerSplit();
+-
+-    // Stats collectors for individual sets of a split:
+-    TVec&lt; PP&lt;VecStatsCollector&gt; &gt; stcol(nsets);
+-    for (int setnum = 0; setnum &lt; nsets; setnum++)
+-    {
+-        if (template_stats_collector)
+-        {
+-            CopiesMap copies;
+-            stcol[setnum] = template_stats_collector-&gt;deepCopy(copies);
+-        }
+-        else
+-            stcol[setnum] = new VecStatsCollector();
+-
+-        if (setnum == 0)
+-            stcol[setnum]-&gt;setFieldNames(traincostnames);
+-        else
+-            stcol[setnum]-&gt;setFieldNames(testcostnames);
+-
+-        stcol[setnum]-&gt;build();
+-        stcol[setnum]-&gt;forget();
+-    }
+-
+-    PP&lt;VecStatsCollector&gt; train_stats = stcol[0];
+-    learner-&gt;setTrainStatsCollector(train_stats);
+-
+-    // Global stats collector
+-    PP&lt;VecStatsCollector&gt; global_statscol;
+-    if (global_template_stats_collector)
+-    {
+-        CopiesMap copies;
+-        global_statscol = global_template_stats_collector-&gt;deepCopy(copies);
+-        global_statscol-&gt;build();
+-        global_statscol-&gt;forget();
+-    }
+-    else
+-        global_statscol = new VecStatsCollector();
+-
+-    // Stat specs
+-    TVec&lt;StatSpec&gt; statspecs(nstats);
+-    for(int k = 0; k &lt; nstats; k++)
+-    {
+-        statspecs[k].init(statnames_processed[k]);
+-    }
+-        
+-    // Hack to accumulate statistics over splits. We store in 'acc' the sets
+-    // which need to accumulate statistics.
+-    TVec&lt;int&gt; acc;
+-    for (int k = 0; k &lt; nstats; k++)
+-        if (statspecs[k].extstat == &quot;ACC&quot;)
+-        {
+-            if (statspecs[k].setnum == 0)
+-                PLERROR(&quot;In PTester::perform - For now, you cannot accumulate train stats&quot;);
+-            if (acc.find(statspecs[k].setnum) == -1)
+-                acc.append(statspecs[k].setnum);
+-        }
+-        else if (acc.find(statspecs[k].setnum) != -1)
+-            PLERROR(&quot;In PTester::perform - You can't have stats with and without 'ACC' for set %d&quot;, statspecs[k].setnum);
+-
+-    // The vmat in which to save global result stats specified in statnames
+-    VMat global_stats_vm;
+-    // The vmat in which to save per split result stats
+-    VMat split_stats_vm;
+-        
+-    if (expdir != &quot;&quot; &amp;&amp; report_stats)
+-    {
+-        if(save_test_names){
+-            saveStringInFile(expdir / &quot;train_cost_names.txt&quot;, join(traincostnames, &quot;\n&quot;) + &quot;\n&quot;);
+-            saveStringInFile(expdir / &quot;test_cost_names.txt&quot;, join(testcostnames, &quot;\n&quot;) + &quot;\n&quot;);
+-        }
+-        global_stats_vm = new FileVMatrix(expdir / &quot;global_stats.pmat&quot;,
+-                                          1, nstats);
+-        for (int k = 0; k &lt; nstats; k++)
+-            global_stats_vm-&gt;declareField(k, statspecs[k].statName());
+-        global_stats_vm-&gt;saveFieldInfos();
+-
+-        split_stats_vm = new FileVMatrix(expdir / &quot;split_stats.pmat&quot;,
+-                                         0, 1 + nstats);
+-        split_stats_vm-&gt;declareField(0, &quot;splitnum&quot;);
+-        for (int k = 0; k &lt; nstats; k++)
+-            split_stats_vm-&gt;declareField(k+1, statspecs[k].setname + &quot;.&quot; + statspecs[k].intstatname);
+-        split_stats_vm-&gt;saveFieldInfos();
+-    }
+-
+-    for (int splitnum = 0; splitnum &lt; nsplits; splitnum++)
+-    {
+-        PPath splitdir;
+-        bool is_splitdir = false;
+-        if (!expdir.isEmpty())
+-        {
+-            splitdir = expdir / (&quot;Split&quot; + tostring(splitnum));
+-            is_splitdir = true;
+-        }
+-
+-        TVec&lt;VMat&gt; dsets = splitter-&gt;getSplit(splitnum);
+-
+-        if (should_train) {
+-            VMat trainset = dsets[0];
+-            if (is_splitdir &amp;&amp; save_data_sets)
+-                PLearn::save(splitdir / &quot;training_set.vmat&quot;, trainset);
+-            
+-            if (provide_learner_expdir)
+-            {
+-                if (is_splitdir)
+-                    learner-&gt;setExperimentDirectory(splitdir / &quot;LearnerExpdir/&quot;);
+-                else
+-                    learner-&gt;setExperimentDirectory(&quot;&quot;);
+-            }
+-
+-            learner-&gt;setTrainingSet(trainset, call_forget &amp;&amp; should_train);
+-            if (dsets.size() &gt; 1)
+-                learner-&gt;setValidationSet(dsets[1]);
+-
+-            if (is_splitdir &amp;&amp; save_initial_learners)
+-                PLearn::save(splitdir / &quot;initial_learner.psave&quot;, learner);
+-
+-            train_stats-&gt;forget();
+-            learner-&gt;train();
+-            train_stats-&gt;finalize();
+-
+-            if (is_splitdir)
+-            {
+-                if (save_stat_collectors)
+-                    PLearn::save(splitdir / &quot;train_stats.psave&quot;, train_stats);
+-                if (save_learners)
+-                    PLearn::save(splitdir / &quot;final_learner.psave&quot;, learner);
+-            }
+-        }
+-        else
+-            learner-&gt;build();
+-
+-        // This needs to be after the SetTrainingSet() / build() call to the
+-        // learner.
+-        const int outputsize = learner-&gt;outputsize();
+-
+-        // perf_eval_costs[setnum][perf_evaluator_name][costname] will contain value
+-        // of the given cost returned by the given perf_evaluator on the given setnum
+-        TVec&lt; map&lt;string, map&lt;string, real&gt; &gt; &gt; perf_eval_costs(dsets.length());
+-
+-        // Perform the test if required
+-        if (should_test)
+-        {
+-            for (int setnum = 1; setnum &lt; dsets.length(); setnum++)
+-            {
+-                VMat testset = dsets[setnum];
+-                VMat test_outputs;
+-                VMat test_costs;
+-                VMat test_confidence;
+-
+-                PP&lt;VecStatsCollector&gt; test_stats = stcol[setnum];
+-                const string setname = &quot;test&quot; + tostring(setnum);
+-                if (is_splitdir &amp;&amp; save_data_sets)
+-                    PLearn::save(splitdir / (setname + &quot;_set.vmat&quot;), testset);
+-
+-                // QUESTION Why is this done so late? Can't it be moved
+-                // somewhere earlier? At least before the save_data_sets?
+-                if (is_splitdir)
+-                    force_mkdir(splitdir);
+-
+-                if (is_splitdir &amp;&amp; save_test_outputs)
+-                    test_outputs = new FileVMatrix(splitdir / (setname + &quot;_outputs.pmat&quot;),
+-                                                   0, learner-&gt;getOutputNames());
+-                else if (!perf_evaluators.empty())
+-                {
+-                    // We don't want to save test outputs to disk, but we
+-                    // need them for pef_evaluators. So let's store them in
+-                    // a MemoryVMatrix
+-                    Mat data(testset.length(), outputsize);
+-                    data.resize(0, outputsize);
+-                    test_outputs = new MemoryVMatrix(data);
+-                    test_outputs-&gt;declareFieldNames(learner-&gt;getOutputNames());
+-                }
+-
+-                if (is_splitdir)
+-                {
+-                    if (save_test_costs)
+-                        test_costs = new FileVMatrix(splitdir / (setname + &quot;_costs.pmat&quot;),
+-                                                     0, learner-&gt;getTestCostNames());
+-                    if (save_test_confidence)
+-                        test_confidence = new FileVMatrix(splitdir / (setname + &quot;_confidence.pmat&quot;),
+-                                                          0, 2 * outputsize);
+-                }
+-
+-                const bool reset_stats = (acc.find(setnum) == -1);
+-                if (reset_stats)
+-                    test_stats-&gt;forget();
+-                    
+-                if (testset-&gt;length() == 0)
+-                    PLWARNING(&quot;PTester:: test set %s is of length 0, costs will be set to -1&quot;,
+-                              setname.c_str());
+-
+-                // Before each test set, reset the internal state of the learner
+-                learner-&gt;resetInternalState();
+-
+-                learner-&gt;test(testset, test_stats, test_outputs, test_costs);
+-                if (reset_stats)
+-                    test_stats-&gt;finalize();
+-                if (is_splitdir &amp;&amp; save_stat_collectors)
+-                    PLearn::save(splitdir / (setname + &quot;_stats.psave&quot;), test_stats);
+-
+-                perf_evaluators_t::iterator it = perf_evaluators.begin();
+-                const perf_evaluators_t::iterator itend = perf_evaluators.end();
+-                while (it != itend)
+-                {
+-                    PPath perf_eval_dir;
+-                    if (is_splitdir)
+-                        perf_eval_dir = splitdir / setname / (&quot;perfeval_&quot; + it-&gt;first);
+-                    Vec perf_costvals = it-&gt;second-&gt;evaluatePerformance(learner, testset, test_outputs, perf_eval_dir);
+-                    TVec&lt;string&gt; perf_costnames = it-&gt;second-&gt;getCostNames();
+-                    if (perf_costvals.length()!=perf_costnames.length())
+-                        PLERROR(&quot;vector of costs returned by performance evaluator differ in size with its vector of costnames&quot;);
+-                    map&lt;string, real&gt;&amp; costmap = perf_eval_costs[setnum][it-&gt;first];
+-                    for (int costi = 0; costi &lt; perf_costnames.length(); costi++)
+-                        costmap[perf_costnames[costi]] = perf_costvals[costi];
+-                    ++it;
+-                }
+-                computeConfidence(testset, test_confidence);
+-            }
+-        }
+-
+-        Vec splitres(1 + nstats);
+-        splitres[0] = splitnum;
+-
+-        for (int k = 0; k &lt; nstats; k++)
+-        {
+-            // If we ask for a test-set that's beyond what's currently
+-            // available, OR we are asking for test-statistics in
+-            // train-only mode, then the statistic is MISSING_VALUE.
+-            StatSpec&amp; sp = statspecs[k];
+-            if (sp.setnum&gt;=stcol.length() ||
+-                (! should_test &amp;&amp; sp.setnum &gt; 0))
+-            {
+-                splitres[k+1] = MISSING_VALUE;
+-            }
+-            else
+-            {
+-                if (acc.find(sp.setnum) == -1)
+-                {
+-                    string left, right;
+-                    split_on_first(sp.intstatname, &quot;.&quot;,left,right);
+-                    if (right != &quot;&quot; &amp;&amp; perf_evaluators.find(left) != perf_evaluators.end())
+-                    {
+-                        // looks like a cost from a performance evaluator
+-                        map&lt;string, real&gt;&amp; costmap = perf_eval_costs[sp.setnum][left];
+-                        if (costmap.find(right) == costmap.end())
+-                            PLERROR(&quot;No cost named %s appears to be returned by evaluator %s&quot;,
+-                                    right.c_str(), left.c_str());
+-                        splitres[k+1] = costmap[right];
+-                    }
+-                    else
+-                        // must be a cost from a stats collector
+-                        splitres[k+1] = stcol[sp.setnum]-&gt;getStat(sp.intstatname);
+-                }
+-                else
+-                    splitres[k+1] = MISSING_VALUE;
+-            }
+-        }
+-
+-        if (split_stats_vm)
+-        {
+-            split_stats_vm-&gt;appendRow(splitres);
+-            split_stats_vm-&gt;flush();
+-        }
+-
+-        global_statscol-&gt;update(splitres.subVec(1, nstats));
+-    }
+-
+-
+-    global_statscol-&gt;finalize();
+-    for (int k = 0; k &lt; nstats; k++)
+-    {
+-        if (acc.find(statspecs[k].setnum) == -1)
+-            global_result[k] = global_statscol-&gt;getStats(k).getStat(statspecs[k].extstat);
+-        else
+-        {
+-            const int j = statspecs[k].setnum;
+-            stcol[j]-&gt;finalize();
+-            global_result[k] = stcol[j]-&gt;getStat(statspecs[k].intstatname);
+-        }
+-    }
+-
+-    if (global_stats_vm)
+-        global_stats_vm-&gt;appendRow(global_result);
+-
+-#if USING_MPI
+-    if (PLMPI::rank == 0)
+-#endif
+-    // Perform the final commands provided in final_commands.
+-    for (int i = 0; i &lt; final_commands.length(); i++)
+-    {
+-        system(final_commands[i].c_str());
+-    }
+-
+-    return global_result;
+-}
+-
+-
++///////////////////
++// perform1Split //
++///////////////////
+ Vec PTester::perform1Split(int splitnum, bool call_forget)
+ {
+     if (!learner)
+@@ -848,6 +514,17 @@
+         }
+ 
+         learner-&gt;setTrainingSet(trainset, call_forget);
++
++        if (need_to_save_test_names) {
++            // Now that the learner has a training set, we can be sure the
++            // cost names can be saved.
++            TVec&lt;string&gt; testcostnames = learner-&gt;getTestCostNames();
++            TVec&lt;string&gt; traincostnames = learner-&gt;getTrainCostNames();
++            saveStringInFile(expdir / &quot;train_cost_names.txt&quot;, join(traincostnames, &quot;\n&quot;) + &quot;\n&quot;);
++            saveStringInFile(expdir / &quot;test_cost_names.txt&quot;, join(testcostnames, &quot;\n&quot;) + &quot;\n&quot;);
++            need_to_save_test_names = false;
++        }
++
+         if (dsets.size() &gt; 1)
+             learner-&gt;setValidationSet(dsets[1]);
+ 
+@@ -992,7 +669,9 @@
+     return splitres;
+ }
+ 
+-
++/////////////
++// perform //
++/////////////
+ Vec PTester::perform(bool call_forget)
+ {
+     if (!learner)
+@@ -1053,19 +732,10 @@
+     // The vmat in which to save per split result stats
+     VMat split_stats_vm;
+         
+-    if (expdir != &quot;&quot; &amp;&amp; report_stats)
++    need_to_save_test_names = false; // Reset to default 'false' value.
++    if (!expdir.isEmpty() &amp;&amp; report_stats)
+     {
+-        if(save_test_names){
+-            //To work around the fact that RegressionTree need a
+-            // train_set to generate the train/test costs names
+-            if(!learner-&gt;getTrainingSet())
+-                learner-&gt;setTrainingSet(splitter-&gt;getSplit(0)[0], false);
+-
+-            TVec&lt;string&gt; testcostnames = learner-&gt;getTestCostNames();
+-            TVec&lt;string&gt; traincostnames = learner-&gt;getTrainCostNames();
+-            saveStringInFile(expdir / &quot;train_cost_names.txt&quot;, join(traincostnames, &quot;\n&quot;) + &quot;\n&quot;);
+-            saveStringInFile(expdir / &quot;test_cost_names.txt&quot;, join(testcostnames, &quot;\n&quot;) + &quot;\n&quot;);
+-        }
++        need_to_save_test_names = save_test_names;
+         global_stats_vm = new FileVMatrix(expdir / &quot;global_stats.pmat&quot;,
+                                           1, nstats);
+         for (int k = 0; k &lt; nstats; k++)
+
+Modified: trunk/plearn_learners/testers/PTester.h
+===================================================================
+--- trunk/plearn_learners/testers/PTester.h	2008-03-11 20:48:52 UTC (rev 8664)
++++ trunk/plearn_learners/testers/PTester.h	2008-03-12 15:29:06 UTC (rev 8665)
+@@ -67,6 +67,12 @@
+     //! processing at build time, taking into account the 'statmask' option.
+     TVec&lt;string&gt; statnames_processed;
+ 
++    //! Set to true in perform() when 'save_test_names' is true, in order to
++    //! remember to save the cost names after setting the learner's training
++    //! set (since some learners may not have these costs available until they
++    //! are provided with a training set).
++    bool need_to_save_test_names;
++
+ public:
+ 
+     // ************************
+@@ -193,8 +199,6 @@
+     Vec perform(bool call_forget=true);
+     Vec perform1Split(int splitnum, bool call_forget=true);
+ 
+-    Vec oldperform(bool call_forget=true);
+-
+     //! Transforms a shallow copy into a deep copy
+     virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
+ };
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002112.html">[Plearn-commits] r8664 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="002114.html">[Plearn-commits] r8666 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2113">[ date ]</a>
+              <a href="thread.html#2113">[ thread ]</a>
+              <a href="subject.html#2113">[ subject ]</a>
+              <a href="author.html#2113">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,782 @@
+From nouiz at mail.berlios.de  Mon Aug  3 21:56:23 2009
+From: nouiz at mail.berlios.de (nouiz at BerliOS)
+Date: Mon, 3 Aug 2009 21:56:23 +0200
+Subject: [Plearn-commits] r10286 - trunk/plearn/vmat
+Message-ID: <200908031956.n73JuNww024347@sheep.berlios.de>
+
+Author: nouiz
+Date: 2009-08-03 21:56:22 +0200 (Mon, 03 Aug 2009)
+New Revision: 10286
+
+Modified:
+   trunk/plearn/vmat/CompactFileVMatrix.cc
+   trunk/plearn/vmat/VMatrix.cc
+Log:
+CompactFileVMatrix now load and save the metadata(sizes and fieldnames)
+
+
+Modified: trunk/plearn/vmat/CompactFileVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/CompactFileVMatrix.cc	2009-07-31 15:37:26 UTC (rev 10285)
++++ trunk/plearn/vmat/CompactFileVMatrix.cc	2009-08-03 19:56:22 UTC (rev 10286)
+@@ -232,6 +232,7 @@
+     }
+ 
+     updateMtime(filename_);
++    loadFieldInfos();
+ }
+ 
+ 
+
+Modified: trunk/plearn/vmat/VMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/VMatrix.cc	2009-07-31 15:37:26 UTC (rev 10285)
++++ trunk/plearn/vmat/VMatrix.cc	2009-08-03 19:56:22 UTC (rev 10286)
+@@ -48,6 +48,7 @@
+ #include <plearn/base/lexical_cast.h>
+ #include <plearn/base/stringutils.h> //!< For pgetline()
+ #include <plearn/io/fileutils.h>     //!< For isfile() mtime()
++#include <plearn/base/tostring.h>     //!< For isfile() mtime()
+ #include <plearn/io/load_and_save.h>
+ #include <plearn/math/random.h>      //!< For uniform_multinomial_sample()
+ #include <plearn/base/RemoteDeclareMethod.h>
+@@ -2162,14 +2163,13 @@
+ 
+     //calculate the datatype needed
+     TVec<StatsCollector> stats = getStats(true);
+-    CompactFileVMatrix n = CompactFileVMatrix();
+     int max_bits=0;
+     for(int i=0;i<stats.size();i++){
+         StatsCollector stat = stats[i];
+         if(! stat.isinteger())
+             PLERROR("VMatrix::saveCMAT() currently the source need to contain only integer.");
+         if(stat.min()>=0){
+-            int bits=ceil(sqrt(stat.max()));
++            int bits=(int)ceil(sqrt(stat.max()));
+             if(max_bits<bits)max_bits=bits;
+         }else{
+             PLERROR("not implemented to store negatif number.");
+@@ -2234,6 +2234,13 @@
+     }
+     else
+         PLERROR("VMatrix::saveCMAT() - %d bits are not supported!",max_bits);
++
++    CompactFileVMatrix m = CompactFileVMatrix(filename);
++    m.setMetaDataDir(filename + ".metadata");
++    m.setMetaInfoFrom(this);
++    m.saveFieldInfos();
++    m.saveAllStringMappings();
++
+     pout<<"generated the file " <<filename <<endl;
+ }
+ ///////////////////
+
+
+
+From nouiz at mail.berlios.de  Tue Aug  4 16:04:54 2009
+From: nouiz at mail.berlios.de (nouiz at BerliOS)
+Date: Tue, 4 Aug 2009 16:04:54 +0200
+Subject: [Plearn-commits] r10287 - trunk/python_modules/plearn/parallel
+Message-ID: <200908041404.n74E4sFB001790@sheep.berlios.de>
+
+Author: nouiz
+Date: 2009-08-04 16:04:53 +0200 (Tue, 04 Aug 2009)
+New Revision: 10287
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+fix the cluster backend
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2009-08-03 19:56:22 UTC (rev 10286)
++++ trunk/python_modules/plearn/parallel/dbi.py	2009-08-04 14:04:53 UTC (rev 10287)
+@@ -449,7 +449,8 @@
+         self.os=None
+         DBIBase.__init__(self, commands, **args)
+ 
+-        self.os = self.os.lower()
++        if self.os:
++            self.os = self.os.lower()
+ 
+         self.pre_tasks=["echo '[DBI] executing on host' $HOSTNAME"]+self.pre_tasks
+         self.post_tasks=["echo '[DBI] exit status' $?"]+self.post_tasks
+@@ -527,12 +528,13 @@
+         task.launch_time = time.time()
+         task.set_scheduled_time()
+ 
+-        (output,error)=self.get_redirection(*self.get_file_redirection(task.id))
++        (output_file, error_file)=self.get_file_redirection(task.id)
++        (output, error)=self.get_redirection(output_file, error_file)
+         task.p = Popen(command, shell=True,stdout=output,stderr=error)
+         task.p_wait_ret=task.p.wait()
+         task.dbi_return_status=None
+         if output!=PIPE:#TODO what do to if = PIPE?
+-            fd=open(task.log_file+'.out','r')
++            fd=open(output_file,'r')
+             last=""
+             for l in fd.readlines():
+                 last=l
+@@ -1246,7 +1248,7 @@
+             fd.write('next_job_start_delay = %s\n'%self.next_job_start_delay)
+         if self.mem>0:
+             #condor need value in Kb
+-            fd.write('ImageSize      = %d\n'%(self.mem))
++            fd.write('ImageSize      = %d\n'%(self.mem))#need to be in k.
+ 
+         if self.files: #ON_EXIT_OR_EVICT
+             fd.write( dedent('''\
+
+
+
+From nouiz at mail.berlios.de  Tue Aug  4 17:31:30 2009
+From: nouiz at mail.berlios.de (nouiz at BerliOS)
+Date: Tue, 4 Aug 2009 17:31:30 +0200
+Subject: [Plearn-commits] r10288 - trunk/python_modules/plearn/parallel
+Message-ID: <200908041531.n74FVURk011564@sheep.berlios.de>
+
+Author: nouiz
+Date: 2009-08-04 17:31:30 +0200 (Tue, 04 Aug 2009)
+New Revision: 10288
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+-make the script that source the .bashrc file be executed by bash instead of sh
+-Separete the --mem=X requested from the ImageSize in condor, that way we don't loose this information if the jobs is relaunched.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2009-08-04 14:04:53 UTC (rev 10287)
++++ trunk/python_modules/plearn/parallel/dbi.py	2009-08-04 15:31:30 UTC (rev 10288)
+@@ -824,6 +824,7 @@
+         self.debug = False
+         self.local_log_file = True#by default true as condor can have randomly failure otherwise.
+         self.next_job_start_delay = -1
++        self.imagesize=-1
+ 
+         DBIBase.__init__(self, commands, **args)
+         if self.debug:
+@@ -837,8 +838,6 @@
+             if len(commands)>int(n):
+                 raise DBIError("[DBI] ERROR we refuse to start more jobs on the local universe then the total number of core. Start less jobs or use another universe.")
+ 
+-        #transform from meg to kilo
+-        self.mem=self.mem*1024
+         if not self.os:
+             #if their is not required os, condor launch on the same os.
+             p=Popen( "condor_config_val OpSyS", shell=True,stdout=PIPE)
+@@ -1147,7 +1146,7 @@
+             bash=not self.source_file or not self.source_file.endswith(".cshrc")
+             if bash:
+                 fd.write(dedent('''\
+-                    #!/bin/sh
++                    #!/bin/bash
+                     '''))
+                 if self.condor_home:
+                     fd.write('export HOME=%s\n' % self.condor_home)
+@@ -1246,9 +1245,9 @@
+             fd.write('leave_in_queue = (ExitCode!=0)\n')
+         if self.next_job_start_delay>0:
+             fd.write('next_job_start_delay = %s\n'%self.next_job_start_delay)
+-        if self.mem>0:
++        if self.imagesize>0:
+             #condor need value in Kb
+-            fd.write('ImageSize      = %d\n'%(self.mem))#need to be in k.
++            fd.write('ImageSize      = %d\n'%(self.imagesize))#need to be in k.
+ 
+         if self.files: #ON_EXIT_OR_EVICT
+             fd.write( dedent('''\
+@@ -1418,7 +1417,8 @@
+             self.req+="&&(Arch == \"%s\")"%(self.targetcondorplatform)
+         if self.cpu>0:
+             self.req+='&&(target.CPUS>='+str(self.cpu)+')'
+-
++        if self.mem>0:
++            self.req+='&&(Memory>='+str(self.mem)+')'#Must be in Meg
+         if self.os:
+             self.req=reduce(lambda x,y:x+' || (OpSys == "'+str(y)+'")',
+                             self.os.split(','),
+@@ -1450,11 +1450,10 @@
+             self.req+='&&(Machine!="'+m+'")'
+         #if no mem requirement added, use the executable size.
+         #todo: if they are not the same executable, take the biggest
+-        if self.mem<=0:
+-            try:
+-                self.mem = os.stat(self.tasks[0].commands[0].split()[0]).st_size/1024
+-            except:
+-                pass
++        try:
++            self.imagesize = os.stat(self.tasks[0].commands[0].split()[0]).st_size/1024
++        except:
++            pass
+ 
+         self.condor_submit_file = os.path.join(self.log_dir,
+                                                "submit_file.condor")
+
+
+
+From nouiz at mail.berlios.de  Tue Aug  4 17:44:08 2009
+From: nouiz at mail.berlios.de (nouiz at BerliOS)
+Date: Tue, 4 Aug 2009 17:44:08 +0200
+Subject: [Plearn-commits] r10289 - trunk/scripts
+Message-ID: <200908041544.n74Fi8A9012476@sheep.berlios.de>
+
+Author: nouiz
+Date: 2009-08-04 17:44:02 +0200 (Tue, 04 Aug 2009)
+New Revision: 10289
+
+Modified:
+   trunk/scripts/dbidispatch
+Log:
+back ported dbidispatch to python 2.4
+
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2009-08-04 15:31:30 UTC (rev 10288)
++++ trunk/scripts/dbidispatch	2009-08-04 15:44:02 UTC (rev 10289)
+@@ -618,7 +618,12 @@
+ dbi_param[n]=[""]*len(commands)
+ 
+ def merge_pattern(new_list):
+-    return [x+'.'+y if x else y for (x,y) in  zip(dbi_param[n], new_list)]
++#    return [x+'.'+y if x else y for (x,y) in  zip(dbi_param[n], new_list)]
++    l=[]
++    for (x,y) in zip(dbi_param[n], new_list):
++        if x:
++            l.append(x+'.'+y)
++    return l
+ for pattern in dbi_param.get("tasks_filename"):
+     if pattern == "explicit":
+         dbi_param[n]=merge_pattern([re.sub( '[^a-zA-Z=0-9-]', '_', x ) for x in commands])
+
+
+
+From nouiz at mail.berlios.de  Tue Aug  4 17:54:36 2009
+From: nouiz at mail.berlios.de (nouiz at BerliOS)
+Date: Tue, 4 Aug 2009 17:54:36 +0200
+Subject: [Plearn-commits] r10290 - trunk/plearn/io
+Message-ID: <200908041554.n74Fsa76013414@sheep.berlios.de>
+
+Author: nouiz
+Date: 2009-08-04 17:54:35 +0200 (Tue, 04 Aug 2009)
+New Revision: 10290
+
+Modified:
+   trunk/plearn/io/PStream.cc
+Log:
+changed the number of decimal when we print double. This don't loose any precision as we where printing too much. This make the resulting file smaller.
+
+
+Modified: trunk/plearn/io/PStream.cc
+===================================================================
+--- trunk/plearn/io/PStream.cc	2009-08-04 15:44:02 UTC (rev 10289)
++++ trunk/plearn/io/PStream.cc	2009-08-04 15:54:35 UTC (rev 10290)
+@@ -55,7 +55,12 @@
+ 
+ // Default format string for floats and doubles
+ const char* PStream::format_float_default  = "%.8g";
+-const char* PStream::format_double_default = "%.18g";
++//We put 15 decimal. We need 10 for the precision of double
++// + 4 as when the g format print as 0.0004... we need more digit.
++//Probably 14 was enought, but I put 15 as I was not sur of the border case.
++//Old version with 18 decimal printed value as 0.008659999999999999
++// are now printed as 0.00866(take less space and are more readable).
++const char* PStream::format_double_default = "%.15g";
+ bool PStream::windows_endl = false;
+ // Initialization for pin, pout, ...
+ 
+
+
+
+From laulysta at mail.berlios.de  Tue Aug  4 21:12:33 2009
+From: laulysta at mail.berlios.de (laulysta at BerliOS)
+Date: Tue, 4 Aug 2009 21:12:33 +0200
+Subject: [Plearn-commits] r10291 - trunk/plearn_learners_experimental
+Message-ID: <200908041912.n74JCXi9029084@sheep.berlios.de>
+
+Author: laulysta
+Date: 2009-08-04 21:12:32 +0200 (Tue, 04 Aug 2009)
+New Revision: 10291
+
+Modified:
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+Log:
+softmax update
+
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2009-08-04 15:54:35 UTC (rev 10290)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2009-08-04 19:12:32 UTC (rev 10291)
+@@ -1400,15 +1400,17 @@
+     transposeProduct(reconstruction_activation, reconstruction_weights, hidden); 
+     reconstruction_activation += reconstruction_bias;
+ 
+-    for( int j=0 ; j<fullinputlength ; j++ ){
++    softmax(reconstruction_activation, reconstruction_prob);
++
++        /*for( int j=0 ; j<fullinputlength ; j++ ){
+         if(clean_input[j]==1 || clean_input[j]==0)
+             reconstruction_prob[j] = fastsigmoid( reconstruction_activation[j] );
+         else
+             reconstruction_prob[j] = reconstruction_activation[j] ;
+-    }
++            }*/
+ 
+     double result_cost = 0;
+-    if(encoding=="raw_masked_supervised" || encoding=="generic") // complicated input format... consider it's squared error
++    if(encoding=="raw_masked_supervised") // || encoding=="generic") // complicated input format... consider it's squared error
+     {
+         double r = 0;
+         double neg_log_cost = 0; // neg log softmax
+@@ -1490,6 +1492,7 @@
+     Vec hidden_act_no_bias;
+     Vec hidden_exp;
+     Vec dynamic_act_no_bias_contribution;
++    Vec hidden_gradient2;
+     if(reconstruction_bias.length()==0)
+     {
+         reconstruction_bias.resize(fullhiddenlength);
+@@ -1509,7 +1512,7 @@
+     hidden_act_no_bias.resize(fullhiddenlength);
+     hidden_exp.resize(fullhiddenlength);
+     dynamic_act_no_bias_contribution.resize(fullhiddenlength);
+-
++    hidden_gradient2.resize(fullhiddenlength);
+     
+ 
+     // predict (denoised) input_reconstruction 
+@@ -1534,20 +1537,41 @@
+ 
+     /********************************************************************************/
+     hidden_reconstruction_activation_grad.resize(reconstruction_prob.size());
+-    hidden_reconstruction_activation_grad << reconstruction_prob;
++    hidden_reconstruction_activation_grad << reconstruction_prob2;
+     hidden_reconstruction_activation_grad -= hidden_target;
+     hidden_reconstruction_activation_grad *= hidden_reconstruction_cost_weight;
+     
+ 
+-    productAcc(hidden_gradient, reconstruction_weights, hidden_reconstruction_activation_grad); //dynamic matrice tied
++    productAcc(hidden_gradient2, reconstruction_weights, hidden_reconstruction_activation_grad); //dynamic matrice tied
+     //transposeProductAcc(hidden_gradient, reconstruction_weights, hidden_reconstruction_activation_grad); //dynamic matrice not tied
+     
+     //update bias
+-    multiplyAcc(reconstruction_bias, hidden_reconstruction_activation_grad, -lr);
++    multiplyAcc(reconstruction_bias2, hidden_reconstruction_activation_grad, -lr);
+     // update weight
+     externalProductScaleAcc(acc_weights_gr, hidden, hidden_reconstruction_activation_grad, -lr); //dynamic matrice tied
+     //externalProductScaleAcc(acc_weights_gr, hidden_reconstruction_activation_grad, hidden, -lr); //dynamic matrice not tied
+-                
++    
++    hidden_reconstruction_activation_grad.clear();
++
++    //update bias
++    for( int i=0 ; i<fullhiddenlength ; i++ )
++    {
++        real in_grad_i;
++        in_grad_i = reconstruction_prob[i] * (1-reconstruction_prob[i]) * hidden_gradient2[i];
++        hidden_reconstruction_activation_grad[i] += in_grad_i;
++        
++       
++        // update the bias: bias -= learning_rate * input_gradient
++        reconstruction_bias[i] -= lr * in_grad_i;
++        
++    }
++
++    productAcc(hidden_gradient, reconstruction_weights, hidden_reconstruction_activation_grad); //dynamic matrice tied
++
++    // update weight
++    externalProductScaleAcc(acc_weights_gr, hidden, hidden_reconstruction_activation_grad, -lr); //dynamic matrice tied
++    
++  
+     //update bias2
+     //multiplyAcc(reconstruction_bias2, hidden_gradient, -lr);
+     /********************************************************************************/
+@@ -1958,8 +1982,8 @@
+                 train_n_items[train_costs.length()-2]++;
+             }
+             
+-            
+-            if(i!=0 && dynamic_connections )
++            //if(i!=0 && dynamic_connections )
++            if(i>1 && dynamic_connections )
+             {   
+                 
+                 // Add contribution of hidden reconstruction cost in hidden_gradient
+@@ -1973,6 +1997,7 @@
+                     
+                     //truc stan
+                     //fpropHiddenSymmetricDynamicMatrix(hidden_list(i-1), reconstruction_weights, hidden_reconstruction_prob, hidden_list(i), hidden_gradient, hidden_reconstruction_weight, current_learning_rate);
++                    
+                     train_costs[train_costs.length()-1] += fpropHiddenReconstructionFromLastHidden(input_list[i], 
+                                                                                                    hidden_list(i), 
+                                                                                                    dynamicWeights, //reconsWeights, //dynamicWeights, 
+@@ -1985,6 +2010,23 @@
+                                                                                                    hidden_gradient, 
+                                                                                                    hidden_reconstruction_weight, 
+                                                                                                    current_learning_rate);
++                    
++                    
++                    /*
++                    train_costs[train_costs.length()-1] += fpropHiddenReconstructionFromLastHidden2(input_list[i], 
++                                                                                                   hidden_list(i), 
++                                                                                                   dynamicWeights, //reconsWeights, //dynamicWeights, 
++                                                                                                   acc_dynamic_connections_gr, //acc_reconstruction_dynamic_connections_gr, //acc_dynamic_connections_gr, 
++                                                                                                   hidden_reconstruction_bias, 
++                                                                                                   hidden_reconstruction_bias2, 
++                                                                                                   hidden_reconstruction_activation_grad, 
++                                                                                                   hidden_reconstruction_prob, 
++                                                                                                   hidden_list(i-2), 
++                                                                                                   hidden_gradient, 
++                                                                                                   hidden_reconstruction_weight, 
++                                                                                                   current_learning_rate);
++                    */
++
+                     //fpropHiddenReconstructionFromLastHidden(hidden_list(i), reconsWeights, acc_reconstruction_dynamic_connections_gr, hidden_reconstruction_bias, hidden_reconstruction_activation_grad, hidden_reconstruction_prob, hidden_list(i-1), hidden_gradient, hidden_reconstruction_weight, current_learning_rate);
+                     train_n_items[train_costs.length()-1]++;
+                 }
+
+
+
+From plearner at mail.berlios.de  Wed Aug  5 22:37:42 2009
+From: plearner at mail.berlios.de (plearner at BerliOS)
+Date: Wed, 5 Aug 2009 22:37:42 +0200
+Subject: [Plearn-commits] r10292 - trunk/python_modules/plearn/table
+Message-ID: <200908052037.n75Kbg2h009887@sheep.berlios.de>
+
+Author: plearner
+Date: 2009-08-05 22:37:40 +0200 (Wed, 05 Aug 2009)
+New Revision: 10292
+
+Modified:
+   trunk/python_modules/plearn/table/viewtable.py
+Log:
+experimental display in viewtable
+
+
+Modified: trunk/python_modules/plearn/table/viewtable.py
+===================================================================
+--- trunk/python_modules/plearn/table/viewtable.py	2009-08-04 19:12:32 UTC (rev 10291)
++++ trunk/python_modules/plearn/table/viewtable.py	2009-08-05 20:37:40 UTC (rev 10292)
+@@ -922,20 +922,29 @@
+             fi
+             """ % (guessdir,filename,filename)
+ 
+-        
+         commands = [
+             ('s',"Launch terminal and shell in this matrix's directory",
+              """xterm -e sh -c 'cd "_DIRPATH_"; pwd; ls; sh' """),
+             ('1',"View layer 1 unsup training costs",
+              """xterm -e sh -c 'cd "_DIRPATH_"; myplearn vmat view `find . -name training_costs_layer_1.pmat`' """),
++
++            ('a',"view learner layer1 activation stats", 
++             """xterm -e sh -c 'cd "_DIRPATH_"; pwd; """+
++             set_filepath("learner_layer1act_all_simplestats.pmat","Split0/LearnerExpdir/Strat0/Trials0/Split0/LearnerExpdir")+
++             """myplearn vmat view $filepath' """),        
++            ('b',"display learner layer1 activation statscollector", 
++             """xterm -e sh -c 'cd "_DIRPATH_"; pwd; """+
++             set_filepath("learner_layer1act_selected_statscol.psave","Split0/LearnerExpdir/Strat0/Trials0/Split0/LearnerExpdir")+
++             """displaystatscol.py $filepath' """),        
++            ('c',"display learner layer1 activation bivariate histograms", 
++             """xterm -e sh -c 'cd "_DIRPATH_"; pwd; """+
++             set_filepath("learner_layer1act_selected_bihist.pmat","Split0/LearnerExpdir/Strat0/Trials0/Split0/LearnerExpdir")+
++             """displaybihist.py $filepath' """),        
++
+             ('i',"deepnetplot.py plotRepAndRec learner.psave", 
+              """xterm -e sh -c 'cd "_DIRPATH_"; pwd;"""+
+              set_filepath("learner.psave","Split0/LearnerExpdir/Strat0/Trials0/Split0/LearnerExpdir")+
+              """deepnetplot.py plotRepAndRec $filepath ~/data/mnist/mnist_small/mnist_basic2_valid.pmat; sh' """),
+-            ('a',"view learner layer1 activation stats", 
+-             """xterm -e sh -c 'cd "_DIRPATH_"; pwd; """+
+-             set_filepath("learner_layer1_actstats.pmat","Split0/LearnerExpdir/Strat0/Trials0/Split0/LearnerExpdir")+
+-             """myplearn vmat view $filepath' """),        
+             ('v',"deepnetplot.py plotEachRow learner.psave", 
+              """xterm -e sh -c 'cd "_DIRPATH_"; pwd; """+
+              set_filepath("learner.psave","Split0/LearnerExpdir/Strat0/Trials0/Split0/LearnerExpdir")+
+@@ -948,10 +957,20 @@
+              """xterm -e sh -c 'cd "_DIRPATH_"; pwd; """+
+              set_filepath("learner_Layer1_Wr.png","Split0/LearnerExpdir/Strat0/Trials0/Split0/LearnerExpdir")+
+              """xv $filepath' """),
+-            ('a',"view final_learner layer1 activation stats", 
++
++            ('A',"view final_learner layer1 activation stats", 
+              """xterm -e sh -c 'cd "_DIRPATH_"; pwd; """+
+-             set_filepath("final_learner_layer1_actstats.pmat","Split0/LearnerExpdir")+
++             set_filepath("final_learner_layer1act_all_simplestats.pmat","Split0/LearnerExpdir/Strat0/Trials0/Split0/LearnerExpdir")+
+              """myplearn vmat view $filepath' """),        
++            ('B',"display final_learner layer1 activation statscollector", 
++             """xterm -e sh -c 'cd "_DIRPATH_"; pwd; """+
++             set_filepath("final_learner_layer1act_selected_statscol.psave","Split0/LearnerExpdir/Strat0/Trials0/Split0/LearnerExpdir")+
++             """displaystatscol.py $filepath' """),        
++            ('C',"display final_learner layer1 activation bivariate histograms", 
++             """xterm -e sh -c 'cd "_DIRPATH_"; pwd; """+
++             set_filepath("final_learner_layer1act_selected_bihist.pmat","Split0/LearnerExpdir/Strat0/Trials0/Split0/LearnerExpdir")+
++             """displaybihist.py $filepath' """),        
++
+             ('I',"deepnetplot.py plotRepAndRec final_learner.psave", 
+              """xterm -e sh -c 'cd "_DIRPATH_"; pwd; """+
+              set_filepath("final_learner.psave","Split0/LearnerExpdir")+
+
+
+
+From saintmlx at mail.berlios.de  Thu Aug  6 22:30:46 2009
+From: saintmlx at mail.berlios.de (saintmlx at BerliOS)
+Date: Thu, 6 Aug 2009 22:30:46 +0200
+Subject: [Plearn-commits] r10293 - trunk/plearn/python
+Message-ID: <200908062030.n76KUk2M027667@sheep.berlios.de>
+
+Author: saintmlx
+Date: 2009-08-06 22:30:45 +0200 (Thu, 06 Aug 2009)
+New Revision: 10293
+
+Modified:
+   trunk/plearn/python/PythonObjectWrapper.cc
+Log:
+commented-out superfluous debug logs (can be slooooow for some objects)
+
+Modified: trunk/plearn/python/PythonObjectWrapper.cc
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.cc	2009-08-05 20:37:40 UTC (rev 10292)
++++ trunk/plearn/python/PythonObjectWrapper.cc	2009-08-06 20:30:45 UTC (rev 10293)
+@@ -196,9 +196,9 @@
+ Object* ConvertFromPyObject<Object*>::convert(PyObject* pyobj,
+                                               bool print_traceback)
+ {
+-    DBG_MODULE_LOG << "ConvertFromPyObject<Object*>::convert("
+-                   << (void*)pyobj << ' ' << PythonObjectWrapper(pyobj)
+-                   << ')' << endl;
++//     DBG_MODULE_LOG << "ConvertFromPyObject<Object*>::convert("
++//                    << (void*)pyobj << ' ' << PythonObjectWrapper(pyobj)
++//                    << ')' << endl;
+     PLASSERT(pyobj);
+     if(pyobj == Py_None)
+         return 0;
+@@ -217,9 +217,9 @@
+     Object* obj= static_cast<Object*>(PyCObject_AsVoidPtr(cptr));
+ 
+     Py_DECREF(cptr);
+-    DBG_MODULE_LOG << "EXITING ConvertFromPyObject<Object*>::convert("
+-                   << (void*)pyobj << ' ' << PythonObjectWrapper(pyobj)
+-                   << ')' << " => " << (void*)obj << ' ' << obj->asString() << endl;
++//     DBG_MODULE_LOG << "EXITING ConvertFromPyObject<Object*>::convert("
++//                    << (void*)pyobj << ' ' << PythonObjectWrapper(pyobj)
++//                    << ')' << " => " << (void*)obj << ' ' << obj->asString() << endl;
+     return obj;
+ }
+ 
+@@ -520,8 +520,8 @@
+ //##### Trampoline ############################################################
+ PyObject* PythonObjectWrapper::trampoline(PyObject* self, PyObject* args)
+ {
+-    DBG_MODULE_LOG << "PythonObjectWrapper::trampoline(" << PythonObjectWrapper(self)
+-                   << ", " << PythonObjectWrapper(args) << ')' << endl;
++//     DBG_MODULE_LOG << "PythonObjectWrapper::trampoline(" << PythonObjectWrapper(self)
++//                    << ", " << PythonObjectWrapper(args) << ')' << endl;
+     PythonGlobalInterpreterLock gil;         // For thread-safety
+ 
+     //get object and trampoline from self
+
+
+
+From tihocan at mail.berlios.de  Thu Aug  6 22:32:35 2009
+From: tihocan at mail.berlios.de (tihocan at BerliOS)
+Date: Thu, 6 Aug 2009 22:32:35 +0200
+Subject: [Plearn-commits] r10294 - trunk/plearn/vmat
+Message-ID: <200908062032.n76KWZub027865@sheep.berlios.de>
+
+Author: tihocan
+Date: 2009-08-06 22:32:35 +0200 (Thu, 06 Aug 2009)
+New Revision: 10294
+
+Modified:
+   trunk/plearn/vmat/VMatrix.cc
+Log:
+Added putRow as remote method
+
+Modified: trunk/plearn/vmat/VMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/VMatrix.cc	2009-08-06 20:30:45 UTC (rev 10293)
++++ trunk/plearn/vmat/VMatrix.cc	2009-08-06 20:32:35 UTC (rev 10294)
+@@ -265,6 +265,12 @@
+          ArgDoc ("rows", "A matrix containing the rows to append.\n")));
+ 
+     declareMethod(
++        rmm, "putRow", &VMatrix::putRow,
++        (BodyDoc("Store a row into the VMatrix.\n"),
++         ArgDoc ("i", "Index of the row being modified.\n"),
++         ArgDoc ("v", "Vec with values (row) to store.\n")));
++
++    declareMethod(
+         rmm, "saveFieldInfos", &VMatrix::saveFieldInfos,
+         (BodyDoc("Saves field names, etc. in metadatadir.\n")));
+ 
+
+
+
+From saintmlx at mail.berlios.de  Thu Aug  6 23:14:18 2009
+From: saintmlx at mail.berlios.de (saintmlx at BerliOS)
+Date: Thu, 6 Aug 2009 23:14:18 +0200
+Subject: [Plearn-commits] r10295 - trunk/plearn/python
+Message-ID: <200908062114.n76LEIwh032442@sheep.berlios.de>
+
+Author: saintmlx
+Date: 2009-08-06 23:14:17 +0200 (Thu, 06 Aug 2009)
+New Revision: 10295
+
+Modified:
+   trunk/plearn/python/PythonObjectWrapper.cc
+Log:
+commented-out more debug logs
+
+Modified: trunk/plearn/python/PythonObjectWrapper.cc
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.cc	2009-08-06 20:32:35 UTC (rev 10294)
++++ trunk/plearn/python/PythonObjectWrapper.cc	2009-08-06 21:14:17 UTC (rev 10295)
+@@ -633,7 +633,7 @@
+         PythonObjectWrapper(args).as<TVec<PyObject*> >();
+     Object* o= newObjectFromClassname(PyString_AsString(args_tvec[1]));
+ 
+-    DBG_MODULE_LOG << "In PythonObjectWrapper::newCPPObj() " << PyString_AsString(args_tvec[1]) << " <-> " << (void*)o << '\t' << o << endl;
++    //DBG_MODULE_LOG << "In PythonObjectWrapper::newCPPObj() " << PyString_AsString(args_tvec[1]) << " <-> " << (void*)o << '\t' << o << endl;
+     //perr << "new o->usage()= " << o->usage() << endl;
+ 
+     return PyCObject_FromVoidPtr(o, 0);
+@@ -653,7 +653,7 @@
+     //checkWrappedObjects(">>>>>>>>>> in refcppobj -> checkWrappedObjects");// debug only
+     //perr << "refCPPObj: " << (void*)o << " : " << (void*)pyo << endl;
+ 
+-    DBG_MODULE_LOG << "In PythonObjectWrapper::refCPPObj() " << PythonObjectWrapper(pyo) << " <-> " << (void*)o << '\t' << o << endl;
++    //DBG_MODULE_LOG << "In PythonObjectWrapper::refCPPObj() " << PythonObjectWrapper(pyo) << " <-> " << (void*)o << '\t' << o << endl;
+     addToWrappedObjectsSet(pyo);//Py_INCREF(pyo);
+     
+     //printWrappedObjects();///***///***
+@@ -676,11 +676,11 @@
+             //Py_DECREF(it->second);
+             DBG_MODULE_LOG.clearInOutMaps();
+             PyObject* cptr= PyObject_GetAttrString(it->second, const_cast<char*>("_cptr"));
+-            DBG_MODULE_LOG << "In PythonObjectWrapper::gc_collect1(), removing object " 
+-                           << PythonObjectWrapper(it->second)
+-                           << " ; python version of: " << it->first << " (" << (void*)it->first 
+-                           << ", " << PyCObject_AsVoidPtr(cptr) << ')'
+-                           << endl;
++//             DBG_MODULE_LOG << "In PythonObjectWrapper::gc_collect1(), removing object " 
++//                            << PythonObjectWrapper(it->second)
++//                            << " ; python version of: " << it->first << " (" << (void*)it->first 
++//                            << ", " << PyCObject_AsVoidPtr(cptr) << ')'
++//                            << endl;
+             if(!cptr)
+             {
+                 if(PyErr_Occurred()) PyErr_Print();
+@@ -720,8 +720,8 @@
+ 
+ PyObject* ConvertToPyObject<Object*>::newPyObject(const Object* x)
+ {
+-    DBG_MODULE_LOG << "ENTER ConvertToPyObject<Object*>::newPyObject " 
+-                   << (void*)x << ' ' << (x?x->asString():"") << endl;
++//     DBG_MODULE_LOG << "ENTER ConvertToPyObject<Object*>::newPyObject " 
++//                    << (void*)x << ' ' << (x?x->asString():"") << endl;
+     // void ptr becomes None
+     if(!x) return PythonObjectWrapper::newPyObject();
+ 
+@@ -775,9 +775,9 @@
+ 
+     addToWrappedObjectsSet(the_obj);//Py_INCREF(the_obj);
+     //printWrappedObjects();
+-    DBG_MODULE_LOG << "EXIT ConvertToPyObject<Object*>::newPyObject " 
+-                   << (void*)x << ' ' << x->asString() << " => "
+-                   << (void*) the_obj << ' ' << PythonObjectWrapper(the_obj) << endl;
++//     DBG_MODULE_LOG << "EXIT ConvertToPyObject<Object*>::newPyObject " 
++//                    << (void*)x << ' ' << x->asString() << " => "
++//                    << (void*) the_obj << ' ' << PythonObjectWrapper(the_obj) << endl;
+ 
+     return the_obj;
+ }
+
+
+
+From islaja at mail.berlios.de  Tue Aug 11 20:30:23 2009
+From: islaja at mail.berlios.de (islaja at BerliOS)
+Date: Tue, 11 Aug 2009 20:30:23 +0200
+Subject: [Plearn-commits] r10296 - trunk/plearn_learners/online
+Message-ID: <200908111830.n7BIUNGm015671@sheep.berlios.de>
+
+Author: islaja
+Date: 2009-08-11 20:30:22 +0200 (Tue, 11 Aug 2009)
+New Revision: 10296
+
+Modified:
+   trunk/plearn_learners/online/RBMMatrixConnection.cc
+Log:
+Fixed an error in L2 regularization gradient computation.
+
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.cc	2009-08-06 21:14:17 UTC (rev 10295)
++++ trunk/plearn_learners/online/RBMMatrixConnection.cc	2009-08-11 18:30:22 UTC (rev 10296)
+@@ -866,7 +866,7 @@
+         for( int j=0; j<down_size; j++ )
+         {
+             if( delta_L2 != 0. )
+-                w_[j] *= (1 - delta_L2);
++                w_[j] *= (1 - 2*delta_L2);
+ 
+             if( delta_L1 != 0. )
+             {
+@@ -900,7 +900,7 @@
+         for( int j=0; j<weights.width(); j++ )
+         {
+             if( delta_L2 != 0. )
+-                gw_[j] += delta_L2*w_[j];
++                gw_[j] += 2*delta_L2*w_[j];
+ 
+             if( delta_L1 != 0. )
+             {
+
+
+
+From ducharme at mail.berlios.de  Mon Aug 24 17:04:24 2009
+From: ducharme at mail.berlios.de (ducharme at BerliOS)
+Date: Mon, 24 Aug 2009 17:04:24 +0200
+Subject: [Plearn-commits] r10297 - trunk/python_modules/plearn/gui_tools
+Message-ID: <200908241504.n7OF4O4N027571@sheep.berlios.de>
+
+Author: ducharme
+Date: 2009-08-24 17:04:23 +0200 (Mon, 24 Aug 2009)
+New Revision: 10297
+
+Modified:
+   trunk/python_modules/plearn/gui_tools/xp_workbench.py
+Log:
+
+
+Modified: trunk/python_modules/plearn/gui_tools/xp_workbench.py
+===================================================================
+--- trunk/python_modules/plearn/gui_tools/xp_workbench.py	2009-08-11 18:30:22 UTC (rev 10296)
++++ trunk/python_modules/plearn/gui_tools/xp_workbench.py	2009-08-24 15:04:23 UTC (rev 10297)
+@@ -37,7 +37,7 @@
+ import os.path
+ import sys
+ import threading
+-from   datetime import datetime
++import datetime
+ 
+ _HAS_DISPLAY_ = os.environ.has_key("DISPLAY")
+ 
+@@ -441,7 +441,7 @@
+     def expdir_name(expdir_root, expdir=None):
+         """Return an experiment directory from a root location and possibly a dir name."""
+         if expdir is None or expdir == '':
+-            expdir = datetime.now().strftime("expdir_%Y%m%d_%H%M%S")
++            expdir = datetime.datetime.now().strftime("expdir_%Y%m%d_%H%M%S")
+         return os.path.join(expdir_root, expdir)
+ 
+ 
+
+
+

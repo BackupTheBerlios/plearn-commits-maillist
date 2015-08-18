@@ -1,0 +1,160 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8810 - in trunk: python_modules/plearn/parallel	scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8810%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200804131514.m3DFEVt0005738%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002257.html">
+   <LINK REL="Next"  HREF="002259.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8810 - in trunk: python_modules/plearn/parallel	scripts</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8810%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200804131514.m3DFEVt0005738%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8810 - in trunk: python_modules/plearn/parallel	scripts">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Sun Apr 13 17:14:31 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002257.html">[Plearn-commits] r8809 - trunk
+</A></li>
+        <LI>Next message: <A HREF="002259.html">[Plearn-commits] r8811 - trunk/python_modules/plearn/pymake
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2258">[ date ]</a>
+              <a href="thread.html#2258">[ thread ]</a>
+              <a href="subject.html#2258">[ subject ]</a>
+              <a href="author.html#2258">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-04-13 17:14:30 +0200 (Sun, 13 Apr 2008)
+New Revision: 8810
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+Added the --files option. This option use the file transfert mechanis of condor, so we won't need NFS. 
+WARNING: condor don't handle directory...
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2008-04-13 14:11:04 UTC (rev 8809)
++++ trunk/python_modules/plearn/parallel/dbi.py	2008-04-13 15:14:30 UTC (rev 8810)
+@@ -669,6 +669,7 @@
+         self.nice = False
+         self.req = ''
+         self.copy_local_source_file = False
++        self.files = ''
+         DBIBase.__init__(self, commands, **args)
+         if not os.path.exists(self.log_dir):
+             os.mkdir(self.log_dir) # condor log are always generated
+@@ -698,7 +699,7 @@
+             autorized_shell_command=[ &quot;touch&quot;, &quot;echo&quot;]
+             if c in autorized_shell_command:
+                 shellcommand=True
+-            else:
++            elif not self.files:
+                 c = os.path.normpath(os.path.join(os.getcwd(), c))
+             command = &quot;&quot;.join([c,c2])
+ 
+@@ -800,21 +801,26 @@
+             launch_file = os.path.join(self.log_dir, 'launch.csh')
+         else:
+             launch_file = os.path.join(self.log_dir, 'launch.sh')
+-
++            
+         condor_dat.write( dedent('''\
+                 executable     = %s
+                 universe       = vanilla
+                 requirements   = %s
+-                output         = %s/condor.%s.$(Process).out
+-                error          = %s/condor.%s.$(Process).error
++                output         = %s/condor.$(Process).out
++                error          = %s/condor.$(Process).error
+                 log            = %s/condor.log
+                 getenv         = %s
+                 nice_user      = %s
+                 ''' % (launch_file,req,
+-                       self.log_dir,self.unique_id,
+-                       self.log_dir,self.unique_id,
++                       self.log_dir,
++                       self.log_dir,
+                        self.log_dir,str(self.getenv),str(self.nice))))
+-
++        if self.files: #ON_EXIT_OR_EVICT
++            condor_dat.write( dedent('''\
++                when_to_transfer_output = ON_EXIT
++                should_transfer_files = Yes
++                transfer_input_files = %s
++                '''%(self.files+','+launch_file+','+self.tasks[0].commands[0].split()[0]))) # no directory
+         if len(condor_datas)!=0:
+             for i in condor_datas:
+                 condor_dat.write(&quot;arguments      = sh &quot;+i+&quot; $$(Arch) \nqueue\n&quot;)
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2008-04-13 14:11:04 UTC (rev 8809)
++++ trunk/scripts/dbidispatch	2008-04-13 15:14:30 UTC (rev 8810)
+@@ -164,7 +164,7 @@
+                   &quot;--no_getenv&quot;, &quot;--no_cwait&quot;, &quot;--no_clean_up&quot; , &quot;--no_nice&quot;]:
+         dbi_param[argv[5:]]=False
+     elif argv.split('=')[0] in [&quot;--duree&quot;,&quot;--cpu&quot;,&quot;--mem&quot;,&quot;--os&quot;,
+-                                &quot;--nb_proc&quot;,&quot;--req&quot;]:
++                                &quot;--nb_proc&quot;,&quot;--req&quot;, &quot;--files&quot;]:
+         dbi_param[argv.split('=')[0][2:]]=argv.split('=')[1]
+     elif argv.startswith('--machine=') or argv.startswith('--machines='):
+         if argv.split('=')[0] == &quot;--machine&quot;:
+@@ -203,7 +203,7 @@
+     valid_dbi_param +=[&quot;cwait&quot;,&quot;force&quot;,&quot;nb_proc&quot;,&quot;arch&quot;,&quot;interruptible&quot;,
+                        &quot;duree&quot;,&quot;cpu&quot;,&quot;mem&quot;,&quot;os&quot;]
+ elif launch_cmd==&quot;Condor&quot;:
+-    valid_dbi_param +=[&quot;req&quot;, &quot;arch&quot;, &quot;getenv&quot;, &quot;nice&quot;]
++    valid_dbi_param +=[&quot;req&quot;, &quot;arch&quot;, &quot;getenv&quot;, &quot;nice&quot;, &quot;files&quot;]
+ elif launch_cmd==&quot;Bqtools&quot;:
+     valid_dbi_param +=[&quot;micro&quot;, &quot;long&quot;,&quot;nb_proc&quot;,&quot;duree&quot;]
+ elif launch_cmd==&quot;Local&quot;:
+@@ -211,7 +211,7 @@
+ 
+ from socket import gethostname
+ if  launch_cmd == 'Condor' and gethostname().endswith(&quot;.iro.umontreal.ca&quot;):
+-    if not os.path.abspath(os.path.curdir).startswith(&quot;/home/fringant2/&quot;):
++    if not os.path.abspath(os.path.curdir).startswith(&quot;/home/fringant2/&quot;) and not dbi_param.get('files'):
+         raise Exception(&quot;You must be in a subfolder of /home/fringant2/&quot;)
+     f=os.getenv(&quot;CONDOR_LOCAL_SOURCE&quot;)
+     if f and not f.startswith(&quot;/home/fringant2/&quot;):
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002257.html">[Plearn-commits] r8809 - trunk
+</A></li>
+	<LI>Next message: <A HREF="002259.html">[Plearn-commits] r8811 - trunk/python_modules/plearn/pymake
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2258">[ date ]</a>
+              <a href="thread.html#2258">[ thread ]</a>
+              <a href="subject.html#2258">[ subject ]</a>
+              <a href="author.html#2258">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

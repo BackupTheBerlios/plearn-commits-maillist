@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7114 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7114%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705152224.l4FMOHQX003450%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000562.html">
+   <LINK REL="Next"  HREF="000564.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7114 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7114%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705152224.l4FMOHQX003450%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7114 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Wed May 16 00:24:17 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000562.html">[Plearn-commits] r7113 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000564.html">[Plearn-commits] r7115 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#563">[ date ]</a>
+              <a href="thread.html#563">[ thread ]</a>
+              <a href="subject.html#563">[ subject ]</a>
+              <a href="author.html#563">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-05-16 00:24:17 +0200 (Wed, 16 May 2007)
+New Revision: 7114
+
+Modified:
+   trunk/plearn_learners/online/RBMMixedConnection.cc
+   trunk/plearn_learners/online/RBMMixedConnection.h
+Log:
+Implemented batch bpropUpdate
+
+
+Modified: trunk/plearn_learners/online/RBMMixedConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedConnection.cc	2007-05-15 20:10:56 UTC (rev 7113)
++++ trunk/plearn_learners/online/RBMMixedConnection.cc	2007-05-15 22:24:17 UTC (rev 7114)
+@@ -812,6 +812,57 @@
+     }
+ }
+ 
++void RBMMixedConnection::bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                                     Mat&amp; input_gradients,
++                                     const Mat&amp; output_gradients,
++                                     bool accumulate)
++{
++    PLASSERT( inputs.width() == down_size );
++    PLASSERT( outputs.width() == up_size );
++    PLASSERT( output_gradients.width() == up_size );
++
++    int batch_size = inputs.length();
++    PLASSERT( outputs.length() == batch_size );
++    PLASSERT( output_gradients.length() == batch_size );
++
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradients.width() == down_size &amp;&amp;
++                      input_gradients.length() == batch_size,
++                      &quot;Cannot resize input_gradients AND accumulate into it&quot; );
++    }
++    else
++    {
++        input_gradients.resize( batch_size, down_size );
++        input_gradients.clear();
++    }
++
++    for( int j=0 ; j&lt;n_down_blocks ; j++ )
++    {
++        int init_j = down_init_positions[j];
++        int down_size_j = down_block_sizes[j];
++        Mat sub_inputs = inputs.subMatColumns( init_j, down_size_j );
++        Mat sub_input_gradients = input_gradients.subMatColumns( init_j,
++                                                                 down_size_j );
++
++        for( int i=0 ; i&lt;n_up_blocks ; i++ )
++        {
++            if( sub_connections(i,j) )
++            {
++                int init_i = up_init_positions[i];
++                int up_size_i = up_block_sizes[i];
++                Mat sub_outputs = outputs.subMatColumns( init_i, up_size_i );
++                Mat sub_output_gradients =
++                    output_gradients.subMatColumns( init_i, up_size_i );
++                sub_connections(i,j)-&gt;bpropUpdate( sub_inputs, sub_outputs,
++                                                   sub_input_gradients,
++                                                   sub_output_gradients,
++                                                   true );
++            }
++        }
++    }
++}
++
+ //! reset the parameters to the state they would be BEFORE starting training.
+ //! Note that this method is necessarily called from build().
+ void RBMMixedConnection::forget()
+
+Modified: trunk/plearn_learners/online/RBMMixedConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedConnection.h	2007-05-15 20:10:56 UTC (rev 7113)
++++ trunk/plearn_learners/online/RBMMixedConnection.h	2007-05-15 22:24:17 UTC (rev 7114)
+@@ -157,6 +157,12 @@
+                              const Vec&amp; output_gradient,
+                              bool accumulate=false);
+ 
++    //! Batch version
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             Mat&amp; input_gradients,
++                             const Mat&amp; output_gradients,
++                             bool accumulate=false);
++
+     //! reset the parameters to the state they would be BEFORE starting
+     //! training.  Note that this method is necessarily called from
+     //! build().
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000562.html">[Plearn-commits] r7113 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000564.html">[Plearn-commits] r7115 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#563">[ date ]</a>
+              <a href="thread.html#563">[ thread ]</a>
+              <a href="subject.html#563">[ subject ]</a>
+              <a href="author.html#563">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

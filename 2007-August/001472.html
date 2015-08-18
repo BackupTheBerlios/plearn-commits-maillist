@@ -1,0 +1,191 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8024 - trunk/scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8024%20-%20trunk/scripts&In-Reply-To=%3C200708260008.l7Q08gK3028273%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001471.html">
+   <LINK REL="Next"  HREF="001473.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8024 - trunk/scripts</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8024%20-%20trunk/scripts&In-Reply-To=%3C200708260008.l7Q08gK3028273%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8024 - trunk/scripts">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Sun Aug 26 02:08:42 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001471.html">[Plearn-commits] r8023 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="001473.html">[Plearn-commits] r8025 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1472">[ date ]</a>
+              <a href="thread.html#1472">[ thread ]</a>
+              <a href="subject.html#1472">[ subject ]</a>
+              <a href="author.html#1472">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-08-26 02:08:41 +0200 (Sun, 26 Aug 2007)
+New Revision: 8024
+
+Modified:
+   trunk/scripts/cdispatch
+Log:
+-added option for cluster --duree=X and --wait
+-better log dir
+-small refactoring
+
+
+Modified: trunk/scripts/cdispatch
+===================================================================
+--- trunk/scripts/cdispatch	2007-08-25 20:22:17 UTC (rev 8023)
++++ trunk/scripts/cdispatch	2007-08-26 00:08:41 UTC (rev 8024)
+@@ -2,12 +2,15 @@
+ import sys,os,re,time,datetime
+ 
+ ScriptName=&quot;launchdbi.py&quot;
+-ShortHelp='Usage: cdispatch [--help|-h] [--log|--nolog] [--cluster|--local[=nb_process]] [--test] [--req=&quot;CONDOR_REQUIREMENT&quot;] [--file=FILEPATH | &lt;command-template&gt;] [--32|--64|--3264]'
++ShortHelp='Usage: cdispatch [--help|-h] [--log|*--nolog] [--cluster|--local[=nb_process]|*--condor] [--test] [--duree=X] [--wait] [--req=&quot;CONDOR_REQUIREMENT&quot;] [--32|--64|--3264] {--file=FILEPATH | &lt;command-template&gt;} \n An * before -- mean that it is the default'
+ LongHelp=&quot;&quot;&quot;
+ Dispatches jobs with dbi.py. dbi allow to dispatch jobs on condor, cluster, local, ssh and bqtools.
+ 
+ %s
+ 
++parameter only for cluster:--duree,--wait,--3264,--32,--64
++parameter only for condor:--req=X
++
+ where &lt;command-template&gt; is interpreted as follows: the first argument
+ is the &lt;command&gt; above, and the rest are interpreted as &lt;arguments&gt;.
+ The arguments may contain segments of the form {{a,b,c,d}}, which trigger
+@@ -58,35 +61,41 @@
+ optionargs = []
+ otherargs = []
+ FILE = &quot;&quot;
+-REQ = &quot;&quot;
+-ARCH = &quot;&quot;
+-NB_PROC=None
++dbi_param={}
++
+ for argv in sys.argv[1:]:
+ 
+     if argv == &quot;--help&quot; or argv == &quot;-h&quot;:
+         print LongHelp
+         sys.exit(1)
+     elif argv == &quot;--nolog&quot;:
+-        optionargs.append(argv[2:])
++        dbi_param[&quot;dolog&quot;]=False
+     elif argv == &quot;--log&quot;:
+-        optionargs.append(argv[2:])
++        dbi_param[&quot;dolog&quot;]=True
+     elif argv == &quot;--cluster&quot;:
+         optionargs.append(argv[2:])
+-    elif argv[0:7] == &quot;--local&quot;:
++    elif argv == &quot;--condor&quot;:
++        #it is the default
++        optionargs.append(argv[2:])
++    elif argv.startswith(&quot;--duree=&quot;):
++        dbi_param[&quot;duree&quot;]=argv[8:]
++    elif argv.startswith(&quot;--local&quot;):
+         optionargs.append(argv[2:7])
+         if len(argv)&gt;7:
+             assert(argv[7]==&quot;=&quot;)
+             NB_PROC=argv[8:]
++            dbi_param[&quot;nb_proc&quot;]=argv[8:]
+     elif argv == &quot;--test&quot;:
+-        optionargs.append(argv[2:])
+-    elif argv[0:7] == &quot;--file=&quot;:
++        dbi_param[&quot;test&quot;]=True
++    elif argv.startswith(&quot;--file=&quot;):
+         FILE = argv[7:]
+         optionargs.append(argv[2:])
+     elif argv == &quot;--32&quot;  or argv == &quot;--64&quot; or argv == &quot;--3264&quot;:
+-        ARCH=argv[2:]
+-        optionargs.append(argv[2:])
++        dbi_param[&quot;arch&quot;]=argv[2:]
++    elif argv == &quot;--wait&quot;:
++        dbi_param[&quot;wait&quot;]=True
+     elif argv[0:6] == &quot;--req=&quot;:
+-        REQ = argv[6:]
++        dbi_param[&quot;requirements&quot;]=&quot;\&quot;%s\&quot;&quot;%argv[6:]
+     elif argv[0:1] == '-':
+ 	print &quot;Unknow parameter (%s)&quot;,argv
+ 	print ShortHelp
+@@ -158,29 +167,17 @@
+ else:
+     launch_cmd='Condor'
+ 
+-dbi_param={}
+-if REQ != &quot;&quot;:
+-    dbi_param[&quot;requirements&quot;]=&quot;\&quot;%s\&quot;&quot;%REQ
+-if &quot;test&quot; in optionargs:
+-    dbi_param[&quot;test&quot;]=True
+-if &quot;log&quot; in optionargs:
+-    dbi_param[&quot;dolog&quot;]=True
+-else:
+-    dbi_param[&quot;dolog&quot;]=False
+-if ARCH!=&quot;&quot;:
+-    dbi_param[&quot;arch&quot;]=ARCH
+-if NB_PROC:
+-    dbi_param[&quot;nb_proc&quot;]=NB_PROC
+     
+-tmp=&quot;_&quot;.join(sys.argv)
+-tmp=tmp[tmp.find(&quot;cdispatch&quot;):]
++t = [x for x in sys.argv[1:] if not x[:2]==&quot;--&quot;]
++t[0]=os.path.split(t[0])[1]
++tmp=&quot;_&quot;.join(t)
+ tmp=re.sub( '[^a-zA-Z0-9-.,]', '_', tmp )
+ tmp+=str(datetime.datetime.now()).replace(' ','_')
+-print tmp
++print &quot;tmp:&quot;,tmp
+ dbi_param[&quot;log_dir&quot;]=os.path.join(&quot;LOGS&quot;,tmp)
+ dbi_param[&quot;log_file&quot;]=os.path.join(dbi_param[&quot;log_dir&quot;],'log')
+ 
+-if &quot;test&quot; in optionargs:
++if &quot;test&quot; in dbi_param:
+     print &quot;We generated %s command in the file&quot;% len(commands)
+     print &quot;The script %s was not launched&quot;% ScriptName
+     SCRIPT=open(ScriptName,'w');
+@@ -210,6 +207,7 @@
+ else:
+     print &quot;We generate the DBI object with %s command&quot;%(len(commands))
+     from plearn.parallel.dbi import *
++    print time.ctime()
+     t1=time.time()
+     jobs = DBI(commands,launch_cmd,**dbi_param)
+     t2=time.time()
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001471.html">[Plearn-commits] r8023 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="001473.html">[Plearn-commits] r8025 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1472">[ date ]</a>
+              <a href="thread.html#1472">[ thread ]</a>
+              <a href="subject.html#1472">[ subject ]</a>
+              <a href="author.html#1472">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

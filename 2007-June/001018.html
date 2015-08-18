@@ -1,0 +1,152 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7569 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7569%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200706120035.l5C0ZpMT023026%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001017.html">
+   <LINK REL="Next"  HREF="001019.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7569 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7569%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200706120035.l5C0ZpMT023026%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7569 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Tue Jun 12 02:35:51 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001017.html">[Plearn-commits] r7568 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001019.html">[Plearn-commits] r7570 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1018">[ date ]</a>
+              <a href="thread.html#1018">[ thread ]</a>
+              <a href="subject.html#1018">[ subject ]</a>
+              <a href="author.html#1018">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-06-12 02:35:48 +0200 (Tue, 12 Jun 2007)
+New Revision: 7569
+
+Modified:
+   trunk/plearn_learners/online/NLLCostModule.cc
+Log:
+Relaxed a bit the constraint, so we can handle NaN in input.
+
+
+Modified: trunk/plearn_learners/online/NLLCostModule.cc
+===================================================================
+--- trunk/plearn_learners/online/NLLCostModule.cc	2007-06-12 00:31:53 UTC (rev 7568)
++++ trunk/plearn_learners/online/NLLCostModule.cc	2007-06-12 00:35:48 UTC (rev 7569)
+@@ -93,13 +93,19 @@
+     PLASSERT( target.size() == target_size );
+     cost.resize( output_size );
+ 
+-    PLASSERT_MSG( min(input) &gt;= 0.,
+-                  &quot;Elements of \&quot;input\&quot; should be positive&quot; );
+-    PLASSERT_MSG( is_equal( sum(input), 1. ),
+-                  &quot;Elements of \&quot;input\&quot; should sum to 1&quot; );
++    if( input.hasMissing() )
++        // TODO: should we put something else? infinity?
++        cost[0] = MISSING_VALUE;
++    else
++    {
++        PLASSERT_MSG( min(input) &gt;= 0.,
++                      &quot;Elements of \&quot;input\&quot; should be positive&quot; );
++        PLASSERT_MSG( is_equal( sum(input), 1. ),
++                      &quot;Elements of \&quot;input\&quot; should sum to 1&quot; );
+ 
+-    int the_target = (int) round( target[0] );
+-    cost[0] = -pl_log( input[ the_target ] );
++        int the_target = (int) round( target[0] );
++        cost[0] = -pl_log( input[ the_target ] );
++    }
+ }
+ 
+ void NLLCostModule::fprop(const Mat&amp; inputs, const Mat&amp; targets, Mat&amp; costs)
+@@ -143,26 +149,32 @@
+ 
+         cost-&gt;resize(batch_size, port_sizes(2, 1));
+ 
+-        PLASSERT_MSG( min(*prediction) &gt;= 0.,
+-                &quot;Elements of \&quot;prediction\&quot; should be positive&quot; );
+ 
++        for( int i=0; i&lt;batch_size; i++ )
++        {
++            if( (*prediction)(i).hasMissing() )
++            {
++                // TODO: should we put something else? infinity?
++                (*cost)(i,0) = MISSING_VALUE;
++            }
++            else
++            {
+ #ifdef BOUNDCHECK
+-        for (int i = 0; i &lt; prediction-&gt;length(); i++) {
+-            // Ensure the distribution probabilities sum to 1. We relax a bit
+-            // the default tolerance as probabilities using exponentials could
+-            // suffer numerical imprecisions.
+-            if (!is_equal( sum((*prediction)(i)), 1., 1., 1e-5, 1e-5 ))
+-                PLERROR(&quot;In NLLCostModule::fprop - Elements of \&quot;prediction\&quot; &quot;
+-                        &quot;should sum to 1 (found a sum = %f)&quot;,
+-                        sum((*prediction)(i)));
+-        }
++                PLASSERT_MSG( min((*prediction)(i)) &gt;= 0.,
++                    &quot;Elements of \&quot;prediction\&quot; should be positive&quot; );
++                // Ensure the distribution probabilities sum to 1. We relax a
++                // bit the default tolerance as probabilities using
++                // exponentials could suffer numerical imprecisions.
++                if (!is_equal( sum((*prediction)(i)), 1., 1., 1e-5, 1e-5 ))
++                    PLERROR(&quot;In NLLCostModule::fprop - Elements of&quot;
++                            &quot; \&quot;prediction\&quot; should sum to 1&quot;
++                            &quot; (found a sum = %f)&quot;,
++                            sum((*prediction)(i)));
+ #endif
+-
+-        for( int k=0; k&lt;batch_size; k++ )
+-        {
+-            int target_k = (int) round( (*target)(k,0) );
+-            PLASSERT( is_equal( (*target)(k, 0), target_k ) );
+-            (*cost)(k,0) = -pl_log( (*prediction)(k, target_k) );
++                int target_i = (int) round( (*target)(i,0) );
++                PLASSERT( is_equal( (*target)(i, 0), target_i ) );
++                (*cost)(i,0) = -pl_log( (*prediction)(i, target_i) );
++            }
+         }
+     }
+     else if( !prediction &amp;&amp; !target &amp;&amp; !cost )
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001017.html">[Plearn-commits] r7568 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001019.html">[Plearn-commits] r7570 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1018">[ date ]</a>
+              <a href="thread.html#1018">[ thread ]</a>
+              <a href="subject.html#1018">[ subject ]</a>
+              <a href="author.html#1018">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

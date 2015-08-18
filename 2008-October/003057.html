@@ -1,0 +1,443 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9617 - trunk/plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9617%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200810281731.m9SHVdhs015445%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003056.html">
+   <LINK REL="Next"  HREF="003058.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9617 - trunk/plearn_learners/regressors</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9617%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200810281731.m9SHVdhs015445%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9617 - trunk/plearn_learners/regressors">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Oct 28 18:31:39 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003056.html">[Plearn-commits] r9616 - trunk/python_modules/plearn/learners
+</A></li>
+        <LI>Next message: <A HREF="003058.html">[Plearn-commits] r9618 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3057">[ date ]</a>
+              <a href="thread.html#3057">[ thread ]</a>
+              <a href="subject.html#3057">[ subject ]</a>
+              <a href="author.html#3057">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-10-28 18:31:36 +0100 (Tue, 28 Oct 2008)
+New Revision: 9617
+
+Modified:
+   trunk/plearn_learners/regressors/RegressionTreeLeave.cc
+   trunk/plearn_learners/regressors/RegressionTreeLeave.h
+   trunk/plearn_learners/regressors/RegressionTreeMulticlassLeave.cc
+   trunk/plearn_learners/regressors/RegressionTreeMulticlassLeave.h
+   trunk/plearn_learners/regressors/RegressionTreeNode.cc
+   trunk/plearn_learners/regressors/RegressionTreeNode.h
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+Log:
+optimization of the training time of the RegressionTree. We preload data in an array before using them. So all data fit in less memory and thus we same on memory access time and fct call time. This give a speed up of 40% without the last optimization. With the last optimization we double the speed aproximatly.
+
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeLeave.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeLeave.cc	2008-10-26 16:39:20 UTC (rev 9616)
++++ trunk/plearn_learners/regressors/RegressionTreeLeave.cc	2008-10-28 17:31:36 UTC (rev 9617)
+@@ -138,10 +138,8 @@
+     else loss_function_factor = 1.0;
+ }
+ 
+-void RegressionTreeLeave::addRow(int row)
++void RegressionTreeLeave::addRow(int row, real target, real weight)
+ {
+-    real weight = train_set-&gt;getWeight(row);
+-    real target = train_set-&gt;getTarget(row);
+     length += 1;
+     weights_sum += weight;
+     targets_sum += target;
+@@ -150,6 +148,20 @@
+     weighted_squared_targets_sum += weight * squared_target;  
+ }
+ 
++void RegressionTreeLeave::addRow(int row)
++{
++    real weight = train_set-&gt;getWeight(row);
++    real target = train_set-&gt;getTarget(row);
++    addRow(row, target, weight);
++}
++
++void RegressionTreeLeave::addRow(int row, real target, real weight,
++                                 Vec outputv, Vec errorv)
++{
++    addRow(row, target, weight);
++    getOutputAndError(outputv,errorv);
++}
++
+ void RegressionTreeLeave::addRow(int row, Vec outputv, Vec errorv)
+ {
+     addRow(row);
+@@ -159,13 +171,18 @@
+ {
+     real weight = train_set-&gt;getWeight(row);
+     real target = train_set-&gt;getTarget(row);
++    removeRow(row, target, weight, output, error);
++}
++void RegressionTreeLeave::removeRow(int row, real target, real weight,
++                                    Vec outputv, Vec errorv)
++{
+     length -= 1;
+     weights_sum -= weight;
+     targets_sum -= target;
+     real squared_target = pow(target, 2);
+     weighted_targets_sum -= weight * target;
+     weighted_squared_targets_sum -= weight * squared_target; 
+-    getOutputAndError(output, error);
++    getOutputAndError(outputv, errorv);
+ }
+ 
+ void RegressionTreeLeave::getOutputAndError(Vec&amp; output, Vec&amp; error)const
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeLeave.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeLeave.h	2008-10-26 16:39:20 UTC (rev 9616)
++++ trunk/plearn_learners/regressors/RegressionTreeLeave.h	2008-10-28 17:31:36 UTC (rev 9617)
+@@ -92,8 +92,11 @@
+     void         initLeave(PP&lt;RegressionTreeRegisters&gt; the_train_set);
+     virtual void         initStats();
+     virtual void         addRow(int row);
++    virtual void         addRow(int row, real target, real weight);
+     virtual void         addRow(int row, Vec outputv, Vec errorv);
++    virtual void         addRow(int row, real target, real weight, Vec outputv, Vec errorv);
+     virtual void         removeRow(int row, Vec outputv, Vec errorv);
++    virtual void         removeRow(int row, real target, real weight, Vec outputv, Vec errorv);
+     inline void          registerRow(int row)
+     {train_set-&gt;registerLeave(id, row);}
+     inline int           getId()const{return id;}
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeMulticlassLeave.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeMulticlassLeave.cc	2008-10-26 16:39:20 UTC (rev 9616)
++++ trunk/plearn_learners/regressors/RegressionTreeMulticlassLeave.cc	2008-10-28 17:31:36 UTC (rev 9617)
+@@ -132,6 +132,18 @@
+ {
+     real weight = train_set-&gt;getWeight(row);
+     real target = train_set-&gt;getTarget(row);
++    addRow(row, target, weight);
++}
++
++void RegressionTreeMulticlassLeave::addRow(int row, real target, real weight,
++                                 Vec outputv, Vec errorv)
++{
++    addRow(row, target, weight);
++    getOutputAndError(outputv,errorv);
++}
++
++void RegressionTreeMulticlassLeave::addRow(int row, real target, real weight)
++{
+     length += 1;
+     weights_sum += weight;
+     int multiclass_found = 0;
+@@ -161,6 +173,11 @@
+ {
+     real weight = train_set-&gt;getWeight(row);
+     real target = train_set-&gt;getTarget(row);
++    removeRow(row,target,weight,outputv,errorv);
++}
++
++void RegressionTreeMulticlassLeave::removeRow(int row, real target, real weight,
++                                 Vec outputv, Vec errorv){
+     length -= 1;
+     weights_sum -= weight;
+     PLASSERT(length&gt;=0);
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeMulticlassLeave.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeMulticlassLeave.h	2008-10-26 16:39:20 UTC (rev 9616)
++++ trunk/plearn_learners/regressors/RegressionTreeMulticlassLeave.h	2008-10-28 17:31:36 UTC (rev 9617)
+@@ -77,9 +77,12 @@
+     virtual void         makeDeepCopyFromShallowCopy(CopiesMap &amp;copies);
+     virtual void         build();
+     void         initStats();
++    void         addRow(int row);
++    void         addRow(int row, real target, real weight);
+     void         addRow(int row, Vec outputv, Vec errorv);
+-    void         addRow(int row);
++    void         addRow(int row, real target, real weight, Vec outputv, Vec errorv);
+     void         removeRow(int row, Vec outputv, Vec errorv);
++    void         removeRow(int row, real target, real weight, Vec outputv, Vec errorv);
+     void         getOutputAndError(Vec&amp; output, Vec&amp; error)const;
+     void         printStats();
+   
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.cc	2008-10-26 16:39:20 UTC (rev 9616)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.cc	2008-10-28 17:31:36 UTC (rev 9617)
+@@ -236,7 +236,10 @@
+         return;
+     TVec&lt;RTR_type&gt; candidate(0, leave-&gt;length);//list of candidate row to split
+     TVec&lt;RTR_type&gt; registered_row(0, leave-&gt;length);
+-    tmp_vec.resize(2);
++    Vec registered_target(0, leave-&gt;length); 
++    Vec registered_weight(0, leave-&gt;length);
++    Vec registered_value(0, leave-&gt;length);
++   tmp_vec.resize(2);
+     Vec left_error(3);
+     Vec right_error(3);
+     Vec missing_error(3);
+@@ -259,7 +262,10 @@
+         left_leave-&gt;initStats();
+         right_leave-&gt;initStats();
+         registered_row.resize(0);
+-        train_set-&gt;getAllRegisteredRow(leave_id,col,registered_row);
++        
++        train_set-&gt;getAllRegisteredRow(leave_id, col, registered_row,
++                                       registered_target, registered_weight,
++                                       registered_value);
+         PLASSERT(registered_row.size()&gt;0);
+         PLASSERT(candidate.size()==0);
+ 
+@@ -267,17 +273,19 @@
+         //at the end as with binary variable.
+         int row_idx_end = registered_row.size() - 1;
+         int prev_row=registered_row[row_idx_end];
+-        real prev_val=train_set-&gt;get(prev_row,col);
++        real prev_val=registered_value[row_idx_end];
+         for( ;row_idx_end&gt;0;row_idx_end--)
+         {
+             int row=prev_row;
+             real val=prev_val;
+             prev_row = registered_row[row_idx_end - 1];
+-            prev_val = train_set-&gt;get(prev_row, col);
++            prev_val = registered_value[row_idx_end - 1];
+             if (is_missing(val))
+-                missing_leave-&gt;addRow(row);
++                missing_leave-&gt;addRow(row, registered_target[row_idx_end],
++                                      registered_weight[row_idx_end]);
+             else if(val==prev_val)
+-                right_leave-&gt;addRow(row);
++                right_leave-&gt;addRow(row, registered_target[row_idx_end],
++                                    registered_weight[row_idx_end]);
+             else
+                 break;
+         }
+@@ -285,10 +293,12 @@
+         for(int row_idx = 0;row_idx&lt;=row_idx_end;row_idx++)
+         {
+             int row=registered_row[row_idx];
+-            if (is_missing(train_set-&gt;get(row, col)))
+-                missing_leave-&gt;addRow(row);
++            if (is_missing(registered_value[row_idx]))
++                missing_leave-&gt;addRow(row, registered_target[row_idx],
++                                      registered_weight[row_idx]);
+             else {
+-                left_leave-&gt;addRow(row);
++                left_leave-&gt;addRow(row, registered_target[row_idx],
++                                   registered_weight[row_idx]);
+                 candidate.append(row);
+             }
+         }
+@@ -297,8 +307,10 @@
+ 
+ #ifndef BY_ROW
+         //in case of missing value
+-        if(candidate.size()==0)
++        if(candidate.size()==0){
++            PLASSERT(missing_leave-&gt;length()&gt;0);
+             continue;
++        }
+         int row = candidate.pop();
+         while (candidate.size()&gt;0)
+         {
+@@ -314,7 +326,8 @@
+         tuple&lt;real,real,int&gt; ret=bestSplitInRow(col, candidate, left_error,
+                                                 right_error, missing_error,
+                                                 right_leave, left_leave,
+-                                                train_set);
++                                                train_set, registered_value,
++                                                registered_target, registered_weight);
+ #ifdef RCMP
+         row_split_err[col] = get&lt;0&gt;(ret);
+         row_split_value[col] = get&lt;1&gt;(ret);
+@@ -350,7 +363,8 @@
+     const Vec missing_error,
+     PP&lt;RegressionTreeLeave&gt; right_leave,
+     PP&lt;RegressionTreeLeave&gt; left_leave,
+-    PP&lt;RegressionTreeRegisters&gt; train_set
++    PP&lt;RegressionTreeRegisters&gt; train_set,
++    Vec values, Vec targets, Vec weights
+     )
+ {
+     int best_balance=INT_MAX;
+@@ -359,25 +373,23 @@
+     //in case of only missing value
+     if(candidates.size()==0)
+         return make_tuple(best_feature_value, best_split_error, best_balance);
+-    int row = candidates.pop();
+-//    real row_value = train_set-&gt;get(row, col);
++
++    int row = candidates.last();
+     Vec tmp(3);
+ 
+     real missing_errors = missing_error[0] + missing_error[1];
+-
+-    while (candidates.size()&gt;0)
++    for(int i=candidates.size()-2;i&gt;=0;i--)
+     {
+-        int next_row = candidates.pop();
+-        left_leave-&gt;removeRow(row, tmp, left_error);
+-        right_leave-&gt;addRow(row, tmp, right_error);
++        int next_row = candidates[i];
++        left_leave-&gt;removeRow(row, targets[i+1], weights[i+1], tmp, left_error);
++        right_leave-&gt;addRow(row, targets[i+1], weights[i+1], tmp, right_error);
+ 
+-        {//compare split
+         real next_feature=train_set-&gt;get(next_row, col);
+         real row_feature=train_set-&gt;get(row, col);
++        PLASSERT(train_set-&gt;get(next_row, col)==values[i]);
++        PLASSERT(train_set-&gt;get(row, col)==values[i+1]);
+         PLASSERT(next_feature&lt;=row_feature);
+-//        PLASSERT(row_value == row_feature);
+         row = next_row;
+-//        row_value = next_feature;
+ 
+         if (next_feature &gt;= row_feature) continue;
+         real work_error = missing_errors + left_error[0]
+@@ -391,9 +403,9 @@
+         best_feature_value = 0.5 * (row_feature + next_feature);
+         best_split_error = work_error;
+         best_balance = work_balance;
+-        }
+ 
+     }
++    candidates.resize(0);
+     return make_tuple(best_split_error, best_feature_value, best_balance);
+ }
+ 
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.h	2008-10-26 16:39:20 UTC (rev 9616)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.h	2008-10-28 17:31:36 UTC (rev 9617)
+@@ -130,9 +130,12 @@
+     void         build_();
+     void         verbose(string msg, int level); 
+     static tuple&lt;real,real,int&gt; bestSplitInRow(int col, TVec&lt;RTR_type&gt;&amp; candidates,
+-        Vec left_error, Vec right_error, const Vec missing_error,
+-        PP&lt;RegressionTreeLeave&gt; right_leave, PP&lt;RegressionTreeLeave&gt; left_leave,
+-        PP&lt;RegressionTreeRegisters&gt; train_set                                
++                                               Vec left_error, Vec right_error,
++                                               const Vec missing_error,
++                                               PP&lt;RegressionTreeLeave&gt; right_leave,
++                                               PP&lt;RegressionTreeLeave&gt; left_leave,
++                                               PP&lt;RegressionTreeRegisters&gt; train_set,
++                                               Vec values, Vec targets, Vec weights
+         );
+ };
+ 
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2008-10-26 16:39:20 UTC (rev 9616)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2008-10-28 17:31:36 UTC (rev 9617)
+@@ -146,9 +146,35 @@
+     //in case we don't save the sorted data
+     sortRows();
+ }
+-
+-void RegressionTreeRegisters::getAllRegisteredRow(RTR_type leave_id, int col, TVec&lt;RTR_type&gt; &amp;reg)
++void RegressionTreeRegisters::getAllRegisteredRow(RTR_type leave_id, int col,
++                                                  TVec&lt;RTR_type&gt; &amp;reg,
++                                                  Vec &amp;target,
++                                                  Vec &amp;weight, Vec &amp;value) const
+ {
++    getAllRegisteredRow(leave_id,col,reg);
++    target.resize(reg.length());
++    weight.resize(reg.length());
++    value.resize(reg.length());
++    int idx_target=inputsize();
++    int idx_weight=inputsize() + targetsize();
++    if(weightsize() &lt;= 0){
++        weight.fill(1.0 / length());
++        for(int i=0;i&lt;reg.length();i++){            
++            target[i] = tsource-&gt;get(idx_target, reg[i]);
++            value[i]  = tsource-&gt;get(col, reg[i]);
++        }
++    } else {
++        //Is it better to do multiple pass?
++        for(int i=0;i&lt;reg.length();i++){
++            target[i] = tsource-&gt;get(idx_target, reg[i]);
++            weight[i] = tsource-&gt;get(idx_weight, reg[i]);
++            value[i]  = tsource-&gt;get(col, reg[i]);
++        }
++    }
++}
++void RegressionTreeRegisters::getAllRegisteredRow(RTR_type leave_id, int col,
++                                                  TVec&lt;RTR_type&gt; &amp;reg) const
++{
+     for(int i=0;i&lt;length();i++)
+     {
+         int srow = tsorted_row(col, i);
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2008-10-26 16:39:20 UTC (rev 9616)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2008-10-28 17:31:36 UTC (rev 9617)
+@@ -106,8 +106,9 @@
+         tsource-&gt;put( inputsize() + targetsize(), row, val );
+     }
+     inline RTR_type     getNextId(){next_id += 1;return next_id;}
+-    void         getAllRegisteredRow(RTR_type leave_id, int col, TVec&lt;RTR_type&gt; &amp;reg);
+-    void         sortRows();
++    void         getAllRegisteredRow(RTR_type leave_id, int col, TVec&lt;RTR_type&gt; &amp;reg)const;
++    void         getAllRegisteredRow(RTR_type leave_id, int col, TVec&lt;RTR_type&gt; &amp;reg,
++                                     Vec &amp;target, Vec &amp;weight, Vec &amp;value)const;
+     void         printRegisters();
+     void         getExample(int i, Vec&amp; input, Vec&amp; target, real&amp; weight);
+     inline virtual void put(int i, int j, real value)
+@@ -122,6 +123,7 @@
+ 
+ private:
+     void         build_();
++    void         sortRows();
+     void         sortEachDim(int dim);
+     void         sortSmallSubArray(int start_index, int end_index, int dim);
+     void         swapIndex(int index_i, int index_j, int dim);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003056.html">[Plearn-commits] r9616 - trunk/python_modules/plearn/learners
+</A></li>
+	<LI>Next message: <A HREF="003058.html">[Plearn-commits] r9618 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3057">[ date ]</a>
+              <a href="thread.html#3057">[ thread ]</a>
+              <a href="subject.html#3057">[ subject ]</a>
+              <a href="author.html#3057">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

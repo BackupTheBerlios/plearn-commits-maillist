@@ -1,0 +1,226 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8931 - trunk/plearn_learners/hyper
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8931%20-%20trunk/plearn_learners/hyper&In-Reply-To=%3C200805051509.m45F9MHm025486%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002378.html">
+   <LINK REL="Next"  HREF="002380.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8931 - trunk/plearn_learners/hyper</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8931%20-%20trunk/plearn_learners/hyper&In-Reply-To=%3C200805051509.m45F9MHm025486%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8931 - trunk/plearn_learners/hyper">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Mon May  5 17:09:22 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002378.html">[Plearn-commits] r8930 - trunk/plearn_learners/hyper
+</A></li>
+        <LI>Next message: <A HREF="002380.html">[Plearn-commits] r8932 - trunk/plearn_learners/hyper
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2379">[ date ]</a>
+              <a href="thread.html#2379">[ thread ]</a>
+              <a href="subject.html#2379">[ subject ]</a>
+              <a href="author.html#2379">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-05-05 17:09:21 +0200 (Mon, 05 May 2008)
+New Revision: 8931
+
+Modified:
+   trunk/plearn_learners/hyper/HyperOptimize.cc
+   trunk/plearn_learners/hyper/HyperOptimize.h
+Log:
+Using PTimer instead of Profiler to make sure there is no overflow of the time elapsed for long durations
+
+Modified: trunk/plearn_learners/hyper/HyperOptimize.cc
+===================================================================
+--- trunk/plearn_learners/hyper/HyperOptimize.cc	2008-05-05 14:43:23 UTC (rev 8930)
++++ trunk/plearn_learners/hyper/HyperOptimize.cc	2008-05-05 15:09:21 UTC (rev 8931)
+@@ -110,6 +110,7 @@
+ HyperOptimize::HyperOptimize()
+     : best_objective(REAL_MAX),
+       trialnum(0),
++      auto_save_timer(new PTimer()),
+       which_cost_pos(-1),
+       which_cost(),
+       min_n_trials(0),
+@@ -122,7 +123,9 @@
+       auto_save_diff_time(3*60*60)
+ { }
+ 
+-
++////////////////////
++// declareOptions //
++////////////////////
+ void HyperOptimize::declareOptions(OptionList&amp; ol)
+ {
+     declareOption(
+@@ -177,8 +180,9 @@
+     declareOption(
+         ol, &quot;auto_save_diff_time&quot;, &amp;HyperOptimize::auto_save_diff_time,
+         OptionBase::buildoption,
+-        &quot;HyperOptimize::auto_save_diff_time is the mininum amount of time before the\n&quot;
+-        &quot; first save point and between two save point in second. Default 3h.&quot;);
++        &quot;HyperOptimize::auto_save_diff_time is the mininum amount of time\n&quot;
++        &quot;(in seconds) before the first save point, then between two\n&quot;
++        &quot;consecutive save points.&quot;);
+ 
+     declareOption(
+         ol, &quot;auto_save_test&quot;, &amp;HyperOptimize::auto_save_test, OptionBase::buildoption,
+@@ -212,28 +216,19 @@
+     declareOption(ol, &quot;option_vals&quot;, &amp;HyperOptimize::option_vals,
+                   OptionBase::learntoption,&quot;The option value to try.&quot; );
+ 
+-//     declareOption(ol, &quot;auto_save_timer&quot;, &amp;HyperOptimize::auto_save_timer,
+-//                   OptionBase::learntoption|OptionBase::nosave,
+-//                   &quot;The last time a save was done.&quot; );
+-
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+ 
++////////////
++// build_ //
++////////////
+ void HyperOptimize::build_()
+-{
+-    // ### This method should do the real building of the object,
+-    // ### according to set 'options', in *any* situation.
+-    // ### Typical situations include:
+-    // ###  - Initial building of an object from a few user-specified options
+-    // ###  - Building of a &quot;reloaded&quot; object: i.e. from the complete set of all serialised options.
+-    // ###  - Updating or &quot;re-building&quot; of an object after a few &quot;tuning&quot; options have been modified.
+-    // ### You should assume that the parent class' build_() has already been called.
++{}
+ 
+-    auto_save_timer.activate();
+-}
+-
+-// ### Nothing to add here, simply calls build_
++///////////
++// build //
++///////////
+ void HyperOptimize::build()
+ {
+     inherited::build();
+@@ -371,7 +366,7 @@
+     Vec results;
+     while(option_vals)
+     {
+-        auto_save_timer.start(&quot;auto_save&quot;);
++        auto_save_timer-&gt;startTimer(&quot;auto_save&quot;);
+ 
+         if(verbosity&gt;0)
+             perr &lt;&lt; &quot;In HyperOptimize::optimize() - We optimize with &quot;
+@@ -429,15 +424,14 @@
+         }
+         ++trialnum;
+ 
+-        auto_save_timer.end(&quot;auto_save&quot;);
+-        if(auto_save&gt;0){
+-            if(trialnum%auto_save!=0 &amp;&amp; option_vals)
+-                continue;
+-            int s=auto_save_timer.getStats(&quot;auto_save&quot;).wall_duration;
+-            s/=auto_save_timer.ticksPerSecond();
+-            if(s&gt;auto_save_diff_time|| ! option_vals){
++        auto_save_timer-&gt;stopTimer(&quot;auto_save&quot;);
++        if (auto_save &gt; 0 &amp;&amp;
++                (trialnum % auto_save == 0) || option_vals.isEmpty())
++        {
++            int s = int(auto_save_timer-&gt;getTimer(&quot;auto_save&quot;));
++            if(s &gt; auto_save_diff_time || option_vals.isEmpty()) {
+                 hlearner-&gt;auto_save();
+-                auto_save_timer.reset(&quot;auto_save&quot;);
++                auto_save_timer-&gt;resetTimer(&quot;auto_save&quot;);
+                 if(auto_save_test&gt;0 &amp;&amp; trialnum%auto_save_test==0)
+                     PLERROR(&quot;In HyperOptimize::optimize() - auto_save_test is true,&quot;
+                             &quot; exiting&quot;);
+@@ -584,13 +578,14 @@
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+-    deepCopyField(resultsmat,   copies);
+-    deepCopyField(best_results, copies);
+-    deepCopyField(best_learner, copies);
+-    deepCopyField(option_vals,  copies);
+-    deepCopyField(oracle,       copies);
+-    deepCopyField(sub_strategy, copies);
+-    deepCopyField(splitter,     copies);
++    deepCopyField(resultsmat,       copies);
++    deepCopyField(best_results,     copies);
++    deepCopyField(best_learner,     copies);
++    deepCopyField(option_vals,      copies);
++    deepCopyField(auto_save_timer,  copies);
++    deepCopyField(oracle,           copies);
++    deepCopyField(sub_strategy,     copies);
++    deepCopyField(splitter,         copies);
+ }
+ 
+ } // end of namespace PLearn
+
+Modified: trunk/plearn_learners/hyper/HyperOptimize.h
+===================================================================
+--- trunk/plearn_learners/hyper/HyperOptimize.h	2008-05-05 14:43:23 UTC (rev 8930)
++++ trunk/plearn_learners/hyper/HyperOptimize.h	2008-05-05 15:09:21 UTC (rev 8931)
+@@ -45,12 +45,12 @@
+ #define HyperOptimize_INC
+ 
+ #include &quot;HyperCommand.h&quot;
++#include &quot;OptionsOracle.h&quot;
++#include &lt;plearn/misc/PTimer.h&gt;
+ #include &lt;plearn/vmat/Splitter.h&gt;
+-#include &quot;OptionsOracle.h&quot;
+ 
+ namespace PLearn {
+ using namespace std;
+-class Profiler;
+ /**
+  *  Carry out an hyper-parameter optimization according to an Oracle
+  *
+@@ -115,7 +115,7 @@
+     PP&lt;PLearner&gt; best_learner;
+     int trialnum;
+     TVec&lt;string&gt; option_vals;
+-    Profiler auto_save_timer;
++    PP&lt;PTimer&gt; auto_save_timer;
+ 
+ public:
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002378.html">[Plearn-commits] r8930 - trunk/plearn_learners/hyper
+</A></li>
+	<LI>Next message: <A HREF="002380.html">[Plearn-commits] r8932 - trunk/plearn_learners/hyper
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2379">[ date ]</a>
+              <a href="thread.html#2379">[ thread ]</a>
+              <a href="subject.html#2379">[ subject ]</a>
+              <a href="author.html#2379">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

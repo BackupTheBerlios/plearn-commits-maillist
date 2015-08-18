@@ -1,0 +1,157 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8058 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8058%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200709101613.l8AGDGfE013074%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001505.html">
+   <LINK REL="Next"  HREF="001507.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8058 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8058%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200709101613.l8AGDGfE013074%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8058 - trunk/plearn_learners/generic/EXPERIMENTAL">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Mon Sep 10 18:13:16 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001505.html">[Plearn-commits] r8057 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001507.html">[Plearn-commits] r8059 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1506">[ date ]</a>
+              <a href="thread.html#1506">[ thread ]</a>
+              <a href="subject.html#1506">[ subject ]</a>
+              <a href="author.html#1506">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-09-10 18:13:16 +0200 (Mon, 10 Sep 2007)
+New Revision: 8058
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h
+Log:
+Added declareMethods so we can manually free shared memory, in case the object destructor is not called
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc	2007-09-07 22:08:43 UTC (rev 8057)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc	2007-09-10 16:13:16 UTC (rev 8058)
+@@ -44,6 +44,9 @@
+ #include &lt;sys/sem.h&gt;
+ #include &lt;sys/shm.h&gt;
+ 
++#define PL_LOG_MODULE_NAME &quot;NatGradSMPNNet&quot;
++#include &lt;plearn/io/pl_log.h&gt;
++
+ namespace PLearn {
+ using namespace std;
+ 
+@@ -354,6 +357,17 @@
+     inherited::declareOptions(ol);
+ }
+ 
++////////////////////
++// declareMethods //
++////////////////////
++void NatGradSMPNNet::declareMethods(RemoteMethodMap&amp; rmm)
++{
++    declareMethod(rmm, &quot;freeSharedMemory&quot;, &amp;NatGradSMPNNet::freeSharedMemory,
++        (BodyDoc(&quot;Free shared memory ressources.&quot;)));
++
++    inherited::declareMethods(rmm);
++}
++
+ ////////////
+ // build_ //
+ ////////////
+@@ -421,11 +435,16 @@
+     freeSharedMemory(); // First deallocate memory if needed.
+     long total_memory_needed = long(n_params) * sizeof(real);
+     params_id = shmget(IPC_PRIVATE, total_memory_needed, 0666 | IPC_CREAT);
+-    PLCHECK( params_id != -1 );
++    DBG_MODULE_LOG &lt;&lt; &quot;params_id = &quot; &lt;&lt; params_id &lt;&lt; endl;
++    if (params_id == -1) {
++        PLERROR(&quot;In NatGradSMPNNet::build_ - Error while allocating shared &quot;
++                &quot;memory (errno = %d)&quot;, errno);
++    }
+     params_ptr = (real*) shmat(params_id, 0, 0);
+     PLCHECK( params_ptr );
+     long total_int_memory_needed = 1 * sizeof(int);
+     params_int_id = shmget(IPC_PRIVATE, total_int_memory_needed, 0666 | IPC_CREAT);
++    DBG_MODULE_LOG &lt;&lt; &quot;params_int_id = &quot; &lt;&lt; params_int_id &lt;&lt; endl;
+     PLCHECK( params_int_id != -1 );
+     params_int_ptr = (int*) shmat(params_int_id, 0, 0);
+     PLCHECK( params_int_ptr );
+@@ -575,6 +594,7 @@
+ //////////////////////
+ void NatGradSMPNNet::freeSharedMemory()
+ {
++    DBG_MODULE_LOG &lt;&lt; &quot;Freeing shared memory&quot; &lt;&lt; endl;
+     if (params_ptr) {
+         shmctl(params_id, IPC_RMID, 0);
+         params_ptr = NULL;
+@@ -962,7 +982,7 @@
+     const Profiler::Stats&amp; synch_stats = Profiler::getStats(&quot;Synchronization&quot;);
+     real synch_time = (synch_stats.user_duration + synch_stats.system_duration)
+         / real(Profiler::ticksPerSecond());
+-    pout &lt;&lt; &quot;Synch time: &quot; &lt;&lt; synch_time &lt;&lt; endl;
++    DBG_MODULE_LOG &lt;&lt; &quot;Synch time: &quot; &lt;&lt; synch_time &lt;&lt; endl;
+     */
+ 
+     // Get current stage (for debug purpose).
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h	2007-09-07 22:08:43 UTC (rev 8057)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h	2007-09-10 16:13:16 UTC (rev 8058)
+@@ -283,9 +283,11 @@
+     //#####  Protected Member Functions  ######################################
+ 
+     //! Declares the class options.
+-    // (PLEASE IMPLEMENT IN .cc)
+     static void declareOptions(OptionList&amp; ol);
+ 
++    //! Declares the class methods.
++    static void declareMethods(RemoteMethodMap&amp; rmm);
++
+     //! one minibatch training step
+     void onlineStep(int t, const Mat&amp; targets, Mat&amp; train_costs, Vec example_weights);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001505.html">[Plearn-commits] r8057 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001507.html">[Plearn-commits] r8059 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1506">[ date ]</a>
+              <a href="thread.html#1506">[ thread ]</a>
+              <a href="subject.html#1506">[ subject ]</a>
+              <a href="author.html#1506">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

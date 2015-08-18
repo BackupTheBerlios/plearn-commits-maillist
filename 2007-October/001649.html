@@ -1,0 +1,413 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8201 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8201%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200710221817.l9MIHUx6025073%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001648.html">
+   <LINK REL="Next"  HREF="001650.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8201 - trunk/plearn_learners/online</H1>
+    <B>louradou at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8201%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200710221817.l9MIHUx6025073%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8201 - trunk/plearn_learners/online">louradou at mail.berlios.de
+       </A><BR>
+    <I>Mon Oct 22 20:17:30 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001648.html">[Plearn-commits] r8200 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001650.html">[Plearn-commits] r8202 -	branches/cgi-desjardin/plearn_learners/second_iteration
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1649">[ date ]</a>
+              <a href="thread.html#1649">[ thread ]</a>
+              <a href="subject.html#1649">[ subject ]</a>
+              <a href="author.html#1649">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: louradou
+Date: 2007-10-22 20:17:28 +0200 (Mon, 22 Oct 2007)
+New Revision: 8201
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+Log:
+Included: a batch version of the cost computation
+(needed when the cost function is non stochastic, for instance)
+
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-10-22 18:10:48 UTC (rev 8200)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-10-22 18:17:28 UTC (rev 8201)
+@@ -38,7 +38,6 @@
+ 
+ 
+ #define PL_LOG_MODULE_NAME &quot;DeepBeliefNet&quot;
+-
+ #include &quot;DeepBeliefNet.h&quot;
+ #include &lt;plearn/io/pl_log.h&gt;
+ 
+@@ -66,7 +65,6 @@
+     n_classes( -1 ),
+     use_classification_cost( true ),
+     reconstruct_layerwise( false ),
+-    n_layers( 0 ),
+     i_output_layer( -1 ),
+     online ( false ),
+     background_gibbs_update_ratio(0),
+@@ -86,6 +84,7 @@
+     cumulative_testing_time( 0 )
+ {
+     random_gen = new PRandom();
++    n_layers = 0;
+ }
+ 
+ ////////////////////
+@@ -275,19 +274,6 @@
+                   OptionBase::learntoption | OptionBase::nosave,
+                   &quot;Cumulative testing time since age=0, in seconds.\n&quot;);
+ 
+-
+-    /*
+-    declareOption(ol, &quot;n_final_costs&quot;, &amp;DeepBeliefNet::n_final_costs,
+-                  OptionBase::learntoption,
+-                  &quot;Number of final costs&quot;);
+-     */
+-
+-    /*
+-    declareOption(ol, &quot;&quot;, &amp;DeepBeliefNet::,
+-                  OptionBase::learntoption,
+-                  &quot;&quot;);
+-     */
+-
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -506,7 +492,7 @@
+ {
+     MODULE_LOG &lt;&lt; &quot;build_classification_cost() called&quot; &lt;&lt; endl;
+ 
+-    PLASSERT_MSG(batch_size == 1, &quot;DeepBeliefNet::build_classification_cost - &quot;
++    PLASSERT_MSG(batch_size &gt; 1, &quot;DeepBeliefNet::build_classification_cost - &quot;
+             &quot;This method has not been verified yet for minibatch &quot;
+             &quot;compatibility&quot;);
+ 
+@@ -594,40 +580,41 @@
+             final_module-&gt;random_gen = random_gen;
+             final_module-&gt;forget();
+         }
+-    }
+-    else
+-    {
+-        if( layers[n_layers-1]-&gt;size != final_cost-&gt;input_size )
+-            PLERROR(&quot;DeepBeliefNet::build_final_cost() - &quot;
+-                    &quot;layers[%i]-&gt;size (%d) != final_cost-&gt;input_size (%d).&quot;
+-                    &quot;\n&quot;, n_layers-1, layers[n_layers-1]-&gt;size,
+-                    final_cost-&gt;input_size);
+-    }
+ 
+-    // check target size and final_cost-&gt;input_size
+-    if( n_classes == 0 ) // regression
+-    {
+-        if( final_cost-&gt;input_size != targetsize() )
+-            PLERROR(&quot;DeepBeliefNet::build_final_cost() - &quot;
++        // check target size and final_cost-&gt;input_size
++        if( n_classes == 0 ) // regression
++        {
++            if( final_cost-&gt;input_size != targetsize() )
++                PLERROR(&quot;DeepBeliefNet::build_final_cost() - &quot;
+                     &quot;final_cost-&gt;input_size (%d) != targetsize() (%d), &quot;
+                     &quot;although we are doing regression (n_classes == 0).\n&quot;,
+                     final_cost-&gt;input_size, targetsize());
+-    }
+-    else
+-    {
+-        if( final_cost-&gt;input_size != n_classes )
+-            PLERROR(&quot;DeepBeliefNet::build_final_cost() - &quot;
++        }
++        else
++        {
++            if( final_cost-&gt;input_size != n_classes )
++                PLERROR(&quot;DeepBeliefNet::build_final_cost() - &quot;
+                     &quot;final_cost-&gt;input_size (%d) != n_classes (%d), &quot;
+                     &quot;although we are doing classification (n_classes != 0).\n&quot;,
+                     final_cost-&gt;input_size, n_classes);
+ 
+-        if( targetsize_ &gt;= 0 &amp;&amp; targetsize() != 1 )
+-            PLERROR(&quot;DeepBeliefNet::build_final_cost() - &quot;
++            if( targetsize_ &gt;= 0 &amp;&amp; targetsize() != 1 )
++                PLERROR(&quot;DeepBeliefNet::build_final_cost() - &quot;
+                     &quot;targetsize() (%d) != 1, &quot;
+                     &quot;although we are doing classification (n_classes != 0).\n&quot;,
+                     targetsize());
++        }
+     }
++    else
++    {
++        if( layers[n_layers-1]-&gt;size != final_cost-&gt;input_size )
++            PLERROR(&quot;DeepBeliefNet::build_final_cost() - &quot;
++                    &quot;layers[%i]-&gt;size (%d) != final_cost-&gt;input_size (%d).&quot;
++                    &quot;\n&quot;, n_layers-1, layers[n_layers-1]-&gt;size,
++                    final_cost-&gt;input_size);
++    }
+ 
++
+     // Share random_gen with final_cost, unless it already has one
+     if( !(final_cost-&gt;random_gen) )
+     {
+@@ -910,7 +897,7 @@
+         int end_stage = min(cumulative_schedule[n_layers-1], nstages);
+         if( use_classification_cost &amp;&amp; (stage &lt; end_stage) )
+         {
+-            PLASSERT_MSG(batch_size == 1, &quot;'use_classification_cost' code not &quot;
++            PLASSERT_MSG(batch_size &gt; 1, &quot;'use_classification_cost' code not &quot;
+                     &quot;verified with mini-batch learning yet&quot;);
+ 
+             MODULE_LOG &lt;&lt; &quot;Training the classification module&quot; &lt;&lt; endl;
+@@ -950,7 +937,6 @@
+             }
+         }
+ 
+-
+         /***** fine-tuning by gradient descent *****/
+         end_stage = min(cumulative_schedule[n_layers], nstages);
+         if( stage &gt;= end_stage )
+@@ -1474,11 +1460,11 @@
+                 save_layer_activations.resize(source_act.length(),
+                                               source_act.width());
+                 save_layer_activations &lt;&lt; source_act;
+-                const Mat&amp; source_exp = layers[i]-&gt;getExpectations();
+-                save_layer_expectations.resize(source_exp.length(),
+-                                               source_exp.width());
+-                save_layer_expectations &lt;&lt; source_exp;
+             }
++            const Mat&amp; source_exp = layers[i]-&gt;getExpectations();
++            save_layer_expectations.resize(source_exp.length(),
++                                           source_exp.width());
++            save_layer_expectations &lt;&lt; source_exp;
+ 
+             if (reconstruct_layerwise)
+             {
+@@ -1497,8 +1483,9 @@
+             if( i &gt; 0 )
+             {
+                 layers[i]-&gt;activations &lt;&lt; save_layer_activations;
+-                layers[i]-&gt;getExpectations() &lt;&lt; save_layer_expectations;
+             }
++            layers[i]-&gt;getExpectations() &lt;&lt; save_layer_expectations;
++
+         }
+     }
+ 
+@@ -1657,7 +1644,7 @@
+ {
+     real lr;
+     PLASSERT( joint_layer );
+-    PLASSERT_MSG(batch_size == 1, &quot;Not implemented for mini-batches&quot;);
++    PLASSERT_MSG(batch_size &gt; 1, &quot;Not implemented for mini-batches&quot;);
+ 
+     layers[0]-&gt;expectation &lt;&lt; input;
+     for( int i=0 ; i&lt;n_layers-2 ; i++ )
+@@ -1956,7 +1943,7 @@
+     // do it AFTER the bprop to avoid interfering with activations used in bprop
+     // (and do not worry that the weights have changed a bit). This is incoherent
+     // with the current implementation in the greedy stage.
+-    if (reconstruct_layerwise)
++    if ( reconstruct_layerwise )
+     {
+         Mat rc = train_costs.column(reconstruction_cost_index);
+         rc.clear();
+@@ -2232,6 +2219,7 @@
+     }
+ }
+ 
++
+ void DeepBeliefNet::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
+                                            const Vec&amp; target, Vec&amp; costs) const
+ {
+@@ -2248,8 +2236,7 @@
+                 target, costs[nll_cost_index] );
+ 
+         costs[class_cost_index] =
+-            (argmax(output.subVec(0, n_classes)) == (int) round(target[0]))? 0
+-            : 1;
++            (argmax(output.subVec(0, n_classes)) == (int) round(target[0]))? 0 : 1;
+     }
+ 
+     if( final_cost )
+@@ -2283,6 +2270,82 @@
+ 
+ }
+ 
++//! This function is usefull when the NLL CostModule AND/OR the final_cost Module
++//! are more efficient with batch computation (or need to be computed on a bunch of examples, as LayerCostModule)
++void DeepBeliefNet::computeOutputsAndCosts(const Mat&amp; inputs, const Mat&amp; targets, 
++                                      Mat&amp; outputs, Mat&amp; costs) const
++{
++    int nsamples = inputs.length();
++    PLASSERT( targets.length() == nsamples );
++    outputs.resize( nsamples, outputsize() );
++    costs.resize( nsamples, cost_names.length() );
++    costs.fill( MISSING_VALUE );
++    for (int isample = 0; isample &lt; nsamples; isample++ )
++    {
++        Vec in_i = inputs(isample);
++        Vec out_i = outputs(isample); 
++	computeOutput(in_i, out_i);
++        if( !partial_costs.isEmpty() )
++        {
++            Vec pcosts;
++            for( int i=0 ; i&lt;n_layers-1 ; i++ )
++                // propagate into local cost associated to output of layer i+1
++                if( partial_costs[ i ] )
++                {
++                    partial_costs[ i ]-&gt;fprop( layers[ i+1 ]-&gt;expectation,
++                                               targets(isample), pcosts);
++
++                    costs(isample).subVec(partial_costs_indices[i], pcosts.length())
++                        &lt;&lt; pcosts;
++                }
++        }
++	if (reconstruct_layerwise)
++           costs(isample).subVec(reconstruction_cost_index, reconstruction_costs.length())
++                &lt;&lt; reconstruction_costs;
++    }
++    computeClassifAndFinalCostsFromOutputs(inputs, outputs, targets, costs);
++}
++
++void DeepBeliefNet::computeClassifAndFinalCostsFromOutputs(const Mat&amp; inputs, const Mat&amp; outputs,
++                                           const Mat&amp; targets, Mat&amp; costs) const
++{
++    // Compute the costs from *already* computed output.
++
++    int nsamples = inputs.length();
++    PLASSERT( nsamples &gt; 0 );
++    PLASSERT( targets.length() == nsamples );
++    PLASSERT( targets.width() == 1 );
++    PLASSERT( outputs.length() == nsamples );
++    PLASSERT( costs.length() == nsamples );
++
++
++    if( use_classification_cost )
++    {
++        Vec pcosts;
++        classification_cost-&gt;CostModule::fprop( outputs.subMat(0, 0, nsamples, n_classes),
++                                                targets, pcosts );
++        costs.subMat( 0, nll_cost_index, nsamples, 1) &lt;&lt; pcosts;
++
++        for (int isample = 0; isample &lt; nsamples; isample++ )
++	    costs(isample,class_cost_index) =
++                (argmax(outputs(isample).subVec(0, n_classes)) == (int) round(targets(isample,0))) ? 0 : 1;
++    }
++
++    if( final_cost )
++    {
++        int init = use_classification_cost ? n_classes : 0;
++        final_cost-&gt;fprop( outputs.subMat(0, init, nsamples, outputs(0).size() - init ),
++                           targets, final_cost_values );
++
++        costs.subMat(0, final_cost_index, nsamples, final_cost_values.width())
++            &lt;&lt; final_cost_values;
++    }
++
++    if( !partial_costs.isEmpty() )
++        PLERROR(&quot;cannot compute partial costs in DeepBeliefNet::computeCostsFromOutputs(Mat&amp;, Mat&amp;, Mat&amp;, Mat&amp;)&quot;
++	        &quot;(expectations are not up to date in the batch version)&quot;);
++}
++
+ void DeepBeliefNet::test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats, VMat testoutputs, VMat testcosts) const
+ {
+ 
+@@ -2375,7 +2438,6 @@
+         final_cost-&gt;setLearningRate( the_learning_rate );
+ }
+ 
+-
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2007-10-22 18:10:48 UTC (rev 8200)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2007-10-22 18:17:28 UTC (rev 8201)
+@@ -36,7 +36,6 @@
+ 
+ /*! \file DeepBeliefNet.h */
+ 
+-
+ #ifndef DeepBeliefNet_INC
+ #define DeepBeliefNet_INC
+ 
+@@ -52,6 +51,7 @@
+ #include &lt;plearn/sys/Profiler.h&gt;
+ 
+ namespace PLearn {
++using namespace std;
+ 
+ /**
+  * Neural net, learned layer-wise in a greedy fashion.
+@@ -221,10 +221,15 @@
+     // (PLEASE IMPLEMENT IN .cc)
+     virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
+ 
++    virtual void computeOutputsAndCosts(const Mat&amp; inputs, const Mat&amp; targets, 
++                                        Mat&amp; outputs, Mat&amp; costs) const;
++
+     //! Computes the costs from already computed output.
+     // (PLEASE IMPLEMENT IN .cc)
+     virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
+                                          const Vec&amp; target, Vec&amp; costs) const;
++    virtual void computeClassifAndFinalCostsFromOutputs(const Mat&amp; inputs, const Mat&amp; outputs,
++                                                        const Mat&amp; targets, Mat&amp; costs) const;
+ 
+     //! Returns the names of the costs computed by computeCostsFromOutpus (and
+     //! thus the test method).
+@@ -404,6 +409,9 @@
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+ 
++    //! Declare the methods that are remote-callable
++    static void declareMethods(RemoteMethodMap&amp; rmm);
++
+ private:
+     //#####  Private Member Functions  ########################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001648.html">[Plearn-commits] r8200 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001650.html">[Plearn-commits] r8202 -	branches/cgi-desjardin/plearn_learners/second_iteration
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1649">[ date ]</a>
+              <a href="thread.html#1649">[ thread ]</a>
+              <a href="subject.html#1649">[ subject ]</a>
+              <a href="author.html#1649">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,205 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8157 - in trunk/plearn: base vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8157%20-%20in%20trunk/plearn%3A%20base%20vmat&In-Reply-To=%3C200710091718.l99HIo0J003518%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001604.html">
+   <LINK REL="Next"  HREF="001606.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8157 - in trunk/plearn: base vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8157%20-%20in%20trunk/plearn%3A%20base%20vmat&In-Reply-To=%3C200710091718.l99HIo0J003518%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8157 - in trunk/plearn: base vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Oct  9 19:18:50 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001604.html">[Plearn-commits] r8156 - trunk/plearn_learners_experimental
+</A></li>
+        <LI>Next message: <A HREF="001606.html">[Plearn-commits] r8158 - trunk/plearn_learners/hyper
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1605">[ date ]</a>
+              <a href="thread.html#1605">[ thread ]</a>
+              <a href="subject.html#1605">[ subject ]</a>
+              <a href="author.html#1605">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-10-09 19:18:49 +0200 (Tue, 09 Oct 2007)
+New Revision: 8157
+
+Modified:
+   trunk/plearn/base/stringutils.cc
+   trunk/plearn/base/stringutils.h
+   trunk/plearn/vmat/TextFilesVMatrix.cc
+   trunk/plearn/vmat/TextFilesVMatrix.h
+Log:
+-Added an split_quoted_delimiter() function where we allow the delimiter to be quoted. When they are quoted they do not trigger a split.
+-Use this function in TextFilesVMatrix sot that we can escape caractere in csv file
+
+
+Modified: trunk/plearn/base/stringutils.cc
+===================================================================
+--- trunk/plearn/base/stringutils.cc	2007-10-09 13:13:07 UTC (rev 8156)
++++ trunk/plearn/base/stringutils.cc	2007-10-09 17:18:49 UTC (rev 8157)
+@@ -366,6 +366,41 @@
+     return res;
+ }
+ 
++// One version where we allow to quote a delimiter so that it is not considered as a delimiter.
++// TODO: optimize...
++// the double_quote are only considered if at the boundary of deliminer.
++// should execute in O(n+k) where n is the number of character in s and k is the number of field in k.
++vector&lt;string&gt; split_quoted_delimiter(const string&amp; s, char delimiter, string double_quote){
++    if(double_quote.length()==1)
++        PLASSERT(delimiter!=double_quote[0]);
++    vector&lt;string&gt; ret = split(s, delimiter);
++    vector&lt;string&gt; ret2;
++    int delim_size=double_quote.size();
++    for(uint i=0; i&lt;ret.size();i++){
++        bool bw=string_begins_with(ret[i],double_quote);
++        bool ew=string_ends_with(ret[i],double_quote);
++        if(bw &amp;&amp; ew){
++            ret2.push_back(ret[i].substr(delim_size,
++                                         ret[i].size()-delim_size)); 
++        }else if(bw){
++            string tmp=ret[i].substr(delim_size);
++            tmp+=delimiter;
++            for(uint j=i+1;j&lt;ret.size();j++){
++                if(string_ends_with(ret[j],double_quote)){
++                    tmp+=ret[j].substr(0,ret[j].size()-delim_size);
++                    ret2.push_back(tmp);
++                    i=j;
++                    break;
++                }
++                tmp+=ret[j];
++                tmp+=delimiter;
++            }
++        }else
++            ret2.push_back(ret[i]);
++    }
++    return ret2;
++    
++}
+ vector&lt;string&gt; split(const string&amp; s, const string&amp; delimiters, bool keep_delimiters)
+ {
+     vector&lt;string&gt; result;
+
+Modified: trunk/plearn/base/stringutils.h
+===================================================================
+--- trunk/plearn/base/stringutils.h	2007-10-09 13:13:07 UTC (rev 8156)
++++ trunk/plearn/base/stringutils.h	2007-10-09 17:18:49 UTC (rev 8157)
+@@ -169,6 +169,8 @@
+ */
+ vector&lt;string&gt; split(const string&amp; s, const string&amp; delimiters=&quot; \t\n\r&quot;, bool keepdelimiters=false);
+ 
++vector&lt;string&gt; split_quoted_delimiter(const string&amp; s, char delimiter, string double_quote);
++
+ /*!     Split the string on the first occurence of a delimiter and returns 
+   what was left of the delimitor and what was right of it.
+   If no delimitor character is found, the original string is returned 
+
+Modified: trunk/plearn/vmat/TextFilesVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/TextFilesVMatrix.cc	2007-10-09 13:13:07 UTC (rev 8156)
++++ trunk/plearn/vmat/TextFilesVMatrix.cc	2007-10-09 17:18:49 UTC (rev 8157)
+@@ -52,6 +52,7 @@
+ TextFilesVMatrix::TextFilesVMatrix()
+     : idxfile(0),
+       delimiter(&quot;\t&quot;),
++      quote_delimiter(&quot;&quot;),
+       auto_build_map(false),
+       auto_extend_map(true),
+       build_vmatrix_stringmap(false)
+@@ -160,6 +161,8 @@
+                     length_++;
+                 }
+             }
++            else
++                PLWARNING(&quot;In TextFilesVMatrix::buildIdx() - The line %d is blank&quot;,lineno);
+         } // end of loop over lines of file
+     } // end of loop over files
+ 
+@@ -242,6 +245,10 @@
+     {
+         string fnam = txtfilenames[k];
+         txtfiles[k] = fopen(fnam.c_str(),&quot;r&quot;);
++        if(txtfiles[k]==NULL){
++            perror(&quot;Can't open file&quot;);
++            PLERROR(&quot;In TextFilesVMatrix::build_ - Can't open file %s&quot;,fnam.c_str());
++        }
+     }
+ 
+     // open the index file
+@@ -434,7 +441,7 @@
+ 
+ TVec&lt;string&gt; TextFilesVMatrix::splitIntoFields(const string&amp; raw_row) const
+ {
+-    return split(raw_row, delimiter[0]);
++    return split_quoted_delimiter(raw_row, delimiter[0],quote_delimiter);
+ }
+ 
+ TVec&lt;string&gt; TextFilesVMatrix::getTextFields(int i) const
+@@ -693,6 +700,10 @@
+                   &quot;- \&quot;,\&quot;  : used for CSV files\n&quot;
+                   &quot;- \&quot;;\&quot;  : used for a variant of CSV files&quot;);
+ 
++    declareOption(ol, &quot;quote_delimiter&quot;, &amp;TextFilesVMatrix::quote_delimiter, OptionBase::buildoption,
++                  &quot;The escate caractere where the delimiter is not considered.&quot;
++                  &quot; //! - '\&quot;' : used frequently.&quot;);
++
+     declareOption(ol, &quot;skipheader&quot;, &amp;TextFilesVMatrix::skipheader, OptionBase::buildoption,
+                   &quot;An (optional) list of integers, one for each of the txtfilenames,\n&quot;
+                   &quot;indicating the number of header lines at the top of the file to be skipped.&quot;);
+
+Modified: trunk/plearn/vmat/TextFilesVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/TextFilesVMatrix.h	2007-10-09 13:13:07 UTC (rev 8156)
++++ trunk/plearn/vmat/TextFilesVMatrix.h	2007-10-09 17:18:49 UTC (rev 8157)
+@@ -103,6 +103,10 @@
+     //! - ';'  : used for a variant of CSV files
+     string delimiter;
+ 
++    //! The escate caractere where the delimiter is not considered.
++    //! - '&quot;' : used frequently
++    string quote_delimiter;
++
+     //! An (optional) list of integers, one for each of the txtfilenames
+     //! indicating the number of header lines at the top of the file to be skipped.
+     TVec&lt;int&gt; skipheader;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001604.html">[Plearn-commits] r8156 - trunk/plearn_learners_experimental
+</A></li>
+	<LI>Next message: <A HREF="001606.html">[Plearn-commits] r8158 - trunk/plearn_learners/hyper
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1605">[ date ]</a>
+              <a href="thread.html#1605">[ thread ]</a>
+              <a href="subject.html#1605">[ subject ]</a>
+              <a href="author.html#1605">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

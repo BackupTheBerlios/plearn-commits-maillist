@@ -1,0 +1,402 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6644 - in trunk/plearn: opt var
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6644%20-%20in%20trunk/plearn%3A%20opt%20var&In-Reply-To=%3C200702092309.l19N9NSk001825%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000092.html">
+   <LINK REL="Next"  HREF="000094.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6644 - in trunk/plearn: opt var</H1>
+    <B>plearner at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6644%20-%20in%20trunk/plearn%3A%20opt%20var&In-Reply-To=%3C200702092309.l19N9NSk001825%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6644 - in trunk/plearn: opt var">plearner at mail.berlios.de
+       </A><BR>
+    <I>Sat Feb 10 00:09:23 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000092.html">[Plearn-commits] r6643 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000094.html">[Plearn-commits] r6645 -	trunk/plearn_learners/regressors/test/GaussianProcessRegressor/.pytest/PL_GaussianProcessRegressor_Hyperopt/expected_results
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#93">[ date ]</a>
+              <a href="thread.html#93">[ thread ]</a>
+              <a href="subject.html#93">[ subject ]</a>
+              <a href="author.html#93">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: plearner
+Date: 2007-02-10 00:09:22 +0100 (Sat, 10 Feb 2007)
+New Revision: 6644
+
+Modified:
+   trunk/plearn/opt/ConjGradientOptimizer.cc
+   trunk/plearn/opt/ConjGradientOptimizer.h
+   trunk/plearn/var/SumOfVariable.cc
+   trunk/plearn/var/SumOfVariable.h
+Log:
+Initial version of minibatch capability for ConjGradientOptimizer
+
+
+
+Modified: trunk/plearn/opt/ConjGradientOptimizer.cc
+===================================================================
+--- trunk/plearn/opt/ConjGradientOptimizer.cc	2007-02-09 21:26:30 UTC (rev 6643)
++++ trunk/plearn/opt/ConjGradientOptimizer.cc	2007-02-09 23:09:22 UTC (rev 6644)
+@@ -42,6 +42,7 @@
+ 
+ #include &quot;ConjGradientOptimizer.h&quot;
+ #include &lt;plearn/io/pl_log.h&gt;
++#include &lt;plearn/var/SumOfVariable.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -59,6 +60,9 @@
+       max_eval_per_line_search(20),
+       no_negative_gamma(true),
+       verbosity(0),
++      minibatch_n_samples(0),
++      minibatch_n_line_searches(3),
++      minibatch_curpos(0),
+       line_search_failed(false),
+       line_search_succeeded(false)
+ { }
+@@ -175,6 +179,20 @@
+         OptionBase::buildoption, 
+         &quot;Maximum slope ratio.&quot;);
+ 
++    declareOption(
++        ol, &quot;minibatch_n_samples&quot;, &amp;ConjGradientOptimizer::minibatch_n_samples,
++        OptionBase::buildoption, 
++        &quot;If &gt;0 we'll do minibatch. In minibatch mode, weight updates are based on \n&quot;
++        &quot;cost and gradients computed on a subset of the whole training set, made \n&quot;
++        &quot;of minibatch_n_samples consecutive samples. Each such subset will be used \n&quot;
++        &quot;to perform minibatch_n_line_searches line searches before moving to the \n&quot;
++        &quot;next minibatch subset.\n&quot;);
++
++    declareOption(
++        ol, &quot;minibatch_n_line_searches&quot;, &amp;ConjGradientOptimizer::minibatch_n_line_searches,
++        OptionBase::buildoption, 
++        &quot;How many line searches to perform with each minibatch subset.&quot;);
++
+     inherited::declareOptions(ol);
+ }
+ 
+@@ -424,6 +442,25 @@
+ bool ConjGradientOptimizer::optimizeN(VecStatsCollector&amp; stats_coll) {
+     int stage_max = stage + nstages; // The stage to reach.
+ 
++    SumOfVariable* sumofvar = 0;
++    int trainsetlength = -1;
++    int minibatch_n_line_searches_left = minibatch_n_line_searches;
++    if(minibatch_n_samples&gt;0)
++    {
++        sumofvar = dynamic_cast&lt;SumOfVariable*&gt;((Variable*)cost);
++        if(sumofvar)
++        {
++            trainsetlength = sumofvar-&gt;getDataSet()-&gt;length();
++            sumofvar-&gt;setSampleRange(minibatch_curpos, minibatch_n_samples, true);
++        }
++        else
++        {
++            PLWARNING(&quot;In ConjGradientOptimizer, minibatch_n_samples&gt;0 but can't &quot;
++                      &quot;do minibatch since cost does not seem to be a SumOfVariable &quot;
++                      &quot; (the only type of variable for which minibatch is supported)&quot;);
++        }
++    }
++    
+     if (stage == 0)
+     {
+         computeOppositeGradient(current_opp_gradient);
+@@ -444,8 +481,19 @@
+     }
+ 
+     for (; !early_stop &amp;&amp; stage&lt;stage_max; stage++) {
++
++        if(sumofvar &amp;&amp; minibatch_n_line_searches_left==0)
++        {
++            minibatch_curpos = (minibatch_curpos+minibatch_n_samples)%trainsetlength;
++            sumofvar-&gt;setSampleRange(minibatch_curpos, minibatch_n_samples, true);
++            minibatch_n_line_searches_left = minibatch_n_line_searches;            
++        }
++
+         // Make a line search along the current search direction.
+         early_stop = !lineSearch();
++        if(sumofvar) // we're doing minibatch
++            --minibatch_n_line_searches_left;
++            
+         // Ensure 'delta' contains the opposite gradient at the new point
+         // reached after the line search.
+         // Also update 'current_cost'.
+@@ -490,6 +538,7 @@
+     inherited::reset();
+     line_search_failed = false;
+     line_search_succeeded = false;
++    minibatch_curpos = 0;
+ }
+ 
+ ///////////////////////////
+
+Modified: trunk/plearn/opt/ConjGradientOptimizer.h
+===================================================================
+--- trunk/plearn/opt/ConjGradientOptimizer.h	2007-02-09 21:26:30 UTC (rev 6643)
++++ trunk/plearn/opt/ConjGradientOptimizer.h	2007-02-09 23:09:22 UTC (rev 6644)
+@@ -66,8 +66,13 @@
+     bool no_negative_gamma;
+     int verbosity;
+ 
++    int minibatch_n_samples;
++    int minibatch_n_line_searches;
++
+ protected:
+-  
++
++    int minibatch_curpos; // current starting sample position in dataset for minibatch 
++
+     //! Bracket limit.
+     real bracket_limit;
+ 
+
+Modified: trunk/plearn/var/SumOfVariable.cc
+===================================================================
+--- trunk/plearn/var/SumOfVariable.cc	2007-02-09 21:26:30 UTC (rev 6643)
++++ trunk/plearn/var/SumOfVariable.cc	2007-02-09 23:09:22 UTC (rev 6644)
+@@ -69,7 +69,7 @@
+     : inherited(nonInputParentsOfPath(the_f-&gt;inputs,the_f-&gt;outputs), 
+                 the_f-&gt;outputs[0]-&gt;length(), 
+                 the_f-&gt;outputs[0]-&gt;width()),
+-      distr(the_distr), f(the_f), nsamples(the_nsamples), curpos(0),
++      distr(the_distr), f(the_f), nsamples(the_nsamples), curpos(0), loop(false),
+       //input_value(the_distr-&gt;inputsize()+the_distr-&gt;targetsize()+the_distr-&gt;weightsize()), 
+       //input_gradient(the_distr-&gt;inputsize()+the_distr-&gt;targetsize()+the_distr-&gt;weightsize()), 
+       input_value(the_distr-&gt;width()),
+@@ -90,7 +90,8 @@
+ void
+ SumOfVariable::build_()
+ {
+-    if (f &amp;&amp; distr) {
++    if (f &amp;&amp; distr) 
++    {
+         input_value.resize(distr-&gt;inputsize() + distr-&gt;targetsize() + distr-&gt;weightsize());
+         input_gradient.resize(distr-&gt;inputsize() + distr-&gt;targetsize() + distr-&gt;weightsize());
+         if(f-&gt;outputs.size() != 1)
+@@ -116,6 +117,17 @@
+                   &quot;all rows of the matrix.&quot;);
+     declareOption(ol, &quot;curpos&quot;, &amp;SumOfVariable::curpos, OptionBase::buildoption,
+                   &quot;Current position (row) in the VMatrix we are summing over.&quot;);
++    declareOption(ol, &quot;loop&quot;, &amp;SumOfVariable::loop, OptionBase::buildoption,
++                  &quot;If true, every propagation operation, before returning,\n&quot;
++                  &quot;will set back curpos to the value it had when entering\n&quot;
++                  &quot;the call. So curpos will be left unchanged by the call.\n&quot;
++                  &quot;This behavior corresponds to propagation operations \n&quot;
++                  &quot;always summing over the same nsamples (in range \n&quot;
++                  &quot;curpos, ..., curpos+nsamples-1) \n&quot;
++                  &quot;If loop is false however, any propagation call will \n&quot;
++                  &quot;move curpos by nsamples, thus a subsequent propagation \n&quot;
++                  &quot;call will sum over the *next* nsamples (which will correspond \n&quot;
++                  &quot;to the same saples only if nsamples == distr.length()).&quot;);
+     inherited::declareOptions(ol);
+ }
+ 
+@@ -140,6 +152,8 @@
+ 
+ void SumOfVariable::fprop()
+ {
++    int orig_curpos = curpos;
++
+     f-&gt;recomputeParents();
+ 
+     if(nsamples==1)
+@@ -186,6 +200,9 @@
+         }
+ #endif
+     }
++
++    if(loop)
++        curpos = orig_curpos;
+ }
+ 
+ 
+@@ -195,8 +212,9 @@
+ 
+ void SumOfVariable::fbprop()
+ {
+-    f-&gt;recomputeParents();
+-  
++    f-&gt;recomputeParents();  
++    int orig_curpos = curpos;
++
+     if(nsamples==1)
+     {
+         input_value.resize(distr-&gt;width());
+@@ -254,6 +272,10 @@
+         }
+ #endif
+     }
++
++    if(loop)
++        curpos = orig_curpos;
++
+ }
+ 
+ 
+@@ -280,6 +302,8 @@
+ 
+ void SumOfVariable::rfprop()
+ {
++    int orig_curpos = curpos;
++
+     if (rValue.length()==0) resizeRValue();
+     // TODO... (we will need a rfprop() in Func)
+   
+@@ -320,6 +344,11 @@
+ //      }
+ //  #endif
+ //    }
++
++
++    if(loop)
++        curpos = orig_curpos;
++
+ }
+ 
+ 
+@@ -348,9 +377,9 @@
+             curpos = 0;
+         f-&gt;fproppath.printInfo(print_gradient);
+     }
+-    cout &lt;&lt; info() &lt;&lt; &quot; : &quot; &lt;&lt; getName() &lt;&lt; &quot; = &quot; &lt;&lt; value;
++    pout &lt;&lt; info() &lt;&lt; &quot; : &quot; &lt;&lt; getName() &lt;&lt; &quot; = &quot; &lt;&lt; value;
+     if (print_gradient) cout &lt;&lt; &quot; gradient=&quot; &lt;&lt; gradient;
+-    cout &lt;&lt; endl; 
++    pout &lt;&lt; endl; 
+ }
+ 
+ 
+
+Modified: trunk/plearn/var/SumOfVariable.h
+===================================================================
+--- trunk/plearn/var/SumOfVariable.h	2007-02-09 21:26:30 UTC (rev 6643)
++++ trunk/plearn/var/SumOfVariable.h	2007-02-09 23:09:22 UTC (rev 6644)
+@@ -63,22 +63,34 @@
+ {
+     typedef NaryVariable inherited;
+ 
++// protected:
+ public:
+-    //protected:
+     VMat distr;
+     Func f;
+-    int nsamples;
+-    int curpos; //!&lt;  current pos in VMat 
++
++    int nsamples; //!&lt; number of consecutive samples from the dataset distr
++                  //!&lt; that every propagation operation will use
++
++    int curpos;   //!&lt; position of current sample in dataset distr 
++
++    bool loop;    //!&lt; if true, every propagation operation, before returning,
++                  //!&lt; will set back curpos to the value it had when entering
++                  //!&lt; the call. So that curpos will be unchanged by the call.
++
+     // To avoid allocation/deallocations in fprop/bprop
+     Vec input_value;
+     Vec input_gradient;
+     Vec output_value;
+     //! Indication that sizefprop should be used on f
+     bool do_sizeprop;
++
++    int beginpos;
++    int endpos;
+     
+ public:
+     //!  protected default constructor for persistence
+-    SumOfVariable() : distr(), f(), nsamples(), curpos() {}
++    SumOfVariable() : distr(), f(), nsamples(0), curpos(0), loop(false) {}
++
+     //!  Sum_{inputs \in distr} f(inputs)
+     SumOfVariable(VMat the_distr, Func the_f, int the_nsamples=-1, bool the_do_resizeprop=false);
+     
+@@ -94,7 +106,46 @@
+     virtual void fbprop();
+     virtual void symbolicBprop();
+     virtual void rfprop();
+-    
++
++    VMat getDataSet() const
++    { return distr; }
++
++    void setDataSet(VMat dset)
++    {
++        if(distr.isNotNull() &amp;&amp; distr.length()==nsamples)
++            nsamples = -1;
++        
++        distr = dset;
++        if(nsamples == -1)
++            nsamples = distr-&gt;length();
++
++        curpos = 0;
++    }
++
++    void setCurrentSamplePos(int pos)
++    { curpos = pos; }
++
++    int getCurrentSamplePos() const
++    { return curpos; }
++
++    //! This allows to control over which part of the dataset
++    //! the next propagation operation(s) will sum.
++    /** The call sets the curpos, nsamples and loop options.  Thus the next
++        propagation call will start at sample curpos=startpos and sum over
++        nsamples=n consecutive samples.  If loop (assigned the value do_loop)
++        is true, then curpos will be left unchanged by propagation calls, which
++        will thus always sum over the same nsamples samples.  If loop is
++        false however, any propagation call will move curpos by nsamples, thus
++        a subsequent propagation call will sum over the *next* nsamples (which
++        will correspond to the same smaples only if nsamples == distr.length()) **/
++
++    void setSampleRange(int startpos, int n, bool do_loop)
++    {
++        curpos = startpos;
++        nsamples = n;
++        loop = do_loop;
++    }
++
+     void printInfo(bool print_gradient);
+ 
+ protected:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000092.html">[Plearn-commits] r6643 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000094.html">[Plearn-commits] r6645 -	trunk/plearn_learners/regressors/test/GaussianProcessRegressor/.pytest/PL_GaussianProcessRegressor_Hyperopt/expected_results
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#93">[ date ]</a>
+              <a href="thread.html#93">[ thread ]</a>
+              <a href="subject.html#93">[ subject ]</a>
+              <a href="author.html#93">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

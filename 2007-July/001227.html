@@ -1,0 +1,150 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7779 - trunk/plearn_learners/online/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7779%20-%20trunk/plearn_learners/online/EXPERIMENTAL&In-Reply-To=%3C200707160131.l6G1VduG003255%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001226.html">
+   <LINK REL="Next"  HREF="001228.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7779 - trunk/plearn_learners/online/EXPERIMENTAL</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7779%20-%20trunk/plearn_learners/online/EXPERIMENTAL&In-Reply-To=%3C200707160131.l6G1VduG003255%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7779 - trunk/plearn_learners/online/EXPERIMENTAL">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Mon Jul 16 03:31:39 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001226.html">[Plearn-commits] r7778 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="001228.html">[Plearn-commits] r7780 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1227">[ date ]</a>
+              <a href="thread.html#1227">[ thread ]</a>
+              <a href="subject.html#1227">[ subject ]</a>
+              <a href="author.html#1227">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-07-16 03:31:38 +0200 (Mon, 16 Jul 2007)
+New Revision: 7779
+
+Modified:
+   trunk/plearn_learners/online/EXPERIMENTAL/KLp0p1RBMModule.cc
+Log:
+still getting negative KL and total probability mass &gt; 1...
+
+
+Modified: trunk/plearn_learners/online/EXPERIMENTAL/KLp0p1RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/EXPERIMENTAL/KLp0p1RBMModule.cc	2007-07-15 15:57:15 UTC (rev 7778)
++++ trunk/plearn_learners/online/EXPERIMENTAL/KLp0p1RBMModule.cc	2007-07-16 01:31:38 UTC (rev 7779)
+@@ -919,6 +919,8 @@
+         connection-&gt;setAsUpInputs(conf_hidden_layer-&gt;samples);
+         conf_visible_layer-&gt;getAllActivations(connection,0,true);
+ 
++        //Vec check_sum_to_one(n);
++
+         for (int c=0;c&lt;n_configurations;c++)
+         {
+             // KL(p0|p1) = sum_t (1/n) log ((1/n) / p1(x_t)) = (1/n) sum_t C(x_t)
+@@ -940,6 +942,12 @@
+                     // and  h log(sigm(act))+(1-h)log(1-sigm(act)) = act*h-softplus(act)
+                     lp += h[i]*act-softplus(act); 
+                 }
++#if 0
++                if (c==0)
++                    check_sum_to_one[k]=lp;
++                else
++                    check_sum_to_one[k]=logadd(check_sum_to_one[k],lp);
++#endif
+                 // now lp = log P(h|x^k)
+                 if (k==0)
+                     log_sum_ph_given_xk = lp;
+@@ -948,19 +956,45 @@
+             }
+             // now log_sum_ph_given_xk = log sum_k P(h|x^k)
+             conf_visible_layer-&gt;activation &lt;&lt; conf_visible_layer-&gt;activations(c);
++            real log_sum_p_xt = 0;
+             for (int t=0;t&lt;mbs;t++)
+-                if (c==0) // at this point we accumulate log sum_h P(x_t|h) P(h|x_k) in KLp0p1
+-                    (*KLp0p1)(t,0) = -conf_visible_layer-&gt;fpropNLL((*visible)(t)) + log_sum_ph_given_xk;
++            {
++                real log_p_xt = -conf_visible_layer-&gt;fpropNLL((*visible)(t));
++                //if (t==0) // check if sum_xt p(xt|h) = 1 (when testing with the full set of possible inputs)
++                //    log_sum_p_xt = log_p_xt;
++                //else
++                //    log_sum_p_xt = logadd(log_sum_p_xt,log_p_xt);
++                if (c==0) // at this point we accumulate log sum_h P(x_t|h) sum_k P(h|x_k) in KLp0p1
++                    (*KLp0p1)(t,0) = log_p_xt + log_sum_ph_given_xk;
+                 else {
+-                    (*KLp0p1)(t,0) = logadd((*KLp0p1)(t,0), -conf_visible_layer-&gt;fpropNLL((*visible)(t)) + log_sum_ph_given_xk);
++                    (*KLp0p1)(t,0) = logadd((*KLp0p1)(t,0), log_p_xt + log_sum_ph_given_xk);
+                     //if ((*KLp0p1)(t,0) &gt; 0)
+                     // PLWARNING(&quot;KLp0p1: training example %d is getting mass &gt; 1/n! KL=%g after getting to configuration %d&quot;,t,(double)(*KLp0p1)(t,0),c);
+                 }
++            }
++            //if (!during_training)
++            //    cout &lt;&lt; &quot;sum_t(p(x_t|h)) = &quot; &lt;&lt; exp(log_sum_p_xt) &lt;&lt; endl;
+         }
++#if 0 
++        for (int k=0;k&lt;n;k++)
++        {
++            real p_k=exp(check_sum_to_one[k]);
++            if (fabs(p_k-1)&gt;1e-6)
++                PLWARNING(&quot;Probabilities that do not sum to 1!&quot;);
++        }
++#endif
+         *KLp0p1 *= -1;
+-        //for (int t=0;t&lt;mbs;t++)
+-        //    if ((*KLp0p1)(t,0) &lt; 0)
+-        //        PLWARNING(&quot;KLp0p1: training example %d is getting mass &gt; 1/n! KL=%g&quot;,t,(double)(*KLp0p1)(t,0));
++        if (!during_training)
++        {
++            real sum_pxt=0;
++            for (int t=0;t&lt;mbs;t++)
++            {
++                sum_pxt += exp(-(*KLp0p1)(t,0) -logn);
++                if ((*KLp0p1)(t,0) &lt; 0)
++                    PLWARNING(&quot;KLp0p1: training example %d is getting mass = %g &gt; 1/n!&quot;,t,(double)exp(-(*KLp0p1)(t,0)-logn));
++            }
++            cout &lt;&lt; &quot;sum_t p1(x_t) = &quot; &lt;&lt; sum_pxt &lt;&lt; endl;
++        }
+         hidden_layer-&gt;setBatchSize(mbs);
+         visible_layer-&gt;setBatchSize(mbs);
+     }
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001226.html">[Plearn-commits] r7778 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="001228.html">[Plearn-commits] r7780 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1227">[ date ]</a>
+              <a href="thread.html#1227">[ thread ]</a>
+              <a href="subject.html#1227">[ subject ]</a>
+              <a href="author.html#1227">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,584 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7992 - in trunk: . plearn/base plearn/python
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7992%20-%20in%20trunk%3A%20.%20plearn/base%20plearn/python&In-Reply-To=%3C200708141822.l7EIMj8T002387%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001439.html">
+   <LINK REL="Next"  HREF="001441.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7992 - in trunk: . plearn/base plearn/python</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7992%20-%20in%20trunk%3A%20.%20plearn/base%20plearn/python&In-Reply-To=%3C200708141822.l7EIMj8T002387%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7992 - in trunk: . plearn/base plearn/python">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Tue Aug 14 20:22:45 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001439.html">[Plearn-commits] r7991 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="001441.html">[Plearn-commits] r7993 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1440">[ date ]</a>
+              <a href="thread.html#1440">[ thread ]</a>
+              <a href="subject.html#1440">[ subject ]</a>
+              <a href="author.html#1440">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2007-08-14 20:22:44 +0200 (Tue, 14 Aug 2007)
+New Revision: 7992
+
+Modified:
+   trunk/plearn/base/Object.cc
+   trunk/plearn/base/Object.h
+   trunk/plearn/base/OptionBase.h
+   trunk/plearn/python/PythonExtension.cc
+   trunk/plearn/python/PythonObjectWrapper.h
+   trunk/pymake.config.model
+Log:
+- added support for sets in PLearn/python bridge
+- use maps and sets instead of lists when searching options
+
+
+
+Modified: trunk/plearn/base/Object.cc
+===================================================================
+--- trunk/plearn/base/Object.cc	2007-08-14 18:17:21 UTC (rev 7991)
++++ trunk/plearn/base/Object.cc	2007-08-14 18:22:44 UTC (rev 7992)
+@@ -156,25 +156,19 @@
+ #ifdef PL_PYTHON_VERSION 
+ void Object::setOptionFromPython(const string&amp; optionname, const PythonObjectWrapper&amp; value)
+ {
+-    OptionList &amp;options= getOptionList();
+-    for(OptionList::iterator it= options.begin(); 
+-        it != options.end(); ++it)
+-        if((*it)-&gt;optionname() == optionname)
+-        {
+-            (*it)-&gt;setFromPythonObject(this, value);
+-            return;
+-        }
++    OptionMap&amp; om= getOptionMap();
++    OptionMap::iterator it= om.find(optionname);
++    if(it == om.end())
++        PLERROR(&quot;%s has no option %s.&quot;, classname().c_str(), optionname.c_str());
++    it-&gt;second-&gt;setFromPythonObject(this, value);
+ }
+ #endif //def PL_PYTHON_VERSION 
+ 
+ bool Object::hasOption(const string &amp;optionname) const
+ { 
+-    OptionList &amp;options= getOptionList();
+-    for(OptionList::iterator it= options.begin(); 
+-        it != options.end(); ++it)
+-        if((*it)-&gt;optionname() == optionname)
+-            return true;
+-    return false;
++    OptionMap&amp; om= getOptionMap();
++    OptionMap::iterator it= om.find(optionname);
++    return it != om.end();
+ }
+ 
+ string Object::getOption(const string &amp;optionname) const
+@@ -211,14 +205,13 @@
+ {
+     try 
+     {
+-        OptionList &amp;options = getOptionList();
+-        for (OptionList::iterator it = options.begin(); it != options.end(); ++it) 
++
++        OptionMap&amp; om= getOptionMap();
++        OptionMap::iterator it= om.find(optionname);
++        if(it != om.end())
+         {
+-            if ((*it)-&gt;optionname() == optionname) 
+-            {
+-                (*it)-&gt;read(this, in);
+-                return;
+-            }
++            it-&gt;second-&gt;read(this, in);
++            return;
+         }
+ 
+         // Found no options matching 'optionname'. First look for brackets. If there
+@@ -234,24 +227,25 @@
+             // Found no dot, or a right bracket before a dot
+             if (dot_pos == string::npos || rb_pos &lt; dot_pos) {
+                 string index = optionname.substr(lb_pos + 1, rb_pos - lb_pos - 1);
+-                for (OptionList::iterator it = options.begin(); it != options.end(); ++it)
+-                    if ((*it)-&gt;optionname() == optname) 
+-                    {
+-                        // There are two cases here: either there is a dot located
+-                        // immediately after the right bracket, or there is no dot.
+-                        // If there is a dot, the option HAS to be an Object
+-                        if (dot_pos != string::npos &amp;&amp; dot_pos == rb_pos+1) {
+-                            int i = toint(index);
+-                            (*it)-&gt;getIndexedObject(this, i)-&gt;readOptionVal(
+-                                in, optionname.substr(dot_pos + 1));
+-                        }
+-                        else if (dot_pos == string::npos)
+-                            (*it)-&gt;readIntoIndex(this, in, index);
+-                        else
+-                            PLERROR(&quot;Object::readOptionVal() - unknown option format \&quot;%s\&quot;&quot;,
+-                                    optionname.c_str());
+-                        return;
++
++                it= om.find(optname);
++                if(it != om.end())
++                {
++                    // There are two cases here: either there is a dot located
++                    // immediately after the right bracket, or there is no dot.
++                    // If there is a dot, the option HAS to be an Object
++                    if (dot_pos != string::npos &amp;&amp; dot_pos == rb_pos+1) {
++                        int i = toint(index);
++                        it-&gt;second-&gt;getIndexedObject(this, i)-&gt;readOptionVal(
++                            in, optionname.substr(dot_pos + 1));
+                     }
++                    else if (dot_pos == string::npos)
++                        it-&gt;second-&gt;readIntoIndex(this, in, index);
++                    else
++                        PLERROR(&quot;Object::readOptionVal() - unknown option format \&quot;%s\&quot;&quot;,
++                                optionname.c_str());
++                    return;
++                }
+             }
+         }
+         else if (lb_pos != string::npos)
+@@ -263,12 +257,12 @@
+             // Found a dot, assume it's a field with an Object * field
+             string optname = optionname.substr(0, dot_pos);
+             string optoptname = optionname.substr(dot_pos + 1);
+-            for (OptionList::iterator it = options.begin(); it != options.end(); ++it)
+-                if ((*it)-&gt;optionname() == optname) 
+-                {
+-                    (*it)-&gt;getAsObject(this)-&gt;readOptionVal(in, optoptname);
+-                    return;
+-                }
++            it= om.find(optname);
++            if(it != om.end())
++            {
++                it-&gt;second-&gt;getAsObject(this)-&gt;readOptionVal(in, optoptname);
++                return;
++            }
+         }
+     }
+     catch(const PLearnError&amp; e)
+@@ -287,13 +281,14 @@
+ 
+ void Object::writeOptionVal(PStream &amp;out, const string &amp;optionname) const
+ {
+-    OptionList &amp;options = getOptionList();
+-    for (OptionList::iterator it = options.begin(); it != options.end(); ++it)
+-        if ((*it)-&gt;optionname() == optionname) {
+-            (*it)-&gt;write(this, out);
+-            return;
+-        }
+-
++    OptionMap&amp; om= getOptionMap();
++    OptionMap::iterator it= om.find(optionname);
++    if(it != om.end())
++    {
++        it-&gt;second-&gt;write(this, out);
++        return;
++    }
++    
+     // Found no options matching 'optionname'. First look for brackets. If there
+     // are brackets, they must be located before any dot.
+     size_t lb_pos = optionname.find('[');
+@@ -307,23 +302,24 @@
+         // Found no dot, or a right bracket before a dot
+         if (dot_pos == string::npos || rb_pos &lt; dot_pos) {
+             string index = optionname.substr(lb_pos + 1, rb_pos - lb_pos - 1);
+-            for (OptionList::iterator it = options.begin(); it != options.end(); ++it)
+-                if ((*it)-&gt;optionname() == optname) {
+-                    // There are two cases here: either there is a dot located
+-                    // immediately after the right bracket, or there is no dot.  If
+-                    // there is a dot, the option HAS to be an Object
+-                    if (dot_pos != string::npos &amp;&amp; dot_pos == rb_pos+1) {
+-                        int i = toint(index);
+-                        (*it)-&gt;getIndexedObject(this, i)-&gt;writeOptionVal(
+-                            out, optionname.substr(dot_pos + 1));
+-                    }
+-                    else if (dot_pos == string::npos)
+-                        (*it)-&gt;writeAtIndex(this, out, index);
+-                    else
+-                        PLERROR(&quot;Object::writeOptionVal() - unknown option format \&quot;%s\&quot;&quot;,
+-                                optionname.c_str());
+-                    return;
++            it= om.find(optname);
++            if(it != om.end())
++            {
++                // There are two cases here: either there is a dot located
++                // immediately after the right bracket, or there is no dot.  If
++                // there is a dot, the option HAS to be an Object
++                if (dot_pos != string::npos &amp;&amp; dot_pos == rb_pos+1) {
++                    int i = toint(index);
++                    it-&gt;second-&gt;getIndexedObject(this, i)-&gt;writeOptionVal(
++                        out, optionname.substr(dot_pos + 1));
+                 }
++                else if (dot_pos == string::npos)
++                    it-&gt;second-&gt;writeAtIndex(this, out, index);
++                else
++                    PLERROR(&quot;Object::writeOptionVal() - unknown option format \&quot;%s\&quot;&quot;,
++                            optionname.c_str());
++                return;
++            }
+         }
+     }
+     else if (lb_pos != string::npos)
+@@ -334,11 +330,12 @@
+         // Found a dot, assume it's a field with an Object * field
+         string optname = optionname.substr(0, dot_pos);
+         string optoptname = optionname.substr(dot_pos + 1);
+-        for (OptionList::iterator it = options.begin(); it != options.end(); ++it)
+-            if ((*it)-&gt;optionname() == optname) {
+-                (*it)-&gt;getAsObject(this)-&gt;writeOptionVal(out, optoptname);
+-                return;
+-            }
++        it= om.find(optname);
++        if(it != om.end())
++        {
++            it-&gt;second-&gt;getAsObject(this)-&gt;writeOptionVal(out, optoptname);
++            return;
++        }
+     }
+     // There are bigger problems in the world but still it isn't always funny
+     PLERROR(&quot;Object::writeOptionVal() - Unknown option \&quot;%s\&quot;&quot;, optionname.c_str());    
+@@ -520,13 +517,10 @@
+             in.getline(optionname, '=');
+             optionname = removeblanks(optionname);
+             in.skipBlanksAndComments();
+-
+-            OptionList &amp;options = getOptionList();
+-            OptionList::iterator it =
+-                find_if(options.begin(), options.end(),
+-                        bind2nd(mem_fun(&amp;OptionBase::isOptionNamed), optionname));
+-            // if (it != options.end() &amp;&amp; ((*it)-&gt;flags() &amp; in.option_flags_in) == 0)
+-            if (it!=options.end() &amp;&amp; (*it)-&gt;shouldBeSkipped() ) {
++            OptionMap&amp; om= getOptionMap();
++            OptionMap::iterator it= om.find(optionname);
++            if(it != om.end() &amp;&amp; it-&gt;second-&gt;shouldBeSkipped())
++            {
+                 // Create a dummy object that will read this option.
+                 if (!dummy_obj) {
+                     // Note that we do not call build on 'dummy_obj'. This is
+@@ -546,15 +540,6 @@
+                 // cerr &lt;&lt; &quot;returned from reading optiion &quot; &lt;&lt; optionname &lt;&lt; endl;
+             }
+             in.skipBlanksAndCommentsAndSeparators();
+-            /*
+-              in.skipBlanksAndCommentsAndSeparators();
+-              in.skipBlanksAndCommentsAndSeparators();
+-              in.skipBlanksAndCommentsAndSeparators();
+-              in.skipBlanksAndCommentsAndSeparators();
+-              cerr &lt;&lt; &quot;PEEK1: &quot; &lt;&lt; in.peek() &lt;&lt; endl;
+-              in.peek(); in.peek(); in.peek();
+-              cerr &lt;&lt; &quot;PEEK2: &quot; &lt;&lt; in.peek() &lt;&lt; endl;
+-            */
+ 
+             if (in.peek() == ')') 
+             {
+@@ -661,11 +646,10 @@
+                 {
+                     checkNargs(args.size(), 1);
+                     string optionname= args[0];
+-                    OptionList &amp;options= instance-&gt;getOptionList();
+-                    for (OptionList::iterator it= options.begin(); 
+-                         it != options.end(); ++it)
+-                        if ((*it)-&gt;optionname() == optionname)
+-                            return (*it)-&gt;getAsPythonObject(instance);
++                    OptionMap&amp; om= instance-&gt;getOptionMap();
++                    OptionMap::iterator it= om.find(optionname);
++                    if(it != om.end())
++                        return it-&gt;second-&gt;getAsPythonObject(instance);
+                     PLERROR(&quot;in ObjectTrampolineGetOption::call (python ver.) : &quot;
+                             &quot;unknown option: '%s'&quot;, optionname.c_str());
+                     return PythonObjectWrapper();//gcc: shut up!
+
+Modified: trunk/plearn/base/Object.h
+===================================================================
+--- trunk/plearn/base/Object.h	2007-08-14 18:17:21 UTC (rev 7991)
++++ trunk/plearn/base/Object.h	2007-08-14 18:22:44 UTC (rev 7992)
+@@ -88,6 +88,7 @@
+         virtual string classname() const;                       \
+         static  OptionList&amp; _getOptionList_();                  \
+         virtual OptionList&amp; getOptionList() const;              \
++        virtual OptionMap&amp; getOptionMap() const;                \
+         static  RemoteMethodMap&amp; _getRemoteMethodMap_();        \
+         virtual RemoteMethodMap&amp; getRemoteMethodMap() const;    \
+         static  Object* _new_instance_for_typemap_();           \
+@@ -122,6 +123,18 @@
+             return _getOptionList_();                                                           \
+         }                                                                                       \
+                                                                                                 \
++        OptionMap&amp; CLASSTYPE::getOptionMap() const                                              \
++        {                                                                                       \
++            static OptionMap om;                                                                \
++            if(om.empty())                                                                      \
++            {                                                                                   \
++                OptionList&amp; ol= getOptionList();                                                \
++                for(OptionList::iterator it= ol.begin(); it != ol.end(); ++it)                  \
++                    om[(*it)-&gt;optionname()]= *it;                                               \
++            }                                                                                   \
++            return om;                                                                          \
++        }                                                                                       \
++                                                                                                \
+         RemoteMethodMap&amp; CLASSTYPE::_getRemoteMethodMap_()                                      \
+         {                                                                                       \
+             static bool initialized = false;                                                    \
+@@ -271,6 +284,7 @@
+         virtual string classname() const;                                                       \
+         static  OptionList&amp; _getOptionList_();                                                  \
+         virtual OptionList&amp; getOptionList() const;                                              \
++        virtual OptionMap&amp; getOptionMap() const;                                                \
+         static  RemoteMethodMap&amp; _getRemoteMethodMap_();                                        \
+         virtual RemoteMethodMap&amp; getRemoteMethodMap() const;                                    \
+         static  Object* _new_instance_for_typemap_();                                           \
+@@ -307,6 +321,18 @@
+         {                                                                                       \
+             return _getOptionList_();                                                           \
+         }                                                                                       \
++        template &lt; TEMPLATE_DEF_ ## CLASSTYPE &gt;                                                 \
++        OptionMap&amp; CLASSTYPE&lt; TEMPLATE_ARGS_ ## CLASSTYPE &gt;::getOptionMap() const               \
++        {                                                                                       \
++            static OptionMap om;                                                                \
++            if(om.empty())                                                                      \
++            {                                                                                   \
++                OptionList&amp; ol= getOptionList();                                                \
++                for(OptionList::iterator it= ol.begin(); it != ol.end(); ++it)                  \
++                    om[(*it)-&gt;optionname()]= *it;                                               \
++            }                                                                                   \
++            return om;                                                                          \
++        }                                                                                       \
+                                                                                                 \
+         template &lt; TEMPLATE_DEF_ ## CLASSTYPE &gt;                                                 \
+         RemoteMethodMap&amp; CLASSTYPE&lt; TEMPLATE_ARGS_ ## CLASSTYPE &gt;::_getRemoteMethodMap_()       \
+
+Modified: trunk/plearn/base/OptionBase.h
+===================================================================
+--- trunk/plearn/base/OptionBase.h	2007-08-14 18:17:21 UTC (rev 7991)
++++ trunk/plearn/base/OptionBase.h	2007-08-14 18:22:44 UTC (rev 7992)
+@@ -326,6 +326,7 @@
+ };
+ 
+ typedef std::vector&lt; PP&lt;OptionBase&gt; &gt; OptionList;
++typedef std::map&lt;std::string, PP&lt;OptionBase&gt; &gt; OptionMap;
+ 
+ 
+ 
+
+Modified: trunk/plearn/python/PythonExtension.cc
+===================================================================
+--- trunk/plearn/python/PythonExtension.cc	2007-08-14 18:17:21 UTC (rev 7991)
++++ trunk/plearn/python/PythonExtension.cc	2007-08-14 18:22:44 UTC (rev 7992)
+@@ -279,10 +279,9 @@
+         //set option names
+         OptionList&amp; options= tit-&gt;second.getoptionlist_method();
+         unsigned int nopts= options.size();
+-        TVec&lt;string&gt; optionnames(nopts);
++        set&lt;string&gt; optionnames;
+         for(unsigned int i= 0; i &lt; nopts; ++i)
+-            optionnames[i]= options[i]-&gt;optionname();
+-
++            optionnames.insert(options[i]-&gt;optionname());
+         the_pyclass= clit-&gt;second;
+         if(-1==PyObject_SetAttrString(the_pyclass, &quot;_optionnames&quot;, 
+                                       PythonObjectWrapper(optionnames).getPyObject()))
+
+Modified: trunk/plearn/python/PythonObjectWrapper.h
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.h	2007-08-14 18:17:21 UTC (rev 7991)
++++ trunk/plearn/python/PythonObjectWrapper.h	2007-08-14 18:22:44 UTC (rev 7992)
+@@ -52,6 +52,7 @@
+ #include &lt;utility&gt;                           // Pairs
+ #include &lt;vector&gt;                            // vector&lt;T&gt;
+ #include &lt;map&gt;                               // map&lt;T,U&gt;
++#include &lt;set&gt;                               // set&lt;T&gt;
+ #include &lt;limits&gt;                            // numeric_limits&lt;I&gt;
+ 
+ // From PLearn
+@@ -424,6 +425,12 @@
+     static std::map&lt;T,U&gt; convert(PyObject*, bool print_traceback);
+ };
+ 
++template &lt;class T&gt;
++struct ConvertFromPyObject&lt;std::set&lt;T&gt; &gt;
++{
++    static std::set&lt;T&gt; convert(PyObject*, bool print_traceback);
++};
++
+ template &lt;class T, class U&gt;
+ struct ConvertFromPyObject&lt; std::pair&lt;T,U&gt; &gt;
+ {
+@@ -614,6 +621,10 @@
+ template &lt;class T, class U&gt; struct ConvertToPyObject&lt;std::map&lt;T,U&gt; &gt;
+ { static PyObject* newPyObject(const std::map&lt;T,U&gt;&amp;); };
+ 
++//! C++ stlib set&lt;&gt;: create a Python set of those objects
++template &lt;class T&gt; struct ConvertToPyObject&lt;std::set&lt;T&gt; &gt;
++{ static PyObject* newPyObject(const std::set&lt;T&gt;&amp;); };
++
+ //! C++ stdlib pair&lt;&gt;: create a Python tuple with two elements
+ template &lt;class T, class U&gt; struct ConvertToPyObject&lt;std::pair&lt;T,U&gt; &gt;
+ { static PyObject* newPyObject(const std::pair&lt;T,U&gt;&amp;); };
+@@ -630,6 +641,10 @@
+ template &lt;class T, class U&gt; struct ConvertToPyObject&lt;std::map&lt;T,U&gt; const* &gt;
+ { static PyObject* newPyObject(const std::map&lt;T,U&gt;*); };
+ 
++//! Pointer to set&lt;&gt;: simply dereference pointer, or None if NULL
++template &lt;class T&gt; struct ConvertToPyObject&lt;std::set&lt;T&gt; const* &gt;
++{ static PyObject* newPyObject(const std::set&lt;T&gt;*); };
++
+ //! For a general PythonObjectWrapper: we simply increment the refcount
+ //! to the underlying Python object, no matter whether we own it or not.
+ template&lt;&gt; struct ConvertToPyObject&lt;PythonObjectWrapper&gt;
+@@ -1063,6 +1078,38 @@
+     return result;
+ }
+ 
++template &lt;class T&gt;
++std::set&lt;T&gt; ConvertFromPyObject&lt;std::set&lt;T&gt; &gt;::convert(PyObject* pyobj,
++                                                       bool print_traceback)
++{
++    PLASSERT( pyobj );
++    PyObject* env= PyDict_New();
++    if(0 != PyDict_SetItemString(env, &quot;__builtins__&quot;, PyEval_GetBuiltins()))
++        PLERROR(&quot;in ConvertFromPyObject&lt;std::set&lt;T&gt; &gt;::convert : &quot;
++                &quot;cannot insert builtins in env.&quot;);
++    if(0 != PyDict_SetItemString(env, &quot;the_set&quot;, pyobj))
++        PLERROR(&quot;in ConvertFromPyObject&lt;std::set&lt;T&gt; &gt;::convert : &quot;
++                &quot;cannot insert the_set in env.&quot;);
++    PyObject* res= PyRun_String(&quot;\nresult= list(the_set)\n&quot;, 
++                                Py_file_input, env, env);
++    if(!res)
++    {
++        Py_DECREF(env);
++        if(PyErr_Occurred()) PyErr_Print();
++        PLERROR(&quot;in ConvertFromPyObject&lt;std::set&lt;T&gt; &gt;::convert : &quot;
++                &quot;cannot convert to a set.&quot;);
++    }
++    Py_DECREF(res);
++    TVec&lt;PythonObjectWrapper&gt; listobj= 
++        PythonObjectWrapper(env).as&lt;std::map&lt;string, PythonObjectWrapper&gt; &gt;()[&quot;result&quot;];
++    Py_DECREF(env);
++    std::set&lt;T&gt; the_set;
++    for(TVec&lt;PythonObjectWrapper&gt;::iterator it= listobj.begin();
++        it != listobj.end(); ++it)
++        the_set.insert(*it);
++    return the_set;
++}
++
+ template &lt;class T, class U&gt;
+ std::pair&lt;T,U&gt; ConvertFromPyObject&lt; std::pair&lt;T,U&gt; &gt;::convert(PyObject* pyobj,
+                                                               bool print_traceback)
+@@ -1198,6 +1245,45 @@
+     return newdict;
+ }
+ 
++template &lt;class T&gt;
++PyObject* ConvertToPyObject&lt;std::set&lt;T&gt; &gt;::newPyObject(const std::set&lt;T&gt;&amp; data)
++{
++    TVec&lt;T&gt; as_list(data.size());
++    int i= 0;
++    for(typename std::set&lt;T&gt;::iterator it= data.begin();
++        it != data.end(); ++it, ++i)
++        as_list[i]= *it;
++    PyObject* pylist= ConvertToPyObject&lt;TVec&lt;T&gt; &gt;::newPyObject(as_list);
++    PyObject* env= PyDict_New();
++    if(0 != PyDict_SetItemString(env, &quot;__builtins__&quot;, PyEval_GetBuiltins()))
++        PLERROR(&quot;in ConvertToPyObject&lt;std::set&lt;T&gt; &gt;::newPyObject : &quot;
++                &quot;cannot insert builtins in env.&quot;);
++    if(0 != PyDict_SetItemString(env, &quot;the_list&quot;, pylist))
++        PLERROR(&quot;in ConvertToPyObject&lt;std::set&lt;T&gt; &gt;::newPyObject : &quot;
++                &quot;cannot insert the_list in env.&quot;);
++    string code= &quot;&quot;;
++#if PL_PYTHON_VERSION &lt;= 230
++    code+= &quot;\nfrom sets import Set as set\n&quot;;
++#endif // PL_PYTHON_VERSION &lt;= 230
++    code+= &quot;\nresult= set(the_list)\n&quot;;
++    PyObject* res= PyRun_String(const_cast&lt;const char*&gt;(code.c_str()),
++                                Py_file_input, env, env);
++    Py_DECREF(pylist);
++    if(!res)
++    {
++        Py_DECREF(env);
++        if(PyErr_Occurred()) PyErr_Print();
++        PLERROR(&quot;in ConvertToPyObject&lt;std::set&lt;T&gt; &gt;::newPyObject : &quot;
++                &quot;cannot convert to a set.&quot;);
++    }
++    Py_DECREF(res);
++    PyObject* setobj= 
++        PythonObjectWrapper(env).as&lt;map&lt;string, PyObject*&gt; &gt;()[&quot;result&quot;];
++    Py_INCREF(setobj);
++    Py_DECREF(env);
++    return setobj;
++}
++
+ template &lt;class T, class U&gt;
+ PyObject* ConvertToPyObject&lt;std::pair&lt;T,U&gt; &gt;::newPyObject(const std::pair&lt;T,U&gt;&amp; data)
+ {
+@@ -1304,6 +1390,15 @@
+         return PythonObjectWrapper::newPyObject();
+ }
+ 
++template &lt;class T&gt;
++PyObject* ConvertToPyObject&lt;std::set&lt;T&gt; const* &gt;::newPyObject(const std::set&lt;T&gt;* data)
++{
++    if(data)
++        return ConvertToPyObject&lt;std::set&lt;T&gt; &gt;::newPyObject(*data);
++    else
++        return PythonObjectWrapper::newPyObject();
++}
++
+ PStream&amp; operator&gt;&gt;(PStream&amp; in, PythonObjectWrapper&amp; v);
+ DECLARE_TYPE_TRAITS(PythonObjectWrapper);
+ 
+
+Modified: trunk/pymake.config.model
+===================================================================
+--- trunk/pymake.config.model	2007-08-14 18:17:21 UTC (rev 7991)
++++ trunk/pymake.config.model	2007-08-14 18:22:44 UTC (rev 7992)
+@@ -348,7 +348,7 @@
+         python_includedirs   = [ '/usr/include/python'+python_version]
+ 
+         numpy_includedirs   = python_includedirs
+-
++        
+     python_includedirs= numpy_includedirs
+ 
+     if python_version != pyver:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001439.html">[Plearn-commits] r7991 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="001441.html">[Plearn-commits] r7993 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1440">[ date ]</a>
+              <a href="thread.html#1440">[ thread ]</a>
+              <a href="subject.html#1440">[ subject ]</a>
+              <a href="author.html#1440">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

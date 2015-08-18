@@ -1,0 +1,154 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10114 - trunk/plearn_learners/generic
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10114%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200904131906.n3DJ6Q8k016235%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003553.html">
+   <LINK REL="Next"  HREF="003555.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10114 - trunk/plearn_learners/generic</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10114%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200904131906.n3DJ6Q8k016235%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10114 - trunk/plearn_learners/generic">chapados at mail.berlios.de
+       </A><BR>
+    <I>Mon Apr 13 21:06:26 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003553.html">[Plearn-commits] r10113 - trunk/plearn_learners/regressors
+</A></li>
+        <LI>Next message: <A HREF="003555.html">[Plearn-commits] r10115 - trunk/plearn/misc
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3554">[ date ]</a>
+              <a href="thread.html#3554">[ thread ]</a>
+              <a href="subject.html#3554">[ subject ]</a>
+              <a href="author.html#3554">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2009-04-13 21:06:24 +0200 (Mon, 13 Apr 2009)
+New Revision: 10114
+
+Modified:
+   trunk/plearn_learners/generic/PLearner.cc
+   trunk/plearn_learners/generic/PLearner.h
+Log:
+Added new function computeOutputConfMat
+
+Modified: trunk/plearn_learners/generic/PLearner.cc
+===================================================================
+--- trunk/plearn_learners/generic/PLearner.cc	2009-04-13 19:05:55 UTC (rev 10113)
++++ trunk/plearn_learners/generic/PLearner.cc	2009-04-13 19:06:24 UTC (rev 10114)
+@@ -433,6 +433,16 @@
+          RetDoc (&quot;Matrix holding the inputs+outputs+confidence-low+confidence-high&quot;)));
+ 
+     declareMethod(
++        rmm, &quot;computeOutputConfMat&quot;, &amp;PLearner::computeOutputConfMat,
++        (BodyDoc(&quot;Return a Mat that is the contatenation of outputs, lower confidence\n&quot;
++                 &quot;bound, and upper confidence bound.  If confidence intervals cannot be\n&quot;
++                 &quot;computed for the learner, they are filled with MISSING_VALUE.\n&quot;),
++         ArgDoc (&quot;inputs&quot;, &quot;VMatrix containing the inputs&quot;),
++         ArgDoc (&quot;probability&quot;, &quot;Level at which the confidence intervals should be computed, &quot;
++                                &quot;e.g. 0.95.&quot;),
++         RetDoc (&quot;Matrix holding the outputs+confidence-low+confidence-high&quot;)));
++
++    declareMethod(
+         rmm, &quot;computeOutputAndCosts&quot;, &amp;PLearner::remote_computeOutputAndCosts,
+         (BodyDoc(&quot;Compute both the output from the input, and the costs associated\n&quot;
+                  &quot;with the desired target.  The computed costs\n&quot;
+@@ -1334,6 +1344,41 @@
+ }
+ 
+ 
++//#####  computeOutputConfMat  ################################################
++
++Mat PLearner::computeOutputConfMat(VMat inputs, real probability) const
++{
++    int l = inputs.length();
++    int nin = inputsize();
++    int nout = outputsize();
++    Mat m(l, 3*nout);
++    TVec&lt; pair&lt;real,real&gt; &gt; intervals;
++    Vec invec(nin);
++    for(int i=0; i&lt;l; i++)
++    {
++        Vec v = m(i);
++        Vec outvec  = v.subVec(0, nout);
++        Vec lowconf = v.subVec(nout, nout);
++        Vec hiconf  = v.subVec(2*nout, nout);
++        inputs-&gt;getRow(i, invec);
++        computeOutput(invec, outvec);
++        bool conf_avail = computeConfidenceFromOutput(invec, outvec,
++                                                      probability, intervals);
++        if (conf_avail) {
++            for (int j=0, n=intervals.size() ; j&lt;n ; ++j) {
++                lowconf[j] = intervals[j].first;
++                hiconf[j]  = intervals[j].second;
++            }
++        }
++        else {
++            lowconf &lt;&lt; MISSING_VALUE;
++            hiconf  &lt;&lt; MISSING_VALUE;
++        }
++    }
++    return m;
++}
++
++
+ //////////////////////////
+ // remote_computeOutput //
+ //////////////////////////
+
+Modified: trunk/plearn_learners/generic/PLearner.h
+===================================================================
+--- trunk/plearn_learners/generic/PLearner.h	2009-04-13 19:05:55 UTC (rev 10113)
++++ trunk/plearn_learners/generic/PLearner.h	2009-04-13 19:06:24 UTC (rev 10114)
+@@ -569,6 +569,13 @@
+      *  cannot be computed for the learner, they are filled with MISSING_VALUE.
+      */
+     Mat computeInputOutputConfMat(VMat inputs, real probability) const;
++
++    /**
++     *  Return a Mat that is the contatenation of outputs, lower confidence
++     *  bound, and upper confidence bound.  If confidence intervals cannot be
++     *  computed for the learner, they are filled with MISSING_VALUE.
++     */
++    Mat computeOutputConfMat(VMat inputs, real probability) const;
+     
+     /**
+      *  Compute the output on the training set of the learner, and save the
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003553.html">[Plearn-commits] r10113 - trunk/plearn_learners/regressors
+</A></li>
+	<LI>Next message: <A HREF="003555.html">[Plearn-commits] r10115 - trunk/plearn/misc
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3554">[ date ]</a>
+              <a href="thread.html#3554">[ thread ]</a>
+              <a href="subject.html#3554">[ subject ]</a>
+              <a href="author.html#3554">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

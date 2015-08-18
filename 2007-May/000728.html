@@ -1,0 +1,305 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7279 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7279%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705240236.l4O2aCjm002378%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000727.html">
+   <LINK REL="Next"  HREF="000729.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7279 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7279%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705240236.l4O2aCjm002378%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7279 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Thu May 24 04:36:12 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000727.html">[Plearn-commits] r7278 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000729.html">[Plearn-commits] r7280 -	trunk/plearn_learners/online/test/MaxSubsampling2DModule/.pytest/PL_max_subsampling
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#728">[ date ]</a>
+              <a href="thread.html#728">[ thread ]</a>
+              <a href="subject.html#728">[ subject ]</a>
+              <a href="author.html#728">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-05-24 04:36:11 +0200 (Thu, 24 May 2007)
+New Revision: 7279
+
+Modified:
+   trunk/plearn_learners/online/RBMConv2DConnection.cc
+   trunk/plearn_learners/online/RBMConv2DConnection.h
+Log:
+Implement batch version of some functions
+
+
+Modified: trunk/plearn_learners/online/RBMConv2DConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMConv2DConnection.cc	2007-05-24 02:33:18 UTC (rev 7278)
++++ trunk/plearn_learners/online/RBMConv2DConnection.cc	2007-05-24 02:36:11 UTC (rev 7279)
+@@ -347,6 +347,74 @@
+     }
+ }
+ 
++void RBMConv2DConnection::update( const Mat&amp; pos_down_values, // v_0
++                                  const Mat&amp; pos_up_values,   // h_0
++                                  const Mat&amp; neg_down_values, // v_1
++                                  const Mat&amp; neg_up_values )  // h_1
++{
++    PLASSERT( pos_up_values.width() == up_size );
++    PLASSERT( neg_up_values.width() == up_size );
++    PLASSERT( pos_down_values.width() == down_size );
++    PLASSERT( neg_down_values.width() == down_size );
++
++    int batch_size = pos_down_values.length();
++    PLASSERT( pos_up_values.length() == batch_size );
++    PLASSERT( neg_down_values.length() == batch_size );
++    PLASSERT( neg_up_values.length() == batch_size );
++
++    /*  for i=0 to up_image_length:
++     *   for j=0 to up_image_width:
++     *     for l=0 to kernel_length:
++     *       for m=0 to kernel_width:
++     *         kernel_neg_stats(l,m) -= learning_rate *
++     *           ( pos_down_image(step1*i+l,step2*j+m) * pos_up_image(i,j)
++     *             - neg_down_image(step1*i+l,step2*j+m) * neg_up_image(i,j) )
++     */
++
++    if( momentum == 0. )
++    {
++        for( int b=0; b&lt;batch_size; b++ )
++        {
++            real* puv = pos_up_values(b).data();
++            real* nuv = neg_up_values(b).data();
++            real* pdv = pos_down_values(b).data();
++            real* ndv = neg_down_values(b).data();
++            int k_mod = kernel.mod();
++
++            for( int i=0; i&lt;up_image_length;
++                 i++,
++                 puv+=up_image_width,
++                 nuv+=up_image_width,
++                 pdv+=kernel_step1*down_image_width,
++                 ndv+=kernel_step1*down_image_width )
++            {
++                // copies to iterate over columns
++                real* pdv1 = pdv;
++                real* ndv1 = ndv;
++                for( int j=0; j&lt;up_image_width; j++,
++                                                pdv1+=kernel_step2,
++                                                ndv1+=kernel_step2 )
++                {
++                    real* k = kernel.data();
++                    real* pdv2 = pdv1; // copy to iterate over sub-rows
++                    real* ndv2 = ndv1;
++                    real puv_ij = puv[j];
++                    real nuv_ij = nuv[j];
++                    for( int l=0; l&lt;kernel_length; l++, k+=k_mod,
++                                                   pdv2+=down_image_width,
++                                                   ndv2+=down_image_width )
++                        for( int m=0; m&lt;kernel_width; m++ )
++                            k[m] += learning_rate *
++                                (ndv2[m] * nuv_ij - pdv2[m] * puv_ij);
++                }
++            }
++        }
++    }
++    else
++        PLCHECK_MSG(false,
++                    &quot;mini-batch and momentum don't work together yet&quot;);
++}
++
+ void RBMConv2DConnection::clearStats()
+ {
+     kernel_pos_stats.clear();
+@@ -425,6 +493,55 @@
+     }
+ }
+ 
++void RBMConv2DConnection::computeProducts(int start, int length,
++                                          Mat&amp; activations,
++                                          bool accumulate) const
++{
++    PLASSERT( activations.width() == length );
++    int batch_size = inputs_mat.length();
++    activations.resize( batch_size, length);
++    if( going_up )
++    {
++        PLASSERT( start+length &lt;= up_size );
++        // usual case
++        if( start == 0 &amp;&amp; length == up_size )
++            for( int k=0; k&lt;batch_size; k++ )
++            {
++                up_image = activations(k)
++                    .toMat(up_image_length, up_image_width);
++                down_image = inputs_mat(k)
++                    .toMat(down_image_length, down_image_width);
++
++                convolve2D(down_image, kernel, up_image,
++                           kernel_step1, kernel_step2, accumulate);
++            }
++        else
++            PLCHECK_MSG(false,
++                        &quot;Unusual case of use (start!=0 or length!=up_size)\n&quot;
++                        &quot;not implemented yet.&quot;);
++    }
++    else
++    {
++        PLASSERT( start+length &lt;= down_size );
++        // usual case
++        if( start == 0 &amp;&amp; length == down_size )
++            for( int k=0; k&lt;batch_size; k++ )
++            {
++                up_image = inputs_mat(k)
++                    .toMat(up_image_length, up_image_width);
++                down_image = activations(k)
++                    .toMat(down_image_length, down_image_width);
++
++                backConvolve2D(down_image, kernel, up_image,
++                               kernel_step1, kernel_step2, accumulate);
++            }
++        else
++            PLCHECK_MSG(false,
++                        &quot;Unusual case of use (start!=0 or length!=down_size)\n&quot;
++                        &quot;not implemented yet.&quot;);
++    }
++}
++
+ //! this version allows to obtain the input gradient as well
+ void RBMConv2DConnection::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+                                       Vec&amp; input_gradient,
+@@ -460,6 +577,51 @@
+     multiplyAcc( kernel, kernel_gradient, -learning_rate );
+ }
+ 
++void RBMConv2DConnection::bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                                      Mat&amp; input_gradients,
++                                      const Mat&amp; output_gradients,
++                                      bool accumulate)
++{
++    PLASSERT( inputs.width() == down_size );
++    PLASSERT( outputs.width() == up_size );
++    PLASSERT( output_gradients.width() == up_size );
++
++    int batch_size = inputs.length();
++    PLASSERT( outputs.length() == batch_size );
++    PLASSERT( output_gradients.length() == batch_size );
++
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradients.width() == down_size &amp;&amp;
++                      input_gradients.length() == batch_size,
++                      &quot;Cannot resize input_gradient AND accumulate into it&quot; );
++    }
++    else
++    {
++        input_gradients.resize(batch_size, down_size);
++        input_gradients.clear();
++    }
++
++    kernel_gradient.clear();
++    for( int k=0; k&lt;batch_size; k++ )
++    {
++        down_image = inputs(k).toMat( down_image_length, down_image_width );
++        up_image = outputs(k).toMat( up_image_length, up_image_width );
++        down_image_gradient = input_gradients(k)
++            .toMat( down_image_length, down_image_width );
++        up_image_gradient = output_gradients(k)
++            .toMat( up_image_length, up_image_width );
++
++        // update input_gradient and kernel_gradient
++        convolve2Dbackprop( down_image, kernel,
++                            up_image_gradient, down_image_gradient,
++                            kernel_gradient,
++                            kernel_step1, kernel_step2, true );
++    }
++
++    // kernel -= learning_rate/n * kernel_gradient
++    multiplyAcc( kernel, kernel_gradient, -learning_rate/batch_size );
++}
+ //! reset the parameters to the state they would be BEFORE starting training.
+ //! Note that this method is necessarily called from build().
+ void RBMConv2DConnection::forget()
+
+Modified: trunk/plearn_learners/online/RBMConv2DConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMConv2DConnection.h	2007-05-24 02:33:18 UTC (rev 7278)
++++ trunk/plearn_learners/online/RBMConv2DConnection.h	2007-05-24 02:36:11 UTC (rev 7279)
+@@ -136,14 +136,10 @@
+                          const Vec&amp; neg_down_values,
+                          const Vec&amp; neg_up_values );
+ 
+-    //! Not implemented.
+     virtual void update( const Mat&amp; pos_down_values,
+                          const Mat&amp; pos_up_values,
+                          const Mat&amp; neg_down_values,
+-                         const Mat&amp; neg_up_values)
+-    {
+-        PLASSERT_MSG( false, &quot;Not implemented&quot; );
+-    }
++                         const Mat&amp; neg_up_values );
+ 
+     //! Clear all information accumulated during stats
+     virtual void clearStats();
+@@ -157,10 +153,7 @@
+ 
+     virtual void computeProducts(int start, int length,
+                                  Mat&amp; activations,
+-                                 bool accumulate=false ) const
+-    {
+-        PLASSERT( false ); // Not implemented.
+-    }
++                                 bool accumulate=false ) const;
+ 
+     //! Adapt based on the output gradient: this method should only
+     //! be called just after a corresponding fprop; it should be
+@@ -182,6 +175,11 @@
+                              const Vec&amp; output_gradient,
+                              bool accumulate=false);
+ 
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             Mat&amp; input_gradients,
++                             const Mat&amp; output_gradients,
++                             bool accumulate=false);
++
+     //! reset the parameters to the state they would be BEFORE starting
+     //! training.  Note that this method is necessarily called from
+     //! build().
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000727.html">[Plearn-commits] r7278 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000729.html">[Plearn-commits] r7280 -	trunk/plearn_learners/online/test/MaxSubsampling2DModule/.pytest/PL_max_subsampling
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#728">[ date ]</a>
+              <a href="thread.html#728">[ thread ]</a>
+              <a href="subject.html#728">[ subject ]</a>
+              <a href="author.html#728">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

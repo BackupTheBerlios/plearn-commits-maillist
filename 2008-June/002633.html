@@ -1,0 +1,357 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9185 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9185%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200806262223.m5QMNYVr031194%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002632.html">
+   <LINK REL="Next"  HREF="002634.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9185 - trunk/plearn_learners_experimental</H1>
+    <B>plearner at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9185%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200806262223.m5QMNYVr031194%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9185 - trunk/plearn_learners_experimental">plearner at mail.berlios.de
+       </A><BR>
+    <I>Fri Jun 27 00:23:34 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002632.html">[Plearn-commits] r9184 - in trunk: plearn/io plearn/ker	plearn/python plearn/var plearn/vmat plearn_learners/misc	plearn_learners/regressors
+</A></li>
+        <LI>Next message: <A HREF="002634.html">[Plearn-commits] r9186 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2633">[ date ]</a>
+              <a href="thread.html#2633">[ thread ]</a>
+              <a href="subject.html#2633">[ subject ]</a>
+              <a href="author.html#2633">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: plearner
+Date: 2008-06-27 00:23:34 +0200 (Fri, 27 Jun 2008)
+New Revision: 9185
+
+Modified:
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.h
+Log:
+
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2008-06-26 21:07:47 UTC (rev 9184)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2008-06-26 22:23:34 UTC (rev 9185)
+@@ -459,7 +459,6 @@
+ 
+     // reserve memory for sequences
+     seq.resize(5000,2); // contains the current sequence
+-    encoded_seq.resize(5000, 4);
+ 
+     Vec input( inputsize() );
+     Vec target( targetsize() );
+@@ -480,12 +479,6 @@
+     train_stats-&gt;forget();
+ 
+ 
+-    /***** RBM training phase *****/
+-//    if(rbm_stage &lt; rbm_nstages)
+-//    {
+-//    }
+-
+-
+     /***** Recurrent phase *****/
+     if( stage &gt;= nstages )
+         return;
+@@ -510,11 +503,6 @@
+         // TO DO: check this line
+         setLearningRate( recurrent_net_learning_rate );
+ 
+-        int ith_sample_in_sequence = 0;
+-        int inputsize_without_masks = inputsize() 
+-            - ( use_target_layers_masks ? targetsize() : 0 );
+-        int sum_target_elements = 0;
+-
+         while(stage &lt; end_stage)
+         {
+             train_costs.clear();
+@@ -524,17 +512,7 @@
+             for(int i=0; i&lt;nseq; i++)
+             {
+                 getSequence(i, seq);
+-                if(encoding==&quot;raw_masked_supervised&quot;)
+-                {
+-                    splitMaskedSupervisedSequence(seq);
+-                }
+-                else
+-                {
+-                    encodeSequence(seq, encoded_seq);
+-                    createSupervisedSequence(encoded_seq);
+-                }
+-
+-                resize_lists();
++                encodeSequenceAndPopulateLists(seq);
+                 fprop(train_costs, train_n_items);
+                 recurrent_update();
+             }
+@@ -567,10 +545,29 @@
+     train_stats-&gt;finalize();        
+ }
+ 
++
++//! does encoding if needed and populates the list.
++void DenoisingRecurrentNet::encodeSequenceAndPopulateLists(Mat seq)
++{
++    if(encoding==&quot;raw_masked_supervised&quot;) // old already encoded format (for backward testing)
++        splitRawMaskedSupervisedSequence(seq);
++    else
++        encodeAndCreateSupervisedSequence(seq);
++    resize_lists();
++}
++
+ // TO DO: penser a gestion des prepended dans ce cas
+-// Populates: inputslist, targets_list, masks_list
+-void DenoisingRecurrentNet::createSupervisedSequence(Mat encoded_seq)
++// encodes sequ, then populates: inputslist, targets_list, masks_list
++void DenoisingRecurrentNet::encodeAndCreateSupervisedSequence(Mat seq)
+ {
++    encodeSequence(seq, encoded_seq);
++    // now work with encoded_seq
++    int l = encoded_seq;
++    resize_lists(l);
++
++    // TO DO: populate lists
++    // ....
++
+     PLERROR(&quot;Not implemented yet&quot;);
+ }
+ 
+@@ -578,16 +575,16 @@
+ 
+ // TO DO: penser a prepend dans ce cas
+ 
+-// Populates: input_list, targets_list, masks_list
+-void DenoisingRecurrentNet::splitMaskedSupervisedSequence(Mat seq)
++// For the (backward testing) raw_masked_supervised case. Populates: input_list, targets_list, masks_list
++void DenoisingRecurrentNet::splitRawMaskedSupervisedSequence(Mat seq)
+ {
++    int l = seq.length();
++    resize_lists(l);
+     int inputsize_without_masks = inputsize()-targetsize();
+     Mat input_part = seq.subMatColumns(0,inputsize_without_masks);
+     Mat mask_part = seq.subMatColumns(inputsize_without_masks, targetsize());
+     Mat target_part = seq.subMatColumns(inputsize_without_masks+targetsize(), targetsize());
+ 
+-    int l = input_part.length();
+-    input_list.resize(l);
+     for(int i=0; i&lt;l; i++)
+         input_list[i] = input_part(i);
+ 
+@@ -605,10 +602,9 @@
+ }
+ 
+ 
+-void DenoisingRecurrentNet::resize_lists()
++void DenoisingRecurrentNet::resize_lists(int l)
+ {
+-    int l = input_list.length();
+-
++    input_list.resize(l);
+     hidden_list.resize(l, hidden_layer-&gt;size);
+     hidden_act_no_bias_list.resize(l, hidden_layer-&gt;size);
+ 
+@@ -634,7 +630,7 @@
+ 
+ // TODO: think properly about prepended stuff
+ 
+-// fprop accumulates costs in costs and n_items in n_items
++// fprop accumulates costs in costs and counts in n_items
+ void DenoisingRecurrentNet::fprop(Vec train_costs, Vec train_n_items)
+ {
+     int l = input_list.length();
+@@ -682,7 +678,7 @@
+             }
+         }
+ 
+-        sum_target_elements = 0;
++        int sum_target_elements = 0;
+         for( int tar=0; tar &lt; ntargets; tar++ )
+         {
+             if( !fast_exact_is_equal(target_layers_weights[tar],0) )
+@@ -1258,11 +1254,14 @@
+ 
+  */
+ 
+-void DenoisingRecurrentNet::encodeSequence(Mat sequence, Mat&amp; encoded_sequence)
++void DenoisingRecurrentNet::encodeSequence(Mat sequence, Mat&amp; encoded_seq)
+ {
+     //! Possibilities: &quot;timeframe&quot;, &quot;note_duration&quot;, &quot;note_octav_duration&quot;, &quot;generic&quot;
+     int prepend_zero_rows = input_window_size;
+ 
++    // reserve some minimum space for encoded_seq
++    encoded_seq.resize(5000, 4);
++
+     if(encoding==&quot;timeframe&quot;)
+         encode_onehot_timeframe(sequence, encoded_sequence, prepend_zero_rows);
+     else if(encoding==&quot;note_duration&quot;)
+@@ -1570,51 +1569,46 @@
+     int nseq = testset_boundaries.length();
+ 
+     seq.resize(5000,2); // contains the current sequence
+-    seq.resize(5000, 4);
++    encoded_seq.resize(5000, 4);
+ 
++
++    int pos = 0; // position in testoutputs
+     for(int i=0; i&lt;nseq; i++)
+     {
+         int start = 0;
+         if(i&gt;0)
+             start = testset_boundaries[i-1]+1;
+         int end = testset_boundaries[i];
+-        seq.resize(end-start, w);
++        int seqlen = end-start; // target_prediction_list[0].length();
++        seq.resize(seqlen, w);
+         testset-&gt;getMat(start,0,seq);
+-
+-        if(encoding==&quot;raw_masked_supervised&quot;)
+-        {
+-            splitMaskedSupervisedSequence(seq);
+-        }
+-        else
+-        {
+-            encodeSequence(seq, encoded_seq);
+-            createSupervisedSequence(encoded_seq);
+-        }
+-
+-        resize_lists();
++        encodeSequenceAndPopulateLists(seq);
+         fprop(test_costs, test_n_items);
+ 
+-        /*
+         if (testoutputs)
+         {
+-            int sum_target_layers_size = 0;
+-            for( int tar=0; tar &lt; target_layers.length(); tar++ )
++            for(int t=0; t&lt;seqlen; t++)
+             {
+-                if( !fast_exact_is_equal(target_layers_weights[tar],0) )
++                int sum_target_layers_size = 0;
++                for( int tar=0; tar &lt; target_layers.length(); tar++ )
+                 {
+-                    output.subVec(sum_target_layers_size,target_layers[tar]-&gt;size)
+-                        &lt;&lt; target_prediction_list[tar][ ith_sample_in_sequence ];
++                    if( !fast_exact_is_equal(target_layers_weights[tar],0) )
++                    {
++                        output.subVec(sum_target_layers_size,target_layers[tar]-&gt;size)
++                            &lt;&lt; target_prediction_list[tar](t);
++                    }
++                    sum_target_layers_size += target_layers[tar]-&gt;size;
+                 }
+-                sum_target_layers_size += target_layers[tar]-&gt;size;
++                testoutputs-&gt;putOrAppendRow(pos++, output);
+             }
+-            testoutputs-&gt;putOrAppendRow(i, output);
+         }
+-        */
++        else
++            pos += seqlen;
+ 
++        if (report_progress)
++            pb-&gt;update(pos);
+     }
+ 
+-        if (report_progress)
+-            pb-&gt;update(i);
+ 
+     }
+ 
+@@ -1630,11 +1624,6 @@
+     
+     if (test_stats)
+         test_stats-&gt;update(costs, weight);
+-
+-
+-    if( pb )
+-        pb-&gt;update( stage + 1 - init_stage);
+-
+ }
+ 
+ /*
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.h
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.h	2008-06-26 21:07:47 UTC (rev 9184)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.h	2008-06-26 22:23:34 UTC (rev 9185)
+@@ -152,13 +152,19 @@
+ 
+     // encodings
+ 
++    //! encodes sequence according to specified encoding option
++    void encodeSequence(Mat sequence, Mat&amp; encoded_seq);
++
+     static void encode_onehot_note_octav_duration(Mat sequence, Mat&amp; encoded_sequence, int prepend_zero_rows,
+                                                   bool use_silence=true, int octav_nbits=0, int duration_nbits=8);
+     
+-    static void encode_onehot_timeframe(Mat sequence, Mat&amp; encoded_sequence, int prepend_zero_rows, 
+-                                        bool use_silence=true);
+-    
++    static void encode_onehot_timeframe(Mat sequence, Mat&amp; encoded_sequence, 
++                                        int prepend_zero_rows, bool use_silence=true);    
+ 
++    static int duration_to_number_of_timeframes(int duration);
++
++
++
+     // input noise injection
+     void inject_zero_forcing_noise(Mat sequence, double noise_prob);
+ 
+@@ -351,6 +357,16 @@
+     //! This does the actual building.
+     void build_();
+ 
++    //! does encoding if needed and populates the list.
++    void encodeSequenceAndPopulateLists(Mat seq);
++
++    //! encodes seq, then populates: inputslist, targets_list, masks_list
++    void encodeAndCreateSupervisedSequence(Mat seq);
++
++    //! For the (backward testing) raw_masked_supervised case. Populates: input_list, targets_list, masks_list
++    void splitRawMaskedSupervisedSequence(Mat seq);
++
++
+ private:
+     //#####  Private Data Members  ############################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002632.html">[Plearn-commits] r9184 - in trunk: plearn/io plearn/ker	plearn/python plearn/var plearn/vmat plearn_learners/misc	plearn_learners/regressors
+</A></li>
+	<LI>Next message: <A HREF="002634.html">[Plearn-commits] r9186 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2633">[ date ]</a>
+              <a href="thread.html#2633">[ thread ]</a>
+              <a href="subject.html#2633">[ subject ]</a>
+              <a href="author.html#2633">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

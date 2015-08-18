@@ -1,0 +1,825 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7068 - in trunk: plearn/var	plearn_learners/generic/EXPERIMENTAL python_modules/plearn/var
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7068%20-%20in%20trunk%3A%20plearn/var%0A%09plearn_learners/generic/EXPERIMENTAL%20python_modules/plearn/var&In-Reply-To=%3C200705112215.l4BMFGZ2010781%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000516.html">
+   <LINK REL="Next"  HREF="000518.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7068 - in trunk: plearn/var	plearn_learners/generic/EXPERIMENTAL python_modules/plearn/var</H1>
+    <B>simonl at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7068%20-%20in%20trunk%3A%20plearn/var%0A%09plearn_learners/generic/EXPERIMENTAL%20python_modules/plearn/var&In-Reply-To=%3C200705112215.l4BMFGZ2010781%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7068 - in trunk: plearn/var	plearn_learners/generic/EXPERIMENTAL python_modules/plearn/var">simonl at mail.berlios.de
+       </A><BR>
+    <I>Sat May 12 00:15:16 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000516.html">[Plearn-commits] r7067 - in trunk/plearn_learners: generic online
+</A></li>
+        <LI>Next message: <A HREF="000518.html">[Plearn-commits] r7069 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#517">[ date ]</a>
+              <a href="thread.html#517">[ thread ]</a>
+              <a href="subject.html#517">[ subject ]</a>
+              <a href="author.html#517">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: simonl
+Date: 2007-05-12 00:15:15 +0200 (Sat, 12 May 2007)
+New Revision: 7068
+
+Added:
+   trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h
+Modified:
+   trunk/plearn/var/DotProductVariable.cc
+   trunk/plearn/var/SourceVariable.cc
+   trunk/plearn/var/SourceVariable.h
+   trunk/python_modules/plearn/var/Var.py
+Log:
+Initial version of DeepReconstructorNet 
+Improvements to SourceVariable to allow random initialization.
+
+
+
+Modified: trunk/plearn/var/DotProductVariable.cc
+===================================================================
+--- trunk/plearn/var/DotProductVariable.cc	2007-05-11 22:08:39 UTC (rev 7067)
++++ trunk/plearn/var/DotProductVariable.cc	2007-05-11 22:15:15 UTC (rev 7068)
+@@ -73,7 +73,9 @@
+ DotProductVariable::build_()
+ {
+     if(input1 &amp;&amp; input2 &amp;&amp; (input1-&gt;nelems() != input2-&gt;nelems()))
+-        PLERROR(&quot;IN DotProductVariable input1 and input2 must have the same number of elements&quot;);
++        PLERROR(&quot;IN DotProductVariable input1 and input2 must have the &quot;
++                &quot;same number of elements: %dx%d != %dx%d&quot;, 
++                input1-&gt;length(), input1-&gt;width(), input2-&gt;length(), input2-&gt;width());
+ }
+ 
+ void DotProductVariable::recomputeSize(int&amp; l, int&amp; w) const
+
+Modified: trunk/plearn/var/SourceVariable.cc
+===================================================================
+--- trunk/plearn/var/SourceVariable.cc	2007-05-11 22:08:39 UTC (rev 7067)
++++ trunk/plearn/var/SourceVariable.cc	2007-05-11 22:15:15 UTC (rev 7068)
+@@ -80,6 +80,18 @@
+     declareOption(ol, &quot;build_width&quot;, &amp;SourceVariable::build_width, OptionBase::buildoption, 
+                   &quot;The initial width for the variable&quot;);
+ 
++    declareOption(ol, &quot;random_type&quot;, &amp;SourceVariable::random_type, OptionBase::buildoption, 
++                  &quot;Type of random generation to use : 'F' = fill with random_a, 'U' = uniform, 'N' = normal&quot;);
++
++    declareOption(ol, &quot;random_a&quot;, &amp;SourceVariable::random_a, OptionBase::buildoption, 
++                  &quot;A first parameter for random generation&quot;);
++
++    declareOption(ol, &quot;random_b&quot;, &amp;SourceVariable::random_b, OptionBase::buildoption, 
++                  &quot;A second parameter for random generation&quot;);
++
++    declareOption(ol, &quot;random_clear_first_row&quot;, &amp;SourceVariable::random_clear_first_row, OptionBase::buildoption, 
++                  &quot;Indicates if we assign 0 to the elements of the first row when doing random generation&quot;);
++
+     inherited::declareOptions(ol);
+ }
+ 
+@@ -162,6 +174,30 @@
+     }
+ }
+ 
++
++void SourceVariable::randomInitialize(PP&lt;PRandom&gt; random_gen)
++{
++    Mat values = matValue;
++    if(random_clear_first_row)
++        values = values.subMatRows(1, values.length()-1);
++
++    switch (random_type)
++    {
++    case 'F':
++        values.fill(random_a);
++        break;
++    case 'U':
++        random_gen-&gt;fill_random_uniform(values, random_a, random_b);
++        break;
++    case 'N':
++        random_gen-&gt;fill_random_normal(values, random_a, random_b);
++        break;
++    default :
++        PLERROR(&quot;Invalid random_type in SourceVariable&quot;);
++        break;
++    }
++}
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn/var/SourceVariable.h
+===================================================================
+--- trunk/plearn/var/SourceVariable.h	2007-05-11 22:08:39 UTC (rev 7067)
++++ trunk/plearn/var/SourceVariable.h	2007-05-11 22:15:15 UTC (rev 7068)
+@@ -44,6 +44,7 @@
+ #define SourceVariable_INC
+ 
+ #include &quot;VarArray.h&quot;
++#include &lt;plearn/math/PRandom.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -57,6 +58,16 @@
+     int build_length;
+     int build_width;
+ 
++    //! Type of random generation to use: 
++    //!  'U': uniform(random_a, random_b)
++    //!  'N': normal(mean = random_a, variance = random_b)
++    char random_type;
++
++    real random_a;
++    real random_b;
++
++    bool random_clear_first_row;
++
+ private:
+     void build_();
+ public:
+@@ -67,7 +78,7 @@
+ 
+ public:
+     //!  Default constructor for persistence
+-    SourceVariable(): build_length(-1), build_width(-1) {}
++    SourceVariable(): build_length(-1), build_width(-1), random_type('F'), random_a(0.), random_b(1.), random_clear_first_row(0) {}
+     SourceVariable(int thelength, int thewidth);
+     SourceVariable(const Vec&amp; v, bool vertical=true);
+     SourceVariable(const Mat&amp; m);
+@@ -81,6 +92,9 @@
+     virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
+     PLEARN_DECLARE_OBJECT(SourceVariable);
+   
++    //! Initializes the value of this variable from the given generator,
++    //! according to options     
++    virtual void randomInitialize(PP&lt;PRandom&gt; random_gen);
+   
+     virtual void fprop();
+     virtual void bprop();
+
+Added: trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc	2007-05-11 22:08:39 UTC (rev 7067)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc	2007-05-11 22:15:15 UTC (rev 7068)
+@@ -0,0 +1,323 @@
++// -*- C++ -*-
++
++// DeepReconstructorNet.cc
++//
++// Copyright (C) 2007 Simon Lemieux, Pascal Vincent
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Simon Lemieux, Pascal Vincent
++
++/*! \file DeepReconstructorNet.cc */
++
++
++#include &quot;DeepReconstructorNet.h&quot;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++   DeepReconstructorNet,
++   &quot;ONE LINE DESCRIPTION&quot;,
++   &quot;MULTI-LINE \nHELP&quot;);
++
++DeepReconstructorNet::DeepReconstructorNet()
++/* ### Initialize all fields to their default value here */
++{
++    // ...
++
++    // ### You may (or not) want to call build_() to finish building the object
++    // ### (doing so assumes the parent classes' build_() have been called too
++    // ### in the parent classes' constructors, something that you must ensure)
++
++    // ### If this learner needs to generate random numbers, uncomment the
++    // ### line below to enable the use of the inherited PRandom object.
++    // random_gen = new PRandom();
++}
++
++void DeepReconstructorNet::declareOptions(OptionList&amp; ol)
++{
++    // ### Declare all of this object's options here.
++    // ### For the &quot;flags&quot; of each option, you should typically specify
++    // ### one of OptionBase::buildoption, OptionBase::learntoption or
++    // ### OptionBase::tuningoption. If you don't provide one of these three,
++    // ### this option will be ignored when loading values from a script.
++    // ### You can also combine flags, for example with OptionBase::nosave:
++    // ### (OptionBase::buildoption | OptionBase::nosave)
++
++    
++    declareOption(ol, &quot;schedule&quot;, &amp;DeepReconstructorNet::schedule,
++                  OptionBase::buildoption,
++                  &quot;schedule[k] conatins the number of nstages to run the optimizer for the training of the hidden layer taking layer k as input (k=0 corresponds to input layer).&quot;);
++
++    declareOption(ol, &quot;layers&quot;, &amp;DeepReconstructorNet::layers,
++                  OptionBase::buildoption,
++                  &quot;layers[0] is the input variable ; last layer is final output layer&quot;);
++
++    declareOption(ol, &quot;reconstruction_costs&quot;, &amp;DeepReconstructorNet::reconstruction_costs,
++                  OptionBase::buildoption,
++                  &quot;recontruction_costs[k] is the reconstruction cost for layer[k]&quot;);
++
++    declareOption(ol, &quot;reconstruction_optimizer&quot;, &amp;DeepReconstructorNet::reconstruction_optimizer,
++                  OptionBase::buildoption,
++                  &quot;&quot;);
++
++    declareOption(ol, &quot;target&quot;, &amp;DeepReconstructorNet::target,
++                  OptionBase::buildoption,
++                  &quot;&quot;);
++
++    declareOption(ol, &quot;supervised_cost&quot;, &amp;DeepReconstructorNet::supervised_cost,
++                  OptionBase::buildoption,
++                  &quot;&quot;);
++
++    declareOption(ol, &quot;minibatch_size&quot;, &amp;DeepReconstructorNet::minibatch_size,
++                  OptionBase::buildoption,
++                  &quot;&quot;);
++
++    declareOption(ol, &quot;supervised_optimizer&quot;, &amp;DeepReconstructorNet::supervised_optimizer,
++                  OptionBase::buildoption,
++                  &quot;&quot;);
++
++    declareOption(ol, &quot;fine_tuning_optimizer&quot;, &amp;DeepReconstructorNet::fine_tuning_optimizer,
++                  OptionBase::buildoption,
++                  &quot;&quot;);
++
++    
++    
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++void DeepReconstructorNet::build_()
++{
++    // ### This method should do the real building of the object,
++    // ### according to set 'options', in *any* situation.
++    // ### Typical situations include:
++    // ###  - Initial building of an object from a few user-specified options
++    // ###  - Building of a &quot;reloaded&quot; object: i.e. from the complete set of
++    // ###    all serialised options.
++    // ###  - Updating or &quot;re-building&quot; of an object after a few &quot;tuning&quot;
++    // ###    options have been modified.
++    // ### You should assume that the parent class' build_() has already been
++    // ### called.
++    
++    int nlayers = layers.length();
++    compute_layer.resize(nlayers-1);
++    for(int k=0; k&lt;nlayers-1; k++)
++        compute_layer[k] = Func(layers[k], layers[k+1]);
++    compute_output = Func(layers[0], layers[nlayers-1]);
++    nout = layers[nlayers-1]-&gt;size();
++}
++
++// ### Nothing to add here, simply calls build_
++void DeepReconstructorNet::build()
++{
++    inherited::build();
++    build_();
++}
++
++void DeepReconstructorNet::initializeParams(bool set_seed)
++{
++    if (set_seed &amp;&amp; seed_ != 0)
++        random_gen-&gt;manual_seed(seed_);
++
++    VarArray params = getAllParams();
++    for(int i=0; i&lt;params.length(); i++)
++        ((PP&lt;SourceVariable&gt;)params[i])-&gt;randomInitialize(random_gen);
++}
++
++VarArray DeepReconstructorNet::getAllParams()
++{
++    PLERROR(&quot;Not implemented yet&quot;);
++    return VarArray();
++}
++
++void DeepReconstructorNet::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    // ### Call deepCopyField on all &quot;pointer-like&quot; fields
++    // ### that you wish to be deepCopied rather than
++    // ### shallow-copied.
++    // ### ex:
++    // deepCopyField(trainvec, copies);
++
++    // ### Remove this line when you have fully implemented this method.
++    PLERROR(&quot;DeepReconstructorNet::makeDeepCopyFromShallowCopy not fully (correctly) implemented yet!&quot;);
++}
++
++
++int DeepReconstructorNet::outputsize() const
++{
++    // Compute and return the size of this learner's output (which typically
++    // may depend on its inputsize(), targetsize() and set options).
++
++    //TODO : retourner la bonne chose ici
++    return 0;
++}
++
++void DeepReconstructorNet::forget()
++{
++    //! (Re-)initialize the PLearner in its fresh state (that state may depend
++    //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
++    //! a fresh learner!)
++    /*!
++      A typical forget() method should do the following:
++      - call inherited::forget() to initialize its random number generator
++        with the 'seed' option
++      - initialize the learner's parameters, using this random generator
++      - stage = 0
++    */
++    inherited::forget();
++}
++
++void DeepReconstructorNet::train()
++{
++    // The role of the train method is to bring the learner up to
++    // stage==nstages, updating train_stats with training costs measured
++    // on-line in the process.
++
++    // This generic PLearner method does a number of standard stuff useful for
++    // (almost) any learner, and return 'false' if no training should take
++    // place. See PLearner.h for more details.
++    if (!initTrain())
++        return;
++
++    PPath outmatfname = expdir/&quot;outmat&quot;;
++
++    int nreconstructions = reconstruction_costs.length();
++    VMat dset = train_set;
++    for(int k=0; k&lt;nreconstructions; k++)
++    {
++        trainHiddenLayer(k, dset);
++        int width = layers[k+1].width();
++        outmat[k] = new FileVMatrix(outmatfname+tostring(k),0,width);
++        buildHiddenLayerOutputs(0, dset, outmat[k]);
++        dset = outmat[k];
++    }    
++
++    /*
++    while(stage&lt;nstages)
++    {        
++        // clear statistics of previous epoch
++        train_stats-&gt;forget();
++
++        //... train for 1 stage, and update train_stats,
++        // using train_set-&gt;getExample(input, target, weight)
++        // and train_stats-&gt;update(train_costs)
++
++        ++stage;
++        train_stats-&gt;finalize(); // finalize statistics for this epoch
++    }
++    */
++}
++
++void DeepReconstructorNet::buildHiddenLayerOutputs(int which_input_layer, VMat inputs, VMat outputs)
++{
++    int l = inputs.length();
++    Vec in;
++    Vec target;
++    real weight;
++    Func f = compute_layer[which_input_layer];
++    Vec out(f-&gt;outputsize);
++    for(int i=0; i&lt;l; i++)
++    {
++        inputs-&gt;getExample(i,in,target,weight);
++        f-&gt;fprop(in, out);
++        outputs-&gt;putOrAppendRow(i,out);
++    }
++}
++
++void DeepReconstructorNet::trainHiddenLayer(int which_input_layer, VMat inputs)
++{
++    Func f(layers[which_input_layer], reconstruction_costs[which_input_layer]);
++    Var totalcost = sumOf(inputs, f, minibatch_size);
++    VarArray params = totalcost-&gt;parents();
++    reconstruction_optimizer-&gt;setToOptimize(params, totalcost);
++    reconstruction_optimizer-&gt;reset();
++    VecStatsCollector st;
++    reconstruction_optimizer-&gt;nstages = schedule[which_input_layer];
++    reconstruction_optimizer-&gt;optimizeN(st);
++}
++
++
++
++void DeepReconstructorNet::computeOutput(const Vec&amp; input, Vec&amp; output) const
++{
++    output.resize(nout);
++    compute_output-&gt;fprop(input, output);
++}
++
++void DeepReconstructorNet::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                           const Vec&amp; target, Vec&amp; costs) const
++{
++// Compute the costs from *already* computed output.
++// ...
++}
++
++TVec&lt;string&gt; DeepReconstructorNet::getTestCostNames() const
++{
++    // Return the names of the costs computed by computeCostsFromOutputs
++    // (these may or may not be exactly the same as what's returned by
++    // getTrainCostNames).
++    // ...
++    
++    //TODO : retourner la bonne chose ici !
++    TVec&lt;string&gt; todo(0);
++    return todo;
++}
++
++TVec&lt;string&gt; DeepReconstructorNet::getTrainCostNames() const
++{
++    // Return the names of the objective costs that the train method computes
++    // and for which it updates the VecStatsCollector train_stats
++    // (these may or may not be exactly the same as what's returned by
++    // getTestCostNames).
++    // ...
++
++    //TODO : retourner la bonne chose ici !
++    TVec&lt;string&gt; todo(0);
++    return todo;
++}
++
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h	2007-05-11 22:08:39 UTC (rev 7067)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h	2007-05-11 22:15:15 UTC (rev 7068)
+@@ -0,0 +1,240 @@
++// -*- C++ -*-
++
++// DeepReconstructorNet.h
++//
++// Copyright (C) 2007 Simon Lemieux, Pascal Vincent
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Simon Lemieux, Pascal Vincent
++
++/*! \file DeepReconstructorNet.h */
++
++
++#ifndef DeepReconstructorNet_INC
++#define DeepReconstructorNet_INC
++
++#include &lt;plearn_learners/generic/PLearner.h&gt;
++#include &lt;plearn/var/Variable.h&gt;
++#include &lt;plearn/opt/Optimizer.h&gt;
++#include &lt;plearn/var/SumOfVariable.h&gt;
++#include &lt;plearn/vmat/FileVMatrix.h&gt;
++#include &lt;plearn/var/SourceVariable.h&gt;
++
++namespace PLearn {
++
++/**
++ * The first sentence should be a BRIEF DESCRIPTION of what the class does.
++ * Place the rest of the class programmer documentation here.  Doxygen supports
++ * Javadoc-style comments.  See <A HREF="http://www.doxygen.org/manual.html">http://www.doxygen.org/manual.html</A>
++ *
++ * @todo Write class to-do's here if there are any.
++ *
++ * @deprecated Write deprecated stuff here if there is any.  Indicate what else
++ * should be used instead.
++ */
++class DeepReconstructorNet : public PLearner
++{
++    typedef PLearner inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! ### declare public option fields (such as build options) here
++    //! Start your comments with Doxygen-compatible comments such as //!
++    
++
++    //! schedule[k] conatins the number of nstages to run the optimizer for the
++    //! training of the hidden layer taking layer k as input (k=0 corresponds to
++    //! input layer).
++
++    TVec&lt;int&gt; schedule;
++  
++    // layers[0] is the input variable
++    // last layer is final output layer
++    TVec&lt;Var&gt; layers;
++
++    // reconstruction_costs[k] is the reconstruction cost for layers[k]
++    TVec&lt;Var&gt; reconstruction_costs;
++
++    PP&lt;Optimizer&gt; reconstruction_optimizer;
++
++
++    Var target;
++    Var supervised_cost;
++
++    int minibatch_size;
++
++
++    PP&lt;Optimizer&gt; supervised_optimizer;
++
++    PP&lt;Optimizer&gt; fine_tuning_optimizer;
++
++protected:
++    // protected members (not options)
++
++    TVec&lt;Func&gt; compute_layer;
++    Func compute_output;
++    TVec&lt;VMat&gt; outmat;
++    
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    // ### Make sure the implementation in the .cc
++    // ### initializes all fields to reasonable default values.
++    DeepReconstructorNet();
++
++
++    //#####  PLearner Member Functions  #######################################
++
++    //! Returns the size of this learner's output, (which typically
++    //! may depend on its inputsize(), targetsize() and set options).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual int outputsize() const;
++
++    //! (Re-)initializes the PLearner in its fresh state (that state may depend
++    //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
++    //! a fresh learner!).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void forget();
++
++    //! The role of the train method is to bring the learner up to
++    //! stage==nstages, updating the train_stats collector with training costs
++    //! measured on-line in the process.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void train();
++
++    //! Computes the output from the input.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
++
++    //! Computes the costs from already computed output.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                         const Vec&amp; target, Vec&amp; costs) const;
++
++    //! Returns the names of the costs computed by computeCostsFromOutpus (and
++    //! thus the test method).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual TVec&lt;std::string&gt; getTestCostNames() const;
++
++    //! Returns the names of the objective costs that the train method computes
++    //! and  for which it updates the VecStatsCollector train_stats.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual TVec&lt;std::string&gt; getTrainCostNames() const;
++
++
++    virtual void initializeParams(bool set_seed);
++    virtual VarArray getAllParams();
++
++    
++
++
++    // *** SUBCLASS WRITING: ***
++    // While in general not necessary, in case of particular needs
++    // (efficiency concerns for ex) you may also want to overload
++    // some of the following methods:
++    // virtual void computeOutputAndCosts(const Vec&amp; input, const Vec&amp; target,
++    //                                    Vec&amp; output, Vec&amp; costs) const;
++    // virtual void computeCostsOnly(const Vec&amp; input, const Vec&amp; target,
++    //                               Vec&amp; costs) const;
++    // virtual void test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
++    //                   VMat testoutputs=0, VMat testcosts=0) const;
++    // virtual int nTestCosts() const;
++    // virtual int nTrainCosts() const;
++    // virtual void resetInternalState();
++    // virtual bool isStatefulLearner() const;
++
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    // ### If your class is not instantiatable (it has pure virtual methods)
++    // ### you should replace this by PLEARN_DECLARE_ABSTRACT_OBJECT_METHODS
++    PLEARN_DECLARE_OBJECT(DeepReconstructorNet);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++    //#####  Protected Options  ###############################################
++
++    // ### Declare protected option fields (such as learned parameters) here
++    // ...
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    // (PLEASE IMPLEMENT IN .cc)
++    static void declareOptions(OptionList&amp; ol);
++
++    void trainHiddenLayer(int which_input_layer, VMat inputs);
++    void buildHiddenLayerOutputs(int which_input_layer, VMat inputs, VMat outputs);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    // (PLEASE IMPLEMENT IN .cc)
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++    int nout;
++
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(DeepReconstructorNet);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Modified: trunk/python_modules/plearn/var/Var.py
+===================================================================
+--- trunk/python_modules/plearn/var/Var.py	2007-05-11 22:08:39 UTC (rev 7067)
++++ trunk/python_modules/plearn/var/Var.py	2007-05-11 22:15:15 UTC (rev 7068)
+@@ -35,10 +35,14 @@
+ 
+ class Var:
+ 
+-    def __init__(self, l, w=1):
++    def __init__(self, l, w=1, random_type='F', random_a=0., random_b=1., random_clear_first_row=False):
+         if isinstance(l,int):
+             self.v = pl.SourceVariable(build_length=l,
+-                                       build_width=w)
++                                       build_width=w,
++                                       random_type=PLChar(random_type),
++                                       random_a=random_a,
++                                       random_b=random_b,
++                                       random_clear_first_row=random_clear_first_row)
+         else: # assume parameter l is a pl. plvar
+             self.v = l
+ 
+@@ -59,7 +63,7 @@
+         # return Var(pl.MatrixProductVariable(self.v, W)
+ 
+     def doubleProduct(self, W, M):
+-        return Var(pl.DoubleProductVariable(x=self.v, w=W, m=M))
++        return Var(pl.DoubleProductVariable(varray=[self.v, W, M]))
+ 
+     def dot(self, input):
+         return Var(pl.DotProductVariable(input1=self, input2=input))
+@@ -74,7 +78,7 @@
+         return self.multiMax(igs, 'L')
+ 
+     def transposeDoubleProduct(self, W, M):
+-        return Var(pl.TranposedDoubleProductVariable(w=W, m=M, h=self.v))
++        return Var(pl.TransposedDoubleProductVariable(varray=[W, M, self.v]))
+ 
+     def __neg__(self):
+         return Var(pl.NegateElementsVariable(input=self.v))
+@@ -113,8 +117,8 @@
+             return hidden, cost, (W, Wr)
+ 
+     else: # use double product
+-        M = Var(ing*igs, ong)
+-        W = Var(ing*igs, ogs)
++        M = Var(ing*igs, ong, 'U', -1/ing/igs, 1/ing/igs, False)
++        W = Var(ing*igs, ogs, 'U', -1/ing/igs, 1/ing/igs, False)
+         hidden = input.doubleProduct(W,M).multiSoftMax(ogs)
+         if tighed:
+             cost = -hidden.transposeDoubleProduct(W,M).multiLogSoftMax(igs).dot(input)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000516.html">[Plearn-commits] r7067 - in trunk/plearn_learners: generic online
+</A></li>
+	<LI>Next message: <A HREF="000518.html">[Plearn-commits] r7069 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#517">[ date ]</a>
+              <a href="thread.html#517">[ thread ]</a>
+              <a href="subject.html#517">[ subject ]</a>
+              <a href="author.html#517">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

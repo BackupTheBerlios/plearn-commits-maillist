@@ -1,0 +1,184 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8927 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8927%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200805022052.m42KqH4Y012298%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002374.html">
+   <LINK REL="Next"  HREF="002376.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8927 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8927%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200805022052.m42KqH4Y012298%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8927 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Fri May  2 22:52:17 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002374.html">[Plearn-commits] r8926 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="002376.html">[Plearn-commits] r8928 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2375">[ date ]</a>
+              <a href="thread.html#2375">[ thread ]</a>
+              <a href="subject.html#2375">[ subject ]</a>
+              <a href="author.html#2375">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-05-02 22:52:16 +0200 (Fri, 02 May 2008)
+New Revision: 8927
+
+Modified:
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+Log:
+- Corrected bug with partial_costs stats
+- Added an option to only mask input layer when doing unsupervised fine-tuning
+
+
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2008-05-01 22:20:28 UTC (rev 8926)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2008-05-02 20:52:16 UTC (rev 8927)
+@@ -32,7 +32,7 @@
+ // This file is part of the PLearn library. For more information on the PLearn
+ // library, go to the PLearn Web site at www.plearn.org
+ 
+-// Authors: Pascal Lamblin
++// Authors: Hugo Larochelle
+ 
+ /*! \file StackedAutoassociatorsNet.cc */
+ 
+@@ -66,6 +66,7 @@
+     unsupervised_nstages( 0 ),
+     unsupervised_fine_tuning_learning_rate( 0. ),
+     unsupervised_fine_tuning_decrease_ct( 0. ),
++    mask_input_layer_only_in_unsupervised_fine_tuning( false ),
+     n_layers( 0 ),
+     unsupervised_stage( 0 ),
+     currently_trained_layer( 0 )
+@@ -231,6 +232,12 @@
+                   &quot;The decrease constant of the learning rate used during\n&quot;
+                   &quot;unsupervised fine tuning gradient descent.\n&quot;);
+ 
++    declareOption(ol, &quot;mask_input_layer_only_in_unsupervised_fine_tuning&quot;, 
++                  &amp;StackedAutoassociatorsNet::mask_input_layer_only_in_unsupervised_fine_tuning,
++                  OptionBase::buildoption,
++                  &quot;Indication that only the input layer should be masked\n&quot;
++                  &quot;during unsupervised fine-tuning.\n&quot;);
++
+     declareOption(ol, &quot;greedy_stages&quot;, 
+                   &amp;StackedAutoassociatorsNet::greedy_stages,
+                   OptionBase::learntoption,
+@@ -597,7 +604,7 @@
+                         &quot;partial_costs[%i] should have an input_size of %d.\n&quot;, 
+                         i,layers[i+1]-&gt;size);
+             if(i==0)
+-                partial_costs_positions[i] = n_layers;
++                partial_costs_positions[i] = n_layers-1;
+             else
+                 partial_costs_positions[i] = partial_costs_positions[i-1]
+                     + partial_costs[i-1]-&gt;name().length();
+@@ -1086,7 +1093,7 @@
+                                              expectation_gradients[ index + 1 ]
+                                              );
+ 
+-        train_costs.subVec(partial_costs_positions[index],
++        train_costs.subVec(partial_costs_positions[index]+1,
+                            partial_cost_value.length()) &lt;&lt; partial_cost_value;
+ 
+         if( !fast_exact_is_equal( partial_costs_weights.length(), 0 ) )
+@@ -1311,8 +1318,9 @@
+         for( int i=0 ; i&lt;n_layers-1; i++ )
+         {
+             masked_autoassociator_expectations[i] &lt;&lt; expectations[i];
+-            for( int j=0 ; j &lt; round(fraction_of_masked_inputs*layers[i]-&gt;size) ; j++)
+-                masked_autoassociator_expectations[i][ autoassociator_expectation_indices[i][j] ] = 0; 
++            if( !(mask_input_layer_only_in_unsupervised_fine_tuning &amp;&amp; i &gt; 0) )
++                for( int j=0 ; j &lt; round(fraction_of_masked_inputs*layers[i]-&gt;size) ; j++)
++                    masked_autoassociator_expectations[i][ autoassociator_expectation_indices[i][j] ] = 0; 
+             
+             connections[i]-&gt;fprop( masked_autoassociator_expectations[i], 
+                                    activations[i+1] );
+@@ -1524,7 +1532,7 @@
+                     expectation_gradients[ i + 1 ]
+                     );
+                 
+-                train_costs.subVec(partial_costs_positions[i],
++                train_costs.subVec(partial_costs_positions[i]+1,
+                                    partial_cost_value.length()) 
+                     &lt;&lt; partial_cost_value;
+                 
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2008-05-01 22:20:28 UTC (rev 8926)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2008-05-02 20:52:16 UTC (rev 8927)
+@@ -32,7 +32,7 @@
+ // This file is part of the PLearn library. For more information on the PLearn
+ // library, go to the PLearn Web site at www.plearn.org
+ 
+-// Authors: Pascal Lamblin
++// Authors: Hugo Larochelle
+ 
+ /*! \file StackedAutoassociatorsNet.h */
+ 
+@@ -56,10 +56,6 @@
+  * Neural net, trained layer-wise in a greedy fashion using autoassociators.
+  * It is highly inspired by the DeepBeliefNet class, and can use use the
+  * same RBMLayer and RBMConnection components.
+- *
+- * TODO: - code globally online version (can't use hyperlearner, 
+- *         because of copies in earlystopping oracle and testing after change...)
+- *       - make sure fpropNLL only uses the expectation field in RBMLayer objects
+  */
+ class StackedAutoassociatorsNet : public PLearner
+ {
+@@ -160,6 +156,10 @@
+     //! unsupervised fine tuning gradient descent
+     real unsupervised_fine_tuning_decrease_ct;
+ 
++    //! Indication that only the input layer should be masked 
++    //! during unsupervised fine-tuning
++    bool mask_input_layer_only_in_unsupervised_fine_tuning;
++
+     //#####  Public Learnt Options  ###########################################
+ 
+     //! Number of layers
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002374.html">[Plearn-commits] r8926 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="002376.html">[Plearn-commits] r8928 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2375">[ date ]</a>
+              <a href="thread.html#2375">[ thread ]</a>
+              <a href="subject.html#2375">[ subject ]</a>
+              <a href="author.html#2375">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

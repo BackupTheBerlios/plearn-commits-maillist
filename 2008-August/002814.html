@@ -1,0 +1,219 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9381 - trunk/plearn_learners/distributions
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9381%20-%20trunk/plearn_learners/distributions&In-Reply-To=%3C200808160318.m7G3IGPQ014988%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002815.html">
+   <LINK REL="Next"  HREF="002822.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9381 - trunk/plearn_learners/distributions</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9381%20-%20trunk/plearn_learners/distributions&In-Reply-To=%3C200808160318.m7G3IGPQ014988%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9381 - trunk/plearn_learners/distributions">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Sat Aug 16 05:18:16 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002815.html">[Plearn-commits] r9380 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="002822.html">[Plearn-commits] r9382 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2814">[ date ]</a>
+              <a href="thread.html#2814">[ thread ]</a>
+              <a href="subject.html#2814">[ subject ]</a>
+              <a href="author.html#2814">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-08-16 05:18:16 +0200 (Sat, 16 Aug 2008)
+New Revision: 9381
+
+Modified:
+   trunk/plearn_learners/distributions/RBMDistribution.cc
+   trunk/plearn_learners/distributions/RBMDistribution.h
+Log:
+Added options to initialize Gibbs chain from sample, and to compute unnormalized densities (ie energies)
+
+Modified: trunk/plearn_learners/distributions/RBMDistribution.cc
+===================================================================
+--- trunk/plearn_learners/distributions/RBMDistribution.cc	2008-08-16 03:16:40 UTC (rev 9380)
++++ trunk/plearn_learners/distributions/RBMDistribution.cc	2008-08-16 03:18:16 UTC (rev 9381)
+@@ -52,7 +52,8 @@
+ // RBMDistribution //
+ /////////////////////
+ RBMDistribution::RBMDistribution():
+-    n_gibbs_chains(-1)
++    n_gibbs_chains(-1),
++    unnormalized_density(false)
+ {}
+ 
+ ////////////////////
+@@ -81,6 +82,20 @@
+         &quot;absolute number of chains that are run simultaneously. Each chain\n&quot;
+         &quot;will sample about N/n_chains samples, so as to obtain N samples.&quot;);
+ 
++    declareOption(ol, &quot;unnormalized_density&quot;,
++                  &amp;RBMDistribution::unnormalized_density,
++                  OptionBase::buildoption,
++        &quot;If set to True, then the density will not be normalized (so the\n&quot;
++        &quot;partition function does not need to be computed). This means the\n&quot;
++        &quot;value returned by the 'log_density' method will instead be the\n&quot;
++        &quot;negative free energy of the visible input.&quot;);
++
++    declareOption(ol, &quot;sample_data&quot;,
++                  &amp;RBMDistribution::sample_data,
++                  OptionBase::buildoption,
++        &quot;If provided, this data will be used to initialize the Gibbs\n&quot;
++        &quot;chains when generating samples.&quot;);
++ 
+     // Now call the parent class' declareOptions().
+     inherited::declareOptions(ol);
+ }
+@@ -140,9 +155,19 @@
+ //////////////
+ void RBMDistribution::generate(Vec&amp; y) const
+ {
+-    work1.resize(1, 0);
++    work1.resize(0, 0);
+     ports_val.fill(NULL);
+     ports_val[rbm-&gt;getPortIndex(&quot;visible_sample&quot;)] = &amp;work1;
++    if (sample_data) {
++        // Pick a random sample to initialize the Gibbs chain.
++        int init_i =
++            random_gen-&gt;uniform_multinomial_sample(sample_data-&gt;length());
++        real dummy_weight;
++        work3.resize(1, sample_data-&gt;inputsize());
++        Vec w3 = work3.toVec();
++        sample_data-&gt;getExample(init_i, w3, workv1, dummy_weight);
++        ports_val[rbm-&gt;getPortIndex(&quot;visible&quot;)] = &amp;work2;
++    }
+     rbm-&gt;fprop(ports_val);
+     y.resize(work1.width());
+     y &lt;&lt; work1(0);
+@@ -166,17 +191,41 @@
+     if (n % n_chains &gt; 0)
+         n_gibbs_samples += 1;
+     work2.resize(n_chains * n_gibbs_samples, Y.width());
+-    PP&lt;ProgressBar&gt; pb = verbosity &amp;&amp; n_gibbs_samples &gt; 10
+-        ? new ProgressBar(&quot;Gibbs sampling&quot;, n_gibbs_samples)
++    PP&lt;ProgressBar&gt; pb = verbosity &amp;&amp; work2.length() &gt; 10
++        ? new ProgressBar(&quot;Gibbs sampling&quot;, work2.length())
+         : NULL;
+-    for (int i = 0; i &lt; n_gibbs_samples; i++) {
+-        work1.resize(n_chains, 0);
++    int idx = 0;
++    for (int j = 0; j &lt; n_chains; j++) {
+         ports_val.fill(NULL);
+-        ports_val[rbm-&gt;getPortIndex(&quot;visible_sample&quot;)] = &amp;work1;
+-        rbm-&gt;fprop(ports_val);
+-        work2.subMatRows(i * n_chains, n_chains) &lt;&lt; work1;
+-        if (pb)
+-            pb-&gt;updateone();
++        if (sample_data) {
++            // Pick a sample to initialize the Gibbs chain.
++            int init_i;
++            if (n_chains == sample_data-&gt;length())
++                // We use each sample once and only once.
++                init_i = j;
++            else
++                // Pick the sample randomly.
++                init_i = random_gen-&gt;uniform_multinomial_sample(sample_data-&gt;length());
++            real dummy_weight;
++            work3.resize(1, sample_data-&gt;inputsize());
++            Vec w3 = work3.toVec();
++            sample_data-&gt;getExample(init_i, w3, workv1, dummy_weight);
++            ports_val[rbm-&gt;getPortIndex(&quot;visible&quot;)] = &amp;work3;
++        }
++        // Crash if not in the specific case where we have sample data and we
++        // compute only 1 sample in each chain. This is because otherwise I
++        // (Olivier D.) am not sure the chain is properly (i) restarted for
++        // each new chain, and (ii) kept intact when continuing the same chain.
++        PLCHECK(sample_data &amp;&amp; n_gibbs_samples == 1);
++        for (int i = 0; i &lt; n_gibbs_samples; i++) {
++            work1.resize(0, 0);
++            ports_val[rbm-&gt;getPortIndex(&quot;visible_sample&quot;)] = &amp;work1;
++            rbm-&gt;fprop(ports_val);
++            work2(idx) &lt;&lt; work1;
++            idx++;
++            if (pb)
++                pb-&gt;update(idx);
++        }
+     }
+     if (n_gibbs_samples &gt; 1)
+         // We shuffle rows to add more &quot;randomness&quot; since consecutive samples
+@@ -194,7 +243,10 @@
+     work1.resize(1, 0);
+     work2.resize(1, y.length());
+     work2 &lt;&lt; y;
+-    ports_val[rbm-&gt;getPortIndex(&quot;neg_log_likelihood&quot;)] = &amp;work1;
++    if (unnormalized_density)
++        ports_val[rbm-&gt;getPortIndex(&quot;energy&quot;)] = &amp;work1;
++    else
++        ports_val[rbm-&gt;getPortIndex(&quot;neg_log_likelihood&quot;)] = &amp;work1;
+     ports_val[rbm-&gt;getPortIndex(&quot;visible&quot;)] = &amp;work2;
+     rbm-&gt;fprop(ports_val);
+     return -work1(0, 0);
+
+Modified: trunk/plearn_learners/distributions/RBMDistribution.h
+===================================================================
+--- trunk/plearn_learners/distributions/RBMDistribution.h	2008-08-16 03:16:40 UTC (rev 9380)
++++ trunk/plearn_learners/distributions/RBMDistribution.h	2008-08-16 03:18:16 UTC (rev 9381)
+@@ -66,6 +66,8 @@
+     PP&lt;RBMModule&gt; rbm;
+ 
+     real n_gibbs_chains;
++    VMat sample_data;
++    bool unnormalized_density;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+@@ -151,8 +153,11 @@
+     TVec&lt;Mat*&gt; ports_val;
+ 
+     //! Temporary storage.
+-    mutable Mat work1, work2;
+-    
++    mutable Mat work1, work2, work3;
++
++    //! Temporary storage.
++    mutable Vec workv1;
++
+     //#####  Protected Options  ###############################################
+ 
+     // ### Declare protected option fields (such as learned parameters) here
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002815.html">[Plearn-commits] r9380 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="002822.html">[Plearn-commits] r9382 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2814">[ date ]</a>
+              <a href="thread.html#2814">[ thread ]</a>
+              <a href="subject.html#2814">[ subject ]</a>
+              <a href="author.html#2814">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

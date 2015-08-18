@@ -1,0 +1,133 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7031 - trunk/plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7031%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200705081506.l48F6dHs026372%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000479.html">
+   <LINK REL="Next"  HREF="000481.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7031 - trunk/plearn_learners/regressors</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7031%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200705081506.l48F6dHs026372%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7031 - trunk/plearn_learners/regressors">chapados at mail.berlios.de
+       </A><BR>
+    <I>Tue May  8 17:06:39 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000479.html">[Plearn-commits] r7030 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000481.html">[Plearn-commits] r7032 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#480">[ date ]</a>
+              <a href="thread.html#480">[ thread ]</a>
+              <a href="subject.html#480">[ subject ]</a>
+              <a href="author.html#480">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2007-05-08 17:06:39 +0200 (Tue, 08 May 2007)
+New Revision: 7031
+
+Modified:
+   trunk/plearn_learners/regressors/GaussianProcessRegressor.cc
+   trunk/plearn_learners/regressors/GaussianProcessRegressor.h
+Log:
+Better handling of missing values at test-time
+
+Modified: trunk/plearn_learners/regressors/GaussianProcessRegressor.cc
+===================================================================
+--- trunk/plearn_learners/regressors/GaussianProcessRegressor.cc	2007-05-08 13:50:13 UTC (rev 7030)
++++ trunk/plearn_learners/regressors/GaussianProcessRegressor.cc	2007-05-08 15:06:39 UTC (rev 7031)
+@@ -393,6 +393,12 @@
+ void GaussianProcessRegressor::computeOutputAux(
+     const Vec&amp; input, Vec&amp; output, Vec&amp; kernel_evaluations) const
+ {
++    if (input.hasMissing()) {
++        output.fill(MISSING_VALUE);
++        kernel_evaluations.fill(MISSING_VALUE);
++        return;
++    }
++    
+     m_kernel-&gt;evaluate_all_i_x(input, kernel_evaluations);
+ 
+     // Finally compute k(x,x_i) * (M + \lambda I)^-1 y
+@@ -501,17 +507,26 @@
+     // Start by computing the matrix of kernel evaluations between the train
+     // and test outputs, and compute the output
+     m_gram_traintest_inputs.resize(N, T);
++    bool has_missings = false;
+     for (int i=0 ; i&lt;N ; ++i) {
+         Vec cur_traintest_kereval = m_gram_traintest_inputs(i);
+         Vec cur_output = outputs(i);
+         computeOutputAux(inputs(i), cur_output, cur_traintest_kereval);
++        has_missings = has_missings || inputs(i).hasMissing();
+     }
+ 
++    // If any missings found in the inputs, don't bother with with computing a
++    // covariance matrix
++    if (has_missings) {
++        covmat.fill(MISSING_VALUE);
++        return;
++    }
++
+     // Next compute the kernel evaluations between the test inputs; more or
+     // less lifted from Kernel.cc ==&gt; must see with Olivier how to better
+     // factor this code
+     Mat&amp; K = covmat;
+-    K.resize(N,N);
++    PLASSERT( K.width() == N &amp;&amp; K.length() == N );
+     const int mod = K.mod();
+     real Kij;
+     real* Ki;
+
+Modified: trunk/plearn_learners/regressors/GaussianProcessRegressor.h
+===================================================================
+--- trunk/plearn_learners/regressors/GaussianProcessRegressor.h	2007-05-08 13:50:13 UTC (rev 7030)
++++ trunk/plearn_learners/regressors/GaussianProcessRegressor.h	2007-05-08 15:06:39 UTC (rev 7031)
+@@ -220,7 +220,9 @@
+                                      real probability,
+                                      TVec&lt; pair&lt;real,real&gt; &gt;&amp; intervals) const;
+ 
+-    /// Compute the posterior mean and covariance matrix of a set of inputs
++    /// Compute the posterior mean and covariance matrix of a set of inputs.
++    /// Note that if any of the inputs contains a missing value (NaN), then
++    /// the whole covariance matrix is NaN (in the current implementation).
+     virtual void computeOutputCovMat(const Mat&amp; inputs, Mat&amp; outputs,
+                                      TVec&lt;Mat&gt;&amp; covariance_matrices) const;
+     
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000479.html">[Plearn-commits] r7030 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000481.html">[Plearn-commits] r7032 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#480">[ date ]</a>
+              <a href="thread.html#480">[ thread ]</a>
+              <a href="subject.html#480">[ subject ]</a>
+              <a href="author.html#480">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

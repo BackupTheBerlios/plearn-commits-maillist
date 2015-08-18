@@ -1,0 +1,169 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8002 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8002%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708190304.l7J34g0S020467%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001449.html">
+   <LINK REL="Next"  HREF="001451.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8002 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8002%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708190304.l7J34g0S020467%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8002 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Sun Aug 19 05:04:42 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001449.html">[Plearn-commits] r8001 - trunk/python_modules/plearn/pytest
+</A></li>
+        <LI>Next message: <A HREF="001451.html">[Plearn-commits] r8003 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1450">[ date ]</a>
+              <a href="thread.html#1450">[ thread ]</a>
+              <a href="subject.html#1450">[ subject ]</a>
+              <a href="author.html#1450">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-08-19 05:04:41 +0200 (Sun, 19 Aug 2007)
+New Revision: 8002
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+Log:
+Added the bprop part of the downward fprop (hidden--&gt;visible). Untested yet.
+
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-08-17 20:28:04 UTC (rev 8001)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-08-19 03:04:41 UTC (rev 8002)
+@@ -297,7 +297,7 @@
+     addPortName(&quot;hidden_activations.state&quot;);
+     addPortName(&quot;visible_sample&quot;);
+     addPortName(&quot;visible_expectation&quot;);
+-    addPortName(&quot;visible_activation&quot;);
++    addPortName(&quot;visible_activation.state&quot;);
+     addPortName(&quot;hidden_sample&quot;);
+     addPortName(&quot;energy&quot;);
+     addPortName(&quot;hidden_bias&quot;);
+@@ -330,7 +330,7 @@
+         port_sizes(getPortIndex(&quot;visible&quot;), 1) = visible_layer-&gt;size;
+         port_sizes(getPortIndex(&quot;visible_sample&quot;), 1) = visible_layer-&gt;size;
+         port_sizes(getPortIndex(&quot;visible_expectation&quot;), 1) = visible_layer-&gt;size;
+-        port_sizes(getPortIndex(&quot;visible_activation&quot;), 1) = visible_layer-&gt;size;
++        port_sizes(getPortIndex(&quot;visible_activation.state&quot;), 1) = visible_layer-&gt;size;
+     }
+     if (hidden_layer) {
+         port_sizes(getPortIndex(&quot;hidden.state&quot;), 1) = hidden_layer-&gt;size;
+@@ -692,7 +692,7 @@
+     bool visible_sample_is_output = visible_sample &amp;&amp; visible_sample-&gt;isEmpty();
+     Mat* visible_expectation = ports_value[getPortIndex(&quot;visible_expectation&quot;)];
+     bool visible_expectation_is_output = visible_expectation &amp;&amp; visible_expectation-&gt;isEmpty();
+-    Mat* visible_activation = ports_value[getPortIndex(&quot;visible_activation&quot;)];
++    Mat* visible_activation = ports_value[getPortIndex(&quot;visible_activation.state&quot;)];
+     bool visible_activation_is_output = visible_activation &amp;&amp; visible_activation-&gt;isEmpty();
+     Mat* hidden_sample = ports_value[getPortIndex(&quot;hidden_sample&quot;)];
+     bool hidden_sample_is_output = hidden_sample &amp;&amp; hidden_sample-&gt;isEmpty();
+@@ -1153,6 +1153,8 @@
+     // BUT IS ALWAYS EXPECTED BECAUSE IT IS A STATE (!@#$%!!!)
+     if (hidden_act &amp;&amp; hidden_act-&gt;isEmpty())
+         hidden_act-&gt;resize(1,1);
++    if (visible_activation &amp;&amp; visible_activation-&gt;isEmpty())
++        visible_activation-&gt;resize(1,1);
+     if (hidden &amp;&amp; hidden-&gt;isEmpty())
+         hidden-&gt;resize(1,1);
+     if (visible_reconstruction &amp;&amp; visible_reconstruction-&gt;isEmpty())
+@@ -1232,11 +1234,12 @@
+ {
+     PLASSERT( ports_value.length() == nPorts() );
+     PLASSERT( ports_gradient.length() == nPorts() );
++    Mat* visible = ports_value[getPortIndex(&quot;visible&quot;)];
+     Mat* visible_grad = ports_gradient[getPortIndex(&quot;visible&quot;)];
+     Mat* hidden_grad = ports_gradient[getPortIndex(&quot;hidden.state&quot;)];
+-    Mat* visible = ports_value[getPortIndex(&quot;visible&quot;)];
+     Mat* hidden = ports_value[getPortIndex(&quot;hidden.state&quot;)];
+     hidden_act = ports_value[getPortIndex(&quot;hidden_activations.state&quot;)];
++    Mat* visible_activations = ports_value[getPortIndex(&quot;visible_activations.state&quot;)];
+     Mat* reconstruction_error_grad = 0;
+     Mat* hidden_bias_grad = ports_gradient[getPortIndex(&quot;hidden_bias&quot;)];
+     weights = ports_value[getPortIndex(&quot;weights&quot;)];
+@@ -1271,10 +1274,12 @@
+                   &quot; the corresponding matrix should have 0 length&quot; );
+ 
+     bool compute_visible_grad = visible_grad &amp;&amp; visible_grad-&gt;isEmpty();
++    bool compute_hidden_grad = hidden_grad &amp;&amp; hidden_grad-&gt;isEmpty();
+     bool compute_weights_grad = weights_grad &amp;&amp; weights_grad-&gt;isEmpty();
+ 
+     int mbs = (visible &amp;&amp; !visible-&gt;isEmpty()) ? visible-&gt;length() : -1;
+ 
++    // BPROP of UPWARD FPROP
+     if (hidden_grad &amp;&amp; !hidden_grad-&gt;isEmpty())
+     {
+         // Note: the assert below is for behavior compatibility with previous
+@@ -1351,6 +1356,29 @@
+         partition_function_is_stale = true;
+     }
+ 
++    // BPROP of DOWNWARD FPROP
++    if (compute_hidden_grad &amp;&amp; visible_grad &amp;&amp; !compute_visible_grad)
++    {
++        PLASSERT(visible &amp;&amp; !visible-&gt;isEmpty());
++        PLASSERT(visible_activations &amp;&amp; !visible_activations-&gt;isEmpty());
++        PLASSERT(hidden &amp;&amp; !hidden-&gt;isEmpty());
++        setAllLearningRates(grad_learning_rate);
++        visible_layer-&gt;bpropUpdate(*visible_activations,
++                                   *visible, visible_act_grad, *visible_grad, 
++                                   false);
++        
++        PLASSERT_MSG(!visible_bias_grad,&quot;back-prop into visible bias  not implemented for downward fprop&quot;);
++        PLASSERT_MSG(!weights_grad,&quot;back-prop into weights  not implemented for downward fprop&quot;);
++        hidden_grad-&gt;resize(mbs,hidden_layer-&gt;size);
++        TVec&lt;Mat*&gt; ports_value(2);
++        TVec&lt;Mat*&gt; ports_gradient(2);
++        ports_value[0] = visible_activations;
++        ports_value[1] = hidden;
++        ports_gradient[0] = &amp;visible_act_grad;
++        ports_gradient[1] = hidden_grad;
++        connection-&gt;bpropAccUpdate(ports_value,ports_gradient);
++    }
++
+     if (cd_learning_rate &gt; 0 &amp;&amp; minimize_log_likelihood) {
+         PLASSERT( visible &amp;&amp; !visible-&gt;isEmpty() );
+         PLASSERT( hidden &amp;&amp; !hidden-&gt;isEmpty() );
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001449.html">[Plearn-commits] r8001 - trunk/python_modules/plearn/pytest
+</A></li>
+	<LI>Next message: <A HREF="001451.html">[Plearn-commits] r8003 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1450">[ date ]</a>
+              <a href="thread.html#1450">[ thread ]</a>
+              <a href="subject.html#1450">[ subject ]</a>
+              <a href="author.html#1450">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

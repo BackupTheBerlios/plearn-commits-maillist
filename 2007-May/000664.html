@@ -1,0 +1,200 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7215 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7215%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705212024.l4LKOXH1030910%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000663.html">
+   <LINK REL="Next"  HREF="000665.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7215 - trunk/plearn_learners/online</H1>
+    <B>dumitruerhan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7215%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705212024.l4LKOXH1030910%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7215 - trunk/plearn_learners/online">dumitruerhan at mail.berlios.de
+       </A><BR>
+    <I>Mon May 21 22:24:33 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000663.html">[Plearn-commits] r7214 - in trunk: commands/PLearnCommands	plearn/python python_modules/plearn/pyext
+</A></li>
+        <LI>Next message: <A HREF="000665.html">[Plearn-commits] r7216 - trunk/commands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#664">[ date ]</a>
+              <a href="thread.html#664">[ thread ]</a>
+              <a href="subject.html#664">[ subject ]</a>
+              <a href="author.html#664">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: dumitruerhan
+Date: 2007-05-21 22:24:33 +0200 (Mon, 21 May 2007)
+New Revision: 7215
+
+Modified:
+   trunk/plearn_learners/online/SplitModule.cc
+   trunk/plearn_learners/online/SplitModule.h
+Log:
+lots of bugfixes: (1) moved local static fields to private members ((2) correct resizing of all gradient matrices (3) correct handling of cases where there is no input gradient etc 
+
+Modified: trunk/plearn_learners/online/SplitModule.cc
+===================================================================
+--- trunk/plearn_learners/online/SplitModule.cc	2007-05-21 19:27:58 UTC (rev 7214)
++++ trunk/plearn_learners/online/SplitModule.cc	2007-05-21 20:24:33 UTC (rev 7215)
+@@ -139,7 +139,8 @@
+             int width = up_port_sizes[i];
+             if (ports_value[i+1])
+             {
+-                PLASSERT_MSG(!ports_value[i+1]-&gt;isEmpty(),&quot;In SplitModule, when the down_port is an input, the up_ports should either be outputs or not connected.\n&quot;);
++                PLASSERT_MSG(ports_value[i+1]-&gt;isEmpty(),&quot;In SplitModule, when the down_port is an input, the up_ports should either be outputs or not connected.\n&quot;);
++                ports_value[i+1]-&gt;resize(input.length(),width);
+                 *ports_value[i+1] &lt;&lt; input.subMatColumns(start,width);
+             }
+             start += width;
+@@ -149,10 +150,13 @@
+     {
+         int start=0;
+         Mat&amp; output = *ports_value[0];
++        // hacky check so that the resize does not fail
++        PLASSERT_MSG(ports_value[1] &amp;&amp; !ports_value[1]-&gt;isEmpty(), &quot;In SplitModule, when the down_port is an output, all up_ports should be connected.\n&quot;);
++        output.resize(ports_value[1]-&gt;length(),input_size);
+         for (int i=0;i&lt;up_port_sizes.length();i++)
+         {
+             int width = up_port_sizes[i];
+-            PLASSERT_MSG(ports_value[i+1], &quot;In SplitModule, when the down_port is an output, all up_ports should be connected.\n&quot;);
++            PLASSERT_MSG(ports_value[i+1] &amp;&amp; !ports_value[i+1]-&gt;isEmpty(), &quot;In SplitModule, when the down_port is an output, all up_ports should be connected.\n&quot;);
+             output.subMatColumns(start,width) &lt;&lt; *ports_value[i+1];
+             start += width;
+         }
+@@ -172,8 +176,7 @@
+ {
+     PLASSERT( ports_value.length() == nPorts() &amp;&amp; ports_gradient.length() == nPorts());
+     PLASSERT_MSG( up_port_sizes.length()&gt;0, &quot;SplitModule should have up_port_sizes specified with length&gt;0&quot;);
+-    PLASSERT_MSG( ports_gradient[0], &quot;SplitModule's down_port should always be connected.\n&quot;);
+-    if (ports_gradient[0]-&gt;isEmpty()) // the down_port is an input, do a backprop on SPLIT
++    if (ports_gradient[0] &amp;&amp; ports_gradient[0]-&gt;isEmpty()) // the down_port is an input, do a backprop on SPLIT
+     {
+         int start=0;
+         Mat&amp; input_gradient = *ports_gradient[0];
+@@ -182,27 +185,41 @@
+             int width = up_port_sizes[i];
+             if (ports_gradient[i+1])
+             {
+-                PLASSERT_MSG(!ports_gradient[i+1]-&gt;isEmpty(),&quot;In SplitModule, when the down_port is an input, the up_ports should either be outputs or not connected.\n&quot;);
++                PLASSERT_MSG(ports_gradient[i+1]-&gt;isEmpty(),&quot;In SplitModule, when the down_port is an input, the up_ports should either be outputs or not connected.\n&quot;);
++                input_gradient.resize(ports_gradient[i+1]-&gt;length(),width);
+                 input_gradient.subMatColumns(start,width) += *ports_value[i+1];
+             }
+             start += width;
+         }
+         return;
+-    } else // the down_port is an output, do a CONCATENATE
++    } 
++    bool one_of_the_up_ports_wants_a_gradient = false;
++    for (int i=0;i&lt;up_port_sizes.length();i++)
++        if (ports_gradient[i+1] &amp;&amp; ports_gradient[i+1]-&gt;isEmpty())
++        {
++            one_of_the_up_ports_wants_a_gradient = true;
++            break;
++        }
++    if (one_of_the_up_ports_wants_a_gradient)
++    // the down_port is an output, do a CONCATENATE
+     {
+         int start=0;
+         Mat&amp; output_gradient = *ports_gradient[0];
++
+         for (int i=0;i&lt;up_port_sizes.length();i++)
+         {
+             int width = up_port_sizes[i];
+-            PLASSERT_MSG(ports_gradient[i+1], &quot;In SplitModule, when the down_port is an output, all up_ports should be connected.\n&quot;);
+-            (*ports_gradient[i+1]) += output_gradient.subMatColumns(start,width);
++            if (ports_gradient[i+1] &amp;&amp; ports_gradient[i+1]-&gt;isEmpty()) 
++            {
++                ports_gradient[i+1]-&gt;resize(output_gradient.length(),width);
++                (*ports_gradient[i+1]) += output_gradient.subMatColumns(start,width);
++            }
+             start += width;
+         }
+         return;
+     }
+-    PLERROR(&quot;In SplitModule::fprop - This cofiguration of ports not implemented for class &quot;
+-            &quot;'%s'&quot;, classname().c_str());
++    //PLERROR(&quot;In SplitModule::fprop - This configuration of ports not implemented for class &quot;
++    //       &quot;'%s'&quot;, classname().c_str());
+ }
+ 
+ ////////////////////////
+@@ -239,7 +256,6 @@
+ // getPorts //
+ //////////////
+ const TVec&lt;string&gt;&amp; SplitModule::getPorts() {
+-    static TVec&lt;string&gt; port_names;
+     if (port_names.isEmpty())
+     {
+         port_names.resize(nPorts());
+@@ -253,7 +269,6 @@
+ // getPortSizes //
+ //////////////////
+ const TMat&lt;int&gt;&amp; SplitModule::getPortSizes() {
+-    static TMat&lt;int&gt; sizes;
+     if (sizes.isEmpty())
+     { 
+         sizes.resize(nPorts(),2);
+
+Modified: trunk/plearn_learners/online/SplitModule.h
+===================================================================
+--- trunk/plearn_learners/online/SplitModule.h	2007-05-21 19:27:58 UTC (rev 7214)
++++ trunk/plearn_learners/online/SplitModule.h	2007-05-21 20:24:33 UTC (rev 7215)
+@@ -67,7 +67,7 @@
+     string down_port_name;
+     TVec&lt;int&gt; up_port_sizes;
+     TVec&lt;string&gt; up_port_names;
+-    
++     
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+@@ -198,6 +198,10 @@
+     //#####  Private Data Members  ############################################
+ 
+     // The rest of the private stuff goes here
++
++    TVec&lt;string&gt; port_names;
++    TMat&lt;int&gt; sizes;
++
+ };
+ 
+ // Declares a few other classes and functions related to this class
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000663.html">[Plearn-commits] r7214 - in trunk: commands/PLearnCommands	plearn/python python_modules/plearn/pyext
+</A></li>
+	<LI>Next message: <A HREF="000665.html">[Plearn-commits] r7216 - trunk/commands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#664">[ date ]</a>
+              <a href="thread.html#664">[ thread ]</a>
+              <a href="subject.html#664">[ subject ]</a>
+              <a href="author.html#664">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

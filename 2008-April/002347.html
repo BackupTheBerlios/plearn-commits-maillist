@@ -1,0 +1,325 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8899 - trunk/plearn_learners/hyper
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8899%20-%20trunk/plearn_learners/hyper&In-Reply-To=%3C200804252028.m3PKS2DV030063%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002346.html">
+   <LINK REL="Next"  HREF="002348.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8899 - trunk/plearn_learners/hyper</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8899%20-%20trunk/plearn_learners/hyper&In-Reply-To=%3C200804252028.m3PKS2DV030063%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8899 - trunk/plearn_learners/hyper">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Apr 25 22:28:02 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002346.html">[Plearn-commits] r8898 - trunk/python_modules/plearn/learners
+</A></li>
+        <LI>Next message: <A HREF="002348.html">[Plearn-commits] r8900 - trunk/plearn_learners/hyper
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2347">[ date ]</a>
+              <a href="thread.html#2347">[ thread ]</a>
+              <a href="subject.html#2347">[ subject ]</a>
+              <a href="author.html#2347">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-04-25 22:28:02 +0200 (Fri, 25 Apr 2008)
+New Revision: 8899
+
+Modified:
+   trunk/plearn_learners/hyper/HyperLearner.cc
+   trunk/plearn_learners/hyper/HyperLearner.h
+   trunk/plearn_learners/hyper/HyperOptimize.cc
+   trunk/plearn_learners/hyper/HyperOptimize.h
+Log:
+first version that allow saving the HyperLearner after some HyperOptimize trial.
+Test it as not all class save correctly all field.
+
+
+Modified: trunk/plearn_learners/hyper/HyperLearner.cc
+===================================================================
+--- trunk/plearn_learners/hyper/HyperLearner.cc	2008-04-25 20:16:34 UTC (rev 8898)
++++ trunk/plearn_learners/hyper/HyperLearner.cc	2008-04-25 20:28:02 UTC (rev 8899)
+@@ -62,6 +62,7 @@
+     &quot;They are accessible in the higher level PTester as: \n&quot;
+     &quot;for ex: E[test1.E[mse]]&quot;);
+ 
++bool HyperLearner::reloading = false;
+ 
+ TVec&lt;string&gt; HyperLearner::getTrainCostNames() const
+ {
+@@ -72,7 +73,9 @@
+ }
+ 
+ HyperLearner::HyperLearner()
+-    : provide_strategy_expdir(true), save_final_learner(true)
++    : provide_strategy_expdir(true),
++      save_final_learner(true),
++      reloaded(false)
+ {
+     // Forward the 'test' method to the underlying learner.
+     forward_test = true;
+@@ -124,6 +127,12 @@
+     declareOption(ol, &quot;save_final_learner&quot;, &amp;HyperLearner::save_final_learner, OptionBase::buildoption,
+                   &quot;should final learner be saved in expdir/final_learner.psave&quot;);
+ 
++    declareOption(ol, &quot;reloaded&quot;, &amp;HyperLearner::reloaded,
++                  OptionBase::learntoption|OptionBase::nosave,
++                  &quot;Used internally to don't reload a file many as the build function\n&quot;
++                  &quot; can be called many time after the expdir is set. In particular\n&quot;
++                  &quot; PLearn::HyperLearner::setTrainingSet.&quot;);
++
+     inherited::declareOptions(ol);
+ 
+     // Hide some unused options.
+@@ -263,6 +272,8 @@
+ 
+     for(int commandnum=0; commandnum&lt;strategy.length(); commandnum++)
+         strategy[commandnum]-&gt;setHyperLearner(this);
++
++    auto_load();
+ }
+ 
+ /////////
+@@ -312,7 +323,43 @@
+ }
+ 
+ 
++void HyperLearner::auto_save()
++{
++    if(expdir.isEmpty())
++        PLERROR(&quot;In HyperLearner::auto_save - we can't auto_save as&quot;
++                &quot; we don't have any expdir&quot;);
++    PPath f = expdir/&quot;hyper_learner_auto_save.psave&quot;;
++    PPath tmp=f+&quot;.tmp&quot;;
+ 
++    if(verbosity&gt;0)
++        perr &lt;&lt; &quot;In HyperLearner::auto_save() - We save the hlearner&quot;
++             &lt;&lt; endl;
++    PLearn::save(tmp, this);
++    mvforce(tmp,f);
++}
++
++void HyperLearner::auto_load()
++{
++    if(expdir.isEmpty()){
++        if(verbosity&gt;1)
++            pout&lt;&lt;&quot;In HyperLearner::auto_load() - no expdir. Can't reload.&quot;&lt;&lt;endl;
++        return;
++    }
++    PPath f = expdir/&quot;hyper_learner_auto_save.psave&quot;;
++    bool isf=isfile(f);
++    if(stage==0 &amp;&amp; !reloading &amp;&amp; !reloaded &amp;&amp; isf){
++        if(verbosity&gt;0)
++            pout&lt;&lt;&quot;In HyperLearner::auto_load() - reloading from file: &quot;&lt;&lt;f&lt;&lt;endl;
++        reloading = true;
++        PLearn::load(f,*this);
++        reloading = false;
++        reloaded = true;
++    }
++    else if(isf &amp;&amp; verbosity&gt;1)
++        pout&lt;&lt;&quot;In HyperLearner::auto_load() - no file to reload.&quot;&lt;&lt;endl;
++
++}
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/hyper/HyperLearner.h
+===================================================================
+--- trunk/plearn_learners/hyper/HyperLearner.h	2008-04-25 20:16:34 UTC (rev 8898)
++++ trunk/plearn_learners/hyper/HyperLearner.h	2008-04-25 20:28:02 UTC (rev 8899)
+@@ -76,7 +76,8 @@
+ 
+     bool provide_strategy_expdir; //!&lt; should each strategy step be provided a directory expdir/Step#
+     bool save_final_learner; //!&lt; should final learner be saved in expdir/final_learner.psave
+-
++    bool reloaded; //!&lt; Need to don't reload each time build is called as it can be called many time.
++    static bool reloading;
+     // HyperLearner methods
+ 
+     HyperLearner();
+@@ -112,6 +113,12 @@
+ 
+     virtual void run();
+ 
++    //! Save the current HyperLearner in its expdir
++    void auto_save();
++
++    //! Load the previously saved HyperLearner in its expdir if available
++    void auto_load();
++
+ }; // class HyperLearner
+ 
+ DECLARE_OBJECT_PTR(HyperLearner);
+
+Modified: trunk/plearn_learners/hyper/HyperOptimize.cc
+===================================================================
+--- trunk/plearn_learners/hyper/HyperOptimize.cc	2008-04-25 20:16:34 UTC (rev 8898)
++++ trunk/plearn_learners/hyper/HyperOptimize.cc	2008-04-25 20:28:02 UTC (rev 8899)
+@@ -115,7 +115,9 @@
+       provide_tester_expdir(false),
+       rerun_after_sub(false),
+       provide_sub_expdir(true),
+-      save_best_learner(false)
++      save_best_learner(false),
++      auto_save(0),
++      auto_save_test(0)
+ { }
+ 
+ 
+@@ -164,6 +166,17 @@
+         &quot;If not specified, we'll use default splitter specified in the hyper-learner's tester option&quot;);
+ 
+     declareOption(
++        ol, &quot;auto_save&quot;, &amp;HyperOptimize::auto_save, OptionBase::buildoption,
++        &quot;Save the hlearner and reload it if necessary.\n&quot;
++        &quot;0 mean never, 1 mean always and &gt;0 save iff trialnum%auto_save == 0.\n&quot;
++        &quot;In the last case, it save after the last trial.\n&quot;);
++
++    declareOption(
++        ol, &quot;auto_save_test&quot;, &amp;HyperOptimize::auto_save_test, OptionBase::buildoption,
++        &quot;exit after each auto_save. This is usefull to test auto_save.\n&quot;
++        &quot;0 mean never, 1 mean always and &gt;0 save iff trialnum%auto_save == 0&quot;);
++
++    declareOption(
+         ol, &quot;resultsmat&quot;, &amp;HyperOptimize::resultsmat,
+         OptionBase::learntoption | OptionBase::nosave,
+         &quot;Gives access to the results of all trials during the last training.\n&quot;
+@@ -215,10 +228,10 @@
+ void HyperOptimize::setExperimentDirectory(const PPath&amp; the_expdir)
+ {
+     inherited::setExperimentDirectory(the_expdir);
+-    createResultsMat();    
++    getResultsMat();    
+ }
+ 
+-void HyperOptimize::createResultsMat()
++void HyperOptimize::getResultsMat()
+ {
+     TVec&lt;string&gt; cost_fields = getResultNames();
+     TVec&lt;string&gt; option_fields = hlearner-&gt;option_fields;
+@@ -230,7 +243,12 @@
+     if (! expdir.isEmpty())
+     {
+         string fname = expdir+&quot;results.pmat&quot;;
+-        resultsmat = new FileVMatrix(fname,0,w);
++        if(isfile(fname)){
++            //we reload the old version if it exist
++            resultsmat = new FileVMatrix(fname, true);
++            return;
++        }else
++            resultsmat = new FileVMatrix(fname,0,w);
+     }
+     else
+         resultsmat = new MemoryVMatrix(0,w);
+@@ -310,20 +328,22 @@
+ 
+ Vec HyperOptimize::optimize()
+ {
++//in the case when auto_save is true. This function can be called even
++//if the optimisation is finished. We must not redo it in this case.
++    if(trialnum&gt;0&amp;&amp;!option_vals&amp;&amp;resultsmat.length()==trialnum+1)
++        return best_results;
+     TVec&lt;string&gt; option_names;
+     option_names = oracle-&gt;getOptionNames();
+ 
+-    if(option_vals.size()==0 &amp;&amp; trialnum&gt;0)
+-        return best_results;//the optimization if finished
+-    else if(option_vals.size()==0)
+-        option_vals = oracle-&gt;generateFirstTrial();
+-//        option_vals = oracle-&gt;generateNextTrial(option_vals, MISSING_VALUE);
+-    if (option_vals.size() != option_names.size())
+-        PLERROR(&quot;HyperOptimize::optimize: the number (%d) of option values (%s) &quot;
+-                &quot;does not match the number (%d) of option names (%s) &quot;,
+-                option_vals.size(), tostring(option_vals).c_str(),
+-                option_names.size(), tostring(option_names).c_str());
+-
++    if(trialnum==0){
++        if(option_vals.size()==0)
++            option_vals = oracle-&gt;generateFirstTrial();
++        if (option_vals.size() != option_names.size())
++            PLERROR(&quot;HyperOptimize::optimize: the number (%d) of option values (%s) &quot;
++                    &quot;does not match the number (%d) of option names (%s) &quot;,
++                    option_vals.size(), tostring(option_vals).c_str(),
++                    option_names.size(), tostring(option_names).c_str());
++    }
+     which_cost_pos= getResultNames().find(which_cost);
+     if(which_cost_pos &lt; 0){
+         if(!pl_islong(which_cost))
+@@ -391,6 +411,13 @@
+             }
+         }
+         ++trialnum;
++        if(auto_save&gt;0 &amp;&amp;
++           (trialnum%auto_save==0 || !option_vals) ){
++            hlearner-&gt;auto_save();
++            if(auto_save_test&gt;0 &amp;&amp; trialnum%auto_save_test==0)
++                PLERROR(&quot;In HyperOptimize::optimize() - auto_save_test is true,&quot;
++                        &quot; exiting&quot;);
++        }
+     }
+ 
+     // Detect the case where no trials at all were performed!
+
+Modified: trunk/plearn_learners/hyper/HyperOptimize.h
+===================================================================
+--- trunk/plearn_learners/hyper/HyperOptimize.h	2008-04-25 20:16:34 UTC (rev 8898)
++++ trunk/plearn_learners/hyper/HyperOptimize.h	2008-04-25 20:28:02 UTC (rev 8899)
+@@ -133,6 +133,8 @@
+     bool rerun_after_sub;
+     bool provide_sub_expdir; // should sub_strategy be provided an expdir
+     bool save_best_learner;
++    int auto_save;
++    int auto_save_test;
+     PP&lt;Splitter&gt; splitter;  // (if not specified, use default splitter specified in PTester)
+ 
+     // ****************
+@@ -158,7 +160,7 @@
+     // (Please implement in .cc)
+     static void declareOptions(OptionList&amp; ol);
+ 
+-    void createResultsMat();
++    void getResultsMat();
+     void reportResult(int trialnum,  const Vec&amp; results);
+     Vec runTest(int trialnum);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002346.html">[Plearn-commits] r8898 - trunk/python_modules/plearn/learners
+</A></li>
+	<LI>Next message: <A HREF="002348.html">[Plearn-commits] r8900 - trunk/plearn_learners/hyper
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2347">[ date ]</a>
+              <a href="thread.html#2347">[ thread ]</a>
+              <a href="subject.html#2347">[ subject ]</a>
+              <a href="author.html#2347">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,165 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7383 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7383%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705281758.l4SHwiII023969%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000831.html">
+   <LINK REL="Next"  HREF="000833.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7383 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7383%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705281758.l4SHwiII023969%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7383 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Mon May 28 19:58:44 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000831.html">[Plearn-commits] r7382 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000833.html">[Plearn-commits] r7384 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#832">[ date ]</a>
+              <a href="thread.html#832">[ thread ]</a>
+              <a href="subject.html#832">[ subject ]</a>
+              <a href="author.html#832">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-05-28 19:58:43 +0200 (Mon, 28 May 2007)
+New Revision: 7383
+
+Modified:
+   trunk/plearn_learners/online/MaxSubsampling2DModule.cc
+   trunk/plearn_learners/online/NLLCostModule.cc
+   trunk/plearn_learners/online/NLLCostModule.h
+Log:
+New version of bpropAccUpdate in NLLCostModule, accepting costs != 1.
+
+
+Modified: trunk/plearn_learners/online/MaxSubsampling2DModule.cc
+===================================================================
+--- trunk/plearn_learners/online/MaxSubsampling2DModule.cc	2007-05-28 17:35:13 UTC (rev 7382)
++++ trunk/plearn_learners/online/MaxSubsampling2DModule.cc	2007-05-28 17:58:43 UTC (rev 7383)
+@@ -264,6 +264,9 @@
+     if( input_grad &amp;&amp; input_grad-&gt;isEmpty()
+         &amp;&amp; output_grad &amp;&amp; !output_grad-&gt;isEmpty() )
+     {
++        PLASSERT( input );
++        PLASSERT( output );
++        PLASSERT( argmax );
+         PLASSERT( !argmax_grad );
+ 
+         PLASSERT( input-&gt;width() == port_sizes(0,1) );
+
+Modified: trunk/plearn_learners/online/NLLCostModule.cc
+===================================================================
+--- trunk/plearn_learners/online/NLLCostModule.cc	2007-05-28 17:35:13 UTC (rev 7382)
++++ trunk/plearn_learners/online/NLLCostModule.cc	2007-05-28 17:58:43 UTC (rev 7383)
+@@ -149,6 +149,55 @@
+     }
+ }
+ 
++void NLLCostModule::bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                   const TVec&lt;Mat*&gt;&amp; ports_gradient)
++{
++    PLASSERT( ports_value.length() == nPorts() );
++    PLASSERT( ports_gradient.length() == nPorts() );
++
++    Mat* prediction = ports_value[0];
++    Mat* target = ports_value[1];
++    Mat* cost = ports_value[2];
++    Mat* prediction_grad = ports_gradient[0];
++    Mat* target_grad = ports_gradient[1];
++    Mat* cost_grad = ports_gradient[2];
++
++    // If we have cost_grad and we want prediction_grad
++    if( prediction_grad &amp;&amp; prediction_grad-&gt;isEmpty()
++        &amp;&amp; cost_grad &amp;&amp; !cost_grad-&gt;isEmpty() )
++    {
++        PLASSERT( prediction );
++        PLASSERT( target );
++        PLASSERT( cost );
++        PLASSERT( !target_grad );
++
++        PLASSERT( prediction-&gt;width() == port_sizes(0,1) );
++        PLASSERT( target-&gt;width() == port_sizes(1,1) );
++        PLASSERT( cost-&gt;width() == port_sizes(2,1) );
++        PLASSERT( prediction_grad-&gt;width() == port_sizes(0,1) );
++        PLASSERT( cost_grad-&gt;width() == port_sizes(2,1) );
++
++        int batch_size = prediction-&gt;length();
++        PLASSERT( target-&gt;length() == batch_size );
++        PLASSERT( cost-&gt;length() == batch_size );
++        PLASSERT( cost_grad-&gt;length() == batch_size );
++
++        prediction_grad-&gt;resize(batch_size, port_sizes(0,1));
++
++        for( int k=0; k&lt;batch_size; k++ )
++        {
++            // input_gradient[ i ] = 0 if i != t,
++            // input_gradient[ t ] = -1/x[t]
++            int target_k = (int) round((*target)(k, 0));
++            (*prediction_grad)(k, target_k) -=
++                (*cost)(k, 0) / (*prediction)(k, target_k);
++        }
++    }
++    else
++        PLERROR(&quot;In OnlineLearningModule::bpropAccUpdate - Port configuration &quot;
++                &quot;not implemented for class '%s'&quot;, classname().c_str());
++}
++
+ void NLLCostModule::bbpropUpdate(const Vec&amp; input, const Vec&amp; target,
+                                  real cost,
+                                  Vec&amp; input_gradient, Vec&amp; input_diag_hessian,
+
+Modified: trunk/plearn_learners/online/NLLCostModule.h
+===================================================================
+--- trunk/plearn_learners/online/NLLCostModule.h	2007-05-28 17:35:13 UTC (rev 7382)
++++ trunk/plearn_learners/online/NLLCostModule.h	2007-05-28 17:58:43 UTC (rev 7383)
+@@ -82,6 +82,10 @@
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost)
+     {}
+ 
++    //! New version of backpropagation
++    virtual void bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                const TVec&lt;Mat*&gt;&amp; ports_gradient);
++
+     //! Similar to bpropUpdate, but adapt based also on the estimation
+     //! of the diagonal of the Hessian matrix, and propagates this back.
+     virtual void bbpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000831.html">[Plearn-commits] r7382 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000833.html">[Plearn-commits] r7384 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#832">[ date ]</a>
+              <a href="thread.html#832">[ thread ]</a>
+              <a href="subject.html#832">[ subject ]</a>
+              <a href="author.html#832">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

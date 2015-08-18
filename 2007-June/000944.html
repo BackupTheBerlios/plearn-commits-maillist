@@ -1,0 +1,291 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7495 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7495%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200706011823.l51IN5AK031739%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000943.html">
+   <LINK REL="Next"  HREF="000945.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7495 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7495%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200706011823.l51IN5AK031739%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7495 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Fri Jun  1 20:23:05 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000943.html">[Plearn-commits] r7494 - in trunk/python_modules/plearn/learners:	autolr online
+</A></li>
+        <LI>Next message: <A HREF="000945.html">[Plearn-commits] r7496 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#944">[ date ]</a>
+              <a href="thread.html#944">[ thread ]</a>
+              <a href="subject.html#944">[ subject ]</a>
+              <a href="author.html#944">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-06-01 20:23:04 +0200 (Fri, 01 Jun 2007)
+New Revision: 7495
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+   trunk/plearn_learners/online/RBMModule.h
+Log:
+- Renamed option 'standard_weights_grad' to 'standard_cd_weights_grad'
+- Added option 'standard_cd_grad' to control whether to use standard CD gradient or 'true' gradient
+
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-06-01 18:18:07 UTC (rev 7494)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-06-01 18:23:04 UTC (rev 7495)
+@@ -40,6 +40,7 @@
+ 
+ #include &quot;RBMModule.h&quot;
+ #include &lt;plearn/vmat/VMat.h&gt;
++#include &lt;plearn_learners/online/RBMMatrixConnection.h&gt;
+ 
+ #define PL_LOG_MODULE_NAME &quot;RBMModule&quot;
+ #include &lt;plearn/io/pl_log.h&gt;
+@@ -100,7 +101,8 @@
+     Gibbs_step(0),
+     log_partition_function(0),
+     partition_function_is_stale(true),
+-    standard_weights_grad(true),
++    standard_cd_weights_grad(true),
++    standard_cd_grad(true),
+     hidden_bias(NULL),
+     weights(NULL),
+     hidden_act(NULL),
+@@ -144,14 +146,23 @@
+                   OptionBase::buildoption,
+         &quot;Compute the constrastive divergence in an output port.&quot;);
+ 
+-    declareOption(ol, &quot;standard_weights_grad&quot;,
+-                  &amp;RBMModule::standard_weights_grad,
++    declareOption(ol, &quot;standard_cd_grad&quot;,
++                  &amp;RBMModule::standard_cd_grad,
+                   OptionBase::buildoption,
++        &quot;Whether to use the standard contrastive divergence gradient for\n&quot;
++        &quot;updates, or the true gradient of the contrastive divergence. This\n&quot;
++        &quot;affects only the gradient w.r.t. internal parameters of the layers\n&quot;
++        &quot;and connections. Currently, this option works only with layers of\n&quot;
++        &quot;the type 'RBMBinomialLayer', connected by a 'RBMMatrixConnection'.&quot;);
++
++    declareOption(ol, &quot;standard_cd_weights_grad&quot;,
++                  &amp;RBMModule::standard_cd_weights_grad,
++                  OptionBase::buildoption,
+         &quot;This option is only used when weights of the connection are given\n&quot;
+         &quot;through the 'weights' port. When this is the case, the gradient of\n&quot;
+         &quot;contrastive divergence w.r.t. weights is either computed:\n&quot;
+-        &quot;- by the usual formula if 'standard_weights_grad' is true\n&quot;
+-        &quot;- by the true gradient if 'standard_weights_grad' is false.&quot;);
++        &quot;- by the usual formula if 'standard_cd_weights_grad' is true\n&quot;
++        &quot;- by the true gradient if 'standard_cd_weights_grad' is false.&quot;);
+ 
+     declareOption(ol, &quot;n_Gibbs_steps_CD&quot;, 
+                   &amp;RBMModule::n_Gibbs_steps_CD,
+@@ -515,6 +526,8 @@
+ 
+     deepCopyField(hidden_exp_grad, copies);
+     deepCopyField(hidden_act_grad, copies);
++    deepCopyField(store_weights_grad, copies);
++    deepCopyField(store_hidden_bias_grad, copies);
+     deepCopyField(visible_exp_grad, copies);
+     deepCopyField(visible_act_grad, copies);
+     deepCopyField(visible_bias_grad, copies);
+@@ -1094,6 +1107,7 @@
+                   !negative_phase_hidden_expectations-&gt;isEmpty() );
+         PLASSERT( negative_phase_hidden_activations &amp;&amp;
+                   !negative_phase_hidden_activations-&gt;isEmpty() );
++
+         // Perform update.
+         visible_layer-&gt;update(*visible, *negative_phase_visible_samples);
+ 
+@@ -1106,7 +1120,7 @@
+                       weights_grad-&gt;width() == up * down );
+             weights_grad-&gt;resize(mbs, up * down);
+ 
+-            if (standard_weights_grad)
++            if (standard_cd_weights_grad)
+             {
+                 // Perform both computation of weights gradient and do update
+                 // at the same time.
+@@ -1127,8 +1141,20 @@
+                             true);
+                     connection_update_is_done = true;
+                 }
+-            } else {
+-                // Only do computation of gradient here.
++            }
++        }
++        if (!standard_cd_weights_grad || !standard_cd_grad) {
++            // Compute 'true' gradient of contrastive divergence w.r.t.
++            // the weights matrix.
++            int up = connection-&gt;up_size;
++            int down = connection-&gt;down_size;
++            Mat* weights_g = weights_grad;
++            if (!weights_g) {
++                // We need to store the gradient in another matrix.
++                store_weights_grad.resize(mbs, up * down);
++                store_weights_grad.clear();
++                weights_g = &amp; store_weights_grad;
++            }
+                 PLASSERT( connection-&gt;classname() == &quot;RBMMatrixConnection&quot; &amp;&amp;
+                           visible_layer-&gt;classname() == &quot;RBMBinomialLayer&quot; &amp;&amp;
+                           hidden_layer-&gt;classname() == &quot;RBMBinomialLayer&quot; );
+@@ -1150,44 +1176,78 @@
+                             real v_j_p = (*visible)(k, j);
+                             real v_j_n =
+                                 (*negative_phase_visible_samples)(k, j);
+-                            (*weights_grad)(k, idx) +=
++                            (*weights_g)(k, idx) +=
+                                 p_i_p * v_j_p * scale_p   // Positive phase.
+                              - (p_i_n * v_j_n * scale_n); // Negative phase.
+                         }
+                     }
+                 }
+-            }
++                if (!standard_cd_grad) {
++                    // Update connection manually.
++                    Mat&amp; weights = ((RBMMatrixConnection*)
++                            get_pointer(connection))-&gt;weights;
++                    real lr = cd_learning_rate / mbs;
++                    for (int k = 0; k &lt; mbs; k++) {
++                        int idx = 0;
++                        for (int i = 0; i &lt; up; i++)
++                            for (int j = 0; j &lt; down; j++, idx++)
++                                weights(i, j) -= lr * (*weights_g)(k, idx);
++                    }
++                    connection_update_is_done = true;
++                }
+         }
+         if (!connection_update_is_done)
++            // Perform standard update of the connection.
+             connection-&gt;update(*visible, *hidden,
+                     *negative_phase_visible_samples,
+                     *negative_phase_hidden_expectations);
+ 
+-        hidden_layer-&gt;update(*hidden, *negative_phase_hidden_expectations);
++        Mat* hidden_bias_g = hidden_bias_grad;
++        if (!standard_cd_grad &amp;&amp; !hidden_bias_grad) {
++            // We need to compute the CD gradient w.r.t. bias of hidden layer,
++            // but there is no bias coming from the outside. Thus we need
++            // another matrix to store this gradient.
++            store_hidden_bias_grad.resize(mbs, hidden_layer-&gt;size);
++            store_hidden_bias_grad.clear();
++            hidden_bias_g = &amp; store_hidden_bias_grad;
++        }
+ 
+-        if (hidden_bias_grad)
++        if (hidden_bias_g)
+         {
+-            if (hidden_bias_grad-&gt;isEmpty()) {
+-                PLASSERT(hidden_bias_grad-&gt;width() == hidden_layer-&gt;size);
+-                hidden_bias_grad-&gt;resize(mbs,hidden_layer-&gt;size);
++            if (hidden_bias_g-&gt;isEmpty()) {
++                PLASSERT(hidden_bias_g-&gt;width() == hidden_layer-&gt;size);
++                hidden_bias_g-&gt;resize(mbs,hidden_layer-&gt;size);
+             }
+             PLASSERT_MSG( hidden_layer-&gt;classname() == &quot;RBMBinomialLayer&quot; &amp;&amp;
+                           visible_layer-&gt;classname() == &quot;RBMBinomialLayer&quot;,
+                           &quot;Only implemented for binomial layers&quot; );
+             // d(contrastive_divergence)/dhidden_bias
+-            for (int k = 0; k &lt; hidden_bias_grad-&gt;length(); k++) {
+-                for (int i = 0; i &lt; hidden_bias_grad-&gt;width(); i++) {
++            for (int k = 0; k &lt; hidden_bias_g-&gt;length(); k++) {
++                for (int i = 0; i &lt; hidden_bias_g-&gt;width(); i++) {
+                     real p_i_p = (*hidden)(k, i);
+                     real a_i_p = (*hidden_act)(k, i);
+                     real p_i_n = (*negative_phase_hidden_expectations)(k, i);
+                     real a_i_n = (*negative_phase_hidden_activations)(k, i);
+-                    (*hidden_bias_grad)(k, i) +=
++                    (*hidden_bias_g)(k, i) +=
+                         - p_i_p * (1 - p_i_p) * a_i_p + p_i_p    // Pos. phase
+                      -( - p_i_n * (1 - p_i_n) * a_i_n + p_i_n ); // Neg. phase
+ 
+                 }
+             }
+         }
++
++        if (standard_cd_grad) {
++            hidden_layer-&gt;update(*hidden, *negative_phase_hidden_expectations);
++        } else {
++            PLASSERT( hidden_layer-&gt;classname() == &quot;RBMBinomialLayer&quot; );
++            // Update hidden layer by hand.
++            Vec&amp; bias = hidden_layer-&gt;bias;
++            real lr = cd_learning_rate / mbs;
++            for (int i = 0; i &lt; mbs; i++)
++                bias -= lr * (*hidden_bias_g)(i);
++        }
++
++
+         partition_function_is_stale = true;
+     } else {
+         PLCHECK_MSG( !contrastive_divergence_grad ||
+
+Modified: trunk/plearn_learners/online/RBMModule.h
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.h	2007-06-01 18:18:07 UTC (rev 7494)
++++ trunk/plearn_learners/online/RBMModule.h	2007-06-01 18:23:04 UTC (rev 7495)
+@@ -90,7 +90,9 @@
+     real log_partition_function;
+     bool partition_function_is_stale;
+ 
+-    bool standard_weights_grad;
++    bool standard_cd_weights_grad;
++    
++    bool standard_cd_grad;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+@@ -240,6 +242,12 @@
+     Mat* hidden_act;
+     bool hidden_activations_are_computed;    
+ 
++    //! Used to store the contrastive divergence gradient w.r.t. weights.
++    Mat store_weights_grad;
++
++    //! Used to store the contrastive divergence gradient w.r.t. hidden bias.
++    Mat store_hidden_bias_grad;
++
+     //! List of port names.
+     TVec&lt;string&gt; ports;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000943.html">[Plearn-commits] r7494 - in trunk/python_modules/plearn/learners:	autolr online
+</A></li>
+	<LI>Next message: <A HREF="000945.html">[Plearn-commits] r7496 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#944">[ date ]</a>
+              <a href="thread.html#944">[ thread ]</a>
+              <a href="subject.html#944">[ subject ]</a>
+              <a href="author.html#944">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

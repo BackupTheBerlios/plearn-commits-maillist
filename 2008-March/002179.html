@@ -1,0 +1,392 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8731 - in trunk: commands plearn_learners/meta	plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8731%20-%20in%20trunk%3A%20commands%20plearn_learners/meta%0A%09plearn_learners/regressors&In-Reply-To=%3C200803281447.m2SElnX5022390%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002178.html">
+   <LINK REL="Next"  HREF="002180.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8731 - in trunk: commands plearn_learners/meta	plearn_learners/regressors</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8731%20-%20in%20trunk%3A%20commands%20plearn_learners/meta%0A%09plearn_learners/regressors&In-Reply-To=%3C200803281447.m2SElnX5022390%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8731 - in trunk: commands plearn_learners/meta	plearn_learners/regressors">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Mar 28 15:47:49 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002178.html">[Plearn-commits] r8730 - trunk/plearn_learners/generic
+</A></li>
+        <LI>Next message: <A HREF="002180.html">[Plearn-commits] r8732 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2179">[ date ]</a>
+              <a href="thread.html#2179">[ thread ]</a>
+              <a href="subject.html#2179">[ subject ]</a>
+              <a href="author.html#2179">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-03-28 15:47:48 +0100 (Fri, 28 Mar 2008)
+New Revision: 8731
+
+Modified:
+   trunk/commands/plearn_noblas_inc.h
+   trunk/plearn_learners/meta/AdaBoost.cc
+   trunk/plearn_learners/meta/AdaBoost.h
+   trunk/plearn_learners/regressors/BaseRegressorWrapper.cc
+   trunk/plearn_learners/regressors/LocalMedBoost.cc
+   trunk/plearn_learners/regressors/RegressionTree.cc
+   trunk/plearn_learners/regressors/RegressionTree.h
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+Log:
+Modified AdaBoost to do not have any knowledge of RegressionTree. To don't sort the RegressionTreeRegisters at each iteration I added an option modif_train_set_weights that modify the train_set weight directly.
+
+
+Modified: trunk/commands/plearn_noblas_inc.h
+===================================================================
+--- trunk/commands/plearn_noblas_inc.h	2008-03-28 14:41:05 UTC (rev 8730)
++++ trunk/commands/plearn_noblas_inc.h	2008-03-28 14:47:48 UTC (rev 8731)
+@@ -181,6 +181,7 @@
+ #include &lt;plearn_learners/regressors/KNNRegressor.h&gt;
+ #include &lt;plearn_learners/regressors/RankLearner.h&gt;
+ #include &lt;plearn_learners/regressors/RegressorFromDistribution.h&gt;
++#include &lt;plearn_learners/regressors/RegressionTree.h&gt;
+ // Unsupervised
+ #include &lt;plearn_learners/unsupervised/UniformizeLearner.h&gt;
+ 
+
+Modified: trunk/plearn_learners/meta/AdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.cc	2008-03-28 14:41:05 UTC (rev 8730)
++++ trunk/plearn_learners/meta/AdaBoost.cc	2008-03-28 14:47:48 UTC (rev 8731)
+@@ -48,7 +48,6 @@
+ #include &lt;plearn/math/random.h&gt;
+ #include &lt;plearn/io/load_and_save.h&gt;
+ #include &lt;plearn/base/stringutils.h&gt;
+-#include &lt;plearn_learners/regressors/RegressionTree.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -66,7 +65,8 @@
+       weight_by_resampling(1), 
+       early_stopping(1),
+       save_often(0),
+-      forward_sub_learner_test_costs(false)
++      forward_sub_learner_test_costs(false),
++      modif_train_set_weights(false)
+ { }
+ 
+ PLEARN_IMPLEMENT_OBJECT(
+@@ -200,17 +200,16 @@
+                   &amp;AdaBoost::forward_sub_learner_test_costs, OptionBase::buildoption,
+                   &quot;Did we add the sub_learner_costs to our costs.\n&quot;);
+ 
++    declareOption(ol, &quot;modif_train_set_weights&quot;, 
++                  &amp;AdaBoost::modif_train_set_weights, OptionBase::buildoption,
++                  &quot;Did we modif directly the train_set weights?\n&quot;);
++
+     declareOption(ol, &quot;found_zero_error_weak_learner&quot;, 
+                   &amp;AdaBoost::found_zero_error_weak_learner, 
+                   OptionBase::learntoption,
+                   &quot;Indication that a weak learner with 0 training error&quot;
+                   &quot;has been found.\n&quot;);
+ 
+-    declareOption(ol, &quot;sorted_train_set&quot;,
+-                  &amp;AdaBoost::sorted_train_set,
+-                  OptionBase::learntoption,
+-                  &quot;A sorted train set when using the class RegressionTree as a base regressor\n&quot;);
+-
+     declareOption(ol, &quot;weak_learner_output&quot;,
+                   &amp;AdaBoost::weak_learner_output,
+                   OptionBase::nosave,
+@@ -304,6 +303,13 @@
+         PLERROR(&quot;In AdaBoost::train, targetsize should be 1, found %d&quot;, 
+                 train_set-&gt;targetsize());
+ 
++    if(modif_train_set_weights &amp;&amp; train_set-&gt;weightsize()!=1)
++        PLERROR(&quot;In AdaBoost::train, when modif_train_set_weights is true&quot;
++                &quot; the weightsize of the trainset must be one.&quot;);
++    
++    PLCHECK_MSG(train_set-&gt;inputsize()&gt;0, &quot;In AdaBoost::train, the inputsize&quot;
++                &quot; of the train_set must be know.&quot;);
++
+     if(found_zero_error_weak_learner) // Training is over...
+         return;
+ 
+@@ -349,22 +355,6 @@
+         sum_voting_weights = 0;
+         voting_weights.resize(0,nstages);
+ 
+-        if (weak_learner_template-&gt;classname()==&quot;RegressionTree&quot; &amp;&amp; ! weight_by_resampling)
+-        {
+-            if(train_set-&gt;weightsize()&lt;=0)
+-            {
+-                Mat* m = new Mat(train_set-&gt;length(),1);
+-                m-&gt;fill(1.0/m-&gt;length());
+-                VMat data_weights = VMat(*m);
+-                VMat new_train_set = new ConcatColumnsVMatrix(train_set,data_weights);
+-                new_train_set-&gt;defineSizes(train_set-&gt;inputsize(),train_set-&gt;targetsize(),1);
+-                train_set = new_train_set;
+-            }
+-            sorted_train_set = new RegressionTreeRegisters();
+-            sorted_train_set-&gt;setOption(&quot;report_progress&quot;, tostring(report_progress));
+-            sorted_train_set-&gt;setOption(&quot;verbosity&quot;, tostring(verbosity));
+-            sorted_train_set-&gt;initRegisters(train_set);
+-        }
+     }
+ 
+     VMat unweighted_data = train_set.subMatColumns(0, inputsize()+1);
+@@ -373,7 +363,6 @@
+     for ( ; stage &lt; nstages ; ++stage)
+     {
+         VMat weak_learner_training_set;
+-        PP&lt;RegressionTreeRegisters&gt; weak_learner_sorted_training_set;
+         { 
+             PP&lt;ProgressBar&gt; pb;
+             if(report_progress) pb = new ProgressBar(
+@@ -415,13 +404,14 @@
+                     new SelectRowsVMatrix(unweighted_data, train_indices);
+                 weak_learner_training_set-&gt;defineSizes(inputsize(), 1, 0);
+             }
+-            else if(weak_learner_template-&gt;classname()==&quot;RegressionTree&quot; &amp;&amp; ! weight_by_resampling)
++            else if(modif_train_set_weights)
+             {
+                 //No Need for deep copy of the sorted_train_set as after the train it is not used anymore
+                 // and the data are not modofied, but we need to change the weight
+-                weak_learner_sorted_training_set = sorted_train_set;
+-                for(int i=0;i&lt;example_weights.size();i++)
+-                    weak_learner_sorted_training_set-&gt;setWeight(i,example_weights[i]);
++                weak_learner_training_set = train_set;
++                int weight_col=train_set-&gt;inputsize()+train_set-&gt;targetsize();
++                for(int i=0;i&lt;train_set-&gt;length();i++)
++                    train_set-&gt;put(i,weight_col,example_weights[i]);
+             }
+             else
+             {
+@@ -438,10 +428,7 @@
+ 
+         // Create new weak-learner and train it
+         PP&lt;PLearner&gt; new_weak_learner = ::PLearn::deepCopy(weak_learner_template);
+-        if(weak_learner_template-&gt;classname()==&quot;RegressionTree&quot; &amp;&amp; ! weight_by_resampling)
+-            ((PP&lt;RegressionTree&gt;)(new_weak_learner))-&gt;setSortedTrainSet(weak_learner_sorted_training_set);
+-        else
+-            new_weak_learner-&gt;setTrainingSet(weak_learner_training_set);
++        new_weak_learner-&gt;setTrainingSet(weak_learner_training_set);
+         new_weak_learner-&gt;setTrainStatsCollector(new VecStatsCollector);
+         if(expdir!=&quot;&quot; &amp;&amp; provide_learner_expdir)
+             new_weak_learner-&gt;setExperimentDirectory( expdir / (&quot;WeakLearner&quot;+tostring(stage)+&quot;Expdir&quot;) );
+@@ -744,11 +731,6 @@
+ {
+     TVec&lt;string&gt; costs=getTrainCostNames();
+ 
+-    PP&lt;VMatrix&gt; the_train_set = train_set;
+-    if(!train_set)
+-        the_train_set=sorted_train_set;
+-    PLASSERT(the_train_set);
+-
+     if(forward_sub_learner_test_costs){
+         TVec&lt;string&gt; subcosts=weak_learners[0]-&gt;getTestCostNames();
+         for(int i=0;i&lt;subcosts.length();i++){
+@@ -774,11 +756,8 @@
+ {
+     if (compute_training_error)
+     {
+-        PP&lt;VMatrix&gt; the_train_set = train_set;
+-        if(!train_set)
+-            the_train_set=sorted_train_set;
+-        PLASSERT(the_train_set);
+-        int n=the_train_set-&gt;length();
++        PLASSERT(train_set);
++        int n=train_set-&gt;length();
+         PP&lt;ProgressBar&gt; pb;
+         if(report_progress) pb = new ProgressBar(&quot;computing weighted training error of whole model&quot;,n);
+         train_stats-&gt;forget();
+
+Modified: trunk/plearn_learners/meta/AdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.h	2008-03-28 14:41:05 UTC (rev 8730)
++++ trunk/plearn_learners/meta/AdaBoost.h	2008-03-28 14:47:48 UTC (rev 8731)
+@@ -44,7 +44,6 @@
+ #define AdaBoost_INC
+ 
+ #include &lt;plearn_learners/generic/PLearner.h&gt;
+-#include &lt;plearn_learners/regressors/RegressionTreeRegisters.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -81,8 +80,6 @@
+     //! Indication that a weak learner with 0 training error has been found
+     bool found_zero_error_weak_learner;
+ 
+-    //! a sorted train set when using a tree as a base regressor  
+-    PP&lt;RegressionTreeRegisters&gt; sorted_train_set;
+ public:
+ 
+     // ************************
+@@ -125,6 +122,8 @@
+     // Did we add the sub_learner_costs to our costs
+     bool forward_sub_learner_test_costs;
+ 
++    // Did we modif directly the train_set weights?
++    bool modif_train_set_weights;
+     // ****************
+     // * Constructors *
+     // ****************
+
+Modified: trunk/plearn_learners/regressors/BaseRegressorWrapper.cc
+===================================================================
+--- trunk/plearn_learners/regressors/BaseRegressorWrapper.cc	2008-03-28 14:41:05 UTC (rev 8730)
++++ trunk/plearn_learners/regressors/BaseRegressorWrapper.cc	2008-03-28 14:47:48 UTC (rev 8731)
+@@ -143,7 +143,7 @@
+         if (regression_tree &gt; 0)
+         {
+             tree_regressor = ::PLearn::deepCopy(tree_regressor_template);
+-            tree_regressor-&gt;setSortedTrainSet(sorted_train_set);
++            tree_regressor-&gt;setTrainingSet(VMat(sorted_train_set));
+             tree_regressor-&gt;setOption(&quot;loss_function_weight&quot;, tostring(loss_function_weight));
+             base_regressor = tree_regressor;
+         }
+
+Modified: trunk/plearn_learners/regressors/LocalMedBoost.cc
+===================================================================
+--- trunk/plearn_learners/regressors/LocalMedBoost.cc	2008-03-28 14:41:05 UTC (rev 8730)
++++ trunk/plearn_learners/regressors/LocalMedBoost.cc	2008-03-28 14:47:48 UTC (rev 8731)
+@@ -197,7 +197,7 @@
+             if (regression_tree == 1)
+             {
+                 tree_regressors[stage] = ::PLearn::deepCopy(tree_regressor_template);
+-                tree_regressors[stage]-&gt;setSortedTrainSet(sorted_train_set);
++                tree_regressors[stage]-&gt;setTrainingSet(VMat(sorted_train_set));
+                 base_regressors[stage] = tree_regressors[stage];
+             }
+             else
+
+Modified: trunk/plearn_learners/regressors/RegressionTree.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTree.cc	2008-03-28 14:41:05 UTC (rev 8730)
++++ trunk/plearn_learners/regressors/RegressionTree.cc	2008-03-28 14:47:48 UTC (rev 8731)
+@@ -243,8 +243,13 @@
+ 
+ void RegressionTree::initialiseTree()
+ {
+-    if (!sorted_train_set)
++    if (!sorted_train_set &amp;&amp; train_set-&gt;classname()==&quot;RegressionTreeRegisters&quot;)
+     {
++        sorted_train_set=(PP&lt;RegressionTreeRegisters&gt;)train_set;
++        sorted_train_set-&gt;reinitRegisters();
++    }
++    else if(!sorted_train_set)
++    {
+         sorted_train_set = new RegressionTreeRegisters();
+         sorted_train_set-&gt;setOption(&quot;report_progress&quot;, tostring(report_progress));
+         sorted_train_set-&gt;setOption(&quot;verbosity&quot;, tostring(verbosity));
+@@ -313,12 +318,6 @@
+     return split_col; 
+ }
+ 
+-void RegressionTree::setSortedTrainSet(PP&lt;RegressionTreeRegisters&gt; the_sorted_train_set)
+-{
+-    sorted_train_set = the_sorted_train_set;
+-    build();
+-}
+-
+ int RegressionTree::outputsize() const
+ {
+     return 2;
+
+Modified: trunk/plearn_learners/regressors/RegressionTree.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTree.h	2008-03-28 14:41:05 UTC (rev 8730)
++++ trunk/plearn_learners/regressors/RegressionTree.h	2008-03-28 14:47:48 UTC (rev 8731)
+@@ -109,7 +109,6 @@
+     virtual void         computeOutputAndNodes(const Vec&amp; input, Vec&amp; output,
+                                                TVec&lt;PP&lt;RegressionTreeNode&gt; &gt;* nodes=0) const;
+     virtual void         computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output, const Vec&amp; target, Vec&amp; costs) const;
+-    void         setSortedTrainSet(PP&lt;RegressionTreeRegisters&gt; the_sorted_train_set);
+   
+ private:
+     void         build_();
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2008-03-28 14:41:05 UTC (rev 8730)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2008-03-28 14:47:48 UTC (rev 8731)
+@@ -108,6 +108,8 @@
+ 
+ void RegressionTreeRegisters::build_()
+ {
++    if(source)
++        initRegisters(source);
+ }
+ 
+ void RegressionTreeRegisters::initRegisters(VMat the_train_set)
+@@ -151,10 +153,20 @@
+ 
+ void RegressionTreeRegisters::setWeight(int row, real val)
+ {
++    PLASSERT(inputsize()&gt;0&amp;&amp;targetsize()&gt;0);
+     PLASSERT(weightsize() &gt; 0);
+     tsource-&gt;put( inputsize() + targetsize(), row, val );
+ }
+ 
++void RegressionTreeRegisters::put(int i, int j, real value)
++{
++    PLASSERT(inputsize()&gt;0&amp;&amp;targetsize()&gt;0);
++    if(j!=inputsize()+targetsize())
++        PLERROR(&quot;In RegressionTreeRegisters::put - implemented the put of &quot;
++                &quot;the weightsize only&quot;);
++    setWeight(i,value);
++}
++
+ int RegressionTreeRegisters::getNextId()
+ {
+     next_id += 1;
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2008-03-28 14:41:05 UTC (rev 8730)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2008-03-28 14:47:48 UTC (rev 8731)
+@@ -96,6 +96,7 @@
+     void         sortRows();
+     void         printRegisters();
+     void         getExample(int i, Vec&amp; input, Vec&amp; target, real&amp; weight);
++    virtual void put(int i, int j, real value);
+ //    virtual void getNewRow(int i, const Vec&amp; v) const;
+     VMat source;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002178.html">[Plearn-commits] r8730 - trunk/plearn_learners/generic
+</A></li>
+	<LI>Next message: <A HREF="002180.html">[Plearn-commits] r8732 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2179">[ date ]</a>
+              <a href="thread.html#2179">[ thread ]</a>
+              <a href="subject.html#2179">[ subject ]</a>
+              <a href="author.html#2179">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

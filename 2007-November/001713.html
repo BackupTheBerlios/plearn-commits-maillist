@@ -1,0 +1,358 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8265 - trunk/plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-November/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8265%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200711161543.lAGFhclG017895%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001712.html">
+   <LINK REL="Next"  HREF="001714.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8265 - trunk/plearn_learners/regressors</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8265%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200711161543.lAGFhclG017895%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8265 - trunk/plearn_learners/regressors">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Nov 16 16:43:38 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001712.html">[Plearn-commits] r8264 -	branches/cgi-desjardin/plearn_learners/second_iteration
+</A></li>
+        <LI>Next message: <A HREF="001714.html">[Plearn-commits] r8266 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1713">[ date ]</a>
+              <a href="thread.html#1713">[ thread ]</a>
+              <a href="subject.html#1713">[ subject ]</a>
+              <a href="author.html#1713">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-11-16 16:43:38 +0100 (Fri, 16 Nov 2007)
+New Revision: 8265
+
+Modified:
+   trunk/plearn_learners/regressors/RegressionTreeNode.cc
+   trunk/plearn_learners/regressors/RegressionTreeNode.h
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+Log:
+speed up. 
+-Store the sorting of row in transposed mode as we always do lookup in columns mode. This is nicer with the cache subsystem.
+-Changed the semantic to get all the registered row at the same time. This remove the use of a big matrix and do some speed up.
+
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.cc	2007-11-16 15:37:52 UTC (rev 8264)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.cc	2007-11-16 15:43:38 UTC (rev 8265)
+@@ -213,14 +213,17 @@
+ void RegressionTreeNode::lookForBestSplit()
+ {
+     TVec&lt;int&gt; candidate;//list of candidate row to split
++    TVec&lt;int&gt; registered_row;
+     for (int col = 0; col &lt; inputsize; col++)
+     {
+         missing_leave-&gt;initStats();
+         left_leave-&gt;initStats();
+         right_leave-&gt;initStats();
+-        for (int row = train_set-&gt;getNextRegisteredRow(leave_id, col, -1);
+-             row &lt; length; row = train_set-&gt;getNextRegisteredRow(leave_id, col, row))
++        registered_row.resize(0);
++        train_set-&gt;getAllRegisteredRow(leave_id,col,registered_row);
++        for(int row_idx = 0;row_idx&lt;registered_row.size();row_idx++)
+         {
++            int row=registered_row[row_idx];
+             if (is_missing(train_set-&gt;get(row, col)))
+                 missing_leave-&gt;addRow(row, missing_output, missing_error);
+             else {
+@@ -265,8 +268,12 @@
+     missing_leave-&gt;initStats();
+     left_leave-&gt;initStats();
+     right_leave-&gt;initStats();
+-    for (int row = train_set-&gt;getNextRegisteredRow(leave_id, split_col, -1); row &lt; length; row = train_set-&gt;getNextRegisteredRow(leave_id, split_col, row))
++    TVec&lt;int&gt;registered_row;
++    train_set-&gt;getAllRegisteredRow(leave_id,split_col,registered_row);
++
++    for (int row_index = 0;row_index&lt;registered_row.size();row_index++)
+     {
++        int row=registered_row[row_index];
+         if (is_missing(train_set-&gt;get(row, split_col)))
+         {
+             missing_leave-&gt;addRow(row, missing_output, missing_error);
+@@ -277,12 +284,12 @@
+             if (train_set-&gt;get(row, split_col) &lt; split_feature_value)
+             {
+                 left_leave-&gt;addRow(row, left_output, left_error);
+-                left_leave-&gt;registerRow(row);    
++                left_leave-&gt;registerRow(row);
+             }
+             else
+             {
+                 right_leave-&gt;addRow(row, right_output, right_error);
+-                right_leave-&gt;registerRow(row); 
++                right_leave-&gt;registerRow(row);
+             }
+         }
+     }
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.h	2007-11-16 15:37:52 UTC (rev 8264)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.h	2007-11-16 15:43:38 UTC (rev 8265)
+@@ -93,7 +93,7 @@
+     PP&lt;RegressionTreeLeave&gt; right_leave;
+     Vec right_output;
+     Vec right_error;
+- 
++    
+ public:  
+     RegressionTreeNode();
+     virtual              ~RegressionTreeNode();
+@@ -114,7 +114,7 @@
+     
+ private:
+     void         build_();
+-    void         verbose(string msg, int level);
++    void         verbose(string msg, int level);    
+ };
+ 
+ DECLARE_OBJECT_PTR(RegressionTreeNode);
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2007-11-16 15:37:52 UTC (rev 8264)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2007-11-16 15:43:38 UTC (rev 8265)
+@@ -73,17 +73,18 @@
+     declareOption(ol, &quot;tsource&quot;, &amp;RegressionTreeRegisters::tsource, OptionBase::learntoption,
+                   &quot;The source VMatrix transposed&quot;);
+ 
++    declareOption(ol, &quot;source&quot;, &amp;RegressionTreeRegisters::source,
++                  OptionBase::buildoption|OptionBase::nosave,
++                  &quot;DEPRECATED The source VMatrix&quot;);
++
+     declareOption(ol, &quot;next_id&quot;, &amp;RegressionTreeRegisters::next_id, OptionBase::learntoption,
+                   &quot;The next id for creating a new leave\n&quot;);
+     declareOption(ol, &quot;leave_register&quot;, &amp;RegressionTreeRegisters::leave_register, OptionBase::learntoption,
+                   &quot;The vector identifying the leave to which, each row belongs\n&quot;);
+ 
+     //too big to save
+-    declareOption(ol, &quot;sorted_row&quot;, &amp;RegressionTreeRegisters::sorted_row, OptionBase::nosave,
++    declareOption(ol, &quot;tsorted_row&quot;, &amp;RegressionTreeRegisters::tsorted_row, OptionBase::nosave,
+                   &quot;The matrix holding the sequence of samples in ascending value order for each dimension\n&quot;);
+-    //too big to save
+-    declareOption(ol, &quot;inverted_sorted_row&quot;, &amp;RegressionTreeRegisters::inverted_sorted_row, OptionBase::nosave,
+-                  &quot;The matrix holding the position of a given entry in the sorted row matrix\n&quot;);
+ 
+     inherited::declareOptions(ol);
+ }
+@@ -91,8 +92,7 @@
+ void RegressionTreeRegisters::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+-    deepCopyField(sorted_row, copies);
+-    deepCopyField(inverted_sorted_row, copies);
++    deepCopyField(tsorted_row, copies);
+     deepCopyField(leave_register, copies);
+     deepCopyField(getExample_tmp, copies);
+ }
+@@ -160,53 +160,44 @@
+     return next_id;
+ }
+ 
+-int RegressionTreeRegisters::getNextRegisteredRow(int leave_id, int col, int previous_row)
++void RegressionTreeRegisters::getAllRegisteredRow(int leave_id, int col, TVec&lt;int&gt; &amp;reg)
+ {
+-    if (previous_row &gt;= length()) return length();
+-    int each_train_sample_index;
+-    if (previous_row &lt; 0) each_train_sample_index = 0;
+-    else each_train_sample_index = inverted_sorted_row(previous_row, col) + 1;
+-    while (true)
++    for(int i=0;i&lt;length();i++)
+     {
+-        if (each_train_sample_index &gt;= length()) return length();
+-        if (leave_register[sorted_row(each_train_sample_index, col)] == leave_id) break;
+-        each_train_sample_index += 1;
++        int srow = tsorted_row(col, i);
++        if ( leave_register[srow] == leave_id)
++            reg.append(srow);
+     }
+-    return sorted_row(each_train_sample_index, col);
+ }
+ 
+ void RegressionTreeRegisters::sortRows()
+ {
+     next_id = 0;
+-    if (sorted_row.length() == length() &amp;&amp; sorted_row.width() == inputsize())
++    if (tsorted_row.length() == length() &amp;&amp; tsorted_row.width() == inputsize())
+     {
+         verbose(&quot;RegressionTreeRegisters: Sorted train set indices are present, no sort required&quot;, 3);
+         return;
+     }
+     verbose(&quot;RegressionTreeRegisters: The train set is being sorted&quot;, 3);
+-    sorted_row.resize(length(), inputsize());
++    tsorted_row.resize(inputsize(), length());
+     PP&lt;ProgressBar&gt; pb;
+     if (report_progress)
+     {
+         pb = new ProgressBar(&quot;RegressionTreeRegisters : sorting the train set on input dimensions: &quot;, inputsize());
+     }
+-    for (int each_train_sample_index = 0; each_train_sample_index &lt; length(); each_train_sample_index++)
+-    {
+-        sorted_row(each_train_sample_index).fill(each_train_sample_index);
+-    }
++    for(int row=0;row&lt;tsorted_row.length();row++)
++        for(int col=0;col&lt;tsorted_row.width(); col++)
++            tsorted_row(row,col)=col;
++            
++//     for (int each_train_sample_index = 0; each_train_sample_index &lt; length(); each_train_sample_index++)
++//     {
++//         sorted_row(each_train_sample_index).fill(each_train_sample_index);
++//     }
+     for (int sample_dim = 0; sample_dim &lt; inputsize(); sample_dim++)
+     {
+         sortEachDim(sample_dim);
+         if (report_progress) pb-&gt;update(sample_dim);
+     }
+-    inverted_sorted_row.resize(length(), inputsize());
+-    for (int each_train_sample_index = 0; each_train_sample_index &lt; length(); each_train_sample_index++)
+-    {
+-        for (int sample_dim = 0; sample_dim &lt; inputsize(); sample_dim++)
+-        {
+-            inverted_sorted_row(sorted_row(each_train_sample_index, sample_dim), sample_dim) = each_train_sample_index;
+-        }
+-    }
+ }
+   
+ void RegressionTreeRegisters::sortEachDim(int dim)
+@@ -235,22 +226,22 @@
+         else
+         {
+             swapIndex(start_index + 1, (start_index + end_index) / 2, dim);
+-            if (compare(tsource-&gt;get(dim, sorted_row(start_index, dim)),
+-                        tsource-&gt;get(dim, sorted_row(end_index, dim))) &gt; 0.0)
++            if (compare(tsource-&gt;get(dim, tsorted_row(dim, start_index)),
++                        tsource-&gt;get(dim, tsorted_row(dim, end_index))) &gt; 0.0)
+                 swapIndex(start_index, end_index, dim);
+-            if (compare(tsource-&gt;get(dim, sorted_row(start_index + 1, dim)),
+-                        tsource-&gt;get(dim, sorted_row(end_index, dim))) &gt; 0.0)
++            if (compare(tsource-&gt;get(dim, tsorted_row(dim, start_index + 1)),
++                        tsource-&gt;get(dim, tsorted_row(dim, end_index))) &gt; 0.0)
+                 swapIndex(start_index + 1, end_index, dim);
+-            if (compare(tsource-&gt;get(dim, sorted_row(start_index, dim)),
+-                        tsource-&gt;get(dim, sorted_row(start_index + 1, dim))) &gt; 0.0)
++            if (compare(tsource-&gt;get(dim, tsorted_row(dim, start_index)),
++                        tsource-&gt;get(dim, tsorted_row(dim, start_index + 1))) &gt; 0.0)
+                 swapIndex(start_index, start_index + 1, dim);
+             forward_index = start_index + 1;
+             backward_index = end_index;
+-            real sample_feature = tsource-&gt;get(dim, sorted_row(start_index + 1, dim));
++            real sample_feature = tsource-&gt;get(dim, tsorted_row(dim, start_index + 1));
+             for (;;)
+             {
+-                do forward_index++; while (compare(tsource-&gt;get(dim, sorted_row(forward_index, dim)), sample_feature) &lt; 0.0);
+-                do backward_index--; while (compare(tsource-&gt;get(dim, sorted_row(backward_index, dim)), sample_feature) &gt; 0.0);
++                do forward_index++; while (compare(tsource-&gt;get(dim, tsorted_row(dim, forward_index)), sample_feature) &lt; 0.0);
++                do backward_index--; while (compare(tsource-&gt;get(dim, tsorted_row(dim, backward_index)), sample_feature) &gt; 0.0);
+                 if (backward_index &lt; forward_index)
+                 {
+                     break;
+@@ -283,28 +274,28 @@
+          next_train_sample_index &lt;= the_end_index;
+          next_train_sample_index++)
+     {
+-        int saved_index = sorted_row(next_train_sample_index, dim);
++        int saved_index = tsorted_row(dim, next_train_sample_index);
+         real sample_feature = tsource-&gt;get(dim,saved_index);
+         int each_train_sample_index;
+         for (each_train_sample_index = next_train_sample_index - 1;
+              each_train_sample_index &gt;= the_start_index;
+              each_train_sample_index--)
+         {
+-            if (compare(tsource-&gt;get(dim,sorted_row(each_train_sample_index, dim)), sample_feature) &lt;= 0.0)
++            if (compare(tsource-&gt;get(dim,tsorted_row(dim, each_train_sample_index)), sample_feature) &lt;= 0.0)
+             {
+                 break;
+             }
+-            sorted_row(each_train_sample_index + 1, dim) = sorted_row(each_train_sample_index, dim);
++            tsorted_row(dim, each_train_sample_index + 1) = tsorted_row(dim, each_train_sample_index);
+         }
+-        sorted_row(each_train_sample_index + 1, dim) = saved_index;
++        tsorted_row(dim, each_train_sample_index + 1) = saved_index;
+     }  
+ }
+ 
+ void RegressionTreeRegisters::swapIndex(int index_i, int index_j, int dim)
+ {
+-    int saved_index = sorted_row(index_i, dim);
+-    sorted_row(index_i, dim) = sorted_row(index_j, dim);
+-    sorted_row(index_j, dim) = saved_index;
++    int saved_index = tsorted_row(dim, index_i);
++    tsorted_row(dim, index_i) = tsorted_row(dim, index_j);
++    tsorted_row(dim, index_j) = saved_index;
+ }
+ 
+ real RegressionTreeRegisters::compare(real field1, real field2)
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2007-11-16 15:37:52 UTC (rev 8264)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2007-11-16 15:43:38 UTC (rev 8265)
+@@ -69,8 +69,8 @@
+ */
+ 
+     int       next_id;
+-    TMat&lt;int&gt; sorted_row;
+-    TMat&lt;int&gt; inverted_sorted_row;
++    //TMat&lt;int&gt; sorted_row;
++    TMat&lt;int&gt; tsorted_row;
+     TVec&lt;int&gt; leave_register;
+     VMat tsource;
+  
+@@ -92,11 +92,12 @@
+     real         getWeight(int row);
+     void         setWeight(int row,real val);
+     int          getNextId();
+-    int          getNextRegisteredRow(int leave_id, int col, int previous_row);
++    void         getAllRegisteredRow(int leave_id, int col, TVec&lt;int&gt; &amp;reg);
+     void         sortRows();
+     void         printRegisters();
+     void         getExample(int i, Vec&amp; input, Vec&amp; target, real&amp; weight);
+ //    virtual void getNewRow(int i, const Vec&amp; v) const;
++    VMat source;
+ 
+ private:
+     void         build_();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001712.html">[Plearn-commits] r8264 -	branches/cgi-desjardin/plearn_learners/second_iteration
+</A></li>
+	<LI>Next message: <A HREF="001714.html">[Plearn-commits] r8266 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1713">[ date ]</a>
+              <a href="thread.html#1713">[ thread ]</a>
+              <a href="subject.html#1713">[ subject ]</a>
+              <a href="author.html#1713">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

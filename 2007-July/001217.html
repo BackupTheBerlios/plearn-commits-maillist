@@ -1,0 +1,365 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7769 - trunk/plearn_learners/generic
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7769%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200707132055.l6DKtpep021275%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001216.html">
+   <LINK REL="Next"  HREF="001218.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7769 - trunk/plearn_learners/generic</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7769%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200707132055.l6DKtpep021275%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7769 - trunk/plearn_learners/generic">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Jul 13 22:55:51 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001216.html">[Plearn-commits] r7768 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="001218.html">[Plearn-commits] r7770 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1217">[ date ]</a>
+              <a href="thread.html#1217">[ thread ]</a>
+              <a href="subject.html#1217">[ subject ]</a>
+              <a href="author.html#1217">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-07-13 22:55:51 +0200 (Fri, 13 Jul 2007)
+New Revision: 7769
+
+Modified:
+   trunk/plearn_learners/generic/AddCostToLearner.cc
+   trunk/plearn_learners/generic/AddCostToLearner.h
+   trunk/plearn_learners/generic/EmbeddedLearner.cc
+   trunk/plearn_learners/generic/EmbeddedLearner.h
+Log:
+-Made AddCostToLearner and EmbeddedLearner use the computOutputsAndCosts from sub learner so that they respect the test_minibatch_size flag
+-In AddCostToLearner their is a squellette that is not finished that add an option to select the threshold between class
+
+
+Modified: trunk/plearn_learners/generic/AddCostToLearner.cc
+===================================================================
+--- trunk/plearn_learners/generic/AddCostToLearner.cc	2007-07-13 19:39:28 UTC (rev 7768)
++++ trunk/plearn_learners/generic/AddCostToLearner.cc	2007-07-13 20:55:51 UTC (rev 7769)
+@@ -94,7 +94,8 @@
+       to_max(1),
+       to_min(0),
+       n_classes(-1),
+-      confusion_matrix_target(0)
++      confusion_matrix_target(0),
++      find_class_threshold(0)
+ {}
+ 
+ ////////////////////
+@@ -177,6 +178,11 @@
+                   OptionBase::buildoption,
+         &quot;Index of the target for which the confusion matrix is computed.&quot;);
+ 
++    declareOption(ol, &quot;find_class_threshold&quot;,
++                  &amp;AddCostToLearner::find_class_threshold,
++                  OptionBase::buildoption,
++        &quot;0 if we don't find the best threshold between classes.\n&quot;
++        &quot;Otherwise we find the best threshold between classes&quot;);
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -267,18 +273,20 @@
+ // computeCostsFromOutputs //
+ /////////////////////////////
+ void AddCostToLearner::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output, 
+-                                               const Vec&amp; target, Vec&amp; costs) const
++                                                const Vec&amp; target, Vec&amp; costs,
++                                                const bool add_sub_learner_costs) const
+ {
+     int n_original_costs = learner_-&gt;nTestCosts();
+     // We give only costs.subVec to the sub-learner because it may want to resize it.
+     costs.resize(nTestCosts());
+     Vec sub_costs = costs.subVec(0, n_original_costs);
+     int target_length = target.length();
+-    if (compute_costs_on_bags) {
+-        learner_-&gt;computeCostsFromOutputs(input, output, target.subVec(0, target_length - 1), sub_costs);
+-    } else {
+-        learner_-&gt;computeCostsFromOutputs(input, output, target, sub_costs);
+-    }
++    if(add_sub_learner_costs)
++        if (compute_costs_on_bags) {
++            learner_-&gt;computeCostsFromOutputs(input, output, target.subVec(0, target_length - 1), sub_costs);
++        } else {
++            learner_-&gt;computeCostsFromOutputs(input, output, target, sub_costs);
++        }
+ 
+     if (compute_costs_on_bags) {
+         // We only need to compute the costs when the whole bag has been seen,
+@@ -327,7 +335,8 @@
+                 PLERROR(&quot;In AddCostToLearner::computeCostsFromOutputs - Unknown value for 'combine_bag_outputs_method'&quot;);
+             }
+             // We re-compute the sub-learner's costs with the brand new combined bag output.
+-            learner_-&gt;computeCostsFromOutputs(input, combined_output, target.subVec(0, target_length - 1), sub_costs);
++            if(add_sub_learner_costs)
++                learner_-&gt;computeCostsFromOutputs(input, combined_output, target.subVec(0, target_length - 1), sub_costs);
+         } else {
+             costs.fill(MISSING_VALUE);
+             return;
+@@ -543,7 +552,10 @@
+             int output_length = sub_learner_output.length();
+             int local_ind = 0;
+             if (output_length == target_length) {
+-                local_ind = ind_cost + int(round(sub_learner_output[confusion_matrix_target]))
++                int sub_learner_out = int(round(sub_learner_output[confusion_matrix_target]));
++//if outside allowd range, will access the wrong element in the cost vector
++                PLASSERT(sub_learner_out&gt;=n_classes || sub_learner_out&lt;0);
++                local_ind = ind_cost + sub_learner_out
+                     + int(round(desired_target[confusion_matrix_target]))*n_classes;
+             } else if (target_length == 1){
+                 local_ind = ind_cost + argmax(sub_learner_output) + int(round(desired_target[confusion_matrix_target]))*n_classes;
+@@ -563,8 +575,89 @@
+             PLERROR(&quot;In AddCostToLearner::computeCostsFromOutputs - Unknown cost&quot;);
+         }
+     }
+-}                                
++}
+ 
++///////////
++// train //
++///////////
++void AddCostToLearner::train()
++{
++    Profiler::pl_profile_start(&quot;AddCostToLearner::train&quot;);
++
++    int find_threshold = -1;
++    if(find_class_threshold){
++        for (int i = 0; i &lt; this-&gt;costs.length(); i++) {
++            if(costs[i]==&quot;square_class_error&quot; || costs[i]==&quot;linear_class_error&quot; || costs[i]==&quot;class_error&quot; )
++                find_threshold = i;
++            break;
++        }
++    }
++    if(find_class_threshold != 0)
++        PLASSERT_MSG(-1 != find_threshold , &quot;We where asked to find the threashold and no *class_error costs are selected.\n&quot;
++                     &quot;We use the first *class_error cost to select the threshold&quot;);
++
++    PLASSERT( learner_ );
++    learner_-&gt;nstages = nstages;
++    learner_-&gt;train();
++    stage = learner_-&gt;stage;
++
++    if(-1 != find_threshold){
++        
++        Vec input;
++        Vec target;
++        Vec output;
++        Vec outcosts;
++        real weight;
++        output.resize(learner_-&gt;outputsize());
++        outcosts.resize(learner_-&gt;nTestCosts());
++        class_threshold.resize(n_classes);
++        Vec test_threshold;
++        Vec best_threshold;
++        test_threshold.resize(n_classes);
++        best_threshold.resize(n_classes);
++        double best_class_error = -1;
++        int costs_index = -1;
++        TVec&lt;string&gt; costsnames=getTestCostNames();
++        Vec paramtotry;
++        for(float f=0;f&lt;3;f+=0.1)
++            paramtotry.append(f);
++
++        //find the index of the costs to use.
++        for(int i=0;i&lt;costsnames.size();i++){
++            string str1 = costsnames[i];
++            string str2 = costs[find_threshold];
++            if( str1 == str2){
++                costs_index = i;
++                break;
++            }
++        }
++
++        for(int a=0;a&lt;paramtotry.size();a++){
++            for(int b=a+1;b&lt;paramtotry.size();b++){
++                test_threshold[0] = paramtotry[a];
++                test_threshold[1]  = paramtotry[b];
++                double cum_class_error = 0;
++                for(int i=0;i&lt;train_set-&gt;length();i++){
++                    learner_-&gt;getTrainingSet().getExample(i, input, target, weight);
++                    computeOutputAndCosts(input, target, output, outcosts);
++                    cum_class_error += outcosts[costs_index];
++                }
++                if(best_class_error == -1 || best_class_error &gt; cum_class_error){
++                    best_threshold &lt;&lt; test_threshold;
++                    best_class_error = cum_class_error;
++                }
++            }
++        }
++        class_threshold &lt;&lt; best_threshold;
++        if(verbosity &gt;=2)
++            for(int i=0;i&lt;class_threshold.size();i++)
++                cout &lt;&lt; &quot;class_threshold[&quot; &lt;&lt; i &lt;&lt; &quot;] = &quot; &lt;&lt;class_threshold[i] &lt;&lt; endl;
++
++    }
++    Profiler::pl_profile_end(&quot;AddCostToLearner::train&quot;);
++
++}
++
+ ///////////////////////////
+ // computeOutputAndCosts //
+ ///////////////////////////
+@@ -573,7 +666,24 @@
+     PLearner::computeOutputAndCosts(input, target, output, costs);
+ }
+ 
+-
++///////////////////////////
++// computeOutputsAndCosts //
++///////////////////////////
++void AddCostToLearner::computeOutputsAndCosts(const Mat&amp; input, const Mat&amp; target,
++                                             Mat&amp; output, Mat&amp; costs) const {
++    PLASSERT( learner_ );
++    Mat sub_costs = costs.subMatColumns(0, learner_-&gt;nTestCosts());
++    learner_-&gt;computeOutputsAndCosts(input, target, output, sub_costs);
++    for (int i=0;i&lt;input.length();i++)
++    {
++        Vec in_i = input(i);
++        Vec out_i = output(i); 
++        Vec target_i = target(i);
++        Vec c_i = costs(i);
++        computeCostsFromOutputs(in_i,out_i,target_i,c_i,false);
++    }
++    
++}
+ ////////////
+ // forget //
+ ////////////
+
+Modified: trunk/plearn_learners/generic/AddCostToLearner.h
+===================================================================
+--- trunk/plearn_learners/generic/AddCostToLearner.h	2007-07-13 19:39:28 UTC (rev 7768)
++++ trunk/plearn_learners/generic/AddCostToLearner.h	2007-07-13 20:55:51 UTC (rev 7769)
+@@ -104,6 +104,9 @@
+     //! Its value is desired_target[0].
+     Var target_var;
+ 
++    //! The threshold between class
++    Vec class_threshold;
++
+ public:
+ 
+     // ************************
+@@ -123,6 +126,7 @@
+     real to_min;
+     int n_classes;
+     int confusion_matrix_target;
++    int find_class_threshold;
+ 
+     // ****************
+     // * Constructors *
+@@ -159,23 +163,35 @@
+     // Declares other standard object methods.
+     PLEARN_DECLARE_OBJECT(AddCostToLearner);
+ 
+-
+     // **************************
+     // **** PLearner methods ****
+     // **************************
+ 
++    virtual void train();
++
+     //! (Re-)initializes the PLearner in its fresh state (that state may depend on the 'seed' option)
+     //! And sets 'stage' back to 0   (this is the stage of a fresh learner!).
+     virtual void forget();
+ 
+-    //! Computes the costs from already computed output. 
++    //! Computes our and from the sub_learner costs from already computed output. 
+     virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output, 
+-                                         const Vec&amp; target, Vec&amp; costs) const;
++                                         const Vec&amp; target, Vec&amp; costs,
++                                         const bool add_sub_learner_costs) const;
+ 
++    //! Computes our and from the sub_learner costs from already computed output. 
++    void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output, 
++                                         const Vec&amp; target, Vec&amp; costs) const{
++        computeCostsFromOutputs(input,output,target,costs,true);
++    }
++
+     //! Overridden to use default PLearner behavior.
+     virtual void computeOutputAndCosts(const Vec&amp; input, const Vec&amp; target,
+                                        Vec&amp; output, Vec&amp; costs) const;
+ 
++    //! Overridden to use the sublearner version and complete it
++    virtual void computeOutputsAndCosts(const Mat&amp; input, const Mat&amp; target,
++                                       Mat&amp; output, Mat&amp; costs) const;
++
+     //! Returns the names of the costs computed by computeCostsFromOutpus (and thus the test method).
+     virtual TVec&lt;string&gt; getTestCostNames() const;
+ 
+
+Modified: trunk/plearn_learners/generic/EmbeddedLearner.cc
+===================================================================
+--- trunk/plearn_learners/generic/EmbeddedLearner.cc	2007-07-13 19:39:28 UTC (rev 7768)
++++ trunk/plearn_learners/generic/EmbeddedLearner.cc	2007-07-13 20:55:51 UTC (rev 7769)
+@@ -208,6 +208,13 @@
+     learner_-&gt;computeOutputAndCosts(input, target, output, costs); 
+ }
+ 
++void EmbeddedLearner::computeOutputsAndCosts(const Mat&amp; input, const Mat&amp; target, 
++                                            Mat&amp; output, Mat&amp; costs) const
++{ 
++    PLASSERT( learner_ );
++    learner_-&gt;computeOutputsAndCosts(input, target, output, costs); 
++}
++
+ bool EmbeddedLearner::computeConfidenceFromOutput(
+     const Vec&amp; input, const Vec&amp; output,
+     real probability, TVec&lt; pair&lt;real,real&gt; &gt;&amp; intervals) const
+
+Modified: trunk/plearn_learners/generic/EmbeddedLearner.h
+===================================================================
+--- trunk/plearn_learners/generic/EmbeddedLearner.h	2007-07-13 19:39:28 UTC (rev 7768)
++++ trunk/plearn_learners/generic/EmbeddedLearner.h	2007-07-13 20:55:51 UTC (rev 7769)
+@@ -137,6 +137,10 @@
+                                        Vec&amp; output, Vec&amp; costs) const;
+ 
+     //! Forwarded to inner learner
++    virtual void computeOutputsAndCosts(const Mat&amp; input, const Mat&amp; target,
++                                       Mat&amp; output, Mat&amp; costs) const;
++
++    //! Forwarded to inner learner
+     virtual
+     bool computeConfidenceFromOutput(const Vec&amp; input, const Vec&amp; output,
+                                      real probability,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001216.html">[Plearn-commits] r7768 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="001218.html">[Plearn-commits] r7770 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1217">[ date ]</a>
+              <a href="thread.html#1217">[ thread ]</a>
+              <a href="subject.html#1217">[ subject ]</a>
+              <a href="author.html#1217">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

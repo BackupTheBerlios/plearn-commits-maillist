@@ -1,0 +1,337 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7610 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7610%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200706192046.l5JKkmAD002640%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001057.html">
+   <LINK REL="Next"  HREF="001059.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7610 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7610%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200706192046.l5JKkmAD002640%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7610 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Tue Jun 19 22:46:48 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001057.html">[Plearn-commits] r7609 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001059.html">[Plearn-commits] r7611 - trunk/python_modules/plearn/pyplearn
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1058">[ date ]</a>
+              <a href="thread.html#1058">[ thread ]</a>
+              <a href="subject.html#1058">[ subject ]</a>
+              <a href="author.html#1058">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-06-19 22:46:48 +0200 (Tue, 19 Jun 2007)
+New Revision: 7610
+
+Modified:
+   trunk/plearn_learners/online/RBMLayer.cc
+   trunk/plearn_learners/online/RBMLayer.h
+   trunk/plearn_learners/online/RBMMatrixConnection.cc
+   trunk/plearn_learners/online/RBMMatrixConnection.h
+   trunk/plearn_learners/online/RBMModule.cc
+   trunk/plearn_learners/online/RBMModule.h
+Log:
+Added (optional) computation of exact gradient of log-likelihood in RBMs.
+
+
+Modified: trunk/plearn_learners/online/RBMLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.cc	2007-06-19 20:31:29 UTC (rev 7609)
++++ trunk/plearn_learners/online/RBMLayer.cc	2007-06-19 20:46:48 UTC (rev 7610)
+@@ -336,6 +336,12 @@
+     bias_pos_stats += pos_values;
+     pos_count++;
+ }
++void RBMLayer::accumulatePosStats( const Mat&amp; pos_values )
++{
++    for (int i=0;i&lt;pos_values.length();i++)
++        bias_pos_stats += pos_values(i);
++    pos_count+=pos_values.length();
++}
+ 
+ ////////////////////////
+ // accumulateNegStats //
+@@ -345,6 +351,12 @@
+     bias_neg_stats += neg_values;
+     neg_count++;
+ }
++void RBMLayer::accumulateNegStats( const Mat&amp; neg_values )
++{
++    for (int i=0;i&lt;neg_values.length();i++)
++        bias_neg_stats += neg_values(i);
++    neg_count+=neg_values.length();
++}
+ 
+ ////////////
+ // update //
+
+Modified: trunk/plearn_learners/online/RBMLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.h	2007-06-19 20:31:29 UTC (rev 7609)
++++ trunk/plearn_learners/online/RBMLayer.h	2007-06-19 20:46:48 UTC (rev 7610)
+@@ -204,9 +204,11 @@
+ 
+     //! Accumulates positive phase statistics
+     virtual void accumulatePosStats( const Vec&amp; pos_values );
++    virtual void accumulatePosStats( const Mat&amp; ps_values);
+ 
+     //! Accumulates negative phase statistics
+     virtual void accumulateNegStats( const Vec&amp; neg_values );
++    virtual void accumulateNegStats( const Mat&amp; neg_values );
+ 
+     //! Update parameters according to accumulated statistics
+     virtual void update();
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-06-19 20:31:29 UTC (rev 7609)
++++ trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-06-19 20:46:48 UTC (rev 7610)
+@@ -135,6 +135,16 @@
+     pos_count++;
+ }
+ 
++void RBMMatrixConnection::accumulatePosStats( const Mat&amp; down_values,
++                                              const Mat&amp; up_values )
++{
++    int mbs=down_values.length();
++    PLASSERT(up_values.length()==mbs);
++    // weights_pos_stats += up_values * down_values'
++    productScaleAcc(weights_pos_stats, up_values, true, down_values, false, 1., 1.);
++    pos_count+=mbs;
++}
++
+ ////////////////////////
+ // accumulateNegStats //
+ ////////////////////////
+@@ -147,6 +157,16 @@
+     neg_count++;
+ }
+ 
++void RBMMatrixConnection::accumulateNegStats( const Mat&amp; down_values,
++                                              const Mat&amp; up_values )
++{
++    int mbs=down_values.length();
++    PLASSERT(up_values.length()==mbs);
++    // weights_neg_stats += up_values * down_values'
++     productScaleAcc(weights_neg_stats, up_values, true, down_values, false, 1., 1.);
++    neg_count+=mbs;
++}
++
+ ////////////
+ // update //
+ ////////////
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.h	2007-06-19 20:31:29 UTC (rev 7609)
++++ trunk/plearn_learners/online/RBMMatrixConnection.h	2007-06-19 20:46:48 UTC (rev 7610)
+@@ -100,20 +100,14 @@
+                                      const Vec&amp; up_values );
+ 
+     virtual void accumulatePosStats( const Mat&amp; down_values,
+-                                     const Mat&amp; up_values )
+-    {
+-        PLASSERT_MSG( false, &quot;Not implemented&quot; );
+-    }
++                                     const Mat&amp; up_values );
+ 
+     //! Accumulates negative phase statistics to *_neg_stats
+     virtual void accumulateNegStats( const Vec&amp; down_values,
+                                      const Vec&amp; up_values );
+ 
+     virtual void accumulateNegStats( const Mat&amp; down_values,
+-                                     const Mat&amp; up_values )
+-    {
+-        PLASSERT_MSG( false, &quot;Not implemented&quot; );
+-    }
++                                     const Mat&amp; up_values );
+ 
+     //! Updates parameters according to contrastive divergence gradient
+     virtual void update();
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-06-19 20:31:29 UTC (rev 7609)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-06-19 20:46:48 UTC (rev 7610)
+@@ -98,6 +98,7 @@
+     min_n_Gibbs_steps(1),
+     n_Gibbs_steps_per_generated_sample(1),
+     compute_log_likelihood(false),
++    minimize_log_likelihood(false),
+     Gibbs_step(0),
+     log_partition_function(0),
+     partition_function_is_stale(true),
+@@ -199,9 +200,16 @@
+     declareOption(ol, &quot;compute_log_likelihood&quot;,
+                   &amp;RBMModule::compute_log_likelihood,
+                   OptionBase::buildoption,
+-                  &quot;Whether to compute the RBM generative model's log-likelihood\n&quot;
++                  &quot;Whether to compute the exact RBM generative model's log-likelihood\n&quot;
+                   &quot;(on the neg_log_likelihood port). If false then the neg_log_likelihood\n&quot;
+                   &quot;port just computes the input visible's free energy.\n&quot;);
++    
++    declareOption(ol, &quot;minimize_log_likelihood&quot;,
++                  &amp;RBMModule::minimize_log_likelihood,
++                  OptionBase::buildoption,
++                  &quot;Whether to minimize the exact RBM generative model's log-likelihood\n&quot;
++                  &quot;i.e. take stochastic gradient steps w.r.t. the log-likelihood instead\n&quot;
++                  &quot;of w.r.t. the contrastive divergence.\n&quot;);
+ 
+     declareOption(ol, &quot;Gibbs_step&quot;, 
+                   &amp;RBMModule::Gibbs_step,
+@@ -1020,6 +1028,7 @@
+ void RBMModule::bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
+                                const TVec&lt;Mat*&gt;&amp; ports_gradient)
+ {
++    PLASSERT( ports_value.length() == nPorts() );
+     PLASSERT( ports_gradient.length() == nPorts() );
+     Mat* visible_grad = ports_gradient[getPortIndex(&quot;visible&quot;)];
+     Mat* hidden_grad = ports_gradient[getPortIndex(&quot;hidden.state&quot;)];
+@@ -1130,13 +1139,83 @@
+             partition_function_is_stale = true;
+     }
+ 
+-    if (cd_learning_rate &gt; 0) {
++    if (cd_learning_rate &gt; 0 &amp;&amp; minimize_log_likelihood) {
++        PLASSERT( visible &amp;&amp; !visible-&gt;isEmpty() );
++        PLASSERT( hidden &amp;&amp; !hidden-&gt;isEmpty() );
++        setAllLearningRates(cd_learning_rate);
++
++        // positive phase
++        visible_layer-&gt;accumulatePosStats(*visible);
++        hidden_layer-&gt;accumulatePosStats(*hidden);
++        connection-&gt;accumulatePosStats(*visible,*hidden);
++
++        // negative phase
++        PLASSERT_MSG(hidden_layer-&gt;size&lt;32 || visible_layer-&gt;size&lt;32,
++                     &quot;To minimize exact log-likelihood of an RBM, hidden_layer-&gt;size &quot;
++                     &quot;or visible_layer-&gt;size must be &lt;32&quot;);
++        // gradient of partition function
++        if (hidden_layer-&gt;size &gt; visible_layer-&gt;size)
++            // do it by summing over visible configurations
++        {
++            PLASSERT(visible_layer-&gt;classname()==&quot;RBMBinomialLayer&quot;);
++            // assuming a binary input we sum over all bit configurations
++            int n_configurations = 1 &lt;&lt; visible_layer-&gt;size; // = 2^{visible_layer-&gt;size}
++            energy_inputs.resize(1, visible_layer-&gt;size);
++            Vec input = energy_inputs(0);
++            // COULD BE DONE MORE EFFICIENTLY BY DOING MANY CONFIGURATIONS
++            // AT ONCE IN A 'MINIBATCH'
++            for (int c=0;c&lt;n_configurations;c++)
++            {
++                // convert integer c into a bit-wise visible representation
++                int x=c;
++                for (int i=0;i&lt;visible_layer-&gt;size;i++)
++                {
++                    input[i]= x &amp; 1; // take least significant bit
++                    x &gt;&gt;= 1; // and shift right (divide by 2)
++                }
++                connection-&gt;setAsDownInput(input);
++                hidden_layer-&gt;getAllActivations(connection,0,false);
++                hidden_layer-&gt;computeExpectation();
++                visible_layer-&gt;accumulateNegStats(input);
++                hidden_layer-&gt;accumulateNegStats(hidden_layer-&gt;expectation);
++                connection-&gt;accumulateNegStats(input,hidden_layer-&gt;expectation);
++            }
++        }
++        else
++        {
++            PLASSERT(hidden_layer-&gt;classname()==&quot;RBMBinomialLayer&quot;);
++            // assuming a binary hidden we sum over all bit configurations
++            int n_configurations = 1 &lt;&lt; hidden_layer-&gt;size; // = 2^{hidden_layer-&gt;size}
++            energy_inputs.resize(1, hidden_layer-&gt;size);
++            Vec h = energy_inputs(0);
++            for (int c=0;c&lt;n_configurations;c++)
++            {
++                // convert integer c into a bit-wise hidden representation
++                int x=c;
++                for (int i=0;i&lt;hidden_layer-&gt;size;i++)
++                {
++                    h[i]= x &amp; 1; // take least significant bit
++                    x &gt;&gt;= 1; // and shift right (divide by 2)
++                }
++                connection-&gt;setAsUpInput(h);
++                visible_layer-&gt;getAllActivations(connection,0,false);
++                visible_layer-&gt;computeExpectation();
++                visible_layer-&gt;accumulateNegStats(visible_layer-&gt;expectation);
++                hidden_layer-&gt;accumulateNegStats(h);
++                connection-&gt;accumulateNegStats(visible_layer-&gt;expectation,h);
++            }
++        }
++        // update
++        visible_layer-&gt;update();
++        hidden_layer-&gt;update();
++        connection-&gt;update();
++    }
++    if (cd_learning_rate &gt; 0 &amp;&amp; !minimize_log_likelihood) {
+         EXTREME_MODULE_LOG &lt;&lt; &quot;Performing contrastive divergence step in RBM '&quot;
+                            &lt;&lt; name &lt;&lt; &quot;'&quot; &lt;&lt; endl;
+         // Perform a step of contrastive divergence.
+         PLASSERT( visible &amp;&amp; !visible-&gt;isEmpty() );
+         setAllLearningRates(cd_learning_rate);
+-        PLASSERT( ports_value.length() == nPorts() );
+         Mat* negative_phase_visible_samples = 
+             compute_contrastive_divergence?ports_value[getPortIndex(&quot;negative_phase_visible_samples.state&quot;)]:0;
+         const Mat* negative_phase_hidden_expectations =
+@@ -1330,7 +1409,6 @@
+         setAllLearningRates(grad_learning_rate);
+         PLASSERT( reconstruction_connection != 0 );
+         // Perform gradient descent on Autoassociator reconstruction cost
+-        PLASSERT( ports_value.length() == nPorts() );
+         Mat* visible_reconstruction = ports_value[getPortIndex(&quot;visible_reconstruction.state&quot;)];
+         Mat* visible_reconstruction_activations = ports_value[getPortIndex(&quot;visible_reconstruction_activations.state&quot;)];
+         Mat* reconstruction_error = ports_value[getPortIndex(&quot;reconstruction_error.state&quot;)];
+
+Modified: trunk/plearn_learners/online/RBMModule.h
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.h	2007-06-19 20:31:29 UTC (rev 7609)
++++ trunk/plearn_learners/online/RBMModule.h	2007-06-19 20:46:48 UTC (rev 7610)
+@@ -83,6 +83,7 @@
+     int n_Gibbs_steps_per_generated_sample;
+ 
+     bool compute_log_likelihood;
++    bool minimize_log_likelihood;
+ 
+     //#####  Public Learnt Options  ############################################
+     //! used to generate samples from the RBM
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001057.html">[Plearn-commits] r7609 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001059.html">[Plearn-commits] r7611 - trunk/python_modules/plearn/pyplearn
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1058">[ date ]</a>
+              <a href="thread.html#1058">[ thread ]</a>
+              <a href="subject.html#1058">[ subject ]</a>
+              <a href="author.html#1058">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

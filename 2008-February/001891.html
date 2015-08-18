@@ -1,0 +1,2174 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8443 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8443%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200802011559.m11FxuOK017887%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001890.html">
+   <LINK REL="Next"  HREF="001892.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8443 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8443%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200802011559.m11FxuOK017887%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8443 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Fri Feb  1 16:59:56 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001890.html">[Plearn-commits] r8442 - trunk/plearn_learners_experimental
+</A></li>
+        <LI>Next message: <A HREF="001892.html">[Plearn-commits] r8444 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1891">[ date ]</a>
+              <a href="thread.html#1891">[ thread ]</a>
+              <a href="subject.html#1891">[ subject ]</a>
+              <a href="author.html#1891">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-02-01 16:59:56 +0100 (Fri, 01 Feb 2008)
+New Revision: 8443
+
+Added:
+   trunk/plearn_learners/online/RBMLateralBinomialLayer.cc
+   trunk/plearn_learners/online/RBMLateralBinomialLayer.h
+Log:
+RBM layer with lateral connection
+
+
+Added: trunk/plearn_learners/online/RBMLateralBinomialLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMLateralBinomialLayer.cc	2008-02-01 04:46:56 UTC (rev 8442)
++++ trunk/plearn_learners/online/RBMLateralBinomialLayer.cc	2008-02-01 15:59:56 UTC (rev 8443)
+@@ -0,0 +1,1784 @@
++// -*- C++ -*-
++
++// RBMLateralBinomialLayer.cc
++//
++// Copyright (C) 2006 Hugo Larochelle
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Hugo Larochelle
++
++/*! \file RBMLateralBinomialLayer.cc */
++
++
++
++#include &quot;RBMLateralBinomialLayer.h&quot;
++#include &lt;plearn/math/TMat_maths.h&gt;
++#include &quot;RBMConnection.h&quot;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    RBMLateralBinomialLayer,
++    &quot;Layer in an RBM formed with binomial units and lateral connections.&quot;,
++    &quot;&quot;);
++
++RBMLateralBinomialLayer::RBMLateralBinomialLayer( real the_learning_rate ) :
++    inherited( the_learning_rate ),
++    n_lateral_connections_passes( 1 ),
++    dampening_factor( 0. ),
++    mean_field_precision_threshold( 0. ),
++    topographic_length( -1 ),
++    topographic_width( -1 ),
++    topographic_patch_vradius( 5 ),
++    topographic_patch_hradius( 5 ),
++    topographic_lateral_weights_init_value( 0. ),
++    do_not_learn_topographic_lateral_weights( false )
++{
++}
++
++void RBMLateralBinomialLayer::reset()
++{
++    inherited::reset();
++    lateral_weights_inc.clear();
++}
++
++void RBMLateralBinomialLayer::clearStats()
++{
++    inherited::clearStats();
++    lateral_weights_pos_stats.clear();
++    lateral_weights_neg_stats.clear();
++}
++
++void RBMLateralBinomialLayer::forget()
++{
++    inherited::forget();
++    //real bu;
++    //for( int i=0; i&lt;lateral_weights.length(); i++)
++    //    for( int j=0; j&lt;lateral_weights.width(); j++)
++    //    {
++    //        bu = random_gen-&gt;bounded_uniform(-1.0/size,1.0/size);
++    //        lateral_weights(i,j) = bu;
++    //        lateral_weights(j,i) = bu;
++    //    }
++    lateral_weights.clear();
++    // Set diagonal to 0
++    if( lateral_weights.length() != 0 )
++    {
++        real *d = lateral_weights.data();        
++        for (int i=0; i&lt;lateral_weights.length(); i++,d+=lateral_weights.mod()+1) 
++            *d = 0;
++    }
++
++    for( int i=0; i&lt;topographic_lateral_weights.length(); i++ )
++        //topographic_lateral_weights[i].clear();
++        topographic_lateral_weights[i].fill( topographic_lateral_weights_init_value );
++}
++
++////////////////////
++// generateSample //
++////////////////////
++void RBMLateralBinomialLayer::generateSample()
++{
++    PLASSERT_MSG(random_gen,
++                 &quot;random_gen should be initialized before generating samples&quot;);
++
++    PLCHECK_MSG(expectation_is_up_to_date, &quot;Expectation should be computed &quot;
++            &quot;before calling generateSample()&quot;);
++
++    for( int i=0 ; i&lt;size ; i++ )
++        sample[i] = random_gen-&gt;binomial_sample( expectation[i] );
++    
++}
++
++/////////////////////
++// generateSamples //
++/////////////////////
++void RBMLateralBinomialLayer::generateSamples()
++{
++    PLASSERT_MSG(random_gen,
++                 &quot;random_gen should be initialized before generating samples&quot;);
++
++    PLCHECK_MSG(expectations_are_up_to_date, &quot;Expectations should be computed &quot;
++            &quot;before calling generateSamples()&quot;);
++
++    PLASSERT( samples.width() == size &amp;&amp; samples.length() == batch_size );
++
++    for (int k = 0; k &lt; batch_size; k++) {
++        for (int i=0 ; i&lt;size ; i++)
++            samples(k, i) = random_gen-&gt;binomial_sample( expectations(k, i) );
++    }
++}
++
++////////////////////////
++// computeExpectation //
++////////////////////////
++void RBMLateralBinomialLayer::computeExpectation()
++{
++    if( expectation_is_up_to_date )
++        return;
++
++    if( temp_output.length() != n_lateral_connections_passes+1 )
++    {
++        temp_output.resize(n_lateral_connections_passes+1);
++        for( int i=0 ; i&lt;n_lateral_connections_passes+1 ; i++ )
++            temp_output[i].resize(size);
++    }       
++
++    current_temp_output = temp_output[0];
++    temp_output.last() = expectation;
++
++    if (use_fast_approximations)
++        for( int i=0 ; i&lt;size ; i++ )
++            current_temp_output[i] = fastsigmoid( activation[i] );
++    else
++        for( int i=0 ; i&lt;size ; i++ )
++            current_temp_output[i] = sigmoid( activation[i] );
++
++    for( int t=0; t&lt;n_lateral_connections_passes; t++ )
++    {
++        previous_temp_output = current_temp_output;
++        current_temp_output = temp_output[t+1];
++        if( topographic_lateral_weights.length() == 0 )
++            product(dampening_expectation, lateral_weights, previous_temp_output);
++        else
++            productTopoLateralWeights( dampening_expectation, previous_temp_output );
++        dampening_expectation += activation;
++        if (use_fast_approximations)
++        {
++            if( fast_exact_is_equal( dampening_factor, 0) )
++            {
++                for( int i=0 ; i&lt;size ; i++ )
++                    current_temp_output[i] = fastsigmoid( dampening_expectation[i] );
++            }
++            else
++            {
++                for( int i=0 ; i&lt;size ; i++ )
++                    current_temp_output[i] = 
++                        (1-dampening_factor) * fastsigmoid( dampening_expectation[i] ) 
++                        + dampening_factor * previous_temp_output[i];
++            }
++        }
++        else
++        {
++            if( fast_exact_is_equal( dampening_factor, 0) )
++            {
++                for( int i=0 ; i&lt;size ; i++ )
++                    current_temp_output[i] = sigmoid( dampening_expectation[i] );
++            }
++            else
++            {
++                for( int i=0 ; i&lt;size ; i++ )
++                    current_temp_output[i] = 
++                        (1-dampening_factor) * sigmoid( dampening_expectation[i] ) 
++                        + dampening_factor * previous_temp_output[i];
++            }
++        }
++        if( !fast_exact_is_equal(mean_field_precision_threshold, 0.) &amp;&amp; 
++            dist(current_temp_output, previous_temp_output,2)/size &lt; mean_field_precision_threshold )
++        {
++            expectation &lt;&lt; current_temp_output;
++            break;
++        }
++        //cout &lt;&lt; sqrt(max(square(current_temp_output-previous_temp_output))) &lt;&lt; &quot; &quot;;
++        //cout &lt;&lt; dist(current_temp_output, previous_temp_output,2)/current_temp_output.length() &lt;&lt; &quot; &quot;;
++    }
++    //cout &lt;&lt; endl;
++    //expectation &lt;&lt; current_temp_output;
++    expectation_is_up_to_date = true;
++}
++
++/////////////////////////
++// computeExpectations //
++/////////////////////////
++void RBMLateralBinomialLayer::computeExpectations()
++{
++    if( expectations_are_up_to_date )
++        return;
++
++    PLASSERT( expectations.width() == size
++              &amp;&amp; expectations.length() == batch_size );
++    dampening_expectations.resize( batch_size, size );
++
++    if( temp_outputs.length() != n_lateral_connections_passes+1 )
++    {
++        temp_outputs.resize(n_lateral_connections_passes+1);
++        for( int i=0 ; i&lt;n_lateral_connections_passes+1 ; i++ )
++            temp_outputs[i].resize( batch_size, size);
++    }       
++
++    current_temp_outputs = temp_outputs[0];
++    temp_outputs.last() = expectations;
++
++    if (use_fast_approximations)
++        for (int k = 0; k &lt; batch_size; k++)
++            for (int i = 0 ; i &lt; size ; i++)
++                current_temp_outputs(k, i) = fastsigmoid(activations(k, i));
++    else
++        for (int k = 0; k &lt; batch_size; k++)
++            for (int i = 0 ; i &lt; size ; i++)
++                current_temp_outputs(k, i) = sigmoid(activations(k, i));
++
++    for( int t=0; t&lt;n_lateral_connections_passes; t++ )
++    {
++        previous_temp_outputs = current_temp_outputs;
++        current_temp_outputs = temp_outputs[t+1];
++        if( topographic_lateral_weights.length() == 0 )
++            productTranspose(dampening_expectations, previous_temp_outputs, 
++                             lateral_weights);
++        else
++            for( int b = 0; b&lt;dampening_expectations.length(); b++)
++                productTopoLateralWeights( dampening_expectations(b), 
++                                           previous_temp_outputs(b) );
++
++        dampening_expectations += activations;
++        if (use_fast_approximations)
++        {
++            if( fast_exact_is_equal( dampening_factor, 0) )
++            {
++                for(int k = 0; k &lt; batch_size; k++)
++                    for( int i=0 ; i&lt;size ; i++ )
++                        current_temp_outputs(k, i) = 
++                            fastsigmoid( dampening_expectations(k, i) );
++            }
++            else
++            {
++                for(int k = 0; k &lt; batch_size; k++)
++                    for( int i=0 ; i&lt;size ; i++ )
++                        current_temp_outputs(k, i) = (1-dampening_factor)
++                            * fastsigmoid( dampening_expectations(k, i) ) 
++                            + dampening_factor * previous_temp_outputs(k, i);
++            }
++        }
++        else
++        {
++            if( fast_exact_is_equal( dampening_factor, 0) )
++            {
++                for(int k = 0; k &lt; batch_size; k++)
++                    for( int i=0 ; i&lt;size ; i++ )
++                        current_temp_outputs(k, i) = 
++                            sigmoid( dampening_expectations(k, i) );
++            }
++            else
++            {
++                for(int k = 0; k &lt; batch_size; k++)
++                    for( int i=0 ; i&lt;size ; i++ )
++                        current_temp_outputs(k, i) = (1-dampening_factor) 
++                            * sigmoid( dampening_expectations(k, i) ) 
++                            + dampening_factor * previous_temp_outputs(k, i);
++            }
++        }
++    }
++    //expectations &lt;&lt; current_temp_outputs;
++    expectations_are_up_to_date = true;
++}
++
++///////////
++// fprop //
++///////////
++void RBMLateralBinomialLayer::fprop( const Vec&amp; input, Vec&amp; output ) const
++{
++    PLASSERT( input.size() == input_size );
++    output.resize( output_size );
++
++    add(bias, input, bias_plus_input);
++
++    if( temp_output.length() != n_lateral_connections_passes+1 )
++    {
++        temp_output.resize(n_lateral_connections_passes+1);
++        for( int i=0 ; i&lt;n_lateral_connections_passes+1 ; i++ )
++            temp_output[i].resize(size);
++    }       
++
++    temp_output.last() = output;
++    current_temp_output = temp_output[0];
++
++    if (use_fast_approximations)
++        for( int i=0 ; i&lt;size ; i++ )
++            current_temp_output[i] = fastsigmoid( bias_plus_input[i] );
++    else
++        for( int i=0 ; i&lt;size ; i++ )
++            current_temp_output[i] = sigmoid( bias_plus_input[i] );
++
++    for( int t=0; t&lt;n_lateral_connections_passes; t++ )
++    {
++        previous_temp_output = current_temp_output;
++        current_temp_output = temp_output[t+1];
++        if( topographic_lateral_weights.length() == 0 )
++            product(dampening_expectation, lateral_weights, previous_temp_output);
++        else
++            productTopoLateralWeights( dampening_expectation, previous_temp_output );
++        dampening_expectation += bias_plus_input;
++        if (use_fast_approximations)
++        {
++            if( fast_exact_is_equal( dampening_factor, 0) )
++            {
++                for( int i=0 ; i&lt;size ; i++ )
++                    current_temp_output[i] = fastsigmoid( dampening_expectation[i] );
++            }
++            else
++            {
++                for( int i=0 ; i&lt;size ; i++ )
++                    current_temp_output[i] = 
++                        (1-dampening_factor) * fastsigmoid( dampening_expectation[i] ) 
++                        + dampening_factor * previous_temp_output[i];
++            }
++        }
++        else
++        {
++            if( fast_exact_is_equal( dampening_factor, 0) )
++            {
++                for( int i=0 ; i&lt;size ; i++ )
++                    current_temp_output[i] = sigmoid( dampening_expectation[i] );
++            }
++            else
++            {
++                for( int i=0 ; i&lt;size ; i++ )
++                    current_temp_output[i] = 
++                        (1-dampening_factor) * sigmoid( dampening_expectation[i] ) 
++                        + dampening_factor * previous_temp_output[i];
++            }
++        }
++    }
++}
++
++void RBMLateralBinomialLayer::fprop( const Mat&amp; inputs, Mat&amp; outputs ) const
++{
++    int mbatch_size = inputs.length();
++    PLASSERT( inputs.width() == size );
++    outputs.resize( mbatch_size, size );
++    dampening_expectations.resize( mbatch_size, size );
++
++    if(bias_plus_inputs.length() != inputs.length() ||
++       bias_plus_inputs.width() != inputs.width())
++        bias_plus_inputs.resize(inputs.length(), inputs.width());
++    bias_plus_inputs &lt;&lt; inputs;
++    bias_plus_inputs += bias;
++
++    if( temp_outputs.length() != n_lateral_connections_passes+1 )
++    {
++        temp_outputs.resize(n_lateral_connections_passes+1);
++        for( int i=0 ; i&lt;n_lateral_connections_passes+1 ; i++ )
++            temp_outputs[i].resize(mbatch_size,size);
++    }       
++
++    temp_outputs.last() = outputs;
++    current_temp_outputs = temp_outputs[0];
++
++    if (use_fast_approximations)
++        for( int k = 0; k &lt; mbatch_size; k++ )
++            for( int i = 0; i &lt; size; i++ )
++                current_temp_outputs(k,i) = fastsigmoid( bias_plus_inputs(k,i) );
++    else
++        for( int k = 0; k &lt; mbatch_size; k++ )
++            for( int i = 0; i &lt; size; i++ )
++                current_temp_outputs(k,i) = sigmoid( bias_plus_inputs(k,i) );
++
++    for( int t=0; t&lt;n_lateral_connections_passes; t++ )
++    {
++        previous_temp_outputs = current_temp_outputs;
++        current_temp_outputs = temp_outputs[t+1];
++        if( topographic_lateral_weights.length() == 0 )
++            productTranspose(dampening_expectations, previous_temp_outputs, 
++                             lateral_weights);
++        else
++            for( int b = 0; b&lt;dampening_expectations.length(); b++)
++                productTopoLateralWeights( dampening_expectations(b), 
++                                           previous_temp_outputs(b) );
++
++        dampening_expectations += bias_plus_inputs;
++        if (use_fast_approximations)
++        {
++            if( fast_exact_is_equal( dampening_factor, 0) )
++            {
++                for(int k = 0; k &lt; batch_size; k++)
++                    for( int i=0 ; i&lt;size ; i++ )
++                        current_temp_outputs(k, i) = 
++                            fastsigmoid( dampening_expectations(k, i) );
++            }
++            else
++            {
++                for(int k = 0; k &lt; batch_size; k++)
++                    for( int i=0 ; i&lt;size ; i++ )
++                        current_temp_outputs(k, i) = (1-dampening_factor)
++                            * fastsigmoid( dampening_expectations(k, i) ) 
++                            + dampening_factor * previous_temp_outputs(k, i);
++            }
++        }
++        else
++        {
++            if( fast_exact_is_equal( dampening_factor, 0) )
++            {
++                for(int k = 0; k &lt; batch_size; k++)
++                    for( int i=0 ; i&lt;size ; i++ )
++                        current_temp_outputs(k, i) = 
++                            sigmoid( dampening_expectations(k, i) );
++            }
++            else
++            {
++                for(int k = 0; k &lt; batch_size; k++)
++                    for( int i=0 ; i&lt;size ; i++ )
++                        current_temp_outputs(k, i) = (1-dampening_factor)
++                            * sigmoid( dampening_expectations(k, i) ) 
++                            + dampening_factor * previous_temp_outputs(k, i);
++            }
++        }
++    }
++}
++
++void RBMLateralBinomialLayer::fprop( const Vec&amp; input, const Vec&amp; rbm_bias,
++                              Vec&amp; output ) const
++{
++    PLASSERT( input.size() == input_size );
++    PLASSERT( rbm_bias.size() == input_size );
++    output.resize( output_size );
++
++    add(rbm_bias, input, bias_plus_input);
++
++        if( temp_output.length() != n_lateral_connections_passes+1 )
++    {
++        temp_output.resize(n_lateral_connections_passes+1);
++        for( int i=0 ; i&lt;n_lateral_connections_passes+1 ; i++ )
++            temp_output[i].resize(size);
++    }       
++
++    temp_output.last() = output;
++    current_temp_output = temp_output[0];
++
++    if (use_fast_approximations)
++        for( int i=0 ; i&lt;size ; i++ )
++            current_temp_output[i] = fastsigmoid( bias_plus_input[i] );
++    else
++        for( int i=0 ; i&lt;size ; i++ )
++            current_temp_output[i] = sigmoid( bias_plus_input[i] );
++
++    for( int t=0; t&lt;n_lateral_connections_passes; t++ )
++    {
++        previous_temp_output = current_temp_output;
++        current_temp_output = temp_output[t+1];
++        if( topographic_lateral_weights.length() == 0 )
++            product(dampening_expectation, lateral_weights, previous_temp_output);
++        else
++            productTopoLateralWeights( dampening_expectation, previous_temp_output );
++        dampening_expectation += bias_plus_input;
++        if (use_fast_approximations)
++        {
++            if( fast_exact_is_equal( dampening_factor, 0) )
++            {
++                for( int i=0 ; i&lt;size ; i++ )
++                    current_temp_output[i] = fastsigmoid( dampening_expectation[i] );
++            }
++            else
++            {
++                for( int i=0 ; i&lt;size ; i++ )
++                    current_temp_output[i] = 
++                        (1-dampening_factor) * fastsigmoid( dampening_expectation[i] ) 
++                        + dampening_factor * previous_temp_output[i];
++            }
++        }
++        else
++        {
++            if( fast_exact_is_equal( dampening_factor, 0) )
++            {
++                for( int i=0 ; i&lt;size ; i++ )
++                    current_temp_output[i] = sigmoid( dampening_expectation[i] );
++            }
++            else
++            {
++                for( int i=0 ; i&lt;size ; i++ )
++                    current_temp_output[i] = 
++                        (1-dampening_factor) * sigmoid( dampening_expectation[i] ) 
++                        + dampening_factor * previous_temp_output[i];
++            }
++        }
++    }
++}
++
++// HUGO: NO 0.5! Computes mat[i][j] += 0.5 * (v1[i] * v2[j] + v1[j] * v2[i])
++// Computes mat[i][j] += (v1[i] * v2[j] + v1[j] * v2[i])
++void RBMLateralBinomialLayer::externalSymetricProductAcc(const Mat&amp; mat, const Vec&amp; v1, const Vec&amp; v2)
++{
++#ifdef BOUNDCHECK
++    if (v1.length()!=mat.length() || mat.width()!=v2.length() 
++        || v1.length() != v2.length())
++        PLERROR(&quot;externalSymetricProductAcc(Mat,Vec,Vec), incompatible &quot;
++                &quot;arguments sizes&quot;);
++#endif
++
++    real* v_1=v1.data();
++    real* v_2=v2.data();
++    real* mp = mat.data();
++    int l = mat.length();
++    int w = mat.width();
++
++    if(mat.isCompact())
++    {
++        real* pv11 = v_1;
++        real* pv21 = v_2;
++        for(int i=0; i&lt;l; i++)
++        {
++            real* pv22 = v_2;
++            real* pv12 = v_1;
++            real val1 = *pv11++;
++            real val2 = *pv21++;
++            for(int j=0; j&lt;w; j++)
++                //*mp++ += 0.5 * (val1 * *pv22++ + val2 * *pv12++) ;
++                *mp++ += (val1 * *pv22++ + val2 * *pv12++) ;
++        }
++    }
++    else
++    {
++        cerr &lt;&lt; &quot;!&quot;;
++        for (int i=0;i&lt;l;i++)
++        {
++            real* mi = mat[i];
++            real v1i = v_1[i];
++            real v2i = v_2[i];
++            for (int j=0;j&lt;w;j++)
++                //mi[j] += 0.5 * ( v1i * v_2[j] + v2i * v_1[j]);
++                mi[j] += ( v1i * v_2[j] + v2i * v_1[j]);
++        }
++    }
++}
++
++void RBMLateralBinomialLayer::productTopoLateralWeights(const Vec&amp; result, 
++                                                        const Vec&amp; input ) const
++{
++    // Could be made faster, in terms of memory access
++    result.clear();
++    int connected_neuron;
++    int wi;
++    real* current_weights;
++    int neuron_v, neuron_h;
++    int vmin, vmax, hmin, hmax;
++    for( int i=0; i&lt;topographic_lateral_weights.length(); i++ )
++    {
++        neuron_v = i/topographic_width;
++        neuron_h = i%topographic_width;
++        wi = 0;
++        current_weights = topographic_lateral_weights[i].data();
++        
++        vmin = neuron_v &lt; topographic_patch_vradius ? 
++            - neuron_v : - topographic_patch_vradius;
++        vmax = topographic_length - neuron_v - 1 &lt; topographic_patch_vradius ? 
++            topographic_length - neuron_v - 1: topographic_patch_vradius;
++
++        hmin = neuron_h &lt; topographic_patch_hradius ? 
++            - neuron_h : - topographic_patch_hradius;
++        hmax = topographic_width - neuron_h - 1 &lt; topographic_patch_hradius ? 
++            topographic_width - neuron_h - 1: topographic_patch_hradius;
++
++        for( int j = -1 * topographic_patch_vradius; 
++             j &lt;= topographic_patch_vradius ; j++ ) 
++        {
++            for( int k = -1 * topographic_patch_hradius; 
++                 k &lt;= topographic_patch_hradius; k++ )
++            {
++                connected_neuron = (i+j*topographic_width)+k;
++                if( connected_neuron != i )
++                {
++                    if( j &gt;= vmin &amp;&amp; j &lt;= vmax &amp;&amp;
++                        k &gt;= hmin &amp;&amp; k &lt;= hmax )
++                        result[i] += input[connected_neuron]
++                            * current_weights[wi];
++                    wi++;
++                }
++            }
++        }
++    }
++}
++
++void RBMLateralBinomialLayer::productTopoLateralWeightsGradients(
++    const Vec&amp; input,
++    const Vec&amp; input_gradient,
++    const Vec&amp; result_gradient,
++    const TVec&lt; Vec &gt;&amp; weights_gradient
++    )
++{
++    // Could be made faster, in terms of memory access
++    int connected_neuron;
++    int wi;
++    real* current_weights;
++    real* current_weights_gradient;
++    int neuron_v, neuron_h;
++    int vmin, vmax, hmin, hmax;
++    real result_gradient_i;
++    real input_i;
++    for( int i=0; i&lt;topographic_lateral_weights.length(); i++ )
++    {
++        neuron_v = i/topographic_width;
++        neuron_h = i%topographic_width;
++        wi = 0;
++        current_weights = topographic_lateral_weights[i].data();
++        current_weights_gradient = weights_gradient[i].data();
++
++        vmin = neuron_v &lt; topographic_patch_vradius ? 
++            - neuron_v : - topographic_patch_vradius;
++        vmax = topographic_length - neuron_v - 1 &lt; topographic_patch_vradius ? 
++            topographic_length - neuron_v - 1: topographic_patch_vradius;
++
++        hmin = neuron_h &lt; topographic_patch_hradius ? 
++            - neuron_h : - topographic_patch_hradius;
++        hmax = topographic_width - neuron_h - 1 &lt; topographic_patch_hradius ? 
++            topographic_width - neuron_h - 1: topographic_patch_hradius;
++
++        result_gradient_i = result_gradient[i];
++        input_i = input[i];
++
++        for( int j = -1 * topographic_patch_vradius; 
++             j &lt;= topographic_patch_vradius ; j++ )
++        {
++            for( int k = -1 * topographic_patch_hradius; 
++                 k &lt;= topographic_patch_hradius; k++ )
++            {
++                connected_neuron = (i+j*topographic_width)+k;
++                if( connected_neuron != i )
++                {
++                    if( j &gt;= vmin &amp;&amp; j &lt;= vmax &amp;&amp;
++                        k &gt;= hmin &amp;&amp; k &lt;= hmax )
++                    {
++                        input_gradient[connected_neuron] += 
++                            result_gradient_i * current_weights[wi];
++                        current_weights_gradient[wi] += 
++                            //0.5 * ( result_gradient_i * input[connected_neuron] +
++                            ( result_gradient_i * input[connected_neuron] +
++                              input_i * result_gradient[connected_neuron] );
++                    }
++                    wi++;
++                }
++            }
++        }
++    }
++}
++
++void RBMLateralBinomialLayer::updateTopoLateralWeightsCD(
++    const Vec&amp; pos_values,
++    const Vec&amp; neg_values  )
++{
++    if( !do_not_learn_topographic_lateral_weights )
++    {
++        
++        // Could be made faster, in terms of memory access
++        int connected_neuron;
++        int wi;
++        int neuron_v, neuron_h;
++        int vmin, vmax, hmin, hmax;
++        real* current_weights;
++        real pos_values_i;
++        real neg_values_i;
++        for( int i=0; i&lt;topographic_lateral_weights.length(); i++ )
++        {
++            neuron_v = i/topographic_width;
++            neuron_h = i%topographic_width;
++            wi = 0;
++            
++            vmin = neuron_v &lt; topographic_patch_vradius ? 
++                - neuron_v : - topographic_patch_vradius;
++            vmax = topographic_length - neuron_v - 1 &lt; topographic_patch_vradius ? 
++                topographic_length - neuron_v - 1: topographic_patch_vradius;
++            
++            hmin = neuron_h &lt; topographic_patch_hradius ? 
++                - neuron_h : - topographic_patch_hradius;
++            hmax = topographic_width - neuron_h - 1 &lt; topographic_patch_hradius ? 
++                topographic_width - neuron_h - 1: topographic_patch_hradius;
++            
++            current_weights = topographic_lateral_weights[i].data();
++            pos_values_i = pos_values[i];
++            neg_values_i = neg_values[i];
++            
++            for( int j = - topographic_patch_vradius; 
++                 j &lt;= topographic_patch_vradius ; j++ )
++            {
++                for( int k = -topographic_patch_hradius; 
++                     k &lt;= topographic_patch_hradius; k++ )
++                {
++                    connected_neuron = (i+j*topographic_width)+k;
++                    if( connected_neuron != i )
++                    {
++                        if( j &gt;= vmin &amp;&amp; j &lt;= vmax &amp;&amp;
++                            k &gt;= hmin &amp;&amp; k &lt;= hmax )
++                        {
++                            current_weights[wi] += 
++                                //learning_rate * 0.5 * ( 
++                                learning_rate * ( 
++                                    pos_values_i * pos_values[connected_neuron] -
++                                    neg_values_i * neg_values[connected_neuron] );
++                        }
++                        wi++;
++                    }
++                }
++            }
++        }
++    }
++}
++
++/////////////////
++// bpropUpdate //
++/////////////////
++void RBMLateralBinomialLayer::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                                   Vec&amp; input_gradient,
++                                   const Vec&amp; output_gradient,
++                                   bool accumulate)
++{
++    PLASSERT( input.size() == size );
++    PLASSERT( output.size() == size );
++    PLASSERT( output_gradient.size() == size );
++
++    if( accumulate )
++        PLASSERT_MSG( input_gradient.size() == size,
++                      &quot;Cannot resize input_gradient AND accumulate into it&quot; );
++    else
++    {
++        input_gradient.resize( size );
++        input_gradient.clear();
++    }
++
++    //if( momentum != 0. )
++    //    bias_inc.resize( size );
++
++    temp_input_gradient.clear();
++    temp_mean_field_gradient &lt;&lt; output_gradient;
++    current_temp_output = output;
++    lateral_weights_gradient.clear();
++    for( int i=0; i&lt;topographic_lateral_weights_gradient.length(); i++)
++        topographic_lateral_weights_gradient[i].clear();
++
++    real output_i;
++    for( int t=n_lateral_connections_passes-1 ; t&gt;=0 ; t-- )
++    {
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            output_i = current_temp_output[i];
++
++            // Contribution from the mean field approximation
++            temp_mean_field_gradient2[i] =  (1-dampening_factor)*
++                output_i * (1-output_i) * temp_mean_field_gradient[i];
++            
++            // Contribution from the dampening
++            temp_mean_field_gradient[i] *= dampening_factor;
++        }
++
++        // Input gradient contribution
++        temp_input_gradient += temp_mean_field_gradient2;
++
++        // Lateral weights gradient contribution
++        if( topographic_lateral_weights.length() == 0)
++        {
++            externalSymetricProductAcc( lateral_weights_gradient, 
++                                        temp_mean_field_gradient2,
++                                        temp_output[t] );
++            
++            transposeProductAcc(temp_mean_field_gradient, lateral_weights, 
++                                temp_mean_field_gradient2);
++        }
++        else
++        {
++            productTopoLateralWeightsGradients( 
++                temp_output[t],
++                temp_mean_field_gradient,
++                temp_mean_field_gradient2,
++                topographic_lateral_weights_gradient);
++        }
++
++        current_temp_output = temp_output[t];
++    }
++    
++    for( int i=0 ; i&lt;size ; i++ )
++    {
++        output_i = current_temp_output[i];
++        temp_mean_field_gradient[i] *= output_i * (1-output_i);
++    }
++
++    temp_input_gradient += temp_mean_field_gradient;
++
++    input_gradient += temp_input_gradient;
++
++    // Update bias
++    real in_grad_i;
++    for( int i=0 ; i&lt;size ; i++ )
++    {
++        in_grad_i = temp_input_gradient[i];
++        if( momentum == 0. )
++        {
++            // update the bias: bias -= learning_rate * input_gradient
++            bias[i] -= learning_rate * in_grad_i;
++        }
++        else
++        {
++            // The update rule becomes:
++            // bias_inc = momentum * bias_inc - learning_rate * input_gradient
++            // bias += bias_inc
++            bias_inc[i] = momentum * bias_inc[i] - learning_rate * in_grad_i;
++            bias[i] += bias_inc[i];
++        }
++    }
++
++    if( topographic_lateral_weights.length() == 0)
++    {
++        if( momentum == 0. )
++        {
++            multiplyScaledAdd( lateral_weights_gradient, 1.0, -learning_rate,
++                               lateral_weights);
++        }
++        else
++        {
++            multiplyScaledAdd( lateral_weights_gradient, momentum, -learning_rate,
++                               lateral_weights_inc);
++            lateral_weights += lateral_weights_inc;
++        }
++    }
++    else
++    {
++        if( !do_not_learn_topographic_lateral_weights )
++        {
++            if( momentum == 0. )
++                for( int i=0; i&lt;topographic_lateral_weights.length(); i++ )
++                    multiplyScaledAdd( topographic_lateral_weights_gradient[i], 1.0, 
++                                       -learning_rate,
++                                       topographic_lateral_weights[i]);
++            
++            else
++                PLERROR(&quot;In RBMLateralBinomialLayer:bpropUpdate - Not implemented for &quot;
++                        &quot;topographic weights&quot;);
++        }
++    }
++
++    // Set diagonal to 0
++    if( lateral_weights.length() != 0 )
++    {
++        real *d = lateral_weights.data();        
++        for (int i=0; i&lt;lateral_weights.length(); i++,d+=lateral_weights.mod()+1) 
++            *d = 0;
++    }
++}
++
++void RBMLateralBinomialLayer::bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                                   Mat&amp; input_gradients,
++                                   const Mat&amp; output_gradients,
++                                   bool accumulate)
++{
++    PLASSERT( inputs.width() == size );
++    PLASSERT( outputs.width() == size );
++    PLASSERT( output_gradients.width() == size );
++
++    int mbatch_size = inputs.length();
++    PLASSERT( outputs.length() == mbatch_size );
++    PLASSERT( output_gradients.length() == mbatch_size );
++
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradients.width() == size &amp;&amp;
++                input_gradients.length() == mbatch_size,
++                &quot;Cannot resize input_gradients and accumulate into it&quot; );
++    }
++    else
++    {
++        input_gradients.resize(mbatch_size, size);
++        input_gradients.clear();
++    }
++
++    //if( momentum != 0. )
++    //    bias_inc.resize( size );
++
++    // TODO Can we do this more efficiently? (using BLAS)
++
++    // We use the average gradient over the mini-batch.
++    real avg_lr = learning_rate / inputs.length();
++    lateral_weights_gradient.clear();
++    real output_i;
++    for (int j = 0; j &lt; mbatch_size; j++)
++    {
++        temp_input_gradient.clear();
++        temp_mean_field_gradient &lt;&lt; output_gradients(j);
++        current_temp_output = outputs(j);
++
++        for( int t=n_lateral_connections_passes-1 ; t&gt;=0 ; t-- )
++        {
++
++            for( int i=0 ; i&lt;size ; i++ )
++            {
++                output_i = current_temp_output[i];
++                
++                // Contribution from the mean field approximation
++                temp_mean_field_gradient2[i] =  (1-dampening_factor)*
++                    output_i * (1-output_i) * temp_mean_field_gradient[i];
++                
++                // Contribution from the dampening
++                temp_mean_field_gradient[i] *= dampening_factor;
++            }
++            
++            // Input gradient contribution
++            temp_input_gradient += temp_mean_field_gradient2;
++            
++            // Lateral weights gradient contribution
++            if( topographic_lateral_weights.length() == 0)
++            {
++                
++                externalSymetricProductAcc( lateral_weights_gradient, 
++                                            temp_mean_field_gradient2,
++                                            temp_outputs[t](j) );
++                
++                transposeProductAcc(temp_mean_field_gradient, lateral_weights, 
++                                    temp_mean_field_gradient2);
++            }
++            else
++            {
++                productTopoLateralWeightsGradients( 
++                    temp_outputs[t](j),
++                    temp_mean_field_gradient,
++                    temp_mean_field_gradient2,
++                    topographic_lateral_weights_gradient);
++            }
++
++            current_temp_output = temp_outputs[t](j);
++        }
++    
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            output_i = current_temp_output[i];
++            temp_mean_field_gradient[i] *= output_i * (1-output_i);
++        }
++
++        temp_input_gradient += temp_mean_field_gradient;
++        
++        input_gradients(j) += temp_input_gradient;
++
++        // Update bias
++        real in_grad_i;
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            in_grad_i = temp_input_gradient[i];
++            if( momentum == 0. )
++            {
++                // update the bias: bias -= learning_rate * input_gradient
++                bias[i] -= avg_lr * in_grad_i;
++            }
++            else
++                PLERROR(&quot;In RBMLateralBinomialLayer:bpropUpdate - Not implemented for &quot;
++                        &quot;momentum with mini-batches&quot;);
++        }        
++    }
++
++    if( topographic_lateral_weights.length() == 0)
++    {
++        if( momentum == 0. )
++            multiplyScaledAdd( lateral_weights_gradient, 1.0, -learning_rate,
++                               lateral_weights);
++        else
++            PLERROR(&quot;In RBMLateralBinomialLayer:bpropUpdate - Not implemented for &quot;
++                    &quot;momentum with mini-batches&quot;);
++    }
++    else
++    {
++        if( !do_not_learn_topographic_lateral_weights )
++        {
++            if( momentum == 0. )
++                for( int i=0; i&lt;topographic_lateral_weights.length(); i++ )
++                    multiplyScaledAdd( topographic_lateral_weights_gradient[i], 1.0, 
++                                       -learning_rate,
++                                       topographic_lateral_weights[i]);
++            
++            else
++                PLERROR(&quot;In RBMLateralBinomialLayer:bpropUpdate - Not implemented for &quot;
++                        &quot;topographic weights&quot;);
++        }
++
++    }
++
++    // Set diagonal to 0
++    if( lateral_weights.length() != 0 )
++    {
++        real *d = lateral_weights.data();
++        for (int i=0; i&lt;lateral_weights.length(); i++,d+=lateral_weights.mod()+1) 
++            *d = 0;
++    }
++}
++
++
++//! TODO: add &quot;accumulate&quot; here
++void RBMLateralBinomialLayer::bpropUpdate(const Vec&amp; input, const Vec&amp; rbm_bias,
++                                   const Vec&amp; output,
++                                   Vec&amp; input_gradient, Vec&amp; rbm_bias_gradient,
++                                   const Vec&amp; output_gradient)
++{
++    PLASSERT( input.size() == size );
++    PLASSERT( rbm_bias.size() == size );
++    PLASSERT( output.size() == size );
++    PLASSERT( output_gradient.size() == size );
++    input_gradient.resize( size );
++    rbm_bias_gradient.resize( size );
++
++    temp_input_gradient.clear();
++    temp_mean_field_gradient &lt;&lt; output_gradient;
++    current_temp_output = output;
++    lateral_weights_gradient.clear();
++
++    real output_i;
++    for( int t=n_lateral_connections_passes-1 ; t&gt;=0 ; t-- )
++    {
++
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            output_i = current_temp_output[i];
++
++            // Contribution from the mean field approximation
++            temp_mean_field_gradient2[i] =  (1-dampening_factor)*
++                output_i * (1-output_i) * temp_mean_field_gradient[i];
++            
++            // Contribution from the dampening
++            temp_mean_field_gradient[i] *= dampening_factor;
++        }
++
++        // Input gradient contribution
++        temp_input_gradient += temp_mean_field_gradient2;
++
++        // Lateral weights gradient contribution
++        if( topographic_lateral_weights.length() == 0)
++        {
++
++            externalSymetricProductAcc( lateral_weights_gradient, 
++                                        temp_mean_field_gradient2,
++                                        temp_output[t] );
++            
++            transposeProductAcc(temp_mean_field_gradient, lateral_weights, 
++                                temp_mean_field_gradient2);
++        }
++        else
++        {
++            productTopoLateralWeightsGradients( 
++                temp_output[t],
++                temp_mean_field_gradient,
++                temp_mean_field_gradient2,
++                topographic_lateral_weights_gradient);
++        }
++
++        current_temp_output = temp_output[t];
++    }
++    
++    for( int i=0 ; i&lt;size ; i++ )
++    {
++        output_i = current_temp_output[i];
++        temp_mean_field_gradient[i] *= output_i * (1-output_i);
++    }
++
++    temp_input_gradient += temp_mean_field_gradient;
++
++    input_gradient &lt;&lt; temp_input_gradient;
++    rbm_bias_gradient &lt;&lt; temp_input_gradient;
++
++    if( topographic_lateral_weights.length() == 0)
++    {
++        if( momentum == 0. )
++        {
++            multiplyScaledAdd( lateral_weights_gradient, 1.0, -learning_rate,
++                               lateral_weights);
++        }
++        else
++        {
++            multiplyScaledAdd( lateral_weights_gradient, momentum, -learning_rate,
++                               lateral_weights_inc);
++            lateral_weights += lateral_weights_inc;
++        }
++    }
++    else
++    {
++        if( !do_not_learn_topographic_lateral_weights )
++        {
++            if( momentum == 0. )
++                for( int i=0; i&lt;topographic_lateral_weights.length(); i++ )
++                    multiplyScaledAdd( topographic_lateral_weights_gradient[i], 1.0, 
++                                       -learning_rate,
++                                       topographic_lateral_weights[i]);
++            
++            else
++                PLERROR(&quot;In RBMLateralBinomialLayer:bpropUpdate - Not implemented for &quot;
++                        &quot;topographic weights&quot;);
++        }
++    }
++        
++    // Set diagonal to 0
++    if( lateral_weights.length() != 0 )
++    {
++        real *d = lateral_weights.data();
++        for (int i=0; i&lt;lateral_weights.length(); i++,d+=lateral_weights.mod()+1) 
++            *d = 0;
++    }
++}
++
++real RBMLateralBinomialLayer::fpropNLL(const Vec&amp; target)
++{
++    PLASSERT( target.size() == input_size );
++    computeExpectation(); 
++
++    real ret = 0;
++    real target_i, expectation_i;
++    for( int i=0 ; i&lt;size ; i++ )
++    {
++        target_i = target[i];
++        expectation_i = expectation[i];
++        // TODO: implement more numerically stable version
++        if(!fast_exact_is_equal(target_i,0.0))
++            ret -= target_i*safeflog(expectation_i) ;
++        if(!fast_exact_is_equal(target_i,1.0))
++            ret -= (1-target_i)*safeflog(1-expectation_i);
++    }
++    return ret;
++}
++
++void RBMLateralBinomialLayer::fpropNLL(const Mat&amp; targets, const Mat&amp; costs_column)
++{
++    computeExpectations(); 
++
++    PLASSERT( targets.width() == input_size );
++    PLASSERT( targets.length() == batch_size );
++    PLASSERT( costs_column.width() == 1 );
++    PLASSERT( costs_column.length() == batch_size );
++
++    for (int k=0;k&lt;batch_size;k++) // loop over minibatch
++    {
++        real nll = 0;
++        real* expectation = expectations[k];
++        real* target = targets[k];
++        for( int i=0 ; i&lt;size ; i++ ) // loop over outputs
++        {
++            // TODO: implement more numerically stable version
++            if(!fast_exact_is_equal(target[i],0.0))
++                nll -= target[i]*safeflog(expectation[i]) ;
++            if(!fast_exact_is_equal(target[i],1.0))
++                nll -= (1-target[i])*safeflog(1-expectation[i]);
++        }
++        costs_column(k,0) = nll;
++    }
++}
++
++void RBMLateralBinomialLayer::bpropNLL(const Vec&amp; target, real nll, Vec&amp; bias_gradient)
++{
++    computeExpectation();
++
++    PLASSERT( target.size() == input_size );
++    bias_gradient.resize( size );
++    bias_gradient.clear();
++
++    // bias_gradient = expectation - target
++    substract(expectation, target, temp_mean_field_gradient);
++
++    current_temp_output = expectation;
++    lateral_weights_gradient.clear();
++
++    real output_i;
++    for( int t=n_lateral_connections_passes-1 ; t&gt;=0 ; t-- )
++    {
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            output_i = current_temp_output[i];
++
++            // Contribution from the mean field approximation
++            temp_mean_field_gradient2[i] =  (1-dampening_factor)*
++                output_i * (1-output_i) * temp_mean_field_gradient[i];
++            
++            // Contribution from the dampening
++            temp_mean_field_gradient[i] *= dampening_factor;
++        }
++
++        // Input gradient contribution
++        bias_gradient += temp_mean_field_gradient2;
++
++        // Lateral weights gradient contribution
++        if( topographic_lateral_weights.length() == 0)
++        {
++            externalSymetricProductAcc( lateral_weights_gradient, 
++                                        temp_mean_field_gradient2,
++                                        temp_output[t] );
++            
++            transposeProductAcc(temp_mean_field_gradient, lateral_weights, 
++                                temp_mean_field_gradient2);
++        }
++        else
++        {
++            productTopoLateralWeightsGradients( 
++                temp_output[t],
++                temp_mean_field_gradient,
++                temp_mean_field_gradient2,
++                topographic_lateral_weights_gradient);
++        }
++
++        current_temp_output = temp_output[t];
++    }
++    
++    for( int i=0 ; i&lt;size ; i++ )
++    {
++        output_i = current_temp_output[i];
++        temp_mean_field_gradient[i] *= output_i * (1-output_i);
++    }
++
++    bias_gradient += temp_mean_field_gradient;
++
++    if( topographic_lateral_weights.length() == 0)
++    {
++        // Update lateral connections
++        if( momentum == 0. )
++        {
++            multiplyScaledAdd( lateral_weights_gradient, 1.0, -learning_rate,
++                               lateral_weights);
++        }
++        else
++        {
++            multiplyScaledAdd( lateral_weights_gradient, momentum, -learning_rate,
++                               lateral_weights_inc);
++            lateral_weights += lateral_weights_inc;
++        }
++    }
++    else
++    {
++        if( !do_not_learn_topographic_lateral_weights )
++        {
++            if( momentum == 0. )
++                for( int i=0; i&lt;topographic_lateral_weights.length(); i++ )
++                    multiplyScaledAdd( topographic_lateral_weights_gradient[i], 1.0, 
++                                       -learning_rate,
++                                       topographic_lateral_weights[i]);
++            
++            else
++                PLERROR(&quot;In RBMLateralBinomialLayer:bpropNLL - Not implemented for &quot;
++                        &quot;topographic weights&quot;);
++        }
++    }
++    // Set diagonal to 0
++    if( lateral_weights.length() != 0 )
++    {
++        real *d = lateral_weights.data();
++        for (int i=0; i&lt;lateral_weights.length(); i++,d+=lateral_weights.mod()+1) 
++            *d = 0;
++    }
++}
++
++void RBMLateralBinomialLayer::bpropNLL(const Mat&amp; targets, const Mat&amp; costs_column,
++                                Mat&amp; bias_gradients)
++{
++    computeExpectations();
++
++    PLASSERT( targets.width() == input_size );
++    PLASSERT( targets.length() == batch_size );
++    PLASSERT( costs_column.width() == 1 );
++    PLASSERT( costs_column.length() == batch_size );
++    bias_gradients.resize( batch_size, size );
++    bias_gradients.clear();
++
++
++    // TODO Can we do this more efficiently? (using BLAS)
++
++    // We use the average gradient over the mini-batch.
++    lateral_weights_gradient.clear();
++    real output_i;
++    for (int j = 0; j &lt; batch_size; j++)
++    {
++        // top_gradient = expectations(j) - targets(j)
++        substract(expectations(j), targets(j), temp_mean_field_gradient);
++        current_temp_output = expectations(j);
++
++        for( int t=n_lateral_connections_passes-1 ; t&gt;=0 ; t-- )
++        {
++            for( int i=0 ; i&lt;size ; i++ )
++            {
++                output_i = current_temp_output[i];
++                
++                // Contribution from the mean field approximation
++                temp_mean_field_gradient2[i] =  (1-dampening_factor)*
++                    output_i * (1-output_i) * temp_mean_field_gradient[i];
++                
++                // Contribution from the dampening
++                temp_mean_field_gradient[i] *= dampening_factor;
++            }
++            
++            // Input gradient contribution
++            bias_gradients(j) += temp_mean_field_gradient2;
++            
++            // Lateral weights gradient contribution
++            if( topographic_lateral_weights.length() == 0)
++            {
++
++                externalSymetricProductAcc( lateral_weights_gradient, 
++                                            temp_mean_field_gradient2,
++                                            temp_outputs[t](j) );
++                
++                transposeProductAcc(temp_mean_field_gradient, lateral_weights, 
++                                    temp_mean_field_gradient2);
++            }
++            else
++            {
++                productTopoLateralWeightsGradients( 
++                    temp_outputs[t](j),
++                    temp_mean_field_gradient,
++                    temp_mean_field_gradient2,
++                    topographic_lateral_weights_gradient);
++            }
++            current_temp_output = temp_outputs[t](j);
++        }
++    
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            output_i = current_temp_output[i];
++            temp_mean_field_gradient[i] *= output_i * (1-output_i);
++        }
++
++        bias_gradients(j) += temp_mean_field_gradient;
++    }
++
++    // Update lateral connections
++    if( topographic_lateral_weights.length() == 0 )
++    {
++        if( momentum == 0. )
++            multiplyScaledAdd( lateral_weights_gradient, 1.0, -learning_rate,
++                               lateral_weights);
++        else
++            PLERROR(&quot;In RBMLateralBinomialLayer:bpropUpdate - Not implemented for &quot;
++                    &quot;momentum with mini-batches&quot;);
++    }
++    else
++    {
++        if( !do_not_learn_topographic_lateral_weights )
++        {
++            if( momentum == 0. )
++                for( int i=0; i&lt;topographic_lateral_weights.length(); i++ )
++                    multiplyScaledAdd( topographic_lateral_weights_gradient[i], 1.0, 
++                                       -learning_rate,
++                                       topographic_lateral_weights[i]);
++            
++            else
++                PLERROR(&quot;In RBMLateralBinomialLayer:bpropNLL - Not implemented for &quot;
++                        &quot;topographic weights&quot;);
++        }
++    }
++
++    // Set diagonal to 0
++    if( lateral_weights.length() != 0 )
++    {
++        real *d = lateral_weights.data();
++        for (int i=0; i&lt;lateral_weights.length(); i++,d+=lateral_weights.mod()+1) 
++            *d = 0;
++    }
++}
++
++void RBMLateralBinomialLayer::accumulatePosStats( const Vec&amp; pos_values )
++{
++    inherited::accumulatePosStats( pos_values);
++    externalProductAcc(lateral_weights_pos_stats, pos_values, pos_values);
++}
++
++void RBMLateralBinomialLayer::accumulatePosStats( const Mat&amp; pos_values )
++{
++    inherited::accumulatePosStats( pos_values);
++    transposeProductAcc(lateral_weights_pos_stats, pos_values, pos_values);
++}
++
++void RBMLateralBinomialLayer::accumulateNegStats( const Vec&amp; neg_values )
++{
++    inherited::accumulateNegStats( neg_values);
++    externalProductAcc(lateral_weights_neg_stats, neg_values, neg_values);
++}
++
++void RBMLateralBinomialLayer::accumulateNegStats( const Mat&amp; neg_values )
++{
++    inherited::accumulateNegStats( neg_values);
++    transposeProductAcc(lateral_weights_neg_stats, neg_values, neg_values);
++}
++
++
++void RBMLateralBinomialLayer::update()
++{ 
++    //real pos_factor = 0.5 * learning_rate / pos_count;
++    //real neg_factor = - 0.5 * learning_rate / neg_count;
++    real pos_factor = learning_rate / pos_count;
++    real neg_factor = - learning_rate / neg_count;
++
++    if( topographic_lateral_weights.length() != 0 )
++        PLERROR(&quot;In RBMLateralBinomialLayer:update - Not implemented for &quot;
++                &quot;topographic weights&quot;);
++
++    // Update lateral connections
++    if( momentum == 0. )
++    {
++        multiplyScaledAdd( lateral_weights_pos_stats, neg_factor, pos_factor,
++                           lateral_weights_neg_stats);
++        lateral_weights += lateral_weights_neg_stats; 
++    }
++    else
++    {
++        multiplyScaledAdd( lateral_weights_pos_stats, neg_factor, pos_factor,
++                           lateral_weights_neg_stats);
++        multiplyScaledAdd( lateral_weights_neg_stats, momentum, 1.0,
++                           lateral_weights_inc);
++        lateral_weights += lateral_weights_inc;
++    }
++
++    // Set diagonal to 0
++    if( lateral_weights.length() != 0 )
++    {
++        real *d = lateral_weights.data();
++        for (int i=0; i&lt;lateral_weights.length(); i++,d+=lateral_weights.mod()+1) 
++            *d = 0;
++    }
++
++    // Call to update() must be at the end, since update() calls clearStats()!
++    inherited::update();
++}
++
++void RBMLateralBinomialLayer::update( const Vec&amp; grad)
++{
++    inherited::update( grad );
++    PLWARNING(&quot;RBMLateralBinomialLayer::update( grad ): does not update the\n&quot;
++        &quot;lateral connections.&quot;);
++}
++
++void RBMLateralBinomialLayer::update( const Vec&amp; pos_values, const Vec&amp; neg_values )
++{
++    // Update lateral connections
++    if( topographic_lateral_weights.length() == 0 )
++    {
++        if( momentum == 0. )
++        {
++            externalProductScaleAcc(lateral_weights, pos_values, pos_values,
++                                    //0.5 * learning_rate);
++                                    learning_rate);
++            externalProductScaleAcc(lateral_weights, neg_values, neg_values,
++                                    //- 0.5 * learning_rate);
++                                    -learning_rate);
++        }
++        else
++        {
++            lateral_weights_inc *= momentum;
++            externalProductScaleAcc(lateral_weights_inc, pos_values, pos_values,
++                                    //0.5 * learning_rate);
++                                    learning_rate);
++            externalProductScaleAcc(lateral_weights_inc, neg_values, neg_values,
++                                    //- 0.5 * learning_rate);
++                                    - learning_rate);
++            lateral_weights += lateral_weights_inc;
++        }    
++
++        // Set diagonal to 0
++        if( lateral_weights.length() != 0 )
++        {
++            real *d = lateral_weights.data();
++            for (int i=0; i&lt;lateral_weights.length(); i++,d+=lateral_weights.mod()+1) 
++                *d = 0;
++        }
++    }
++    else
++    {
++        if( momentum == 0. )
++            updateTopoLateralWeightsCD(pos_values, neg_values);
++        else
++            PLERROR(&quot;In RBMLateralBinomialLayer:bpropNLL - Not implemented for &quot;
++                    &quot;topographic weights&quot;);
++    }
++
++    inherited::update( pos_values, neg_values );
++}
++
++void RBMLateralBinomialLayer::update( const Mat&amp; pos_values, const Mat&amp; neg_values )
++{
++    int n = pos_values.length();
++    PLASSERT( neg_values.length() == n );
++
++    // We take the average gradient over the mini-batch.
++    //real avg_lr = 0.5 * learning_rate / n;
++    real avg_lr = learning_rate / n;
++
++    // Update lateral connections
++    if( topographic_lateral_weights.length() == 0 )
++    {
++        if( momentum == 0. )
++        {
++            transposeProductScaleAcc(lateral_weights, pos_values, pos_values,
++                                     avg_lr, 1);
++            transposeProductScaleAcc(lateral_weights, neg_values, neg_values,
++                                     -avg_lr, 1);
++        }
++        else
++        {
++            lateral_weights_inc *= momentum;
++            transposeProductScaleAcc(lateral_weights_inc, pos_values, pos_values,
++                                     avg_lr, 1);
++            transposeProductScaleAcc(lateral_weights_inc, neg_values, neg_values,
++                                     -avg_lr, 1);
++            lateral_weights += lateral_weights_inc;
++        }
++
++        // Set diagonal to 0
++        if( lateral_weights.length() != 0 )
++        {
++            real *d = lateral_weights.data();
++            for (int i=0; i&lt;lateral_weights.length(); i++,d+=lateral_weights.mod()+1) 
++                *d = 0;
++        }
++    }
++    else
++    {
++        if( momentum == 0. )
++        {
++            for(int b=0; b&lt;pos_values.length(); b++)
++                updateTopoLateralWeightsCD(pos_values(b), neg_values(b));
++            
++        }
++        else
++            PLERROR(&quot;In RBMLateralBinomialLayer:bpropNLL - Not implemented for &quot;
++                    &quot;topographic weights&quot;);
++    }
++
++    inherited::update( pos_values, neg_values );
++}
++
++void RBMLateralBinomialLayer::updateCDandGibbs( const Mat&amp; pos_values,
++                                 const Mat&amp; cd_neg_values,
++                                 const Mat&amp; gibbs_neg_values,
++                                 real background_gibbs_update_ratio )
++{
++    inherited::updateCDandGibbs( pos_values, cd_neg_values,
++                                 gibbs_neg_values, background_gibbs_update_ratio );
++    PLERROR(&quot;In RBMLateralBinomialLayer::updateCDandGibbs(): not implemented yet.&quot;);
++}
++
++void RBMLateralBinomialLayer::updateGibbs( const Mat&amp; pos_values,
++                                           const Mat&amp; gibbs_neg_values)
++{
++    inherited::updateGibbs( pos_values, gibbs_neg_values );
++    PLERROR(&quot;In RBMLateralBinomialLayer::updateCDandGibbs(): not implemented yet.&quot;);
++}
++
++void RBMLateralBinomialLayer::declareOptions(OptionList&amp; ol)
++{
++    declareOption(ol, &quot;n_lateral_connections_passes&quot;, 
++                  &amp;RBMLateralBinomialLayer::n_lateral_connections_passes,
++                  OptionBase::buildoption,
++                  &quot;Number of passes through the lateral connections.\n&quot;);
++
++    declareOption(ol, &quot;dampening_factor&quot;, 
++                  &amp;RBMLateralBinomialLayer::dampening_factor,
++                  OptionBase::buildoption,
++                  &quot;Dampening factor ( expectation_t = (1-df) * currrent mean field&quot;
++                  &quot; + df * expectation_{t-1}).\n&quot;);
++
++    declareOption(ol, &quot;mean_field_precision_threshold&quot;, 
++                  &amp;RBMLateralBinomialLayer::mean_field_precision_threshold,
++                  OptionBase::buildoption,
++                  &quot;Mean-field precision threshold that, once reached, stops the mean-field\n&quot;
++                  &quot;expectation approximation computation. Used only in computeExpectation().\n&quot;
++                  &quot;Precision is computed as:\n&quot;
++                  &quot;  dist(last_mean_field, current_mean_field) / size\n&quot;);
++
++    declareOption(ol, &quot;topographic_length&quot;, 
++                  &amp;RBMLateralBinomialLayer::topographic_length,
++                  OptionBase::buildoption,
++                  &quot;Length of the topographic map.\n&quot;);
++
++    declareOption(ol, &quot;topographic_width&quot;, 
++                  &amp;RBMLateralBinomialLayer::topographic_width,
++                  OptionBase::buildoption,
++                  &quot;Width of the topographic map.\n&quot;);
++
++    declareOption(ol, &quot;topographic_patch_vradius&quot;, 
++                  &amp;RBMLateralBinomialLayer::topographic_patch_vradius,
++                  OptionBase::buildoption,
++                  &quot;Vertical radius of the topographic local weight patches.\n&quot;);
++
++    declareOption(ol, &quot;topographic_patch_hradius&quot;, 
++                  &amp;RBMLateralBinomialLayer::topographic_patch_hradius,
++                  OptionBase::buildoption,
++                  &quot;Horizontal radius of the topographic local weight patches.\n&quot;);
++
++    declareOption(ol, &quot;topographic_lateral_weights_init_value&quot;, 
++                  &amp;RBMLateralBinomialLayer::topographic_lateral_weights_init_value,
++                  OptionBase::buildoption,
++                  &quot;Initial value for the topographic_lateral_weights.\n&quot;);
++
++    declareOption(ol, &quot;do_not_learn_topographic_lateral_weights&quot;, 
++                  &amp;RBMLateralBinomialLayer::do_not_learn_topographic_lateral_weights,
++                  OptionBase::buildoption,
++                  &quot;Indication that the topographic_lateral_weights should\n&quot;
++                  &quot;be fixed at their initial value.\n&quot;);
++
++    declareOption(ol, &quot;lateral_weights&quot;, 
++                  &amp;RBMLateralBinomialLayer::lateral_weights,
++                  OptionBase::learntoption,
++                  &quot;Lateral connections.\n&quot;);
++
++    declareOption(ol, &quot;topographic_lateral_weights&quot;, 
++                  &amp;RBMLateralBinomialLayer::topographic_lateral_weights,
++                  OptionBase::learntoption,
++                  &quot;Local topographic lateral connections.\n&quot;);
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++void RBMLateralBinomialLayer::build_()
++{
++    if( n_lateral_connections_passes == 0 &amp;&amp;
++        !fast_exact_is_equal(dampening_factor, 0) )
++        PLERROR(&quot;In RBMLateralBinomialLayer::build_(): when not using the lateral\n&quot;
++                &quot;connections, dampening_factor should be 0.&quot;);
++
++    if( dampening_factor &lt; 0 || dampening_factor &gt; 1)
++        PLERROR(&quot;In RBMLateralBinomialLayer::build_(): dampening_factor should be\n&quot;
++                &quot;in [0,1].&quot;);
++
++    if( n_lateral_connections_passes &lt; 0 )
++        PLERROR(&quot;In RBMLateralBinomialLayer::build_(): n_lateral_connections_passes\n&quot;
++                &quot; should be &gt;= 0.&quot;);
++    
++    if( topographic_length &lt;= 0 || topographic_width &lt;= 0)
++    {
++        lateral_weights.resize(size,size);
++
++        lateral_weights_gradient.resize(size,size);
++        lateral_weights_pos_stats.resize(size,size);
++        lateral_weights_neg_stats.resize(size,size);
++        if( momentum != 0. )
++        {
++            bias_inc.resize( size );
++            lateral_weights_inc.resize(size,size);
++        }   
++    }
++    else
++    {
++        if( size != topographic_length * topographic_width )
++            PLERROR( &quot;In RBMLateralBinomialLayer::build_(): size != &quot;
++                     &quot;topographic_length * topographic_width.\n&quot; );
++
++        if( topographic_length-1 &lt;= 2*topographic_patch_vradius )
++            PLERROR( &quot;In RBMLateralBinomialLayer::build_(): &quot;
++                     &quot;topographic_patch_vradius is too large.\n&quot; );
++
++        if( topographic_width-1 &lt;= 2*topographic_patch_hradius )
++            PLERROR( &quot;In RBMLateralBinomialLayer::build_(): &quot;
++                     &quot;topographic_patch_hradius is too large.\n&quot; );
++
++        topographic_lateral_weights.resize(size);
++        topographic_lateral_weights_gradient.resize(size);
++        for( int i=0; i&lt;size; i++ )
++        {
++            topographic_lateral_weights[i].resize( 
++                ( 2 * topographic_patch_hradius + 1 ) *
++                ( 2 * topographic_patch_vradius + 1 ) - 1 );
++            topographic_lateral_weights_gradient[i].resize( 
++                ( 2 * topographic_patch_hradius + 1 ) *
++                ( 2 * topographic_patch_vradius + 1 ) - 1 );
++        }
++
++        // Should probably have separate lateral_weights_*_stats
++    }
++
++    // Resizing temporary variables
++    dampening_expectation.resize(size);
++    temp_input_gradient.resize(size);
++    temp_mean_field_gradient.resize(size);
++    temp_mean_field_gradient2.resize(size);
++}
++
++void RBMLateralBinomialLayer::build()
++{
++    inherited::build();
++    build_();
++}
++
++
++void RBMLateralBinomialLayer::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++    deepCopyField(lateral_weights,copies);
++    deepCopyField(topographic_lateral_weights,copies);
++    deepCopyField(lateral_weights_pos_stats,copies);
++    deepCopyField(lateral_weights_neg_stats,copies);
++    deepCopyField(dampening_expectation,copies);
++    deepCopyField(dampening_expectations,copies);
++    deepCopyField(temp_output,copies);
++    deepCopyField(temp_outputs,copies);
++    deepCopyField(current_temp_output,copies);
++    deepCopyField(previous_temp_output,copies);
++    deepCopyField(current_temp_outputs,copies);
++    deepCopyField(previous_temp_outputs,copies);
++    deepCopyField(bias_plus_input,copies);
++    deepCopyField(bias_plus_inputs,copies);
++    deepCopyField(temp_input_gradient,copies);
++    deepCopyField(temp_mean_field_gradient,copies);
++    deepCopyField(temp_mean_field_gradient2,copies);
++    deepCopyField(lateral_weights_gradient,copies);
++    deepCopyField(lateral_weights_inc,copies);
++    deepCopyField(topographic_lateral_weights_gradient,copies);
++}
++
++real RBMLateralBinomialLayer::energy(const Vec&amp; unit_values) const
++{
++    if( topographic_lateral_weights.length() == 0 )
++        product(dampening_expectation, lateral_weights, unit_values);
++    else
++        productTopoLateralWeights( dampening_expectation, unit_values );
++    return -dot(unit_values, bias) - 0.5 * dot(unit_values, dampening_expectation);
++}
++
++real RBMLateralBinomialLayer::freeEnergyContribution(const Vec&amp; unit_activations)
++    const
++{
++    PLERROR(
++        &quot;In RBMLateralBinomialLayer::freeEnergyContribution(): not implemented.&quot;);
++    return -1;
++}
++
++int RBMLateralBinomialLayer::getConfigurationCount()
++{
++    return size &lt; 31 ? 1&lt;&lt;size : INFINITE_CONFIGURATIONS;
++}
++
++void RBMLateralBinomialLayer::getConfiguration(int conf_index, Vec&amp; output)
++{
++    PLASSERT( output.length() == size );
++    PLASSERT( conf_index &gt;= 0 &amp;&amp; conf_index &lt; getConfigurationCount() );
++
++    for ( int i = 0; i &lt; size; ++i ) {
++        output[i] = conf_index &amp; 1;
++        conf_index &gt;&gt;= 1;
++    }
++}
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/online/RBMLateralBinomialLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMLateralBinomialLayer.h	2008-02-01 04:46:56 UTC (rev 8442)
++++ trunk/plearn_learners/online/RBMLateralBinomialLayer.h	2008-02-01 15:59:56 UTC (rev 8443)
+@@ -0,0 +1,306 @@
++// -*- C++ -*-
++
++// RBMLateralBinomialLayer.h
++//
++// Copyright (C) 2006 Hugo Larochelle
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Hugo Larochelle
++
++/*! \file RBMLateralBinomialLayer.h */
++
++
++#ifndef RBMLateralBinomialLayer_INC
++#define RBMLateralBinomialLayer_INC
++
++#include &quot;RBMLayer.h&quot;
++
++namespace PLearn {
++using namespace std;
++
++/**
++ * Layer in an RBM formed with binomial units, with lateral connections
++ *
++ */
++class RBMLateralBinomialLayer: public RBMLayer
++{
++    typedef RBMLayer inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! Number of passes through the lateral connections 
++    int n_lateral_connections_passes;
++
++    //! Dampening factor 
++    //! ( expectation_t = (1-df) * currrent mean field + df * expectation_{t-1})
++    real dampening_factor;
++
++    //! Mean-field precision threshold that, once reached, stops the mean-field 
++    //! expectation approximation computation. Used only in computeExpectation(). 
++    //! Precision is computed as:
++    //!   dist(last_mean_field, current_mean_field) / size
++    real mean_field_precision_threshold;
++
++    //! Length of the topographic map
++    int topographic_length;
++
++    //! Width of the topographic map
++    int topographic_width;
++
++    //! Vertical radius of the topographic local weight patches
++    int topographic_patch_vradius;
++
++    //! Horizontal radius of the topographic local weight patches
++    int topographic_patch_hradius;
++
++    //! Initial value for the topographic_lateral_weights
++    real topographic_lateral_weights_init_value;
++
++    //! Indication that the topographic_lateral_weights should
++    //! be fixed at their initial value.
++    bool do_not_learn_topographic_lateral_weights;
++    
++    //! Lateral connections
++    Mat lateral_weights;
++
++    //! Local topographic lateral connections
++    TVec&lt; Vec &gt; topographic_lateral_weights;
++
++    //! Accumulates positive contribution to the gradient of lateral weights
++    Mat lateral_weights_pos_stats;
++
++    //! Accumulates negative contribution to the gradient of lateral weights
++    Mat lateral_weights_neg_stats;
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    RBMLateralBinomialLayer( real the_learning_rate=0. );
++
++    //! resets activations, sample and expectation fields
++    virtual void reset();
++
++    //! resets the statistics and counts
++    virtual void clearStats();
++
++    //! forgets everything
++    virtual void forget();
++
++    //! generate a sample, and update the sample field
++    virtual void generateSample() ;
++
++    //! Inherited.
++    virtual void generateSamples();
++
++    //! Compute expectation.
++    virtual void computeExpectation() ;
++
++    //! Compute mini-batch expectations.
++    virtual void computeExpectations();
++
++    //! forward propagation
++    virtual void fprop( const Vec&amp; input, Vec&amp; output ) const;
++
++    //! Batch forward propagation
++    virtual void fprop( const Mat&amp; inputs, Mat&amp; outputs ) const;
++
++    //! forward propagation with provided bias
++    virtual void fprop( const Vec&amp; input, const Vec&amp; rbm_bias,
++                        Vec&amp; output ) const;
++
++    //! back-propagates the output gradient to the input
++    virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                             Vec&amp; input_gradient, const Vec&amp; output_gradient,
++                             bool accumulate=false);
++
++    //! back-propagates the output gradient to the input and the bias
++    virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; rbm_bias,
++                             const Vec&amp; output,
++                             Vec&amp; input_gradient, Vec&amp; rbm_bias_gradient,
++                             const Vec&amp; output_gradient) ;
++
++    //! Back-propagate the output gradient to the input, and update parameters.
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             Mat&amp; input_gradients,
++                             const Mat&amp; output_gradients,
++                             bool accumulate = false);
++
++    //! Computes the negative log-likelihood of target given the
++    //! internal activations of the layer
++    virtual real fpropNLL(const Vec&amp; target);
++    virtual void fpropNLL(const Mat&amp; targets, const Mat&amp; costs_column);
++
++    //! Computes the gradient of the negative log-likelihood of target
++    //! with respect to the layer's bias, given the internal activations.
++    //! Will also update the lateral weight connections according
++    //! to their gradient. Assumes computeExpectation(s) or
++    //! fpropNLL was called before.
++    virtual void bpropNLL(const Vec&amp; target, real nll, Vec&amp; bias_gradient);
++    virtual void bpropNLL(const Mat&amp; targets, const Mat&amp; costs_column,
++                          Mat&amp; bias_gradients);
++
++    //! Accumulates positive phase statistics
++    virtual void accumulatePosStats( const Vec&amp; pos_values );
++    virtual void accumulatePosStats( const Mat&amp; ps_values);
++
++    //! Accumulates negative phase statistics
++    virtual void accumulateNegStats( const Vec&amp; neg_values );
++    virtual void accumulateNegStats( const Mat&amp; neg_values );
++
++    //! Update bias and lateral connections parameters 
++    //! according to accumulated statistics
++    virtual void update();
++
++    //! Updates ONLY the bias parameters according to the given gradient
++    virtual void update( const Vec&amp; grad );
++
++    //! Update bias and lateral connections 
++    //! parameters according to one pair of vectors
++    virtual void update( const Vec&amp; pos_values, const Vec&amp; neg_values );
++
++    //! Update bias and lateral connections 
++    //! parameters according to one pair of matrices.
++    virtual void update( const Mat&amp; pos_values, const Mat&amp; neg_values );
++
++    // neg_stats &lt;-- gibbs_chain_statistics_forgetting_factor * neg_stats
++    //              +(1-gibbs_chain_statistics_forgetting_factor)
++    //               * gibbs_neg_values
++    // delta w = -lrate * ( pos_values
++    //                  - ( background_gibbs_update_ratio*neg_stats
++    //                     +(1-background_gibbs_update_ratio)
++    //                      * cd_neg_values ) )
++    virtual void updateCDandGibbs( const Mat&amp; pos_values,
++                                   const Mat&amp; cd_neg_values,
++                                   const Mat&amp; gibbs_neg_values,
++                                   real background_gibbs_update_ratio );
++
++    // neg_stats &lt;-- gibbs_chain_statistics_forgetting_factor * neg_stats
++    //              +(1-gibbs_chain_statistics_forgetting_factor)
++    //               * \sum_i gibbs_neg_values_i / minibatch_size
++    // delta bias = -lrate * \sum_i (pos_values_i - neg_stats) / minibatch_size
++    virtual void updateGibbs( const Mat&amp; pos_values,
++                              const Mat&amp; gibbs_neg_values );
++
++    //! compute -bias' unit_values
++    virtual real energy(const Vec&amp; unit_values) const;
++
++    //! This function is not implemented for this class (returns an error)
++    virtual real freeEnergyContribution(const Vec&amp; unit_activations) const;
++
++    virtual int getConfigurationCount();
++
++    virtual void getConfiguration(int conf_index, Vec&amp; output);
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    PLEARN_DECLARE_OBJECT(RBMLateralBinomialLayer);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++    //#####  Not Options  #####################################################
++
++    mutable Vec dampening_expectation;
++    mutable Mat dampening_expectations;
++
++    mutable TVec&lt;Vec&gt; temp_output;
++    mutable TVec&lt;Mat&gt; temp_outputs;
++
++    mutable Vec current_temp_output, previous_temp_output;
++    mutable Mat current_temp_outputs, previous_temp_outputs;
++
++    mutable Vec bias_plus_input;
++    mutable Mat bias_plus_inputs;
++
++    Vec temp_input_gradient;
++    Vec temp_mean_field_gradient;
++    Vec temp_mean_field_gradient2;
++
++    Mat lateral_weights_gradient;
++    Mat lateral_weights_inc;
++
++    TVec&lt; Vec &gt; topographic_lateral_weights_gradient;
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++    //! Computes mat[i][j] += 0.5 * (v1[i] * v2[j] +  v1[j] * v2[i])
++    void externalSymetricProductAcc(const Mat&amp; mat, const Vec&amp; v1, 
++                                    const Vec&amp; v2);
++
++    void productTopoLateralWeights( const Vec&amp; result, const Vec&amp; input ) const;
++
++    void productTopoLateralWeightsGradients( const Vec&amp; input, const Vec&amp; input_gradient,
++                                             const Vec&amp; result_gradient, 
++                                             const TVec&lt; Vec &gt;&amp; weights_gradient );
++
++    void updateTopoLateralWeightsCD( const Vec&amp; pos_values, const Vec&amp; neg_values );
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(RBMLateralBinomialLayer);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001890.html">[Plearn-commits] r8442 - trunk/plearn_learners_experimental
+</A></li>
+	<LI>Next message: <A HREF="001892.html">[Plearn-commits] r8444 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1891">[ date ]</a>
+              <a href="thread.html#1891">[ thread ]</a>
+              <a href="subject.html#1891">[ subject ]</a>
+              <a href="author.html#1891">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

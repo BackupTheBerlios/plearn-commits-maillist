@@ -1,0 +1,193 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9123 - trunk/python_modules/plearn/gui_tools
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9123%20-%20trunk/python_modules/plearn/gui_tools&In-Reply-To=%3C200806112252.m5BMqBYo020508%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002570.html">
+   <LINK REL="Next"  HREF="002572.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9123 - trunk/python_modules/plearn/gui_tools</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9123%20-%20trunk/python_modules/plearn/gui_tools&In-Reply-To=%3C200806112252.m5BMqBYo020508%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9123 - trunk/python_modules/plearn/gui_tools">chapados at mail.berlios.de
+       </A><BR>
+    <I>Thu Jun 12 00:52:11 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002570.html">[Plearn-commits] r9122 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="002572.html">[Plearn-commits] r9124 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2571">[ date ]</a>
+              <a href="thread.html#2571">[ thread ]</a>
+              <a href="subject.html#2571">[ subject ]</a>
+              <a href="author.html#2571">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2008-06-12 00:52:10 +0200 (Thu, 12 Jun 2008)
+New Revision: 9123
+
+Modified:
+   trunk/python_modules/plearn/gui_tools/console_logger.py
+   trunk/python_modules/plearn/gui_tools/xp_workbench.py
+Log:
+Popup dialog if experiment is still running when closing the window
+
+Modified: trunk/python_modules/plearn/gui_tools/console_logger.py
+===================================================================
+--- trunk/python_modules/plearn/gui_tools/console_logger.py	2008-06-11 22:00:28 UTC (rev 9122)
++++ trunk/python_modules/plearn/gui_tools/console_logger.py	2008-06-11 22:52:10 UTC (rev 9123)
+@@ -137,6 +137,7 @@
+                     select([],[],[],.1) # Give a little time for buffers to fill
+ 
+         listener = _ListenerThread()
++        listener.setDaemon(True)        # Allow quitting Python even if thread running
+         self.is_active = True
+         listener.start()
+         
+
+Modified: trunk/python_modules/plearn/gui_tools/xp_workbench.py
+===================================================================
+--- trunk/python_modules/plearn/gui_tools/xp_workbench.py	2008-06-11 22:00:28 UTC (rev 9122)
++++ trunk/python_modules/plearn/gui_tools/xp_workbench.py	2008-06-11 22:52:10 UTC (rev 9123)
+@@ -43,6 +43,7 @@
+ from enthought.traits.api          import *
+ from enthought.traits.ui.api       import *
+ from enthought.traits.ui.menu      import NoButtons
++from enthought.pyface.api          import confirm, YES
+ 
+ from console_logger    import ConsoleLogger
+ from mpl_figure_editor import TraitedFigure
+@@ -54,8 +55,15 @@
+     &quot;&quot;&quot;Contains the context of a single experiment -- either a running one
+     or a reloaded one.
+     &quot;&quot;&quot;
+-    expdir          = Directory(desc=&quot;Complete path to experiment directory&quot;)
++    ## Complete path to experiment directory
++    expdir = Directory
++
++    ## The console logger
++    console_logger = ConsoleLogger
++
+     
++
++    ## All tabs
+     _all_tabs       = List(HasTraits, desc=&quot;Set of tabs associated with experiment&quot;,
+                            editor=ListEditor(use_notebook=True,
+                                              deletable=False,
+@@ -63,13 +71,6 @@
+                                              page_name=&quot;.title&quot;))
+     
+     @property
+-    def console_logger(self):
+-        &quot;&quot;&quot;Return a reference to the context's console logger.&quot;&quot;&quot;
+-        logger = self._all_tabs[0]
+-        assert isinstance(logger, ConsoleLogger)
+-        return logger
+-
+-    @property
+     def _display_expdir(self):
+         &quot;&quot;&quot;Shortened version of expdir suitable for display.&quot;&quot;&quot;
+         return os.path.basename(self.expdir)
+@@ -113,6 +114,7 @@
+             wkbench.curworker = None
+ 
+         super(_WorkerThread,self).__init__(target=work)
++        self.setDaemon(True)     # Allow quitting Python even if thread still running
+         self.context = context
+ 
+     def _get_my_tid(self):
+@@ -142,6 +144,27 @@
+         self.raise_exc(SystemExit)    
+ 
+ 
++#####  Custom Handlers  #####################################################
++
++class WorkbenchHandler(Handler):
++    &quot;&quot;&quot;Some custom UI code for the main window.
++    &quot;&quot;&quot;
++    def close(self, info, is_ok):
++        &quot;&quot;&quot;If user is trying to close the main window, look at whether an
++        experiment is currently running.  If so, pop a dialog to ask
++        whether it's really OK to close the thing.
++        &quot;&quot;&quot;
++        workbench = info.ui.context['object']
++        if workbench.curworker is not None:
++            msg = &quot;An experiment is currently running.\n&quot; \
++                  &quot;Do you really want to interrupt it and\n&quot; \
++                  &quot;close the workbench window?&quot;
++            parent = info.ui.control
++            return confirm(parent, msg) == YES
++        else:
++            return True
++
++
+ #####  ExperimentWorkbench  #################################################
+ 
+ class ExperimentWorkbench(HasTraits) :
+@@ -164,8 +187,8 @@
+ 
+     ## The main view
+     traits_view  = View(
+-        HSplit(Group(Group(Item(&quot;script_params@&quot;, show_label=False, springy=True),
+-                           springy=True),
++        HSplit(Group(Item(&quot;script_params@&quot;, show_label=False, springy=True),
++                     spring, spring,
+                      Group(Item(&quot;launch&quot;, springy=True, enabled_when=&quot;curworker is None&quot;),
+                            Item(&quot;cancel&quot;, springy=True, enabled_when=&quot;curworker is not None&quot;),
+                            show_labels=False, orientation=&quot;horizontal&quot;)),
+@@ -173,13 +196,15 @@
+                      springy=True)),
+         resizable=True,
+         height=0.75, width=0.75,
+-        buttons=NoButtons)
++        buttons=NoButtons,
++        handler=WorkbenchHandler() )
+ 
+     ## Experiment management
+     def _launch_fired(self):
+         expdir  = self.expdir_name(self.script_params.expdir_root)
+         logger  = ConsoleLogger()
+-        context = ExperimentContext(expdir    = expdir,
++        context = ExperimentContext(expdir = expdir,
++                                    console_logger = logger,
+                                     _all_tabs = [ logger ])
+         self.experiments.append(context)
+         self.curworker = _WorkerThread(self.expfunc, self.script_params, context, self)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002570.html">[Plearn-commits] r9122 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="002572.html">[Plearn-commits] r9124 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2571">[ date ]</a>
+              <a href="thread.html#2571">[ thread ]</a>
+              <a href="subject.html#2571">[ subject ]</a>
+              <a href="author.html#2571">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

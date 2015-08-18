@@ -1,0 +1,262 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8358 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-December/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8358%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200712142015.lBEKFZ91022767%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001805.html">
+   <LINK REL="Next"  HREF="001807.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8358 - trunk/plearn_learners/online</H1>
+    <B>dumitruerhan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8358%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200712142015.lBEKFZ91022767%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8358 - trunk/plearn_learners/online">dumitruerhan at mail.berlios.de
+       </A><BR>
+    <I>Fri Dec 14 21:15:35 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001805.html">[Plearn-commits] r8357 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001807.html">[Plearn-commits] r8359 - in trunk: commands/EXPERIMENTAL	plearn/display plearn/math plearn/var plearn/var/EXPERIMENTAL	plearn_learners/generic/EXPERIMENTAL python_modules/plearn/var
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1806">[ date ]</a>
+              <a href="thread.html#1806">[ thread ]</a>
+              <a href="subject.html#1806">[ subject ]</a>
+              <a href="author.html#1806">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: dumitruerhan
+Date: 2007-12-14 21:15:34 +0100 (Fri, 14 Dec 2007)
+New Revision: 8358
+
+Modified:
+   trunk/plearn_learners/online/RBMLayer.cc
+   trunk/plearn_learners/online/RBMLayer.h
+Log:
+Added an option to decay biases in an RBM layer. Use with caution. Default is no decay (like before)
+
+Modified: trunk/plearn_learners/online/RBMLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.cc	2007-12-14 20:14:05 UTC (rev 8357)
++++ trunk/plearn_learners/online/RBMLayer.cc	2007-12-14 20:15:34 UTC (rev 8358)
+@@ -55,6 +55,8 @@
+     learning_rate(the_learning_rate),
+     momentum(0.),
+     size(-1),
++    bias_decay_type(&quot;none&quot;),
++    bias_decay_parameter(0),
+     gibbs_ma_increment(0.1),
+     gibbs_initial_ma_coefficient(0.1),
+     batch_size(0),
+@@ -109,6 +111,17 @@
+                   OptionBase::buildoption,
+                   &quot;Momentum.&quot;);
+ 
++    declareOption(ol, &quot;bias_decay_type&quot;, &amp;RBMLayer::bias_decay_type,
++                  OptionBase::buildoption,
++                  &quot;Bias decay type:\n&quot;
++                  &quot; - none: no decay applied\n&quot;
++                  &quot; - negative: pushes the biases towards -\\infty\n&quot;
++                  &quot; - l2: applies an l2 penalty&quot;);
++
++    declareOption(ol, &quot;bias_decay_parameter&quot;, &amp;RBMLayer::bias_decay_parameter,
++                  OptionBase::buildoption,
++                  &quot;Bias decay parameter.&quot;);
++
+     declareOption(ol, &quot;gibbs_ma_schedule&quot;, &amp;RBMLayer::gibbs_ma_schedule,
+                   OptionBase::buildoption,
+                   &quot;Each element of this vector is a number of updates after which\n&quot;
+@@ -394,6 +407,8 @@
+         }
+     }
+ 
++    applyBiasDecay();
++    
+     clearStats();
+ }
+ 
+@@ -419,6 +434,8 @@
+             b[i] += binc[i];
+         }
+     }
++
++    applyBiasDecay();
+ }
+ 
+ void RBMLayer::update( const Vec&amp; pos_values, const Vec&amp; neg_values)
+@@ -443,6 +460,9 @@
+             b[i] += binc[i];
+         }
+     }
++
++    applyBiasDecay();
++
+ }
+ 
+ void RBMLayer::update( const Mat&amp; pos_values, const Mat&amp; neg_values)
+@@ -480,6 +500,9 @@
+         }
+         */
+     }
++
++    applyBiasDecay();
++
+ }
+ 
+ //////////////////////
+@@ -522,6 +545,9 @@
+     columnSum(cd_neg_values, tmp);
+     multiplyAcc(bias, tmp,
+                 -learning_rate*(1-background_gibbs_update_ratio)*normalize_factor);
++
++    applyBiasDecay();
++
+ }
+ 
+ /////////////////
+@@ -564,6 +590,9 @@
+     columnSum(pos_values,tmp);
+     multiplyAcc(bias, tmp, learning_rate*normalize_factor);
+     multiplyAcc(bias, bias_neg_stats, -learning_rate);
++
++    applyBiasDecay();
++
+ }
+ 
+ ////////////////
+@@ -628,6 +657,9 @@
+ 
+     for( int i=0 ; i&lt;size ; i++ )
+         bg[i] = -bps[i]/pos_count + bns[i]/neg_count;
++
++    addBiasDecay(bias_gradient);
++
+ }
+ 
+ void RBMLayer::bpropCD(const Vec&amp; pos_values, const Vec&amp; neg_values,
+@@ -641,6 +673,9 @@
+ 
+     for( int i=0 ; i&lt;size ; i++ )
+         bg[i] = -bps[i] + bns[i];
++    
++    addBiasDecay(bias_gradient);
++
+ }
+ 
+ real RBMLayer::energy(const Vec&amp; unit_values) const
+@@ -666,6 +701,49 @@
+     PLERROR(&quot;RBMLayer::getConfiguration(int, Vec) not implemented in subclass %s\n&quot;,classname().c_str());
+ }
+ 
++
++void RBMLayer::addBiasDecay(Vec&amp; bias_gradient)
++{
++    PLASSERT(bias_gradient.size()==size);
++
++    real *bg = bias_gradient.data();
++    real *b = bias.data();
++    bias_decay_type = lowerstring(bias_decay_type);
++
++    if (bias_decay_type==&quot;none&quot;)
++        {}
++    else if (bias_decay_type==&quot;negative&quot;)  // Pushes the biases towards -\infty
++        for( int i=0 ; i&lt;size ; i++ )
++            bg[i] += learning_rate * bias_decay_parameter;
++    else if (bias_decay_type==&quot;l2&quot;)  // L2 penalty on the biases
++        for (int i=0 ; i&lt;size ; i++ )
++            bg[i] += learning_rate * bias_decay_parameter * b[i];
++    else
++        PLERROR(&quot;RBMLayer::addBiasDecay(string) bias_decay_type %s is not in&quot;
++                &quot; the list, in subclass %s\n&quot;,bias_decay_type.c_str(),classname().c_str());
++
++}
++
++void RBMLayer::applyBiasDecay()
++{
++    
++    PLASSERT(bias.size()==size);
++
++    real* b = bias.data();
++    bias_decay_type = lowerstring(bias_decay_type);
++
++    if (bias_decay_type==&quot;none&quot;)
++        {}
++    else if (bias_decay_type==&quot;negative&quot;) // Pushes the biases towards -\infty
++        for( int i=0 ; i&lt;size ; i++ )
++            b[i] -= learning_rate * bias_decay_parameter;
++    else if (bias_decay_type==&quot;l2&quot;) // L2 penalty on the biases
++        bias *= (1 - learning_rate * bias_decay_parameter);
++    else 
++        PLERROR(&quot;RBMLayer::applyBiasDecay(string) bias_decay_type %s is not in&quot;
++                &quot; the list, in subclass %s\n&quot;,bias_decay_type.c_str(),classname().c_str());
++
++}   
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/online/RBMLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.h	2007-12-14 20:14:05 UTC (rev 8357)
++++ trunk/plearn_learners/online/RBMLayer.h	2007-12-14 20:15:34 UTC (rev 8358)
+@@ -72,6 +72,12 @@
+     //! Obsolete option, still here for script compatibility
+     string units_types;
+ 
++    //! Type of decay applied to the biases
++    string bias_decay_type;
++
++    //! Bias decay parameter
++    real bias_decay_parameter;
++
+     //! background gibbs chain options
+     //! each element of this vector is a number of updates after which
+     //! the moving average coefficient is incremented (by incrementing
+@@ -285,6 +291,12 @@
+     //! Computes the conf_index configuration of the layer.
+     virtual void getConfiguration(int conf_index, Vec&amp; output);
+ 
++    //! Applies the bias decay
++    virtual void applyBiasDecay();
++
++    //! Adds the bias decay to the bias gradients
++    virtual void addBiasDecay(Vec&amp; bias_gradient);
++
+     //#####  PLearn::Object Protocol  #########################################
+ 
+     // Declares other standard object methods.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001805.html">[Plearn-commits] r8357 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001807.html">[Plearn-commits] r8359 - in trunk: commands/EXPERIMENTAL	plearn/display plearn/math plearn/var plearn/var/EXPERIMENTAL	plearn_learners/generic/EXPERIMENTAL python_modules/plearn/var
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1806">[ date ]</a>
+              <a href="thread.html#1806">[ thread ]</a>
+              <a href="subject.html#1806">[ subject ]</a>
+              <a href="author.html#1806">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

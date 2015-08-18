@@ -1,0 +1,642 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7858 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7858%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200707301644.l6UGixXO005759%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001305.html">
+   <LINK REL="Next"  HREF="001314.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7858 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7858%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200707301644.l6UGixXO005759%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7858 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Mon Jul 30 18:44:59 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001305.html">[Plearn-commits] r7857 - in trunk/plearn_learners/online: .	EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="001314.html">[Plearn-commits] r7859 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1306">[ date ]</a>
+              <a href="thread.html#1306">[ thread ]</a>
+              <a href="subject.html#1306">[ subject ]</a>
+              <a href="author.html#1306">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2007-07-30 18:44:50 +0200 (Mon, 30 Jul 2007)
+New Revision: 7858
+
+Modified:
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+Log:
+Added correlation weights, which can capture correlation between hidden neurons and potentially suppress their interaction in order to obtain sparse hidden layer representations
+
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2007-07-29 12:05:12 UTC (rev 7857)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2007-07-30 16:44:50 UTC (rev 7858)
+@@ -61,9 +61,7 @@
+     l1_neuron_decay_center( 0 ),
+     compute_all_test_costs( false ),
+     n_layers( 0 ),
+-    currently_trained_layer( 0 ),
+-    final_module_has_learning_rate( false ),
+-    final_cost_has_learning_rate( false )
++    currently_trained_layer( 0 )
+ {
+     // random_gen will be initialized in PLearner::build_()
+     random_gen = new PRandom();
+@@ -137,6 +135,13 @@
+                   &quot;The weights of the reconstruction connections between the &quot;
+                   &quot;layers&quot;);
+ 
++    declareOption(ol, &quot;correlation_connections&quot;, 
++                  &amp;StackedAutoassociatorsNet::correlation_connections,
++                  OptionBase::buildoption,
++                  &quot;Optional weights to capture correlation and anti-correlation\n&quot;
++                  &quot;in the hidden layers. They must have the same input and\n&quot;
++                  &quot;output sizes, compatible with their corresponding layers.&quot;);
++
+     declareOption(ol, &quot;final_module&quot;, &amp;StackedAutoassociatorsNet::final_module,
+                   OptionBase::buildoption,
+                   &quot;Module that takes as input the output of the last layer\n&quot;
+@@ -185,8 +190,15 @@
+ 
+     declareOption(ol, &quot;n_layers&quot;, &amp;StackedAutoassociatorsNet::n_layers,
+                   OptionBase::learntoption,
+-                  &quot;Number of layers&quot;);
++                  &quot;Number of layers&quot;
++        );
+ 
++    declareOption(ol, &quot;correlation_layers&quot;, 
++                  &amp;StackedAutoassociatorsNet::correlation_layers,
++                  OptionBase::learntoption,
++                  &quot;Hidden layers for the correlation connections&quot;
++        );
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -262,6 +274,35 @@
+                 &quot;there should be %d connections.\n&quot;,
+                 n_layers-1);
+ 
++    if( reconstruction_connections.length() != n_layers-1 )
++        PLERROR(&quot;StackedAutoassociatorsNet::build_layers_and_connections() - \n&quot;
++                &quot;there should be %d reconstruction connections.\n&quot;,
++                n_layers-1);
++    
++    if( correlation_connections.length() != 0 &amp;&amp;
++        correlation_connections.length() != n_layers-1 )
++        PLERROR(&quot;StackedAutoassociatorsNet::build_layers_and_connections() - \n&quot;
++                &quot;there should be either %d correlation connections or none.\n&quot;,
++                n_layers-1);
++    
++    if(correlation_connections.length() != 0)
++    {
++        correlation_layers.resize( layers.length()-1 );
++        for( int i=0 ; i&lt;n_layers-1 ; i++ )
++        {
++            if( greedy_stages[i] == 0 )
++            {
++                CopiesMap map;
++                correlation_layers[i] = 
++                    layers[i+1]-&gt;deepCopy(map);
++            }
++        }
++        correlation_activations.resize( n_layers-1 );
++        correlation_expectations.resize( n_layers-1 );
++        correlation_activation_gradients.resize( n_layers-1 );
++        correlation_expectation_gradients.resize( n_layers-1 );
++    }
++
+     if(layers[0]-&gt;size != inputsize_)
+         PLERROR(&quot;StackedAutoassociatorsNet::build_layers_and_connections() - \n&quot;
+                 &quot;layers[0] should have a size of %d.\n&quot;,
+@@ -272,6 +313,7 @@
+     activation_gradients.resize( n_layers );
+     expectation_gradients.resize( n_layers );
+ 
++
+     for( int i=0 ; i&lt;n_layers-1 ; i++ )
+     {
+         if( layers[i]-&gt;size != connections[i]-&gt;down_size )
+@@ -300,6 +342,32 @@
+                     &quot;%d.\n&quot;,
+                     i, layers[i]-&gt;size);
+ 
++        if(correlation_connections.length() != 0)
++        {
++            if( correlation_connections[i]-&gt;up_size != layers[i+1]-&gt;size ||
++                correlation_connections[i]-&gt;down_size != layers[i+1]-&gt;size )
++                PLERROR(&quot;StackedAutoassociatorsNet::build_layers_and_connections()&quot;
++                        &quot; - \n&quot;
++                        &quot;correlation_connections[%i] should have a up_size and &quot;
++                        &quot;down_size of %d.\n&quot;,
++                        i, layers[i+1]-&gt;size);
++            correlation_activations[i].resize( layers[i+1]-&gt;size );
++            correlation_expectations[i].resize( layers[i+1]-&gt;size );
++            correlation_activation_gradients[i].resize( layers[i+1]-&gt;size );
++            correlation_expectation_gradients[i].resize( layers[i+1]-&gt;size );
++            if( !(correlation_connections[i]-&gt;random_gen) )
++            {
++                correlation_connections[i]-&gt;random_gen = random_gen;
++                correlation_connections[i]-&gt;forget();
++            }
++
++            if( !(correlation_layers[i]-&gt;random_gen) )
++            {
++                correlation_layers[i]-&gt;random_gen = random_gen;
++                correlation_layers[i]-&gt;forget();
++            }
++        }
++
+         if( !(layers[i]-&gt;random_gen) )
+         {
+             layers[i]-&gt;random_gen = random_gen;
+@@ -316,7 +384,7 @@
+         {
+             reconstruction_connections[i]-&gt;random_gen = random_gen;
+             reconstruction_connections[i]-&gt;forget();
+-        }
++        }        
+ 
+         activations[i].resize( layers[i]-&gt;size );
+         expectations[i].resize( layers[i]-&gt;size );
+@@ -360,7 +428,7 @@
+     if( final_module-&gt;output_size != final_cost-&gt;input_size )
+         PLERROR(&quot;StackedAutoassociatorsNet::build_costs() - \n&quot;
+                 &quot;final_module should have an output_size of %d.\n&quot;, 
+-                final_module-&gt;input_size);
++                final_cost-&gt;input_size);
+ 
+     final_module-&gt;setLearningRate( fine_tuning_learning_rate );
+ 
+@@ -433,6 +501,12 @@
+     deepCopyField(reconstruction_expectations, copies);
+     deepCopyField(reconstruction_activation_gradients, copies);
+     deepCopyField(reconstruction_expectation_gradients, copies);
++    deepCopyField(correlation_connections, copies);
++    deepCopyField(correlation_activations, copies);
++    deepCopyField(correlation_expectations, copies);
++    deepCopyField(correlation_activation_gradients, copies);
++    deepCopyField(correlation_expectation_gradients, copies);
++    deepCopyField(correlation_layers, copies);
+     deepCopyField(partial_costs_positions, copies);
+     deepCopyField(partial_cost_value, copies);
+     deepCopyField(final_cost_input, copies);
+@@ -476,6 +550,15 @@
+         if( partial_costs[i] )
+             partial_costs[i]-&gt;forget();
+ 
++    if(correlation_connections.length() != 0)
++    {        
++        for( int i=0 ; i&lt;n_layers-1 ; i++)
++        {
++            correlation_connections[i]-&gt;forget();
++            correlation_layers[i]-&gt;forget();
++        }        
++    }
++
+     stage = 0;
+     greedy_stages.clear();
+ }
+@@ -528,12 +611,17 @@
+         layers[i]-&gt;setLearningRate( lr );
+         connections[i]-&gt;setLearningRate( lr );
+         reconstruction_connections[i]-&gt;setLearningRate( lr );
++        if(correlation_connections.length() != 0)
++        {
++            correlation_connections[i]-&gt;setLearningRate( lr );
++            correlation_layers[i]-&gt;setLearningRate( lr );
++        }
+         layers[i+1]-&gt;setLearningRate( lr );
+ 
+-        reconstruction_activations.resize(layers[i+1]-&gt;size);
+-        reconstruction_expectations.resize(layers[i+1]-&gt;size);
+-        reconstruction_activation_gradients.resize(layers[i+1]-&gt;size);
+-        reconstruction_expectation_gradients.resize(layers[i+1]-&gt;size);
++        reconstruction_activations.resize(layers[i]-&gt;size);
++        reconstruction_expectations.resize(layers[i]-&gt;size);
++        reconstruction_activation_gradients.resize(layers[i]-&gt;size);
++        reconstruction_expectation_gradients.resize(layers[i]-&gt;size);
+ 
+         for( ; *this_stage&lt;end_stage ; (*this_stage)++ )
+         {
+@@ -544,7 +632,12 @@
+                 layers[i]-&gt;setLearningRate( lr );
+                 connections[i]-&gt;setLearningRate( lr );
+                 reconstruction_connections[i]-&gt;setLearningRate( lr );
+-                layers[i+1]-&gt;setLearningRate( lr );                
++                layers[i+1]-&gt;setLearningRate( lr );
++                if(correlation_connections.length() != 0)
++                {
++                    correlation_connections[i]-&gt;setLearningRate( lr );
++                    correlation_layers[i]-&gt;setLearningRate( lr );
++                }
+             }
+ 
+             sample = *this_stage % nsamples;
+@@ -592,7 +685,8 @@
+     }
+     
+     train_stats-&gt;finalize();
+-        
++    MODULE_LOG &lt;&lt; &quot;  train costs = &quot; &lt;&lt; train_stats-&gt;getMean() &lt;&lt; endl;
++
+     // Update currently_trained_layer
+     if(stage &gt; 0)
+         currently_trained_layer = n_layers;
+@@ -610,11 +704,27 @@
+     PLASSERT( index &lt; n_layers );
+ 
+     expectations[0] &lt;&lt; input;
+-    for( int i=0 ; i&lt;index + 1; i++ )
++    if(correlation_connections.length() != 0)
+     {
+-        connections[i]-&gt;fprop( expectations[i], activations[i+1] );
+-        layers[i+1]-&gt;fprop(activations[i+1],expectations[i+1]);
++        for( int i=0 ; i&lt;index + 1; i++ )
++        {
++            connections[i]-&gt;fprop( expectations[i], correlation_activations[i] );
++            layers[i+1]-&gt;fprop( correlation_activations[i],
++                                correlation_expectations[i] );
++            correlation_connections[i]-&gt;fprop( correlation_expectations[i], 
++                                               activations[i+1] );
++            correlation_layers[i]-&gt;fprop( activations[i+1], 
++                                          expectations[i+1] );
++        }
+     }
++    else
++    {
++        for( int i=0 ; i&lt;index + 1; i++ )
++        {
++            connections[i]-&gt;fprop( expectations[i], activations[i+1] );
++            layers[i+1]-&gt;fprop(activations[i+1],expectations[i+1]);
++        }
++    }
+ 
+     if( partial_costs &amp;&amp; partial_costs[ index ] )
+     {
+@@ -649,12 +759,13 @@
+                                                 reconstruction_activations);
+     layers[ index ]-&gt;fprop( reconstruction_activations,
+                             layers[ index ]-&gt;expectation);
+-    
++
++    layers[ index ]-&gt;activation &lt;&lt; reconstruction_activations;
+     layers[ index ]-&gt;expectation_is_up_to_date = true;
+     train_costs[index] = layers[ index ]-&gt;fpropNLL(expectations[index]);
+-
++    
+     layers[ index ]-&gt;bpropNLL(expectations[index], train_costs[index],
+-                                  reconstruction_activation_gradients);
++                              reconstruction_activation_gradients);
+ 
+     layers[ index ]-&gt;update(reconstruction_activation_gradients);
+ 
+@@ -667,7 +778,7 @@
+     reconstruction_connections[ index ]-&gt;bpropUpdate( 
+         expectations[ index + 1], 
+         reconstruction_activations, 
+-        reconstruction_expectation_gradients, //reused
++        reconstruction_expectation_gradients, 
+         reconstruction_activation_gradients);
+ 
+     if(!fast_exact_is_equal(l1_neuron_decay,0))
+@@ -688,17 +799,49 @@
+     }
+ 
+     // Update hidden layer bias and weights
+-    layers[ index+1 ]-&gt;bpropUpdate( activations[ index + 1 ],
+-                                    expectations[ index + 1 ],
+-                                    reconstruction_activation_gradients, // reused
+-                                    reconstruction_expectation_gradients);    
+ 
+-    connections[ index ]-&gt;bpropUpdate( 
+-        expectations[ index ],
+-        activations[ index + 1 ],
+-        reconstruction_expectation_gradients, //reused
+-        reconstruction_activation_gradients);
++    if(correlation_connections.length() != 0)
++    {
++        correlation_layers[ index ]-&gt;bpropUpdate(
++            activations[ index + 1 ],
++            expectations[ index + 1 ],
++            reconstruction_activation_gradients,  // reused
++            reconstruction_expectation_gradients
++            );
+ 
++        correlation_connections[ index ]-&gt;bpropUpdate( 
++            correlation_expectations[ index ],
++            activations[ index+1 ],
++            correlation_expectation_gradients[ index ], 
++            reconstruction_activation_gradients);
++        
++        layers[ index+1 ]-&gt;bpropUpdate( 
++            correlation_activations[ index ],
++            correlation_expectations[ index ],
++            correlation_activation_gradients [ index ],
++            correlation_expectation_gradients [ index ]);    
++        
++        connections[ index ]-&gt;bpropUpdate( 
++            expectations[ index ],
++            correlation_activations[ index ],
++            reconstruction_expectation_gradients, //reused
++            correlation_activation_gradients [ index ]);
++    }
++    else
++    {
++        layers[ index+1 ]-&gt;bpropUpdate( activations[ index + 1 ],
++                                        expectations[ index + 1 ],
++                                        // reused
++                                        reconstruction_activation_gradients, 
++                                        reconstruction_expectation_gradients);    
++        
++        connections[ index ]-&gt;bpropUpdate( 
++            expectations[ index ],
++            activations[ index + 1 ],
++            reconstruction_expectation_gradients, //reused
++            reconstruction_activation_gradients);
++    }
++
+ }
+ 
+ void StackedAutoassociatorsNet::fineTuningStep( const Vec&amp; input, const Vec&amp; target,
+@@ -706,11 +849,28 @@
+ {
+     // fprop
+     expectations[0] &lt;&lt; input;
+-    for( int i=0 ; i&lt;n_layers-1; i++ )
++
++    if(correlation_connections.length() != 0)
+     {
+-        connections[i]-&gt;fprop( expectations[i], activations[i+1] );
+-        layers[i+1]-&gt;fprop(activations[i+1],expectations[i+1]);
++        for( int i=0 ; i&lt;n_layers-1; i++ )
++        {
++            connections[i]-&gt;fprop( expectations[i], correlation_activations[i] );
++            layers[i+1]-&gt;fprop( correlation_activations[i],
++                                correlation_expectations[i] );
++            correlation_connections[i]-&gt;fprop( correlation_expectations[i], 
++                                               activations[i+1] );
++            correlation_layers[i]-&gt;fprop( activations[i+1], 
++                                          expectations[i+1] );
++        }
+     }
++    else
++    {
++        for( int i=0 ; i&lt;n_layers-1; i++ )
++        {
++            connections[i]-&gt;fprop( expectations[i], activations[i+1] );
++            layers[i+1]-&gt;fprop(activations[i+1],expectations[i+1]);
++        }
++    }
+ 
+     final_module-&gt;fprop( expectations[ n_layers-1 ],
+                          final_cost_input );
+@@ -728,18 +888,48 @@
+                                expectation_gradients[ n_layers-1 ],
+                                final_cost_gradient );
+ 
+-    for( int i=n_layers-1 ; i&gt;0 ; i-- )
++    if( correlation_connections.length() != 0 )
+     {
+-        layers[i]-&gt;bpropUpdate( activations[i],
+-                                expectations[i],
+-                                activation_gradients[i],
+-                                expectation_gradients[i] );
++        for( int i=n_layers-1 ; i&gt;0 ; i-- )
++        {
++            correlation_layers[i-1]-&gt;bpropUpdate( 
++                activations[i],
++                expectations[i],
++                activation_gradients[i],
++                expectation_gradients[i] );
+ 
+-        connections[i-1]-&gt;bpropUpdate( expectations[i-1],
+-                                       activations[i],
+-                                       expectation_gradients[i-1],
+-                                       activation_gradients[i] );
++            correlation_connections[i-1]-&gt;bpropUpdate( 
++                correlation_expectations[i-1],
++                activations[i],
++                correlation_expectation_gradients[i-1],
++                activation_gradients[i] );
++
++            layers[i]-&gt;bpropUpdate( correlation_activations[i-1],
++                                    correlation_expectations[i-1],
++                                    correlation_activation_gradients[i-1],
++                                    correlation_expectation_gradients[i-1] );
++            
++            connections[i-1]-&gt;bpropUpdate( expectations[i-1],
++                                           correlation_activations[i-1],
++                                           expectation_gradients[i-1],
++                                           correlation_activation_gradients[i-1] );
++        }
+     }
++    else
++    {
++        for( int i=n_layers-1 ; i&gt;0 ; i-- )
++        {
++            layers[i]-&gt;bpropUpdate( activations[i],
++                                    expectations[i],
++                                    activation_gradients[i],
++                                    expectation_gradients[i] );
++            
++            connections[i-1]-&gt;bpropUpdate( expectations[i-1],
++                                           activations[i],
++                                           expectation_gradients[i-1],
++                                           activation_gradients[i] );
++        }        
++    }
+ }
+ 
+ void StackedAutoassociatorsNet::computeOutput(const Vec&amp; input, Vec&amp; output) const
+@@ -748,20 +938,57 @@
+ 
+     expectations[0] &lt;&lt; input;
+ 
+-    for(int i=0 ; i&lt;currently_trained_layer-1 ; i++ )
++    if(correlation_connections.length() != 0)
+     {
+-        connections[i]-&gt;fprop( expectations[i], activations[i+1] );
+-        layers[i+1]-&gt;fprop(activations[i+1],expectations[i+1]);
++        for( int i=0 ; i&lt;currently_trained_layer-1; i++ )
++        {
++            connections[i]-&gt;fprop( expectations[i], correlation_activations[i] );
++            layers[i+1]-&gt;fprop( correlation_activations[i],
++                                correlation_expectations[i] );
++            correlation_connections[i]-&gt;fprop( correlation_expectations[i], 
++                                               activations[i+1] );
++            correlation_layers[i]-&gt;fprop( activations[i+1], 
++                                          expectations[i+1] );
++        }
+     }
++    else
++    {   
++        for(int i=0 ; i&lt;currently_trained_layer-1 ; i++ )
++        {
++            connections[i]-&gt;fprop( expectations[i], activations[i+1] );
++            layers[i+1]-&gt;fprop(activations[i+1],expectations[i+1]);
++        }
++    }
+ 
+     if( currently_trained_layer&lt;n_layers )
+     {
+-        connections[currently_trained_layer-1]-&gt;fprop( 
+-            expectations[currently_trained_layer-1], 
+-            activations[currently_trained_layer] );
+-        layers[currently_trained_layer]-&gt;fprop(
+-            activations[currently_trained_layer],
+-            output);
++        if(correlation_connections.length() != 0)
++        {
++            connections[currently_trained_layer-1]-&gt;fprop( 
++                expectations[currently_trained_layer-1], 
++                correlation_activations[currently_trained_layer-1] );
++
++            layers[currently_trained_layer]-&gt;fprop(
++                correlation_activations[currently_trained_layer-1],
++                correlation_expectations[currently_trained_layer-1] );
++
++            correlation_connections[currently_trained_layer-1]-&gt;fprop( 
++                correlation_expectations[currently_trained_layer-1], 
++                activations[currently_trained_layer] );
++
++            correlation_layers[currently_trained_layer-1]-&gt;fprop( 
++                activations[currently_trained_layer], 
++                output );
++        }
++        else
++        {
++            connections[currently_trained_layer-1]-&gt;fprop( 
++                expectations[currently_trained_layer-1], 
++                activations[currently_trained_layer] );
++            layers[currently_trained_layer]-&gt;fprop(
++                activations[currently_trained_layer],
++                output);
++        }
+     }
+     else        
+         final_module-&gt;fprop( expectations[ currently_trained_layer - 1],
+@@ -785,9 +1012,10 @@
+             layers[ i ]-&gt;fprop( reconstruction_activations,
+                                     layers[ i ]-&gt;expectation);
+             
++            layers[ i ]-&gt;activation &lt;&lt; reconstruction_activations;
+             layers[ i ]-&gt;expectation_is_up_to_date = true;
+             costs[i] = layers[ i ]-&gt;fpropNLL(expectations[ i ]);
+-            
++
+             if( partial_costs &amp;&amp; partial_costs[i])
+             {
+                 partial_costs[ i ]-&gt;fprop( expectations[ i + 1],
+@@ -808,6 +1036,8 @@
+             reconstruction_activations,
+             layers[ currently_trained_layer-1 ]-&gt;expectation);
+         
++        layers[ currently_trained_layer-1 ]-&gt;activation &lt;&lt; 
++            reconstruction_activations;
+         layers[ currently_trained_layer-1 ]-&gt;expectation_is_up_to_date = true;
+         costs[ currently_trained_layer-1 ] = 
+             layers[ currently_trained_layer-1 ]-&gt;fpropNLL(
+@@ -869,6 +1099,11 @@
+     {
+         layers[i]-&gt;setLearningRate( the_learning_rate );
+         connections[i]-&gt;setLearningRate( the_learning_rate );
++        if(correlation_layers.length() != 0)
++        {
++            correlation_layers[i]-&gt;setLearningRate( the_learning_rate );
++            correlation_connections[i]-&gt;setLearningRate( the_learning_rate );
++        }
+     }
+     layers[n_layers-1]-&gt;setLearningRate( the_learning_rate );
+ 
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2007-07-29 12:05:12 UTC (rev 7857)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2007-07-30 16:44:50 UTC (rev 7858)
+@@ -105,6 +105,11 @@
+     //! The weights of the reconstruction connections between the layers
+     TVec&lt; PP&lt;RBMConnection&gt; &gt; reconstruction_connections;
+ 
++    //! Optional weights to capture correlation and anti-correlation
++    //! in the hidden layers. They must have the same input and
++    //! output sizes, compatible with their corresponding layers.
++    TVec&lt; PP&lt;RBMConnection&gt; &gt; correlation_connections;
++
+     //! Module that takes as input the output of the last layer
+     //! (layers[n_layers-1), and feeds its output to final_cost
+     //! which defines the fine-tuning criteria.
+@@ -220,12 +225,27 @@
+     //! Reconstruction expectations
+     mutable Vec reconstruction_expectations;
+     
+-    //! Reconstruction activations
++    //! Reconstruction activation gradients
+     mutable Vec reconstruction_activation_gradients;
+     
+-    //! Reconstruction expectations
++    //! Reconstruction expectation gradients
+     mutable Vec reconstruction_expectation_gradients;
+ 
++    //! Activations before the correlation layer
++    mutable TVec&lt;Vec&gt; correlation_activations;
++    
++    //! Expectations before the correlation layer
++    mutable TVec&lt;Vec&gt; correlation_expectations;
++    
++    //! Gradients of activations before the correlation layer
++    mutable TVec&lt;Vec&gt; correlation_activation_gradients;
++    
++    //! Gradients of expectations before the correlation layer
++    mutable TVec&lt;Vec&gt; correlation_expectation_gradients;
++
++    //! Hidden layers for the correlation connections
++    mutable TVec&lt; PP&lt;RBMLayer&gt; &gt; correlation_layers;
++
+     //! Position in the total cost vector of the different partial costs
+     mutable TVec&lt;int&gt; partial_costs_positions;
+     
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001305.html">[Plearn-commits] r7857 - in trunk/plearn_learners/online: .	EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="001314.html">[Plearn-commits] r7859 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1306">[ date ]</a>
+              <a href="thread.html#1306">[ thread ]</a>
+              <a href="subject.html#1306">[ subject ]</a>
+              <a href="author.html#1306">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

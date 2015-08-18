@@ -1,0 +1,152 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9150 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9150%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200806190345.m5J3jBGB015931%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002597.html">
+   <LINK REL="Next"  HREF="002599.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9150 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9150%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200806190345.m5J3jBGB015931%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9150 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Thu Jun 19 05:45:11 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002597.html">[Plearn-commits] r9149 - trunk/python_modules/plearn/gui_tools
+</A></li>
+        <LI>Next message: <A HREF="002599.html">[Plearn-commits] r9151 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2598">[ date ]</a>
+              <a href="thread.html#2598">[ thread ]</a>
+              <a href="subject.html#2598">[ subject ]</a>
+              <a href="author.html#2598">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-06-19 05:45:09 +0200 (Thu, 19 Jun 2008)
+New Revision: 9150
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+Log:
+Continued work-in-progress experimental code to compare NLL gradient with CD, do not worry it is all disabled by default ;)
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2008-06-19 02:59:06 UTC (rev 9149)
++++ trunk/plearn_learners/online/RBMModule.cc	2008-06-19 03:45:09 UTC (rev 9150)
+@@ -1425,7 +1425,23 @@
+         int n_hidden_conf = hidden_layer-&gt;getConfigurationCount();
+         p_xt_given_x.resize(n_visible_conf, visible-&gt;length());
+         p_ht_given_x.resize(n_hidden_conf, visible-&gt;length());
++        Vec input(visible_layer-&gt;size);
++        Mat input_mat = input.toMat(1, input.length());
++        Mat grad_nll(hidden_layer-&gt;size, visible_layer-&gt;size);
++        Mat grad_cd(hidden_layer-&gt;size, visible_layer-&gt;size);
++        Mat grad_first_term(hidden_layer-&gt;size, visible_layer-&gt;size);
++        grad_nll.fill(0);
++        grad_cd.fill(0);
+         for (int i = 0; i &lt; visible-&gt;length(); i++) {
++            // Compute dF(visible)/dWij.
++            PLASSERT_MSG( visible-&gt;length() == 1, &quot;The comparison can &quot;
++                    &quot;currently be made only with one input example at a &quot;
++                    &quot;time&quot; );
++            computeHiddenActivations(*visible);
++            hidden_layer-&gt;computeExpectations();
++            transposeProduct(grad_first_term,
++                    hidden_layer-&gt;getExpectations(),
++                    *visible);
+             // First compute P(h|x) for inputs x.
+             computeAllHiddenProbabilities(*visible, p_ht_given_x);
+             for (int t = 0; t &lt; n_steps_compare; t++) {
+@@ -1442,10 +1458,52 @@
+                 pout &lt;&lt; &quot;Best (P = &quot; &lt;&lt; p_xt_given_x.column(0)(best_idx, 0) &lt;&lt;
+                     &quot;) for x = &quot; &lt;&lt; (*visible)(0) &lt;&lt; &quot;:&quot; &lt;&lt;
+                     endl &lt;&lt; tmp &lt;&lt; endl;
++                // Compute E_{X_t}[dF(X_t)/dWij | x].
++                for (int k = 0; k &lt; n_visible_conf; k++) {
++                    visible_layer-&gt;getConfiguration(k, input);
++                    computeHiddenActivations(input_mat);
++                    hidden_layer-&gt;computeExpectations();
++                    transposeProductScaleAcc(grad_cd,
++                                             hidden_layer-&gt;getExpectations(),
++                                             input_mat,
++                                             -p_xt_given_x(k, 0),
++                                             real(1));
++                    if (t == 0) {
++                        // Also compute the gradient for the NLL.
++                        transposeProductScaleAcc(
++                                grad_nll,
++                                hidden_layer-&gt;getExpectations(),
++                                input_mat,
++                                -all_p_visible[k],
++                                real(1));
++                    }
++                }
++                // Compute difference between CD and NLL updates.
++                Mat diff = grad_nll.copy();
++                diff -= grad_cd;
++                grad_cd += grad_first_term;
++                if (t == 0)
++                    grad_nll += grad_first_term;
++                pout &lt;&lt; &quot;Grad_CD_&quot; &lt;&lt; t+1 &lt;&lt; &quot;=&quot; &lt;&lt; endl &lt;&lt; grad_cd &lt;&lt; endl;
++                // Compute average relative difference.
++                Vec all_relative_diffs;
++                for (int p = 0; p &lt; diff.length(); p++)
++                    for (int q = 0; q &lt; diff.width(); q++) {
++                        if (!fast_exact_is_equal(grad_nll(p, q), 0))
++                            all_relative_diffs.append(abs(diff(p, q) / grad_nll(p, q)));
++                    }
++                pout &lt;&lt; &quot;Median relative difference: &quot;
++                    &lt;&lt; median(all_relative_diffs) &lt;&lt; endl;
++                pout &lt;&lt; &quot;Mean relative difference: &quot;
++                    &lt;&lt; mean(all_relative_diffs) &lt;&lt; endl;
++                grad_cd.fill(0);
+                 // If it is not the last step, update P(h_t|x).
+                 if (t &lt; n_steps_compare - 1)
+                     product(p_ht_given_x, all_hidden_cond_prob, p_xt_given_x);
+             }
++            pout &lt;&lt; &quot;P(x)=&quot; &lt;&lt; endl &lt;&lt; all_p_visible &lt;&lt; endl;
++            pout &lt;&lt; &quot;Grad_NLL=&quot; &lt;&lt; endl &lt;&lt; grad_nll &lt;&lt; endl;
++            pout &lt;&lt; &quot;Grad first term=&quot; &lt;&lt; endl &lt;&lt; grad_first_term &lt;&lt; endl;
+         }
+     }
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002597.html">[Plearn-commits] r9149 - trunk/python_modules/plearn/gui_tools
+</A></li>
+	<LI>Next message: <A HREF="002599.html">[Plearn-commits] r9151 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2598">[ date ]</a>
+              <a href="thread.html#2598">[ thread ]</a>
+              <a href="subject.html#2598">[ subject ]</a>
+              <a href="author.html#2598">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

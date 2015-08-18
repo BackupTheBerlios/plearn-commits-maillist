@@ -1,0 +1,291 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7201 - trunk/plearn_learners/generic
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7201%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200705211426.l4LEQqOZ018624%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000649.html">
+   <LINK REL="Next"  HREF="000651.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7201 - trunk/plearn_learners/generic</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7201%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200705211426.l4LEQqOZ018624%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7201 - trunk/plearn_learners/generic">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Mon May 21 16:26:52 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000649.html">[Plearn-commits] r7200 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000651.html">[Plearn-commits] r7202 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#650">[ date ]</a>
+              <a href="thread.html#650">[ thread ]</a>
+              <a href="subject.html#650">[ subject ]</a>
+              <a href="author.html#650">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-05-21 16:26:51 +0200 (Mon, 21 May 2007)
+New Revision: 7201
+
+Modified:
+   trunk/plearn_learners/generic/PLearner.cc
+   trunk/plearn_learners/generic/PLearner.h
+Log:
+Added declarations and generic (inefficient) implementations for minibatch testing
+in PLearner (computeOutputs and computeOutputsAndCosts), to allow for efficient testing
+in subclasses that redefine these. 
+
+
+Modified: trunk/plearn_learners/generic/PLearner.cc
+===================================================================
+--- trunk/plearn_learners/generic/PLearner.cc	2007-05-21 02:01:05 UTC (rev 7200)
++++ trunk/plearn_learners/generic/PLearner.cc	2007-05-21 14:26:51 UTC (rev 7201)
+@@ -68,6 +68,7 @@
+       report_progress(true),
+       verbosity(1),
+       nservers(0),
++      test_minibatch_size(1000),
+       save_trainingset_prefix(&quot;&quot;),
+       parallelize_here(true),
+       master_sends_testset_rows(false),
+@@ -223,6 +224,13 @@
+         &quot;For parallel PLearner::test : wether the master should read the testset and\n&quot;
+         &quot;send rows to the slaves, or send a serialized description of the testset.\n&quot;);
+   
++    declareOption(
++        ol, &quot;test_minibatch_size&quot;, &amp;PLearner::test_minibatch_size,
++        OptionBase::buildoption,
++        &quot;Size of minibatches used during testing to take advantage\n&quot;
++        &quot;of efficient (possibly parallelized) implementations when\n&quot;
++        &quot;multiple exemples are processed at once. \n&quot;);
++
+     inherited::declareOptions(ol);
+ }
+ 
+@@ -307,6 +315,13 @@
+          RetDoc (&quot;Computed output (will have width outputsize)&quot;)));
+ 
+     declareMethod(
++        rmm, &quot;computeOutputs&quot;, &amp;PLearner::computeOutputs,
++        (BodyDoc(&quot;On a trained learner, this computes the output from the input, one\n&quot;
++                 &quot;batch of examples at a time (one example per row of the arg. matrices.\n&quot;),
++         ArgDoc (&quot;inputs&quot;, &quot;Input matrix (batch_size x inputsize)&quot;),
++         ArgDoc (&quot;outputs&quot;, &quot;Resulting output matrix (batch_size x outputsize)&quot;)));
++
++    declareMethod(
+         rmm, &quot;use&quot;, &amp;PLearner::remote_use,
+         (BodyDoc(&quot;Compute the output of a trained learner on every row of an\n&quot;
+                  &quot;input VMatrix.  The outputs are stored in a .pmat matrix\n&quot;
+@@ -349,6 +364,18 @@
+                  &quot;- Vec containing cost&quot;)));
+ 
+     declareMethod(
++        rmm, &quot;computeOutputsAndCosts&quot;, &amp;PLearner::computeOutputsAndCosts,
++        (BodyDoc(&quot;Compute both the output from the input, and the costs associated\n&quot;
++                 &quot;with the desired target.  The computed costs\n&quot;
++                 &quot;are returned in the order given by getTestCostNames()\n&quot;
++                 &quot;This variant computes the outputs and the costs simultaneously\n&quot;
++                 &quot;for a whole batch of examples (rows of the argument matrices)\n&quot;),
++         ArgDoc (&quot;inputs&quot;, &quot;Input matrix (batch_size x inputsize)&quot;),
++         ArgDoc (&quot;targets&quot;, &quot;Target matrix (batch_size x targetsize)&quot;),
++         ArgDoc (&quot;outputs&quot;, &quot;Resulting output matrix (batch_size x outputsize)&quot;),
++         ArgDoc (&quot;costs&quot;, &quot;Resulting costs matrix (batch_size x costsize)&quot;)));
++
++    declareMethod(
+         rmm, &quot;computeCostsFromOutputs&quot;, &amp;PLearner::remote_computeCostsFromOutputs,
+         (BodyDoc(&quot;Compute the costs from already-computed output.  The computed costs\n&quot;
+                  &quot;are returned in the order given by getTestCostNames()&quot;),
+@@ -936,20 +963,95 @@
+     }
+     else // Sequential test 
+     {
+-        for (int i = 0; i &lt; len; i++)
++        if (test_minibatch_size==1)
+         {
+-            testset.getExample(i, input, target, weight);
+-            // Always call computeOutputAndCosts, since this is better
+-            // behaved with stateful learners
+-            computeOutputAndCosts(input,target,output,costs);
+-            if (testoutputs) testoutputs-&gt;putOrAppendRow(i, output);
+-            if (testcosts) testcosts-&gt;putOrAppendRow(i, costs);
+-            if (test_stats) test_stats-&gt;update(costs, weight);
+-            if (report_progress) pb-&gt;update(i);
++            for (int i = 0; i &lt; len; i++)
++            {
++                testset.getExample(i, input, target, weight);
++                // Always call computeOutputAndCosts, since this is better
++                // behaved with stateful learners
++                computeOutputAndCosts(input,target,output,costs);
++                if (testoutputs) testoutputs-&gt;putOrAppendRow(i, output);
++                if (testcosts) testcosts-&gt;putOrAppendRow(i, costs);
++                if (test_stats) test_stats-&gt;update(costs, weight);
++                if (report_progress) pb-&gt;update(i);
++            }
++        } else
++        {
++            int n_batches = len/test_minibatch_size, i=0;
++            b_inputs.resize(test_minibatch_size,inputsize());
++            b_outputs.resize(test_minibatch_size,outputsize());
++            b_costs.resize(test_minibatch_size,costs.length());
++            b_targets.resize(test_minibatch_size,targetsize());
++            b_weights.resize(test_minibatch_size);
++            for (int b=0;b&lt;n_batches;b++,i+=test_minibatch_size)
++            {
++                testset-&gt;getExamples(i,test_minibatch_size,b_inputs,b_targets,b_weights);
++                computeOutputsAndCosts(b_inputs,b_targets,b_outputs,b_costs);
++                for (int j=0;j&lt;test_minibatch_size;j++)
++                {
++                    if (testoutputs) testoutputs-&gt;putOrAppendRow(i+j, b_outputs(j));
++                    if (testcosts) testcosts-&gt;putOrAppendRow(i+j, b_costs(j));
++                    if (test_stats) test_stats-&gt;update(b_costs(j), b_weights[j]);
++                    if (report_progress) pb-&gt;update(i+j);
++                }
++            }
++            if (i&lt;len)
++            {
++                b_inputs.resize(len-i,inputsize());
++                b_outputs.resize(len-i,outputsize());
++                b_costs.resize(len-i,costs.length());
++                b_targets.resize(len-i,targetsize());
++                b_weights.resize(len-i);
++                testset-&gt;getExamples(i,len-i,b_inputs,b_targets,b_weights);
++                computeOutputsAndCosts(b_inputs,b_targets,b_outputs,b_costs);
++                for (int j=0;j&lt;len-i;j++)
++                {
++                    if (testoutputs) testoutputs-&gt;putOrAppendRow(i+j, b_outputs(j));
++                    if (testcosts) testcosts-&gt;putOrAppendRow(i+j, b_costs(j));
++                    if (test_stats) test_stats-&gt;update(b_costs(j), b_weights[j]);
++                    if (report_progress) pb-&gt;update(i+j);
++                }
++            }
+         }
+     }
+ }
+ 
++void PLearner::computeOutput(const Vec&amp; input, Vec&amp; output) const
++{
++    PLERROR(&quot;PLearner::computeOutput(Vec,Vec) not implemented in subclass %s\n&quot;,classname().c_str());
++}
++void PLearner::computeOutputs(const Mat&amp; input, Mat&amp; output) const
++{
++    // inefficient default implementation
++    int n=input.length();
++    PLASSERT(output.length()==n);
++    for (int i=0;i&lt;n;i++)
++    {
++        Vec in_i = input(i);
++        Vec out_i = output(i); 
++        computeOutput(in_i,out_i);
++    }
++}
++void PLearner::computeOutputsAndCosts(const Mat&amp; input, const Mat&amp; target, 
++                                      Mat&amp; output, Mat&amp; costs) const
++{
++    // inefficient default implementation
++    int n=input.length();
++    PLASSERT(target.length()==n);
++    output.resize(n,outputsize());
++    costs.resize(n,nTestCosts());
++    for (int i=0;i&lt;n;i++)
++    {
++        Vec in_i = input(i);
++        Vec out_i = output(i); 
++        Vec target_i = target(i);
++        Vec c_i = costs(i);
++        computeOutputAndCosts(in_i,target_i,out_i,c_i);
++    }
++}
++
++
+ ////////////////////////////////////////////////////////////////
+ // test ('remote' version which returns a tuple w/ results.) //
+ //////////////////////////////////////////////////////////////
+
+Modified: trunk/plearn_learners/generic/PLearner.h
+===================================================================
+--- trunk/plearn_learners/generic/PLearner.h	2007-05-21 02:01:05 UTC (rev 7200)
++++ trunk/plearn_learners/generic/PLearner.h	2007-05-21 14:26:51 UTC (rev 7201)
+@@ -153,6 +153,13 @@
+     int nservers; 
+ 
+     /**
++     *  Size of minibatches used during testing to take advantage
++     *  of efficient (possibly parallelized) implementations when
++     *  multiple exemples are processed at once. 
++     */
++    int test_minibatch_size;
++
++    /**
+      *  Whether the training set should be saved upon a call to
+      *  setTrainingSet().  The saved file is put in the learner's expdir
+      *  (assuming there is one) and has the form &quot;&lt;prefix&gt;_trainset_XXX.pmat&quot;
+@@ -429,7 +436,11 @@
+      *  This should be defined in subclasses to compute the output from the
+      *  input.
+      */
+-    virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const =0;
++    virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
++    //! if it is more efficient to compute multipe outputs simultaneously,
++    //! it can be advantageous to define the latter instead, in which
++    //! each row of the matrices is associated with one example.
++    virtual void computeOutputs(const Mat&amp; input, Mat&amp; output) const;
+ 
+     /**
+      *  *** SUBCLASS WRITING: ***
+@@ -451,6 +462,9 @@
+      */
+     virtual void computeOutputAndCosts(const Vec&amp; input, const Vec&amp; target,
+                                        Vec&amp; output, Vec&amp; costs) const;
++    //! minibatch version of computeOutputAndCosts
++    virtual void computeOutputsAndCosts(const Mat&amp; input, const Mat&amp; target,
++                                        Mat&amp; output, Mat&amp; costs) const;
+ 
+     /**
+      *  Default calls computeOutputAndCosts.  This may be overridden if there
+@@ -646,6 +660,9 @@
+     tuple&lt;Mat, TVec&lt;Mat&gt; &gt; remote_computeOutputCovMat(const Mat&amp; inputs) const;
+     void remote_batchComputeOutputAndConfidence(VMat inputs, real probability,
+                                                 string pmat_fname) const;
++protected:
++    mutable Mat b_inputs, b_targets, b_outputs, b_costs;
++    mutable Vec b_weights;
+     
+ public:
+     PLEARN_DECLARE_ABSTRACT_OBJECT(PLearner);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000649.html">[Plearn-commits] r7200 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000651.html">[Plearn-commits] r7202 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#650">[ date ]</a>
+              <a href="thread.html#650">[ thread ]</a>
+              <a href="subject.html#650">[ subject ]</a>
+              <a href="author.html#650">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

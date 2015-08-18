@@ -1,0 +1,214 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6692 - in trunk: plearn/misc scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6692%20-%20in%20trunk%3A%20plearn/misc%20scripts&In-Reply-To=%3C200702272027.l1RKREqu003327%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000140.html">
+   <LINK REL="Next"  HREF="000142.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6692 - in trunk: plearn/misc scripts</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6692%20-%20in%20trunk%3A%20plearn/misc%20scripts&In-Reply-To=%3C200702272027.l1RKREqu003327%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6692 - in trunk: plearn/misc scripts">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Tue Feb 27 21:27:14 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000140.html">[Plearn-commits] r6691 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000142.html">[Plearn-commits] r6693 - in trunk/python_modules/plearn: report xp
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#141">[ date ]</a>
+              <a href="thread.html#141">[ thread ]</a>
+              <a href="subject.html#141">[ subject ]</a>
+              <a href="author.html#141">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2007-02-27 21:27:13 +0100 (Tue, 27 Feb 2007)
+New Revision: 6692
+
+Modified:
+   trunk/plearn/misc/PLearnServer.cc
+   trunk/plearn/misc/PLearnServer.h
+   trunk/plearn/misc/PLearnService.cc
+   trunk/scripts/xdispatch
+Log:
+- remote servers now get their master's verbosity level for logs
+
+
+
+Modified: trunk/plearn/misc/PLearnServer.cc
+===================================================================
+--- trunk/plearn/misc/PLearnServer.cc	2007-02-27 19:44:14 UTC (rev 6691)
++++ trunk/plearn/misc/PLearnServer.cc	2007-02-27 20:27:13 UTC (rev 6692)
+@@ -100,7 +100,12 @@
+     getInstance()-&gt;io.implicit_storage = impl_stor;
+ }
+ 
++void PLearnServer::setVerbosity(int verbosity)
++{
++    PL_Log::instance().verbosity(verbosity);
++}
+ 
++
+ BEGIN_DECLARE_REMOTE_FUNCTIONS
+ 
+ declareFunction(&quot;cd&quot;, &amp;PLearnServer::cd,
+@@ -117,6 +122,10 @@
+                 (BodyDoc(&quot;change the implicit_storage mode of the io of the PLearnServer instance.\n&quot;),
+                  ArgDoc (&quot;impl_stor&quot;, &quot;Whether or not to use implicit_storage&quot;)));
+ 
++declareFunction(&quot;setVerbosity&quot;, &amp;PLearnServer::setVerbosity,
++                (BodyDoc(&quot;change the verbosity for logs of the PLearnServer instance.\n&quot;),
++                 ArgDoc (&quot;verbosity&quot;, &quot;verbosity level&quot;)));
++
+ END_DECLARE_REMOTE_FUNCTIONS
+ 
+ 
+
+Modified: trunk/plearn/misc/PLearnServer.h
+===================================================================
+--- trunk/plearn/misc/PLearnServer.h	2007-02-27 19:44:14 UTC (rev 6691)
++++ trunk/plearn/misc/PLearnServer.h	2007-02-27 20:27:13 UTC (rev 6692)
+@@ -98,6 +98,8 @@
+     //! change the implicit_storage mode of the io of the PLearnServer instance.
+     static void implicit_storage(bool impl_stor);
+ 
++    static void setVerbosity(int verbosity);
++
+ };
+ 
+ 
+
+Modified: trunk/plearn/misc/PLearnService.cc
+===================================================================
+--- trunk/plearn/misc/PLearnService.cc	2007-02-27 19:44:14 UTC (rev 6691)
++++ trunk/plearn/misc/PLearnService.cc	2007-02-27 20:27:13 UTC (rev 6692)
+@@ -126,6 +126,8 @@
+ 
+         reserved_servers.insert(serv);
+         serv-&gt;getResults();
++        serv-&gt;callFunction(&quot;setVerbosity&quot;, PL_Log::instance().verbosity());
++        serv-&gt;getResults();
+         reserved_servers.erase(serv);
+         available_servers.push(serv);
+     }
+
+Modified: trunk/scripts/xdispatch
+===================================================================
+--- trunk/scripts/xdispatch	2007-02-27 19:44:14 UTC (rev 6691)
++++ trunk/scripts/xdispatch	2007-02-27 20:27:13 UTC (rev 6692)
+@@ -1,16 +1,33 @@
+-#!/usr/bin/python2.3
++#!/usr/bin/env python
+ #
+ # xdispatch: dispatch utility for parallel PLearn
+ #
+ # Copyright 2007, Apstat Technologies, inc.
+ # All rights reserved.
+ 
++# Author: Xavier Saint-Mleux
++
+ from optparse import OptionParser
+ from plearn.parallel.dispatch import *
+ import tempfile
+ import os
+ import time
+ 
++
++usage= &quot;&quot;&quot;
++Usage: xdispatch -s&lt;nb_servers&gt; [-l&lt;max_load&gt;] -- &lt;plearn_command&gt; &lt;plearn_args&gt;
++       Will launch nb_servers remote servers on machines with a load no
++       more than max_load for the last minute (default=1.0).
++       plearn_command is your favorite version of plearn.
++       Each server (slave) is launched like:
++         ssh &lt;remote_host&gt; &lt;plearn_command&gt; server 0
++       The master is launched like (on the local host):
++         &lt;plearn_command&gt; --servers &lt;serv_file&gt; &lt;plearn_args&gt;
++       where serv_file is a file that contains one line for each
++       of the running slave servers, with hostname, port and pid.
++       Once the master returns, all slaves are killed.
++&quot;&quot;&quot;
++
+ #
+ # Main
+ #
+@@ -30,30 +47,19 @@
+                       dest= &quot;nb_servers&quot;,
+                       help='Number of servers to launch (maximum)',
+                       default=1)
+-
+-    parser.add_option('-m', '--min-nb-servers', type=&quot;int&quot;,
+-                      dest= &quot;min-nb_servers&quot;,
+-                      help='Number of servers to launch (minimum)',
+-                      default=1)
+-
+-    
++   
+     (options, args) = parser.parse_args()
+ 
+-    set_logdir('/home/saintmlx/xdispatch-log/')
++    set_logdir('/tmp/xdispatch-log/')
+ 
+     Task._max_load= options.max_load
+ 
+-    #xdispatch -l 3.0 -s 25 inslearn exp.pyplearn
+-    #25x -&gt; ssh distant_machine inslearn server 0
+-    #1x  -&gt; inslearn --servers serv_file exp.pyplearn
+-
+     if options.num_available_machines:
+         print Task.availableMachinesCount()
+     elif args:
+         try:
+             plearn_command= args[0]
+             for i in xrange(options.nb_servers):
+-                #launch_server( ['time',plearn_command, '--verbosity 999', 'server', '0'] )
+                 launch_server( ['time',plearn_command, 'server', '0'] )
+ 
+             tf, fname= tempfile.mkstemp(suffix= '.plserv', prefix= '.plserv_', dir= '/tmp/')
+@@ -71,6 +77,8 @@
+ 
+         finally:
+             Task.kill_all_tasks()
++    else:
++        print usage
+ 
+ if __name__ == '__main__':
+     main()
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000140.html">[Plearn-commits] r6691 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000142.html">[Plearn-commits] r6693 - in trunk/python_modules/plearn: report xp
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#141">[ date ]</a>
+              <a href="thread.html#141">[ thread ]</a>
+              <a href="subject.html#141">[ subject ]</a>
+              <a href="author.html#141">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,551 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6970 - trunk/speedtest
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6970%20-%20trunk/speedtest&In-Reply-To=%3C200705021545.l42Fjd4a000655%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000418.html">
+   <LINK REL="Next"  HREF="000420.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6970 - trunk/speedtest</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6970%20-%20trunk/speedtest&In-Reply-To=%3C200705021545.l42Fjd4a000655%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6970 - trunk/speedtest">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed May  2 17:45:39 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000418.html">[Plearn-commits] r6969 - trunk/python_modules/plearn/pytest
+</A></li>
+        <LI>Next message: <A HREF="000420.html">[Plearn-commits] r6971 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#419">[ date ]</a>
+              <a href="thread.html#419">[ thread ]</a>
+              <a href="subject.html#419">[ subject ]</a>
+              <a href="author.html#419">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-05-02 17:45:38 +0200 (Wed, 02 May 2007)
+New Revision: 6970
+
+Added:
+   trunk/speedtest/speedtest
+   trunk/speedtest/speedtest.FloatVsDouble
+   trunk/speedtest/speedtest.NatGradNNet
+   trunk/speedtest/speedtest.NbThread
+   trunk/speedtest/speedtest.OptVsDbg
+   trunk/speedtest/speedtest.gemm
+   trunk/speedtest/speedtest.gemv
+   trunk/speedtest/speedtest.general
+Log:
+Added script that do the speed testing 
+
+
+Added: trunk/speedtest/speedtest
+===================================================================
+--- trunk/speedtest/speedtest	2007-05-02 15:10:29 UTC (rev 6969)
++++ trunk/speedtest/speedtest	2007-05-02 15:45:38 UTC (rev 6970)
+@@ -0,0 +1,132 @@
++#!/bin/bash
++#nb experience executed=size(PROGEXT)*size(SIZE)
++BP=$1 #BASEPROG
++if [ &quot;x$SIZE&quot; == &quot;x&quot; -o &quot;x$TITLE&quot; == &quot;x&quot; -o &quot;x$RESFILE&quot; == &quot;x&quot; -o &quot;x$APPENDRESULT&quot; == &quot;x&quot; ]; then
++    echo &quot;You should not call '$0' directly! See speedtest.general on how to call this script!&quot;
++    exit
++fi
++
++if [ $# -eq 0 ]; then
++    echo &quot;USAGE: $0 &lt;baseprog&gt; [&lt;ext1&gt; ... &lt;extN&gt;]&quot;
++    exit
++else
++    BP=$1 #BASEPROG
++    shift
++    for p in &quot;$@&quot;
++      do
++      PROGEXT=( &quot;${PROGEXT[@]}&quot; $p )
++    done
++fi
++
++if [ &quot;x${PROGEXT[0]}&quot; == &quot;x&quot; ];then
++    PROG=${BP}
++else
++    for p in &quot;${PROGEXT[@]}&quot;
++      do
++      PROG=( &quot;${PROG[@]}&quot; ${BP}$p )
++    done
++fi
++
++for p in &quot;${PROG[@]}&quot;
++do
++  `which $p &amp;&gt; /dev/null`
++  SUCCESS=$?
++  if [ ! -e &quot;$p&quot; -a $SUCCESS != 0 ];then
++      echo &quot;Programme '$p' do not existe&quot;
++      exit
++  fi
++  unset SUCCESS
++done
++
++if [ `dirname $RESFILE` != &quot;.&quot; ]; then
++    mkdir -p `dirname $RESFILE`
++fi
++
++#date +%s
++###
++### execute the test
++###
++
++DATAFILE=${RESFILE}.data
++LOGFILE=${RESFILE}.log
++PLOTFILE=${RESFILE}.plot
++PNGFILE=${RESFILE}.png
++touch ${DATAFILE}
++touch ${LOGFILE}
++touch $PLOTFILE
++
++if [ ! $APPENDRESULT == &quot;YES&quot; ]; then
++    echo -n &quot;&quot;  &gt; ${DATAFILE}
++    echo -n &quot;&quot;  &gt; ${LOGFILE}
++fi
++
++echo &quot;BP: $BP&quot;
++echo &quot;PROGEXT: ${PROGEXT[@]}&quot;
++echo &quot;PROG: ${PROG[@]}&quot;
++echo &quot;SIZE: ${SIZE[@]}&quot;
++echo &quot;RESFILE: $RESFILE&quot;
++echo &quot;APPENDRESULT: $APPENDRESULT&quot;
++echo -n &quot;#SIZE &quot; &gt;&gt; ${DATAFILE}
++for p in &quot;${PROG[@]}&quot;
++  do
++  echo -n &quot;$p &quot; &gt;&gt; ${DATAFILE}
++done
++echo &quot;&quot; &gt;&gt; ${DATAFILE}
++for i in &quot;${SIZE[@]}&quot;
++  do
++  echo -n &quot;$i &quot; &gt;&gt; ${DATAFILE}
++  touch ${DATAFILE}.tmp
++  for p in &quot;${PROG[@]}&quot;
++    do
++    date
++    echo -n &quot;&quot; &gt; ${DATAFILE}.tmp
++    echo -n &quot;Executing ${p} with size of ${i} &quot; &gt;&gt; ${LOGFILE}
++    echo -n &quot;Executing ${p} with size of ${i} ...&quot;
++    f &quot;/usr/bin/time -o${DATAFILE}.tmp -a -f %e&quot; &quot;$p&quot; &quot;$i&quot; &gt;&gt; ${LOGFILE} 2&gt;&gt;${LOGFILE}
++    read time &lt; ${DATAFILE}.tmp
++    echo -n &quot;$time &quot; &gt;&gt; ${DATAFILE}
++    echo &quot;Ended&quot;
++    echo &quot;Ended&quot;&gt;&gt;${LOGFILE}
++  done
++  echo &quot;&quot; &gt;&gt; ${DATAFILE}
++done
++rm -f ${DATAFILE}.tmp
++###
++### generate the plot file
++###
++
++echo &quot;set terminal png
++set output \&quot;${PNGFILE}\&quot;
++#unset logscale; set logscale y
++set style line 1 lt 3 lw 1
++set title \&quot;${TITLE}\&quot;
++set xlabel \&quot;Problem size(matrice size, vector size,...)\&quot;
++set ylabel \&quot;time (s)\&quot;
++set key left
++#set nokey&quot;  &gt; ${PLOTFILE}
++p=&quot;${PROG[0]}&quot;
++echo &quot;plot '${DATAFILE}' using 1:2 with linespoints t '${PROG[0]}'\\&quot; &gt;&gt; ${PLOTFILE}
++i=2
++for p in &quot;${PROG[@]}&quot;
++  do
++  if [ &quot;$p&quot; != &quot;${PROG[0]}&quot; ]; then
++      i=$((i+1))
++      echo &quot;, '${DATAFILE}' using 1:$i with linespoints t '$p'\\&quot;  &gt;&gt; ${PLOTFILE}
++  fi
++done
++echo &quot;#&quot; &gt;&gt; ${PLOTFILE}
++echo &quot;#pause -1 'Hit return to exit: '&quot; &gt;&gt; ${PLOTFILE}
++
++gnuplot ${PLOTFILE}
++
++echo &quot;RESFILE: $RESFILE&quot;
++echo &quot;PLOTFILE: $PLOTFILE&quot;
++echo &quot;DATAFILE: $DATAFILE&quot;
++echo &quot;LOGFILE: $LOGFILE&quot;
++echo &quot;PNG: $PNGFILE&quot;
++
++#      set multiplot;                          # get into multiplot mode
++#      set size 1,0.5;  
++#      set origin 0.0,0.5;   plot sin(x); 
++#      set origin 0.0,0.0;   plot cos(x)
++#      unset multiplot                         # exit multiplot mode
+
+
+Property changes on: trunk/speedtest/speedtest
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Added: trunk/speedtest/speedtest.FloatVsDouble
+===================================================================
+--- trunk/speedtest/speedtest.FloatVsDouble	2007-05-02 15:10:29 UTC (rev 6969)
++++ trunk/speedtest/speedtest.FloatVsDouble	2007-05-02 15:45:38 UTC (rev 6970)
+@@ -0,0 +1,22 @@
++#!/bin/bash
++#nb experience executed=size(PROGEXT)*size(SIZE)
++BP=$1 #BASEPROG
++export OMP_NUM_THREADS=1
++SIZE=( 100 200 400 800 1023 1024 )
++TITLE=&quot;Comparaison of execution speed of float vs double program on $HOSTNAME&quot;
++RESFILE=RES/floatvsdouble_${HOSTNAME%.iro.umontreal.ca}_${BP//.\//_}
++APPENDRESULT=&quot;NO&quot; #&quot;YES&quot; append result to old one, &quot;NO&quot; erase old result
++
++function f(){
++#param1 time prog
++#param2 experiance prog
++#param3 complexity
++
++#$1 $2 ${PLEARNDIR}/speedtest3/sgrad.plearn task=letter_memvmat nout=26 nh1=$3 nh2=$3 nh3=$3 slr=1e-1 dc=0 n=16001 epoch=16000 seed=1 mbs=10 
++$1 $2 $3 $3 $3 1000
++}
++
++source speedtest
++exit
++
++
+
+
+Property changes on: trunk/speedtest/speedtest.FloatVsDouble
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Added: trunk/speedtest/speedtest.NatGradNNet
+===================================================================
+--- trunk/speedtest/speedtest.NatGradNNet	2007-05-02 15:10:29 UTC (rev 6969)
++++ trunk/speedtest/speedtest.NatGradNNet	2007-05-02 15:45:38 UTC (rev 6970)
+@@ -0,0 +1,26 @@
++#!/bin/bash
++#You can use the script multipymake to compile different version of PLearn
++#nb experience executed=size(PROGEXT)*size(SIZE)
++BP=$1 #BASEPROG
++export OMP_NUM_THREADS=1
++#SIZE=( 95 96 191 192 287 288 383 384 479 480 575 576 671 672 766 767 863 864 959 960 1055 1056 )
++#SIZE=( 96 192 288 384 480 576 672 767 864 960 1056 )
++#SIZE=( 95 191 287 383 479 575 671 766 863 959 1055 )
++SIZE=( 100 500 1000 1500 )
++#SIZE=( 1023 1024 1055 1056 )
++SIZE=( 96 100 300 320 1000 1024 3000 3008 )
++SIZE2=1 #1, 3, 10, 30, 32, 96, 100, 128
++TITLE=&quot;Comparison of execution time of different programme on $HOSTNAME&quot;
++RESFILE=RES/NatGradNNet_${HOSTNAME%.iro.umontreal.ca}_${BP//.\//_}_${SIZE2}
++APPENDRESULT=&quot;NO&quot; #&quot;YES&quot; append result to old one, otherwise we erase old results
++
++function f(){
++#param1 time prog
++#param2 experiance prog
++#param3 complexity
++
++$1 $2 ${PLEARNDIR}/speedtest3/sgrad.plearn task=letter_memvmat nout=26 nh1=$3 nh2=$3 nh3=$3 slr=1e-1 dc=0 n=16001 epoch=16000 seed=1 mbs=${SIZE2}
++
++}
++
++source speedtest
+
+
+Property changes on: trunk/speedtest/speedtest.NatGradNNet
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Added: trunk/speedtest/speedtest.NbThread
+===================================================================
+--- trunk/speedtest/speedtest.NbThread	2007-05-02 15:10:29 UTC (rev 6969)
++++ trunk/speedtest/speedtest.NbThread	2007-05-02 15:45:38 UTC (rev 6970)
+@@ -0,0 +1,102 @@
++#! /bin/bash
++#nb experience executed=size(NBTHREADS)*size(PROGEXT)*size(SIZE)
++if [ $# -lt 1 ]; then
++    echo &quot;USAGE: $0 &lt;baseprog&gt; [&lt;ext1&gt; ... &lt;extN&gt;]&quot;
++    exit
++else
++    BP=$1 #BASEPROG
++fi
++
++#SIZE=( 600 800 1000 1200 1500 2000 ) # 800 1000 )
++SIZE=( 1000 )
++NBTHREADS=( 1 2 4 8 16 ) 
++TITLE=&quot;Comparaison of wall execution time for different number of thread for ${BP} on $HOSTNAME&quot;
++RESFILE=RES/nbthread_${HOSTNAME%.iro.umontreal.ca}_${BP//.\//_}
++APPENDRESULT=&quot;NO&quot; #&quot;YES&quot; append result to old one, &quot;NO&quot; erase old result
++
++
++function f(){
++#param1 time prog
++#param2 experiance prog
++#param3 complexity
++#param4 Value of OMP_NUM_THREADS
++if [ &quot;x$4&quot; != &quot;x&quot; ]; then
++    echo OMP_NUM_THREADS=$4
++    export OMP_NUM_THREADS=$4
++fi
++#$1 $2 ${PLEARNDIR}/speedtest3/sgrad.plearn task=letter_memvmat nout=26 nh1=$3 nh2=$3 nh3=$3 slr=1e-1 dc=0 n=16001 epoch=16000 seed=1 mbs=10 
++$1 $2 $3 $3 $3 1000
++}
++
++source speedtest
++exit
++
++#date +%s
++###
++### execute the test
++###
++for p in &quot;${PROG[@]}&quot;
++  do
++  pname=${p//.\//_}
++  touch ${RESFILE}_${pname}
++  touch ${RESFILE}_${pname}.log
++  touch ${RESFILE}_${pname}.res
++  if [ $APPENDRESULT == &quot;YES&quot; ]; then
++      echo &quot;Will append result to old result&quot;
++  else
++      echo &quot;Erase old result&quot;
++      echo &quot;&quot;  &gt; ${RESFILE}_${pname}
++      echo &quot;&quot;  &gt; ${RESFILE}_${pname}.log
++      echo &quot;&quot;  &gt; ${RESFILE}_${pname}.res
++  fi
++  for t in &quot;${NBTHREADS[@]}&quot;
++    do
++    echo &quot;# ${t} threads&quot; &gt;&gt; ${RESFILE}_${pname}.res
++    for i in &quot;${SIZE[@]}&quot;
++      do
++      echo -n &quot;$i &quot; &gt;&gt; ${RESFILE}_${pname}.res
++      echo -n &quot;Executing prog ${p} with size of ${i} with ${t} threads&quot; &gt;&gt; ${RESFILE}_${pname}.log
++      echo -n &quot;Executing prog ${p} with size of ${i} with ${t} threads...&quot;
++      f &quot;/usr/bin/time -o${RESFILE}_${pname}.res -a -f %e&quot; &quot;$p&quot; &quot;$i&quot; $t &gt;&gt; ${RESFILE}_${pname}.log 2&gt;&gt;${RESFILE}_${pname}.log
++      echo &quot;Ended&quot;
++      done
++    echo &quot;&quot; &gt;&gt; ${RESFILE}_${pname}.res
++    echo &quot;&quot; &gt;&gt; ${RESFILE}_${pname}.res
++  done
++done
++###
++### generate the plot file
++###
++touch $RESFILE
++
++echo &quot;set terminal png
++set output \&quot;${RESFILE}.png\&quot;
++#unset logscale; set logscale y
++set style line 1 lt 3 lw 1
++set title \&quot;${TITLE}\&quot;
++set xlabel \&quot;Problem size(matrice size, vector size,...)\&quot;
++set ylabel \&quot;time (s)\&quot;
++#set nokey&quot;  &gt; $RESFILE
++echo &quot;plot '${RESFILE}_${PROG[0]//.\//_}.res' i 0 with linespoints t '${PROG[0]}_${NBTHREADS[0]}'\\&quot; &gt;&gt; $RESFILE
++index=1
++for p in &quot;${PROG[@]}&quot;
++  do
++  pname=${p//.\//_}
++  if [ &quot;$p&quot; == &quot;${PROG[0]}&quot; ]; then
++      index=1
++  else
++      index=0
++  fi
++
++  for t in &quot;${NBTHREADS[@]}&quot;
++    do
++    if [ &quot;$p&quot; != &quot;${PROG[0]}&quot; -o &quot;$t&quot; != &quot;${NBTHREADS[0]}&quot; ]; then
++	echo &quot;, '${RESFILE}_${pname}.res' i $index with linespoints t '${p}_${t}'\\&quot;  &gt;&gt; $RESFILE
++	index=$(( $index + 1 ))
++    fi
++  done
++done
++echo &quot;#&quot; &gt;&gt; $RESFILE
++echo &quot;#pause -1 'Hit return to exit: '&quot; &gt;&gt; $RESFILE
++
++gnuplot $RESFILE
+
+
+Property changes on: trunk/speedtest/speedtest.NbThread
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Added: trunk/speedtest/speedtest.OptVsDbg
+===================================================================
+--- trunk/speedtest/speedtest.OptVsDbg	2007-05-02 15:10:29 UTC (rev 6969)
++++ trunk/speedtest/speedtest.OptVsDbg	2007-05-02 15:45:38 UTC (rev 6970)
+@@ -0,0 +1,19 @@
++#!/bin/bash
++#trap 'echo &quot;Control-C disabled.&quot;' SIGINT
++BP=$1 #BASEPROG
++export OMP_NUM_THREADS=1
++SIZE=( 100 200 400 )
++PROGEXT=( -opt -dbg -safeopt -checkopt -opt64 )
++TITLE=&quot;Compare different compilation optimisation flags with default blas on $HOSTNAME&quot;
++RESFILE=RES/optcompare_${HOSTNAME%.iro.umontreal.ca}_${BP//.\//_}
++APPENDRESULT=&quot;NO&quot; #&quot;YES&quot; append result to old one, &quot;NO&quot; erase old result
++
++function f(){
++#param1 time prog
++#param2 experiance prog
++#param3 complexity
++
++$1 $2 ${PLEARNDIR}/speedtest3/sgrad.plearn task=letter_memvmat nout=26 nh1=$3 nh2=$3 nh3=$3 slr=1e-1 dc=0 n=16001 epoch=16000 seed=1 mbs=10 
++}
++
++source speedtest
+
+
+Property changes on: trunk/speedtest/speedtest.OptVsDbg
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Added: trunk/speedtest/speedtest.gemm
+===================================================================
+--- trunk/speedtest/speedtest.gemm	2007-05-02 15:10:29 UTC (rev 6969)
++++ trunk/speedtest/speedtest.gemm	2007-05-02 15:45:38 UTC (rev 6970)
+@@ -0,0 +1,26 @@
++#!/bin/bash
++#You can use the script multipymake to compile different version of PLearn
++#nb experience executed=size(PROGEXT)*size(SIZE)
++BP=$1 #BASEPROG
++export OMP_NUM_THREADS=1
++#SIZE=( 95 96 191 192 287 288 383 384 479 480 575 576 671 672 766 767 863 864 959 960 1055 1056 )
++#SIZE=( 96 192 288 384 480 576 672 767 864 960 1056 )
++#SIZE=( 95 191 287 383 479 575 671 766 863 959 1055 )
++#SIZE=( 768 100 500 1000 1500 )
++#SIZE=( 50 100 150 200 300 500 1056 )
++SIZE=( 96 100 300 320 1000 1024 3000 3008 )
++SIZE2=32 #1, 3, 10, 30, 32, 96, 100, 128
++#SIZE=( 127 128 255 256 511 512 1023 1024 )
++TITLE=&quot;Comparison of execution time of different programme on $HOSTNAME&quot;
++RESFILE=RES/blascompare_${HOSTNAME%.iro.umontreal.ca}_${BP//.\//_}_${SIZE2}
++APPENDRESULT=&quot;NO&quot; #&quot;YES&quot; append result to old one, otherwise we erase old results
++
++function f(){
++#param1 time prog
++#param2 experiance prog
++#param3 complexity
++
++$1 $2 $3 ${SIZE2} $3 1000
++}
++
++source speedtest
+
+
+Property changes on: trunk/speedtest/speedtest.gemm
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Added: trunk/speedtest/speedtest.gemv
+===================================================================
+--- trunk/speedtest/speedtest.gemv	2007-05-02 15:10:29 UTC (rev 6969)
++++ trunk/speedtest/speedtest.gemv	2007-05-02 15:45:38 UTC (rev 6970)
+@@ -0,0 +1,25 @@
++#!/bin/bash
++#You can use the script multipymake to compile different version of PLearn
++#nb experience executed=size(PROGEXT)*size(SIZE)
++BP=$1 #BASEPROG
++export OMP_NUM_THREADS=1
++#SIZE=( 95 96 191 192 287 288 383 384 479 480 575 576 671 672 766 767 863 864 959 960 1055 1056 )
++SIZE=( 127 128 255 256 511 512 1023 1024 )
++#SIZE=( 96 192 288 384 480 576 672 767 864 960 1056 )
++#SIZE=( 95 191 287 383 479 575 671 766 863 959 1055 )
++#SIZE=( 768 100 500 1000 1500 )
++#SIZE=( 50 100 150 200 300 )
++
++TITLE=&quot;Comparison of execution time of different programme on $HOSTNAME&quot;
++RESFILE=RES/blascompare_${HOSTNAME%.iro.umontreal.ca}_${BP//.\//_}
++APPENDRESULT=&quot;NO&quot; #&quot;YES&quot; append result to old one, otherwise we erase old results
++
++function f(){
++#param1 time prog
++#param2 experiance prog
++#param3 complexity
++
++$1 $2 $3 $3 10000
++}
++
++source speedtest
+
+
+Property changes on: trunk/speedtest/speedtest.gemv
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Added: trunk/speedtest/speedtest.general
+===================================================================
+--- trunk/speedtest/speedtest.general	2007-05-02 15:10:29 UTC (rev 6969)
++++ trunk/speedtest/speedtest.general	2007-05-02 15:45:38 UTC (rev 6970)
+@@ -0,0 +1,25 @@
++#!/bin/bash
++#You can use the script multipymake to compile different version of PLearn
++#nb experience executed=size(PROGEXT)*size(SIZE)
++BP=$1 #BASEPROG
++export OMP_NUM_THREADS=1
++SIZE=( 95 96 191 192 287 288 383 384 479 480 575 576 671 672 766 767 863 864 959 960 1055 1056 )
++#SIZE=( 96 192 288 384 480 576 672 767 864 960 1056 )
++#SIZE=( 95 191 287 383 479 575 671 766 863 959 1055 )
++SIZE=( 100 500 1000 1500 )
++#SIZE=( 1055 )
++#SIZE=( 1023 1024 1055 1056 )
++TITLE=&quot;Comparison of execution time of different programme on $HOSTNAME&quot;
++RESFILE=RES/blascompare_${HOSTNAME%.iro.umontreal.ca}_${BP//.\//_}
++APPENDRESULT=&quot;NO&quot; #&quot;YES&quot; append result to old one, otherwise we erase old results
++
++function f(){
++#param1 time prog
++#param2 experiance prog
++#param3 complexity
++
++#$1 $2 ${PLEARNDIR}/speedtest3/sgrad.plearn task=letter_memvmat nout=26 nh1=$3 nh2=$3 nh3=$3 slr=1e-1 dc=0 n=16001 epoch=16000 seed=1 mbs=10 
++$1 $2 $3 $3 $3 1000
++}
++
++source speedtest
+
+
+Property changes on: trunk/speedtest/speedtest.general
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000418.html">[Plearn-commits] r6969 - trunk/python_modules/plearn/pytest
+</A></li>
+	<LI>Next message: <A HREF="000420.html">[Plearn-commits] r6971 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#419">[ date ]</a>
+              <a href="thread.html#419">[ thread ]</a>
+              <a href="subject.html#419">[ subject ]</a>
+              <a href="author.html#419">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

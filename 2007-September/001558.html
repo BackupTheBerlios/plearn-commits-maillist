@@ -1,0 +1,201 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8110 - trunk/plearn_learners/meta
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8110%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200709251958.l8PJwoYI026655%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001557.html">
+   <LINK REL="Next"  HREF="001559.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8110 - trunk/plearn_learners/meta</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8110%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200709251958.l8PJwoYI026655%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8110 - trunk/plearn_learners/meta">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Sep 25 21:58:50 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001557.html">[Plearn-commits] r8109 - trunk/plearn_learners/meta
+</A></li>
+        <LI>Next message: <A HREF="001559.html">[Plearn-commits] r8111 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1558">[ date ]</a>
+              <a href="thread.html#1558">[ thread ]</a>
+              <a href="subject.html#1558">[ subject ]</a>
+              <a href="author.html#1558">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-09-25 21:58:50 +0200 (Tue, 25 Sep 2007)
+New Revision: 8110
+
+Modified:
+   trunk/plearn_learners/meta/AdaBoost.cc
+   trunk/plearn_learners/meta/AdaBoost.h
+Log:
+Added void computeOutput(input,output,nstage) that compute the output after the first nstage.
+remotely exported this function as ouput computeOutput_at_stage(input,nstage)
+
+
+Modified: trunk/plearn_learners/meta/AdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.cc	2007-09-25 19:51:17 UTC (rev 8109)
++++ trunk/plearn_learners/meta/AdaBoost.cc	2007-09-25 19:58:50 UTC (rev 8110)
+@@ -220,6 +220,23 @@
+     inherited::declareOptions(ol);
+ }
+ 
++////////////////////
++// declareMethods //
++////////////////////
++void AdaBoost::declareMethods(RemoteMethodMap&amp; rmm)
++{
++    // Insert a backpointer to remote methods; note that this
++    // different than for declareOptions()
++    rmm.inherited(inherited::_getRemoteMethodMap_());
++
++    declareMethod(
++        rmm, &quot;computeOutput_at_stage&quot;, &amp;AdaBoost::remote_computeOutput_at_stage,
++        (BodyDoc(&quot;On a trained learner, this computes the output from the input with the first stage weaklearner. Their must be enought weaklearner that have been trained&quot;),
++         ArgDoc (&quot;input&quot;, &quot;Input vector (should have width inputsize)&quot;),
++         ArgDoc (&quot;stage&quot;, &quot;The number of stage to use to calculate the output&quot;),
++         RetDoc (&quot;Computed output (will have width outputsize)&quot;)));
++
++}
+ void AdaBoost::build_()
+ {
+     if(conf_rated_adaboost &amp;&amp; pseudo_loss_adaboost)
+@@ -685,10 +702,26 @@
+ 
+ void AdaBoost::computeOutput(const Vec&amp; input, Vec&amp; output) const
+ {
++    computeOutput(input,output,voting_weights.length());
++}
++void AdaBoost::computeOutput(const Vec&amp; input, Vec&amp; output, int nb_learner) const
++{
++    PLASSERT(nb_learner&gt;0);
++    real local_sum_weight = sum_voting_weights;
++    if (nb_learner&gt;voting_weights.length() and not found_zero_error_weak_learner){
++        PLERROR(&quot;AdaBoost::computeOutput - Asked to compute the output with more learner(%d) then currently learned %d&quot;,
++                nb_learner,voting_weights.length());
++    }else if(nb_learner&gt;voting_weights.length()){
++        nb_learner=voting_weights.length();
++    }else if(nb_learner != voting_weights.length()){
++        local_sum_weight = 0;
++        for (int i=0;i&lt;nb_learner;i++)
++            local_sum_weight += voting_weights[i];
++    }
+     output.resize(weak_learner_template-&gt;outputsize());
+     real sum_out=0;
+     weak_learner_output.resize(output.size());
+-    for (int i=0;i&lt;voting_weights.length();i++)
++    for (int i=0;i&lt;nb_learner;i++)
+     {
+         weak_learners[i]-&gt;computeOutput(input,weak_learner_output);
+         if(!pseudo_loss_adaboost &amp;&amp; !conf_rated_adaboost)
+@@ -697,7 +730,7 @@
+         else
+             sum_out += weak_learner_output[0]*voting_weights[i];
+     }
+-    output[0] = sum_out/sum_voting_weights;
++    output[0] = sum_out/local_sum_weight;
+     output.resize(1);
+ }
+ 
+@@ -755,6 +788,14 @@
+     return costs;
+ }
+ 
++//! Version of computeOutput that returns a result by value
++Vec AdaBoost::remote_computeOutput_at_stage(const Vec&amp; input,const int stage) const
++{
++    tmp_output2.resize(outputsize());
++    computeOutput(input, tmp_output2, stage);
++    return tmp_output2;
++}
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/meta/AdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.h	2007-09-25 19:51:17 UTC (rev 8109)
++++ trunk/plearn_learners/meta/AdaBoost.h	2007-09-25 19:58:50 UTC (rev 8110)
+@@ -52,7 +52,10 @@
+ class AdaBoost: public PLearner
+ {
+     typedef PLearner inherited;
+-  
++
++    //! Global storage to save memory allocations.
++    mutable Vec tmp_output2;
++    
+ protected:
+     // average weighted error of each learner
+     Vec learners_error;
+@@ -140,11 +143,18 @@
+     // (Please implement in .cc)
+     void build_();
+ 
++    // List of methods that are called by Remote Method Invocation.  Our
++    // convention is to have them start with the remote_ prefix.
++    Vec remote_computeOutput_at_stage(const Vec&amp; input,const int stage) const;
++
+ protected: 
+     //! Declares this class' options
+     // (Please implement in .cc)
+     static void declareOptions(OptionList&amp; ol);
+ 
++    //! Declare the methods that are remote-callable
++    static void declareMethods(RemoteMethodMap&amp; rmm);
++
+ public:
+ 
+     // ************************
+@@ -186,6 +196,10 @@
+     //! Computes the output from the input
+     virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
+ 
++    //! Computes the output from the input with a specific number of learner
++    //! This way we don't need to save the learner at each stage, we can save just the last one
++    void computeOutput(const Vec&amp; input, Vec&amp; output, int nb_learner) const;
++
+     //! Computes the costs from already computed output. 
+     virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output, 
+                                          const Vec&amp; target, Vec&amp; costs) const;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001557.html">[Plearn-commits] r8109 - trunk/plearn_learners/meta
+</A></li>
+	<LI>Next message: <A HREF="001559.html">[Plearn-commits] r8111 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1558">[ date ]</a>
+              <a href="thread.html#1558">[ thread ]</a>
+              <a href="subject.html#1558">[ subject ]</a>
+              <a href="author.html#1558">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

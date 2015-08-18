@@ -1,0 +1,594 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10105 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10105%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200904091720.n39HKSFn019714%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003544.html">
+   <LINK REL="Next"  HREF="003546.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10105 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10105%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200904091720.n39HKSFn019714%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10105 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Thu Apr  9 19:20:28 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003544.html">[Plearn-commits] r10104 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="003546.html">[Plearn-commits] r10106 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3545">[ date ]</a>
+              <a href="thread.html#3545">[ thread ]</a>
+              <a href="subject.html#3545">[ subject ]</a>
+              <a href="author.html#3545">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2009-04-09 19:20:25 +0200 (Thu, 09 Apr 2009)
+New Revision: 10105
+
+Modified:
+   trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc
+   trunk/plearn_learners_experimental/PseudolikelihoodRBM.h
+Log:
+Added code to compute partition function Z with AIS
+
+
+Modified: trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc
+===================================================================
+--- trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc	2009-04-08 20:27:21 UTC (rev 10104)
++++ trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc	2009-04-09 17:20:25 UTC (rev 10105)
+@@ -76,11 +76,18 @@
+     n_selected_inputs_cd( -1 ),
+     //select_among_k_most_frequent( -1 ),
+     compute_input_space_nll( false ),
++    compute_Z_exactly( true ),
++    use_ais_to_compute_Z( false ),
++    n_ais_chains( 100 ),
+     pseudolikelihood_context_size ( 0 ),
+     pseudolikelihood_context_type( &quot;uniform_random&quot; ),
+     k_most_correlated( -1 ),
+     generative_learning_weight( 0 ),
+     nll_cost_index( -1 ),
++    log_Z_cost_index( -1 ),
++    log_Z_ais_cost_index( -1 ),
++    log_Z_interval_lower_cost_index( -1 ),
++    log_Z_interval_upper_cost_index( -1 ),
+     class_cost_index( -1 ),
+     training_cpu_time_cost_index ( -1 ),
+     cumulative_training_time_cost_index ( -1 ),
+@@ -88,7 +95,11 @@
+     cumulative_training_time( 0 ),
+     //cumulative_testing_time( 0 ),
+     log_Z( MISSING_VALUE ),
+-    Z_is_up_to_date( false )
++    log_Z_ais( MISSING_VALUE ),
++    log_Z_down( MISSING_VALUE ),
++    log_Z_up( MISSING_VALUE ),
++    Z_is_up_to_date( false ),
++    Z_ais_is_up_to_date( false )
+ {
+     random_gen = new PRandom();
+ }
+@@ -205,9 +216,52 @@
+                   &amp;PseudolikelihoodRBM::compute_input_space_nll,
+                   OptionBase::buildoption,
+                   &quot;Indication that the input space NLL should be &quot;
+-                  &quot;computed during test.\n&quot;
++                  &quot;computed during test. It will require a procedure to compute\n&quot;
++                  &quot;the partition function Z, which can be exact (see compute_Z_exactly)\n&quot;
++                  &quot;or approximate (see use_ais_to_compute_Z). If both are true,\n&quot;
++                  &quot;exact computation will be used.\n&quot;
+                   );
+ 
++    declareOption(ol, &quot;compute_Z_exactly&quot;,
++                  &amp;PseudolikelihoodRBM::compute_Z_exactly,
++                  OptionBase::buildoption,
++                  &quot;Indication that the partition function Z should be computed exactly.\n&quot;
++                  );
++
++    declareOption(ol, &quot;use_ais_to_compute_Z&quot;,
++                  &amp;PseudolikelihoodRBM::use_ais_to_compute_Z,
++                  OptionBase::buildoption,
++                  &quot;Whether to use AIS (see Salakhutdinov and Murray ICML2008) to\n&quot;
++                  &quot;compute Z. Assumes the input layer is an RBMBinomialLayer.\n&quot;
++                  );
++
++    declareOption(ol, &quot;n_ais_chains&quot;, 
++                  &amp;PseudolikelihoodRBM::n_ais_chains,
++                  OptionBase::buildoption,
++                  &quot;Number of AIS chains.\n&quot;
++                  );
++
++    declareOption(ol, &quot;ais_beta_begin&quot;, 
++                  &amp;PseudolikelihoodRBM::ais_beta_begin,
++                  OptionBase::buildoption,
++                  &quot;List of interval beginnings, used to specify the beta schedule.\n&quot;
++                  &quot;Its first element is always set to 0.\n&quot;
++                  );
++
++    declareOption(ol, &quot;ais_beta_end&quot;, 
++                  &amp;PseudolikelihoodRBM::ais_beta_end,
++                  OptionBase::buildoption,
++                  &quot;List of interval ends, used to specify the beta schedule.\n&quot;
++                  &quot;Its last element is always set to 1.\n&quot;
++                  );
++
++    declareOption(ol, &quot;ais_beta_n_steps&quot;, 
++                  &amp;PseudolikelihoodRBM::ais_beta_n_steps,
++                  OptionBase::buildoption,
++                  &quot;Number of steps in each of the beta interval, used to &quot;
++                  &quot;specify the beta schedule.\n&quot;
++                  );
++
+     declareOption(ol, &quot;pseudolikelihood_context_size&quot;, 
+                   &amp;PseudolikelihoodRBM::pseudolikelihood_context_size,
+                   OptionBase::buildoption,
+@@ -286,12 +340,30 @@
+ 
+     declareOption(ol, &quot;log_Z&quot;, &amp;PseudolikelihoodRBM::log_Z,
+                   OptionBase::learntoption,
+-                  &quot;Normalisation constant (on log scale).\n&quot;);
++                  &quot;Normalisation constant, computed exactly (on log scale).\n&quot;);
+ 
++    declareOption(ol, &quot;log_Z_ais&quot;, &amp;PseudolikelihoodRBM::log_Z_ais,
++                  OptionBase::learntoption,
++                  &quot;Normalisation constant, computed by AIS (on log scale).\n&quot;);
++
++    declareOption(ol, &quot;log_Z_down&quot;, &amp;PseudolikelihoodRBM::log_Z_down,
++                  OptionBase::learntoption,
++                  &quot;Lower bound of confidence interval for log_Z.\n&quot;);
++
++    declareOption(ol, &quot;log_Z_up&quot;, &amp;PseudolikelihoodRBM::log_Z_up,
++                  OptionBase::learntoption,
++                  &quot;Upper bound of confidence interval for log_Z.\n&quot;);
++
+     declareOption(ol, &quot;Z_is_up_to_date&quot;, &amp;PseudolikelihoodRBM::Z_is_up_to_date,
+                   OptionBase::learntoption,
+-                  &quot;Indication that the normalisation constant Z is up to date.\n&quot;);
++                  &quot;Indication that the normalisation constant Z (computed exactly) &quot;
++                  &quot;is up to date.\n&quot;);
+ 
++    declareOption(ol, &quot;Z_ais_is_up_to_date&quot;, &amp;PseudolikelihoodRBM::Z_ais_is_up_to_date,
++                  OptionBase::learntoption,
++                  &quot;Indication that the normalisation constant Z (computed with AIS) &quot;
++                  &quot;is up to date.\n&quot;);
++
+     declareOption(ol, &quot;persistent_gibbs_chain_is_started&quot;, 
+                   &amp;PseudolikelihoodRBM::persistent_gibbs_chain_is_started,
+                   OptionBase::learntoption,
+@@ -345,6 +417,21 @@
+                     &quot;pseudolikelihood_context_size should be &gt; 0 &quot;
+                     &quot;for \&quot;most_correlated\&quot; context type&quot;);        
+ 
++        if( compute_input_space_nll &amp;&amp; use_ais_to_compute_Z )
++        {
++            if( n_ais_chains &lt;= 0 )
++                PLERROR(&quot;In PseudolikelihoodRBM::build_(): &quot;
++                        &quot;n_ais_chains should be &gt; 0.&quot;);
++            if( ais_beta_n_steps.length() == 0 )
++                PLERROR(&quot;In PseudolikelihoodRBM::build_(): &quot;
++                        &quot;AIS schedule should have at least 1 interval of betas.&quot;);
++            if( ais_beta_n_steps.length() != ais_beta_begin.length() ||
++                ais_beta_n_steps.length() != ais_beta_end.length() )
++                PLERROR(&quot;In PseudolikelihoodRBM::build_(): &quot;
++                        &quot;ais_beta_begin, ais_beta_end and ais_beta_n_steps should &quot;
++                        &quot;all be of the same length.&quot;);
++        }
++
+         build_layers_and_connections();
+         build_costs();
+ 
+@@ -366,6 +453,21 @@
+         cost_names.append(&quot;NLL&quot;);
+         nll_cost_index = current_index;
+         current_index++;
++        if( compute_Z_exactly )
++        {
++            cost_names.append(&quot;log_Z&quot;);
++            log_Z_cost_index = current_index++;
++        }
++        
++        if( use_ais_to_compute_Z )
++        {
++            cost_names.append(&quot;log_Z_ais&quot;);
++            log_Z_ais_cost_index = current_index++;
++            cost_names.append(&quot;log_Z_interval_lower&quot;);
++            log_Z_interval_lower_cost_index = current_index++;
++            cost_names.append(&quot;log_Z_interval_upper&quot;);
++            log_Z_interval_upper_cost_index = current_index++;
++        }
+     }
+     
+     if( targetsize() &gt; 0 )
+@@ -669,6 +771,7 @@
+     cumulative_training_time = 0;
+     //cumulative_testing_time = 0;
+     Z_is_up_to_date = false;
++    Z_ais_is_up_to_date = false;
+ 
+     persistent_gibbs_chain_is_started.fill( false );
+     correlations_per_i.resize(0,0);
+@@ -739,6 +842,7 @@
+     for( ; stage&lt;nstages ; stage++ )
+     {
+         Z_is_up_to_date = false;
++        Z_ais_is_up_to_date = false;
+         train_set-&gt;getExample(stage%nsamples, input, target, weight);
+ 
+         if( pb )
+@@ -3505,7 +3609,25 @@
+             connection-&gt;setAsDownInput( input );
+             hidden_layer-&gt;getAllActivations( (RBMMatrixConnection *) connection );
+             costs[nll_cost_index] = hidden_layer-&gt;freeEnergyContribution(
+-                hidden_layer-&gt;activation) - dot(input,input_layer-&gt;bias) + log_Z;
++                hidden_layer-&gt;activation) - dot(input,input_layer-&gt;bias);
++            if( compute_Z_exactly )
++                costs[nll_cost_index] += log_Z;
++            else if( use_ais_to_compute_Z )
++                costs[nll_cost_index] += log_Z_ais;
++            else
++                PLERROR(&quot;In PseudolikelihoodRBM::computeCostsFromOutputs(): &quot;
++                    &quot;can't compute NLL without a mean to compute log(Z).&quot;);
++
++            if( compute_Z_exactly )
++            {
++                costs[log_Z_cost_index] = log_Z;
++            }
++            if( use_ais_to_compute_Z )
++            {
++                costs[log_Z_ais_cost_index] = log_Z_ais;
++                costs[log_Z_interval_lower_cost_index] = log_Z_down;
++                costs[log_Z_interval_upper_cost_index] = log_Z_up;
++            }
+         }
+     }
+     costs[cumulative_training_time_cost_index] = cumulative_training_time;
+@@ -3542,55 +3664,185 @@
+ 
+ void PseudolikelihoodRBM::compute_Z() const
+ {
+-    if( Z_is_up_to_date ) return;
+ 
+     int input_n_conf = input_layer-&gt;getConfigurationCount(); 
+     int hidden_n_conf = hidden_layer-&gt;getConfigurationCount();
+-    if( input_n_conf == RBMLayer::INFINITE_CONFIGURATIONS &amp;&amp; 
++    if( !Z_is_up_to_date &amp;&amp; compute_Z_exactly &amp;&amp;
++        input_n_conf == RBMLayer::INFINITE_CONFIGURATIONS &amp;&amp; 
+         hidden_n_conf == RBMLayer::INFINITE_CONFIGURATIONS )
+         PLERROR(&quot;In PseudolikelihoodRBM::computeCostsFromOutputs: &quot;
+                 &quot;RBM's input and hidden layers are too big &quot;
+-                &quot;for NLL computations.&quot;);
++                &quot;for exact NLL computations.&quot;);
+ 
+-    log_Z = 0;
+-    if( input_n_conf &lt; hidden_n_conf )
++    if( !Z_ais_is_up_to_date &amp;&amp; use_ais_to_compute_Z )
+     {
+-        conf.resize( input_layer-&gt;size );
+-        for(int i=0; i&lt;input_n_conf; i++)
++        log_Z_ais = 0;
++        // This AIS code is based on the Matlab code of Russ, on his web page //
++
++        // Compute base-rate RBM biases
++        Vec input( inputsize() );
++        Vec target( targetsize() );
++        real weight;
++        Vec base_rate_rbm_bias( inputsize() );
++        base_rate_rbm_bias.clear();
++        for( int i=0; i&lt;train_set-&gt;length(); i++ )
+         {
+-            input_layer-&gt;getConfiguration(i,conf);
+-            connection-&gt;setAsDownInput( conf );
+-            hidden_layer-&gt;getAllActivations( (RBMMatrixConnection *) connection );
+-            if( i == 0 )
+-                log_Z = -hidden_layer-&gt;freeEnergyContribution(
+-                    hidden_layer-&gt;activation) + dot(conf,input_layer-&gt;bias);
+-            else
+-                log_Z = logadd(-hidden_layer-&gt;freeEnergyContribution(
+-                                   hidden_layer-&gt;activation) 
+-                               + dot(conf,input_layer-&gt;bias),
+-                               log_Z);
++            train_set-&gt;getExample(i, input, target, weight);
++            base_rate_rbm_bias += input;
+         }
++        base_rate_rbm_bias += 0.05*train_set-&gt;length();
++        base_rate_rbm_bias /= 1.05*train_set-&gt;length();
++        for( int j=0; j&lt;inputsize(); j++ )
++            base_rate_rbm_bias[j] = pl_log( base_rate_rbm_bias[j] ) - 
++                pl_log( 1-base_rate_rbm_bias[j] );
++        
++        Mat ais_chain_init_samples( n_ais_chains,inputsize() );
++        Vec ais_weights( n_ais_chains );
++        ais_weights.clear(); // we'll work on log-scale
++        real beg_beta, end_beta, beta, step_beta;
++        int n_beta;
++        
++        // Start chains
++        real p_j;
++        for( int j=0; j&lt;input_layer-&gt;size; j++ )
++        {
++            p_j = sigmoid( base_rate_rbm_bias[j] );
++            for( int c=0; c&lt;n_ais_chains; c++ )
++                ais_chain_init_samples(c,j) = random_gen-&gt;binomial_sample( p_j );
++        }
++        input_layer-&gt;setBatchSize( n_ais_chains );
++        input_layer-&gt;samples &lt;&lt; ais_chain_init_samples;
++
++        // Add importance weight contribution (denominator)
++        productScaleAcc( ais_weights, input_layer-&gt;samples, false,
++                         base_rate_rbm_bias, -1, 0 );
++        ais_weights -= hidden_layer-&gt;size * pl_log(2);
++        for( int k=0; k&lt;ais_beta_n_steps.length(); k++ )
++        {
++            beg_beta = (k==0) ? 0 : ais_beta_begin[k];
++            end_beta = (k == ais_beta_end.length()-1) ? 1 : ais_beta_end[k];
++            if( beg_beta &gt;= end_beta )
++                PLERROR(&quot;In PseudolikelihoodRBM::compute_Z(): &quot;
++                        &quot;the AIS beta schedule is not monotonically increasing.&quot;);
++
++            n_beta = ais_beta_n_steps[k];
++            if( n_beta == 0)
++                PLERROR(&quot;In PseudolikelihoodRBM::compute_Z(): &quot;
++                        &quot;one of the beta intervals has 0 steps.&quot;);
++            step_beta = (end_beta - beg_beta)/n_beta;
++
++            beta = beg_beta;
++            for( int k_i=0; k_i &lt; n_beta; k_i++ )
++            {
++                beta += step_beta;
++                // Add importance weight contribution (numerator)
++                productScaleAcc( ais_weights, input_layer-&gt;samples, false,
++                                 base_rate_rbm_bias, (1-beta), 1 );
++                productScaleAcc( ais_weights, input_layer-&gt;samples, false,
++                                 input_layer-&gt;bias, beta, 1 );
++                connection-&gt;setAsDownInputs(input_layer-&gt;samples);
++                hidden_layer-&gt;getAllActivations( 
++                    (RBMMatrixConnection *) connection, 0, true );
++                hidden_layer-&gt;activations *= beta;
++                for( int c=0; c&lt;n_ais_chains; c++ )
++                    ais_weights[c] -= hidden_layer-&gt;freeEnergyContribution( 
++                        hidden_layer-&gt;activations(c) );
++                // Get new chain sample
++                hidden_layer-&gt;computeExpectations();
++                hidden_layer-&gt;generateSamples();
++                connection-&gt;setAsUpInputs(hidden_layer-&gt;samples);
++                input_layer-&gt;getAllActivations( 
++                    (RBMMatrixConnection *) connection, 0, true );
++                for( int c=0; c&lt;n_ais_chains; c++ )
++                    multiplyScaledAdd(base_rate_rbm_bias,beta,
++                                      (1-beta),input_layer-&gt;activations(c));
++                input_layer-&gt;computeExpectations();
++                input_layer-&gt;generateSamples();
++
++                // Add importance weight contribution (denominator)
++                productScaleAcc( ais_weights, input_layer-&gt;samples, false,
++                                 base_rate_rbm_bias, -(1-beta), 1 );
++                productScaleAcc( ais_weights, input_layer-&gt;samples, false,
++                                 input_layer-&gt;bias, -beta, 1 );
++                connection-&gt;setAsDownInputs(input_layer-&gt;samples);
++                hidden_layer-&gt;getAllActivations( 
++                    (RBMMatrixConnection *) connection, 0, true );
++                hidden_layer-&gt;activations *= beta;
++                for( int c=0; c&lt;n_ais_chains; c++ )
++                    ais_weights[c] += hidden_layer-&gt;freeEnergyContribution( 
++                        hidden_layer-&gt;activations(c) );
++            }
++        }
++        // Final importance weight contribution, at beta=1 (numerator)
++        productScaleAcc( ais_weights, input_layer-&gt;samples, false,
++                         input_layer-&gt;bias, 1, 1 );
++        connection-&gt;setAsDownInputs(input_layer-&gt;samples);
++        hidden_layer-&gt;getAllActivations( 
++            (RBMMatrixConnection *) connection, 0, true );
++        for( int c=0; c&lt;n_ais_chains; c++ )
++            ais_weights[c] -= hidden_layer-&gt;freeEnergyContribution( 
++                hidden_layer-&gt;activations(c) );
++
++        real log_r_ais = logadd(ais_weights) - pl_log(n_ais_chains);
++        real log_Z_base =  hidden_layer-&gt;size * pl_log(2);
++        for( int j=0; j&lt;inputsize(); j++ )
++            log_Z_base += softplus(base_rate_rbm_bias[j]);
++        log_Z_ais = log_r_ais + log_Z_base;
++
++        real offset = mean(ais_weights);
++        PP&lt;StatsCollector&gt; stats = new StatsCollector();
++        stats-&gt;forget();
++        for( int c=0; c&lt;n_ais_chains; c++ )
++            stats-&gt;update(exp(ais_weights[c]-offset),1.);
++        stats-&gt;finalize();
++        real logstd_ais = pl_log(stats-&gt;getStat(&quot;STDDEV&quot;)) + 
++            offset - pl_log(n_ais_chains)/2;
++        log_Z_up = pl_log(exp(log_r_ais)+exp(logstd_ais)*3) + log_Z_base;
++        log_Z_down = pl_log(exp(log_r_ais)-exp(logstd_ais)*3) + log_Z_base;
++
++        Z_ais_is_up_to_date = true;
+     }
+-    else
++    if( !Z_is_up_to_date &amp;&amp; compute_Z_exactly )
+     {
+-        conf.resize( hidden_layer-&gt;size );
+-        for(int i=0; i&lt;hidden_n_conf; i++)
++        log_Z = 0;
++        if( input_n_conf &lt; hidden_n_conf )
+         {
+-            hidden_layer-&gt;getConfiguration(i,conf);
+-            connection-&gt;setAsUpInput( conf );
+-            input_layer-&gt;getAllActivations( (RBMMatrixConnection *) connection );
+-            if( i == 0 )
+-                log_Z = -input_layer-&gt;freeEnergyContribution(
+-                    input_layer-&gt;activation) + dot(conf,hidden_layer-&gt;bias);
+-            else
+-                log_Z = logadd(-input_layer-&gt;freeEnergyContribution(
+-                                   input_layer-&gt;activation)
+-                               + dot(conf,hidden_layer-&gt;bias),
+-                               log_Z);
+-        }        
++            conf.resize( input_layer-&gt;size );
++            for(int i=0; i&lt;input_n_conf; i++)
++            {
++                input_layer-&gt;getConfiguration(i,conf);
++                connection-&gt;setAsDownInput( conf );
++                hidden_layer-&gt;getAllActivations( (RBMMatrixConnection *) connection );
++                if( i == 0 )
++                    log_Z = -hidden_layer-&gt;freeEnergyContribution(
++                        hidden_layer-&gt;activation) + dot(conf,input_layer-&gt;bias);
++                else
++                    log_Z = logadd(-hidden_layer-&gt;freeEnergyContribution(
++                                       hidden_layer-&gt;activation) 
++                                   + dot(conf,input_layer-&gt;bias),
++                                   log_Z);
++            }
++        }
++        else
++        {
++            conf.resize( hidden_layer-&gt;size );
++            for(int i=0; i&lt;hidden_n_conf; i++)
++            {
++                hidden_layer-&gt;getConfiguration(i,conf);
++                connection-&gt;setAsUpInput( conf );
++                input_layer-&gt;getAllActivations( (RBMMatrixConnection *) connection );
++                if( i == 0 )
++                    log_Z = -input_layer-&gt;freeEnergyContribution(
++                        input_layer-&gt;activation) + dot(conf,hidden_layer-&gt;bias);
++                else
++                    log_Z = logadd(-input_layer-&gt;freeEnergyContribution(
++                                       input_layer-&gt;activation)
++                                   + dot(conf,hidden_layer-&gt;bias),
++                                   log_Z);
++            }        
++        }
++        Z_is_up_to_date = true;
+     }
+-    
+-    Z_is_up_to_date = true;
+ }
+ 
+ } // end of namespace PLearn
+
+Modified: trunk/plearn_learners_experimental/PseudolikelihoodRBM.h
+===================================================================
+--- trunk/plearn_learners_experimental/PseudolikelihoodRBM.h	2009-04-08 20:27:21 UTC (rev 10104)
++++ trunk/plearn_learners_experimental/PseudolikelihoodRBM.h	2009-04-09 17:20:25 UTC (rev 10105)
+@@ -126,9 +126,40 @@
+     //int select_among_k_most_frequent;
+ 
+     //! Indication that the input space NLL should be computed
+-    //! during test
++    //! during test. It will require a procedure to compute
++    //! the partition function Z, which can be exact (see compute_Z_exactly)
++    //! or approximate (see use_ais_to_compute_Z). If both are true,
++    //! exact computation will be used.
+     bool compute_input_space_nll;
+ 
++    //! Indication that the partition function should be computed exactly
++    bool compute_Z_exactly;
++
++    //! Whether to use AIS (see Salakhutdinov and Murray ICML2008) to
++    //! compute Z. Assumes the input layer is an RBMBinomialLayer.
++    bool use_ais_to_compute_Z;
++
++    //! Number of AIS chains.
++    int n_ais_chains;
++
++    // Schedule information for the betas in AIS. 
++    //! List of interval beginnings, used to specify the beta schedule.
++    //! Its first element is always set to 0.
++    Vec ais_beta_begin;
++    //! List of interval ends, used to specify the beta schedule.
++    //! Its last element is always set to 1.
++    Vec ais_beta_end;
++    //! Number of steps in each of the beta interval, used to specify the beta schedule
++    TVec&lt;int&gt; ais_beta_n_steps;
++
++    // Each row gives
++    //! the triplet &lt;a_i,b_i,N_i&gt;, which indicate that
++    //! in interval [a_i,b_i], N_i betas should be uniformly
++    //! laid out. The values of a_0 and b_{ais_beta_schedule.length()-1} are
++    //! fixed to 0 and 1 respectively, i.e. the values
++    //! for them as given by the option are ignored.
++    Mat ais_beta_schedule;
++
+     //! Number of additional input variables chosen to form the joint
+     //! condition likelihoods in generalized pseudolikelihood
+     //! (default = 0, which corresponds to standard pseudolikelihood)
+@@ -325,6 +356,17 @@
+     //! Keeps the index of the NLL cost in train_costs
+     int nll_cost_index;
+ 
++    //! Index of log_Z &quot;cost&quot;
++    int log_Z_cost_index;
++    //! Index of log_Z &quot;cost&quot;, computed by AIS
++    int log_Z_ais_cost_index;
++    //! Index of lower bound of confidence interval for log_Z,
++    //! as computed by AIS
++    int log_Z_interval_lower_cost_index;
++    //! Index of upper bound of confidence interval for log_Z,
++    //! as computed by AIS
++    int log_Z_interval_upper_cost_index;
++
+     //! Keeps the index of the class_error cost in train_costs
+     int class_cost_index;
+ 
+@@ -337,12 +379,22 @@
+     real cumulative_training_time;
+     //real cumulative_testing_time;
+     
+-    //! Normalisation constant (on log scale)
++    //! Normalisation constant, computed exactly (on log scale)
+     mutable real log_Z;
++    //! Normalisation constant, computed by AIS (on log scale)
++    mutable real log_Z_ais;
+ 
+-    //! Indication that the normalisation constant Z is up to date
++    //! Lower bound of confidence interval for log_Z
++    mutable real log_Z_down;
++    //! Upper bound of confidence interval for log_Z
++    mutable real log_Z_up;
++
++    //! Indication that the normalisation constant Z (computed exactly) is up to date
+     mutable bool Z_is_up_to_date;
+ 
++    //! Indication that the normalisation constant Z (computed with AIS) is up to date
++    mutable bool Z_ais_is_up_to_date;
++
+     //! Indication that the prolonged gibbs chain for 
+     //! Persistent Consistent Divergence is started, for each chain
+     mutable TVec&lt;bool&gt; persistent_gibbs_chain_is_started;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003544.html">[Plearn-commits] r10104 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="003546.html">[Plearn-commits] r10106 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3545">[ date ]</a>
+              <a href="thread.html#3545">[ thread ]</a>
+              <a href="subject.html#3545">[ subject ]</a>
+              <a href="author.html#3545">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

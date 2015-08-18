@@ -1,0 +1,163 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7515 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7515%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200706041437.l54EbJI6022293%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000963.html">
+   <LINK REL="Next"  HREF="000965.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7515 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7515%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200706041437.l54EbJI6022293%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7515 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Mon Jun  4 16:37:19 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000963.html">[Plearn-commits] r7514 - in trunk/plearn_learners/online: .	test/ModuleTester
+</A></li>
+        <LI>Next message: <A HREF="000965.html">[Plearn-commits] r7516 - in trunk/python_modules/plearn/learners:	autolr online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#964">[ date ]</a>
+              <a href="thread.html#964">[ thread ]</a>
+              <a href="subject.html#964">[ subject ]</a>
+              <a href="author.html#964">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2007-06-04 16:37:18 +0200 (Mon, 04 Jun 2007)
+New Revision: 7515
+
+Modified:
+   trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.cc
+   trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.h
+Log:
+Debugged the rbm learning initialization option...
+
+
+Modified: trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.cc
+===================================================================
+--- trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.cc	2007-06-04 14:03:33 UTC (rev 7514)
++++ trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.cc	2007-06-04 14:37:18 UTC (rev 7515)
+@@ -102,7 +102,9 @@
+       use_bias_in_weights_prediction(false),
+       multi_target_classifier(false),
+       sigma_min(1e-5),
+-      nhidden(-1)
++      nhidden(-1),
++      rbm_nstages(0),
++      rbm_learning_rate(0.01)
+ {
+     random_gen = new PRandom();
+ }
+@@ -116,6 +118,10 @@
+                   &amp;LinearInductiveTransferClassifier::rbm_nstages, 
+                   OptionBase::buildoption,
+                   &quot;Number of RBM training to initialize hidden layer weights&quot;);
++    declareOption(ol, &quot;rbm_learning_rate&quot;, 
++                  &amp;LinearInductiveTransferClassifier::rbm_learning_rate, 
++                  OptionBase::buildoption,
++                  &quot;Learning rate for the RBM&quot;);
+     declareOption(ol, &quot;visible_layer&quot;,
+                   &amp;LinearInductiveTransferClassifier::visible_layer, 
+                   OptionBase::buildoption,
+@@ -312,7 +318,10 @@
+             //                   hidden_neurons[i]);
+             //}
+             weights =vconcat(-product(exp(s),square(weights)) &amp; weights); // Making sure that the scaling factor is going to be positive
+-            output = affine_transform(tanh(affine_transform(input,W)), weights);
++            if(rbm_nstages&gt;0)
++                output = affine_transform(tanh(affine_transform(input,W)), weights);
++            else
++                output = affine_transform(sigmoid(affine_transform(input,W)), weights);
+         }
+ 
+         else
+@@ -648,8 +657,15 @@
+     if(f.isNull()) // Net has not been properly built yet (because build was called before the learner had a proper training set)
+         build();
+     
+-    if(stage == 0 &amp;&amp; nstages &gt; 0 &amp;&amp; model_type == &quot;nnet_discriminative_1_vs_all&quot;)
++    if(rbm_nstages&gt;0 &amp;&amp; stage == 0 &amp;&amp; nstages &gt; 0 &amp;&amp; model_type == &quot;nnet_discriminative_1_vs_all&quot;)
+     {
++        if(!visible_layer)
++            PLERROR(&quot;In LinearInductiveTransferClassifier::train(): &quot;
++                    &quot;visible_layer must be provided.&quot;);
++        if(!hidden_layer)
++            PLERROR(&quot;In LinearInductiveTransferClassifier::train(): &quot;
++                    &quot;hidden_layer must be provided.&quot;);
++
+         Vec input, target;
+         real example_weight;
+         real recons = 0;
+@@ -664,6 +680,11 @@
+         hidden_layer-&gt;random_gen = random_gen;
+         visible_layer-&gt;random_gen = random_gen;
+         layer_connections-&gt;random_gen = random_gen;
++
++        visible_layer-&gt;setLearningRate(rbm_learning_rate);
++        hidden_layer-&gt;setLearningRate(rbm_learning_rate);
++        layer_connections-&gt;setLearningRate(rbm_learning_rate);
++
+         
+         hidden_layer-&gt;build();
+         visible_layer-&gt;build();
+@@ -712,7 +733,7 @@
+                                           neg_hidden, neg_visible);
+             }
+             if(verbosity &gt; 2)
+-                cout &lt;&lt; &quot;Reconstruction error = &quot; &lt;&lt; recons &lt;&lt; endl;
++                cout &lt;&lt; &quot;Reconstruction error = &quot; &lt;&lt; recons/train_set-&gt;length() &lt;&lt; endl;
+             recons = 0;
+         }
+         W-&gt;matValue.subMat(1,0,inputsize_,nhidden) &lt;&lt; layer_matrix_connections-&gt;weights;
+
+Modified: trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.h
+===================================================================
+--- trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.h	2007-06-04 14:03:33 UTC (rev 7514)
++++ trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.h	2007-06-04 14:37:18 UTC (rev 7515)
+@@ -94,6 +94,8 @@
+     int nhidden;
+     //! Number of RBM training to initialize hidden layer weights
+     int rbm_nstages;
++    //! Learning rate for the RBM
++    real rbm_learning_rate;
+     //! Visible layer of the RBM
+     PP&lt;RBMLayer&gt; visible_layer;
+     //! Hidden layer of the RBM
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000963.html">[Plearn-commits] r7514 - in trunk/plearn_learners/online: .	test/ModuleTester
+</A></li>
+	<LI>Next message: <A HREF="000965.html">[Plearn-commits] r7516 - in trunk/python_modules/plearn/learners:	autolr online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#964">[ date ]</a>
+              <a href="thread.html#964">[ thread ]</a>
+              <a href="subject.html#964">[ subject ]</a>
+              <a href="author.html#964">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

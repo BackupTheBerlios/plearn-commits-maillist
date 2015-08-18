@@ -1,0 +1,232 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7509 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7509%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200706030117.l531HdC2002360%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000957.html">
+   <LINK REL="Next"  HREF="000959.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7509 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7509%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200706030117.l531HdC2002360%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7509 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Sun Jun  3 03:17:39 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000957.html">[Plearn-commits] r7508 - trunk/python_modules/plearn/var
+</A></li>
+        <LI>Next message: <A HREF="000959.html">[Plearn-commits] r7510 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#958">[ date ]</a>
+              <a href="thread.html#958">[ thread ]</a>
+              <a href="subject.html#958">[ subject ]</a>
+              <a href="author.html#958">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2007-06-03 03:17:38 +0200 (Sun, 03 Jun 2007)
+New Revision: 7509
+
+Modified:
+   trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.cc
+   trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.h
+Log:
+Added option to initialize hidden weight matrix using RBM training.
+
+
+Modified: trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.cc
+===================================================================
+--- trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.cc	2007-06-02 19:10:40 UTC (rev 7508)
++++ trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.cc	2007-06-03 01:17:38 UTC (rev 7509)
+@@ -81,6 +81,7 @@
+ #include &lt;plearn/vmat/ConcatColumnsVMatrix.h&gt;
+ #include &lt;plearn/math/random.h&gt;
+ #include &lt;plearn/math/plapack.h&gt;
++#include &lt;plearn_learners/online/RBMMatrixConnection.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -111,6 +112,18 @@
+     declareOption(ol, &quot;optimizer&quot;, &amp;LinearInductiveTransferClassifier::optimizer, 
+                   OptionBase::buildoption,
+                   &quot;Optimizer of the discriminative classifier&quot;);
++    declareOption(ol, &quot;rbm_nstages&quot;, 
++                  &amp;LinearInductiveTransferClassifier::rbm_nstages, 
++                  OptionBase::buildoption,
++                  &quot;Number of RBM training to initialize hidden layer weights&quot;);
++    declareOption(ol, &quot;visible_layer&quot;,
++                  &amp;LinearInductiveTransferClassifier::visible_layer, 
++                  OptionBase::buildoption,
++                  &quot;Visible layer of the RBM&quot;);
++    declareOption(ol, &quot;hidden_layer&quot;,
++                  &amp;LinearInductiveTransferClassifier::hidden_layer, 
++                  OptionBase::buildoption,
++                  &quot;Hidden layer of the RBM&quot;);
+     declareOption(ol, &quot;batch_size&quot;, &amp;LinearInductiveTransferClassifier::batch_size,
+                   OptionBase::buildoption, 
+                   &quot;How many samples to use to estimate the avergage gradient before updating the weights\n&quot;
+@@ -301,6 +314,7 @@
+             weights =vconcat(-product(exp(s),square(weights)) &amp; weights); // Making sure that the scaling factor is going to be positive
+             output = affine_transform(tanh(affine_transform(input,W)), weights);
+         }
++
+         else
+             PLERROR(&quot;In LinearInductiveTransferClassifier::build_(): model_type %s is not valid&quot;, model_type.c_str());
+ 
+@@ -539,6 +553,8 @@
+     inherited::makeDeepCopyFromShallowCopy(copies);
+     deepCopyField(class_reps, copies);
+     deepCopyField(optimizer, copies);
++    deepCopyField(visible_layer, copies);
++    deepCopyField(hidden_layer, copies);
+     deepCopyField(params, copies);
+     deepCopyField(paramsvalues, copies);
+     deepCopyField(invars, copies);
+@@ -630,6 +646,76 @@
+     if(f.isNull()) // Net has not been properly built yet (because build was called before the learner had a proper training set)
+         build();
+     
++    if(stage == 0 &amp;&amp; nstages &gt; 0 &amp;&amp; model_type == &quot;nnet_discriminative_1_vs_all&quot;)
++    {
++        Vec input, target;
++        real example_weight;
++        real recons = 0;
++        RBMMatrixConnection* c = new RBMMatrixConnection();
++        PP&lt;RBMMatrixConnection&gt; layer_matrix_connections = c;
++        PP&lt;RBMConnection&gt; layer_connections = c;
++        hidden_layer-&gt;size = nhidden;
++        visible_layer-&gt;size = inputsize_;
++        layer_connections-&gt;up_size = inputsize_;
++        layer_connections-&gt;down_size = nhidden;
++        
++        hidden_layer-&gt;random_gen = random_gen;
++        visible_layer-&gt;random_gen = random_gen;
++        layer_connections-&gt;random_gen = random_gen;
++        
++        hidden_layer-&gt;build();
++        visible_layer-&gt;build();
++        layer_connections-&gt;build();
++        
++        Vec pos_visible,pos_hidden,neg_visible,neg_hidden;
++        pos_visible.resize(inputsize_);
++        pos_hidden.resize(nhidden);
++        neg_visible.resize(inputsize_);
++        neg_hidden.resize(nhidden);
++
++        for(int i = 0; i &lt; rbm_nstages; i++)
++        {
++            for(int i=0; i&lt;train_set-&gt;length(); i++)
++            {
++                train_set-&gt;getExample(i,input,target,example_weight);
++
++                pos_visible = input;
++                layer_connections-&gt;setAsUpInput( input );
++                hidden_layer-&gt;getAllActivations( layer_connections );
++                hidden_layer-&gt;computeExpectation();
++                hidden_layer-&gt;generateSample();
++                pos_hidden &lt;&lt; hidden_layer-&gt;expectation;            
++
++                layer_connections-&gt;setAsDownInput( hidden_layer-&gt;sample );
++                visible_layer-&gt;getAllActivations( layer_connections );
++                visible_layer-&gt;computeExpectation();
++                visible_layer-&gt;generateSample();
++                neg_visible = visible_layer-&gt;sample;
++
++                layer_connections-&gt;setAsUpInput( visible_layer-&gt;sample );
++                hidden_layer-&gt;getAllActivations( layer_connections );
++                hidden_layer-&gt;computeExpectation();
++                neg_hidden = hidden_layer-&gt;expectation;
++
++                // Compute reconstruction error
++                layer_connections-&gt;setAsDownInput( pos_hidden );
++                visible_layer-&gt;getAllActivations( layer_connections );
++                visible_layer-&gt;computeExpectation();
++                recons += visible_layer-&gt;fpropNLL(input);
++                
++                // Update
++                visible_layer-&gt;update(pos_visible, neg_visible);
++                hidden_layer-&gt;update(pos_hidden, neg_hidden);
++                layer_connections-&gt;update(pos_hidden, pos_visible,
++                                          neg_hidden, neg_visible);
++            }
++            if(verbosity &gt; 2)
++                cout &lt;&lt; &quot;Reconstruction error = &quot; &lt;&lt; recons &lt;&lt; endl;
++            recons = 0;
++        }
++        W-&gt;matValue.subMat(1,0,inputsize_,nhidden) &lt;&lt; layer_matrix_connections-&gt;weights;
++    }
++
+     if(model_type == &quot;discriminative&quot; || model_type == &quot;discriminative_1_vs_all&quot; || model_type == &quot;generative_0-1&quot; || model_type == &quot;nnet_discriminative_1_vs_all&quot;)
+     {
+         // number of samples seen by optimizer before each optimizer update
+@@ -955,7 +1041,6 @@
+         random_gen-&gt;fill_random_normal(weights-&gt;value, 0, delta);
+     else
+         random_gen-&gt;fill_random_uniform(weights-&gt;value, -delta, delta);
+-
+     if(zero_first_row)
+         weights-&gt;matValue(0).clear();
+ }
+
+Modified: trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.h
+===================================================================
+--- trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.h	2007-06-02 19:10:40 UTC (rev 7508)
++++ trunk/plearn_learners_experimental/LinearInductiveTransferClassifier.h	2007-06-03 01:17:38 UTC (rev 7509)
+@@ -47,6 +47,7 @@
+ #include &lt;plearn_learners/generic/PLearner.h&gt;
+ #include &lt;plearn/opt/Optimizer.h&gt;
+ #include &lt;plearn/var/VarArray.h&gt;
++#include &lt;plearn_learners/online/RBMLayer.h&gt;
+ 
+ namespace PLearn {
+ 
+@@ -91,6 +92,12 @@
+     real sigma_min;
+     //! Number of hidden units for neural network
+     int nhidden;
++    //! Number of RBM training to initialize hidden layer weights
++    int rbm_nstages;
++    //! Visible layer of the RBM
++    PP&lt;RBMLayer&gt; visible_layer;
++    //! Hidden layer of the RBM
++    PP&lt;RBMLayer&gt; hidden_layer;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000957.html">[Plearn-commits] r7508 - trunk/python_modules/plearn/var
+</A></li>
+	<LI>Next message: <A HREF="000959.html">[Plearn-commits] r7510 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#958">[ date ]</a>
+              <a href="thread.html#958">[ thread ]</a>
+              <a href="subject.html#958">[ subject ]</a>
+              <a href="author.html#958">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

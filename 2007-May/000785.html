@@ -1,0 +1,126 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7336 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7336%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705251509.l4PF905U032184%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000784.html">
+   <LINK REL="Next"  HREF="000786.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7336 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7336%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705251509.l4PF905U032184%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7336 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Fri May 25 17:09:00 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000784.html">[Plearn-commits] r7335 - in trunk: plearn_learners/online	plearn_learners/online/test/ModuleLearner	plearn_learners/online/test/ModuleLearner/.pytest/PL_ModuleLearner_Basic/expected_results/expdir-tester/Split0	plearn_learners/online/test/ModuleLearner/.pytest/PL_ModuleLearner_Greedy/expected_results/expdir-tester/Split0	plearn_learners/online/test/ModuleLearner/.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester	plearn_learners/online/test/ModuleLearner/.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester/Split0	scripts/Skeletons
+</A></li>
+        <LI>Next message: <A HREF="000786.html">[Plearn-commits] r7337 -	trunk/plearn_learners/online/test/ModuleLearner
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#785">[ date ]</a>
+              <a href="thread.html#785">[ thread ]</a>
+              <a href="subject.html#785">[ subject ]</a>
+              <a href="author.html#785">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-05-25 17:09:00 +0200 (Fri, 25 May 2007)
+New Revision: 7336
+
+Modified:
+   trunk/plearn_learners/online/ModuleLearner.cc
+Log:
+A ModuleLearner now only optimizes its first cost (this is to ensure we can measure costs easily without optimizing them)
+
+Modified: trunk/plearn_learners/online/ModuleLearner.cc
+===================================================================
+--- trunk/plearn_learners/online/ModuleLearner.cc	2007-05-25 14:53:08 UTC (rev 7335)
++++ trunk/plearn_learners/online/ModuleLearner.cc	2007-05-25 15:09:00 UTC (rev 7336)
+@@ -62,10 +62,11 @@
+     &quot;ComputeOutputAndCost and for training) are obtained from the 'output'\n&quot;
+     &quot;port and the ports defined by the 'cost_ports' option.\n&quot;
+     &quot;\n&quot;
+-    &quot;During training gradient is propagated from the costs and the bpropUpdate()\n&quot;
+-    &quot;method of the module is called (possibly one mini-batch of examples at a time)\n&quot;
+-    &quot;so as to update the internal parameters of the module. During ComputeOutput,\n&quot;
+-    &quot;it is not necessary to provide a target in order to obtain an output.\n&quot;
++    &quot;During training gradient is propagated from the first cost (only) and\n&quot;
++    &quot;the bpropUpdate() method of the module is called (possibly one mini-\n&quot;
++    &quot;batch of examples at a time), so as to update the internal parameters\n&quot;
++    &quot;of the module. During ComputeOutput, it is not necessary to provide a\n&quot;
++    &quot;target in order to obtain an output.\n&quot;
+ );
+ 
+ /////////////////////
+@@ -100,7 +101,8 @@
+ 
+     declareOption(ol, &quot;cost_ports&quot;, &amp;ModuleLearner::cost_ports,
+                   OptionBase::buildoption,
+-       &quot;List of ports that contain costs being optimized.&quot;);
++       &quot;List of ports that contain costs being computed (the first cost is\n&quot;
++       &quot;also the only one being optimized by this learner).&quot;);
+ 
+     declareOption(ol, &quot;input_ports&quot;, &amp;ModuleLearner::input_ports,
+                   OptionBase::buildoption,
+@@ -194,10 +196,11 @@
+         PP&lt;MatrixModule&gt; store = new MatrixModule(&quot;store_costs_&quot; + tostring(i),
+                                                   true);
+         all_modules.append(get_pointer(store));
+-        // Note that these connections do propagate the gradient.
++        // Note that only the first connection propagates the gradient (we
++        // only optimize the first cost).
+         all_connections.append(new NetworkConnection(
+                     module, cost_port,
+-                    get_pointer(store), &quot;data&quot;, true));
++                    get_pointer(store), &quot;data&quot;, i == 0));
+         store_costs.append(store);
+     }
+ 
+@@ -330,8 +333,8 @@
+     // Initialize cost gradients to 1.
+     // Note that we may not need to re-do it at every iteration, but this is so
+     // cheap it should not impact performance.
+-    for (int i = 0; i &lt; store_costs.length(); i++)
+-        store_costs[i]-&gt;setGradientTo(1);
++    if (!store_costs.isEmpty())
++        store_costs[0]-&gt;setGradientTo(1);
+ 
+     // Backpropagation.
+     network-&gt;bpropAccUpdate(null_pointers, null_pointers);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000784.html">[Plearn-commits] r7335 - in trunk: plearn_learners/online	plearn_learners/online/test/ModuleLearner	plearn_learners/online/test/ModuleLearner/.pytest/PL_ModuleLearner_Basic/expected_results/expdir-tester/Split0	plearn_learners/online/test/ModuleLearner/.pytest/PL_ModuleLearner_Greedy/expected_results/expdir-tester/Split0	plearn_learners/online/test/ModuleLearner/.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester	plearn_learners/online/test/ModuleLearner/.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester/Split0	scripts/Skeletons
+</A></li>
+	<LI>Next message: <A HREF="000786.html">[Plearn-commits] r7337 -	trunk/plearn_learners/online/test/ModuleLearner
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#785">[ date ]</a>
+              <a href="thread.html#785">[ thread ]</a>
+              <a href="subject.html#785">[ subject ]</a>
+              <a href="author.html#785">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,287 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9836 - trunk/plearn_learners/meta
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9836%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200901151951.n0FJpvfX010097%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003275.html">
+   <LINK REL="Next"  HREF="003277.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9836 - trunk/plearn_learners/meta</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9836%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200901151951.n0FJpvfX010097%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9836 - trunk/plearn_learners/meta">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Thu Jan 15 20:51:57 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003275.html">[Plearn-commits] r9835 - trunk/plearn_learners/meta
+</A></li>
+        <LI>Next message: <A HREF="003277.html">[Plearn-commits] r9837 - trunk/python_modules/plearn/gui_tools
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3276">[ date ]</a>
+              <a href="thread.html#3276">[ thread ]</a>
+              <a href="subject.html#3276">[ subject ]</a>
+              <a href="author.html#3276">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-01-15 20:51:57 +0100 (Thu, 15 Jan 2009)
+New Revision: 9836
+
+Modified:
+   trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+   trunk/plearn_learners/meta/MultiClassAdaBoost.h
+Log:
+In MultiClassAdaBoost, if forward_test==2 we automatically decide if we are better to forward it or not.
+
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2009-01-14 21:10:44 UTC (rev 9835)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2009-01-15 19:51:57 UTC (rev 9836)
+@@ -62,8 +62,13 @@
+     total_train_time(0),
+     test_time(0),
+     total_test_time(0),
++    time_sum(0),
++    time_sum_rtr(0),
++    time_last_stage(0),
++    time_last_stage_rtr(0),
++    last_stage(0),
+     forward_sub_learner_test_costs(false),
+-    forward_test(false)
++    forward_test(0)
+ /* ### Initialize all fields to their default value here */
+ {
+     // ...
+@@ -112,7 +117,9 @@
+     declareOption(ol, &quot;forward_test&quot;, 
+                   &amp;MultiClassAdaBoost::forward_test,
+                   OptionBase::buildoption,
+-                  &quot;Did we add forward the test fct to the sub learner.\n&quot;);
++                  &quot;if 0, default test. If 1 forward the test fct to the sub&quot;
++                  &quot; learner. If 2, determine at each stage what is the faster&quot;
++                  &quot; based on past  test time.\n&quot;);
+ 
+     declareOption(ol, &quot;train_time&quot;,
+                   &amp;MultiClassAdaBoost::train_time, OptionBase::learntoption,
+@@ -130,6 +137,26 @@
+                   &amp;MultiClassAdaBoost::total_test_time, OptionBase::learntoption,
+                   &quot;The total time spent in the test() function in second.&quot;);
+ 
++    declareOption(ol, &quot;time_sum&quot;,
++                  &amp;MultiClassAdaBoost::time_sum, 
++                  OptionBase::learntoption|OptionBase::nosave,
++                  &quot;The time spend in test() during the last stage. If test() is called multiple time for the same stage this is the sum of the time.&quot;);
++    declareOption(ol, &quot;time_sum_rtr&quot;,
++                  &amp;MultiClassAdaBoost::time_sum_rtr, 
++                  OptionBase::learntoption|OptionBase::nosave,
++                  &quot;The time spend in test() during the last stage. If test() is called multiple time for the same stage this is the sum of the time.&quot;);
++    declareOption(ol, &quot;time_last_stage&quot;,
++                  &amp;MultiClassAdaBoost::time_last_stage, 
++                  OptionBase::learntoption|OptionBase::nosave,
++                  &quot;&quot;);
++    declareOption(ol, &quot;time_last_stage_rtr&quot;,
++                  &amp;MultiClassAdaBoost::time_last_stage_rtr, 
++                  OptionBase::learntoption|OptionBase::nosave,
++                  &quot;&quot;);
++    declareOption(ol, &quot;last_stage&quot;,
++                  &amp;MultiClassAdaBoost::last_stage, 
++                  OptionBase::learntoption |OptionBase::nosave,
++                  &quot;The stage at witch time_sum was used&quot;);
+  }
+ 
+ void MultiClassAdaBoost::build_()
+@@ -163,7 +190,7 @@
+     }
+ 
+     Profiler::activate();
+-    Profiler::reset(&quot;MultiClassAdaBoost::test&quot;);
++    Profiler::reset(&quot;MultiClassAdaBoost::test()&quot;);
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+@@ -279,7 +306,7 @@
+ 
+     //we get the test_time here as we want the test time for all dataset.
+     //if we put it in the test function, we would have it for one dataset.
+-    const Profiler::Stats&amp; stats_test = Profiler::getStats(&quot;MultiClassAdaBoost::test&quot;);
++    const Profiler::Stats&amp; stats_test = Profiler::getStats(&quot;MultiClassAdaBoost::test()&quot;);
+     tmp=stats_test.wall_duration/Profiler::ticksPerSecond();
+     test_time=tmp-total_test_time;
+     total_test_time=tmp;
+@@ -574,13 +601,39 @@
+ void MultiClassAdaBoost::test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
+                               VMat testoutputs, VMat testcosts) const
+ {
+-    Profiler::start(&quot;MultiClassAdaBoost::test&quot;);
++    Profiler::start(&quot;MultiClassAdaBoost::test()&quot;);
+     if(!forward_test){
++         inherited::test(testset,test_stats,testoutputs,testcosts);
++         Profiler::end(&quot;MultiClassAdaBoost::test()&quot;);
++         return;
++    }
++
++    if(last_stage&lt;stage &amp;&amp; time_sum&gt;0){
++        time_last_stage=time_sum;
++        time_sum=0;
++    }
++    if(last_stage&lt;stage &amp;&amp; time_sum_rtr&gt;0){
++        time_last_stage_rtr=time_sum_rtr;
++        time_sum_rtr=0;
++    }
++
++    if(forward_test==2 &amp;&amp; time_last_stage&lt;time_last_stage_rtr){
++        DBG_MODULE_LOG&lt;&lt;&quot;inherited start time_sum=&quot;&lt;&lt;time_sum&lt;&lt;&quot; time_sum_rtr=&quot;&lt;&lt;time_sum_rtr&lt;&lt;&quot; last_stage=&quot;&lt;&lt;last_stage &lt;&lt;&quot; stage=&quot; &lt;&lt;stage &lt;&lt;&quot; time_last_stage=&quot; &lt;&lt;time_last_stage&lt;&lt;&quot; time_last_stage_rtr=&quot; &lt;&lt;time_last_stage_rtr&lt;&lt;endl;
++        Profiler::reset(&quot;MultiClassAdaBoost::test() current&quot;);
++        Profiler::start(&quot;MultiClassAdaBoost::test() current&quot;);
++        PLCHECK(last_stage&lt;=stage);
+         inherited::test(testset,test_stats,testoutputs,testcosts);
+-        Profiler::end(&quot;MultiClassAdaBoost::test&quot;);
+-	return;
++        Profiler::end(&quot;MultiClassAdaBoost::test() current&quot;);
++        Profiler::end(&quot;MultiClassAdaBoost::test()&quot;);
++        time_sum += Profiler::getStats(&quot;MultiClassAdaBoost::test() current&quot;).wall_duration;
++        last_stage=stage;
++        DBG_MODULE_LOG&lt;&lt;&quot;inherited end time_sum=&quot;&lt;&lt;time_sum&lt;&lt;&quot; time_sum_rtr=&quot;&lt;&lt;time_sum_rtr&lt;&lt;&quot; last_stage=&quot;&lt;&lt;last_stage &lt;&lt;&quot; stage=&quot; &lt;&lt;stage &lt;&lt;&quot; time_last_stage=&quot; &lt;&lt;time_last_stage&lt;&lt;&quot; time_last_stage_rtr=&quot; &lt;&lt;time_last_stage_rtr&lt;&lt;endl;
++        return;
+     }
+-    Profiler::pl_profile_start(&quot;MultiClassAdaBoost::test() part1&quot;);
++    DBG_MODULE_LOG&lt;&lt;&quot;start time_sum=&quot;&lt;&lt;time_sum&lt;&lt;&quot; time_sum_rtr=&quot;&lt;&lt;time_sum_rtr&lt;&lt;&quot; last_stage=&quot;&lt;&lt;last_stage &lt;&lt;&quot; stage=&quot; &lt;&lt;stage &lt;&lt;&quot; time_last_stage=&quot; &lt;&lt;time_last_stage&lt;&lt;&quot; time_last_stage_rtr=&quot; &lt;&lt;time_last_stage_rtr&lt;&lt;endl;
++    Profiler::reset(&quot;MultiClassAdaBoost::test() current&quot;);
++    Profiler::start(&quot;MultiClassAdaBoost::test() current&quot;);
++    //Profiler::pl_profile_start(&quot;MultiClassAdaBoost::test() part1&quot;);//cheap
+     int index=-1;
+     for(int i=0;i&lt;saved_testset.length();i++){
+         if(saved_testset[i]==testset){
+@@ -597,7 +650,7 @@
+     VMat testcosts2 = 0;
+     VMat testset1 = 0;
+     VMat testset2 = 0;
+-    if ((testcosts || test_stats )){
++    if ((testcosts || test_stats )&amp;&amp; forward_sub_learner_test_costs){
+         //comment
+         testcosts1 = VMat(new MemoryVMatrix(testset-&gt;length(),
+                                             learner1-&gt;nTestCosts()));
+@@ -624,11 +677,11 @@
+     if (test_stats){
+         
+     }
+-    Profiler::pl_profile_end(&quot;MultiClassAdaBoost::test() part1&quot;);
+-    Profiler::start(&quot;MultiClassAdaBoost::subtest&quot;);
++    //Profiler::pl_profile_end(&quot;MultiClassAdaBoost::test() part1&quot;);//cheap
++    Profiler::start(&quot;MultiClassAdaBoost::test() subtest&quot;);
+     learner1-&gt;test(testset1,test_stats1,testoutputs1,testcosts1);
+     learner2-&gt;test(testset2,test_stats2,testoutputs2,testcosts2);
+-    Profiler::end(&quot;MultiClassAdaBoost::subtest&quot;);
++    Profiler::end(&quot;MultiClassAdaBoost::test() subtest&quot;);
+ 
+     VMat my_outputs = 0;
+     VMat my_costs = 0;
+@@ -676,8 +729,11 @@
+             //            PLWARNING(&quot;will be long&quot;);
+ 	int target_index = testset-&gt;inputsize();
+ 	PLASSERT(testset-&gt;targetsize()==1);
+-        Vec costs1(learner1-&gt;nTestCosts());
+-        Vec costs2(learner1-&gt;nTestCosts());
++        Vec costs1,costs2;
++        if(forward_sub_learner_test_costs){
++            costs1.resize(learner1-&gt;nTestCosts());
++            costs2.resize(learner2-&gt;nTestCosts());
++        }
+         for(int row=0;row&lt;testset.length();row++){
+             //default version
+             //testset.getExample(row, input, target, weight);
+@@ -687,8 +743,10 @@
+             testset-&gt;getSubRow(row,target_index,tmp_target);
+ //	    Vec costs1=testcosts1(row);
+ //	    Vec costs2=testcosts2(row);
+-            testcosts1-&gt;getRow(row,costs1);
+-            testcosts2-&gt;getRow(row,costs2);
++            if(forward_sub_learner_test_costs){
++                testcosts1-&gt;getRow(row,costs1);
++                testcosts2-&gt;getRow(row,costs2);
++            }
+             //TODO??? tmp_input is empty!!!
+ 	    computeCostsFromOutputs_(tmp_input, my_outputs(row), tmp_target, costs1,
+                                      costs2, tmp_costs);
+@@ -715,8 +773,14 @@
+ 	}
+     }
+     Profiler::pl_profile_end(&quot;MultiClassAdaBoost::test() test_stats&quot;);
++    Profiler::end(&quot;MultiClassAdaBoost::test() current&quot;);
++    Profiler::end(&quot;MultiClassAdaBoost::test()&quot;);
++    
++    time_sum_rtr += Profiler::getStats(&quot;MultiClassAdaBoost::test() current&quot;).wall_duration;
+ 
+-    Profiler::end(&quot;MultiClassAdaBoost::test&quot;);
++    last_stage=stage;
++    DBG_MODULE_LOG&lt;&lt;&quot;end time_sum=&quot;&lt;&lt;time_sum&lt;&lt;&quot; time_sum_rtr=&quot;&lt;&lt;time_sum_rtr&lt;&lt;&quot; last_stage=&quot;&lt;&lt;last_stage &lt;&lt;&quot; stage=&quot; &lt;&lt;stage &lt;&lt;&quot; time_last_stage=&quot; &lt;&lt;time_last_stage&lt;&lt;&quot; time_last_stage_rtr=&quot; &lt;&lt;time_last_stage_rtr&lt;&lt;endl;
++
+ }
+ 
+ } // end of namespace PLearn
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.h	2009-01-14 21:10:44 UTC (rev 9835)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.h	2009-01-15 19:51:57 UTC (rev 9836)
+@@ -82,6 +82,13 @@
+     real test_time;
+     //! The total time passed in test()
+     real total_test_time;
++
++    mutable long time_sum;
++    mutable long time_sum_rtr;
++    mutable long time_last_stage;
++    mutable long time_last_stage_rtr;
++    mutable int last_stage;
++
+ public:
+     //#####  Public Build Options  ############################################
+ 
+@@ -92,7 +99,7 @@
+     bool forward_sub_learner_test_costs;
+ 
+     //! Did we forward the test function to the sub learner?
+-    bool forward_test;
++    uint16_t forward_test;
+ 
+     //! The learner1 and learner2 must be trained!
+     PP&lt;AdaBoost&gt; learner1;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003275.html">[Plearn-commits] r9835 - trunk/plearn_learners/meta
+</A></li>
+	<LI>Next message: <A HREF="003277.html">[Plearn-commits] r9837 - trunk/python_modules/plearn/gui_tools
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3276">[ date ]</a>
+              <a href="thread.html#3276">[ thread ]</a>
+              <a href="subject.html#3276">[ subject ]</a>
+              <a href="author.html#3276">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,241 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6791 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6791%20-%20trunk/plearn/vmat&In-Reply-To=%3C200703262057.l2QKvqk9005464%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000239.html">
+   <LINK REL="Next"  HREF="000241.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6791 - trunk/plearn/vmat</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6791%20-%20trunk/plearn/vmat&In-Reply-To=%3C200703262057.l2QKvqk9005464%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6791 - trunk/plearn/vmat">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Mon Mar 26 22:57:52 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000239.html">[Plearn-commits] r6790 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="000241.html">[Plearn-commits] r6792 - trunk/python_modules/plearn/pymake
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#240">[ date ]</a>
+              <a href="thread.html#240">[ thread ]</a>
+              <a href="subject.html#240">[ subject ]</a>
+              <a href="author.html#240">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-03-26 22:57:52 +0200 (Mon, 26 Mar 2007)
+New Revision: 6791
+
+Modified:
+   trunk/plearn/vmat/BootstrapVMatrix.cc
+   trunk/plearn/vmat/BootstrapVMatrix.h
+Log:
+- Removed 'rgen' from options, to avoid crash when having both a RNG and a seed specified at re-build
+- Got rid of 'own_seed' option in order to use the more universal 'seed' option: this may cause some tests that are not in PLearn to crash, if needed a less radical change may be done in order to preserve such tests (just ask me)
+
+
+Modified: trunk/plearn/vmat/BootstrapVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/BootstrapVMatrix.cc	2007-03-26 20:53:42 UTC (rev 6790)
++++ trunk/plearn/vmat/BootstrapVMatrix.cc	2007-03-26 20:57:52 UTC (rev 6791)
+@@ -56,22 +56,22 @@
+ // BootstrapVMatrix //
+ //////////////////////
+ BootstrapVMatrix::BootstrapVMatrix():
+-    rgen(0),
++    rgen(new PRandom()),
+     frac(0.6667),
+     n_elems(-1),
+-    own_seed(-2), // -2 = hack value while 'seed' is still there
+-    seed(0),
++    own_seed(-3), // Temporary hack value to detect use of deprecated option.
++    seed(1827),   // Default fixed seed value (safer than time-dependent).
+     shuffle(false),
+     allow_repetitions(false)
+ {}
+ 
+ BootstrapVMatrix::BootstrapVMatrix(VMat m, real the_frac, bool the_shuffle,
+                                    long the_seed, bool allow_rep):
+-    rgen(0),
++    rgen(new PRandom()),
+     frac(the_frac),
+     n_elems(-1),
+-    own_seed(the_seed),
+-    seed(0),
++    own_seed(-3),
++    seed(the_seed),
+     shuffle(the_shuffle),
+     allow_repetitions(allow_rep)
+ {
+@@ -80,17 +80,21 @@
+ }
+ 
+ BootstrapVMatrix::BootstrapVMatrix(VMat m, real the_frac, 
+-                                   PP&lt;PRandom&gt; rgen_,
++                                   PP&lt;PRandom&gt; the_rgen,
+                                    bool the_shuffle,
+                                    bool allow_rep):
+-    rgen(rgen_),
++    rgen(the_rgen),
+     frac(the_frac),
+     n_elems(-1),
+-    own_seed(0),
+-    seed(0),
++    own_seed(-3),
+     shuffle(the_shuffle),
+     allow_repetitions(allow_rep)
+ {
++    PLASSERT( the_rgen );
++    // We obtain the seed value that was actually used to initialize the Boost
++    // random number generator, to ensure this VMat is always the same after
++    // consecutive builds.
++    seed = long(the_rgen-&gt;get_the_seed());
+     this-&gt;source = m;
+     build();
+ }
+@@ -109,23 +113,18 @@
+     declareOption(ol, &quot;n_elems&quot;, &amp;BootstrapVMatrix::n_elems, OptionBase::buildoption,
+                   &quot;The absolute number of elements we keep (will override 'frac' if provided).&quot;);
+ 
+-    declareOption(ol, &quot;own_seed&quot;, &amp;BootstrapVMatrix::own_seed, OptionBase::buildoption,
+-                  &quot;The random generator seed (-1 = initialized from clock, 0 = no initialization).&quot;);
+-
+     declareOption(ol, &quot;seed&quot;, &amp;BootstrapVMatrix::seed, OptionBase::buildoption,
+-                  &quot;DEPRECATED: The random generator seed (-1 = initialized from clock, 0 = no initialization).\n&quot;
+-                  &quot;Warning: this is a global seed that may affect other PLearn objects.&quot;,
+-                  &quot;&quot;, OptionBase::deprecated_level);
++        &quot;Random generator seed (-1 = from clock and 0 = no initialization).&quot;);
+ 
+     declareOption(ol, &quot;allow_repetitions&quot;, &amp;BootstrapVMatrix::allow_repetitions, 
+                   OptionBase::buildoption,
+                   &quot;Wether examples should be allowed to appear each more than once.&quot;,
+                   &quot;&quot;, OptionBase::advanced_level);
+ 
+-    declareOption(ol, &quot;rgen&quot;, &amp;BootstrapVMatrix::rgen, 
+-                  OptionBase::buildoption,
+-                  &quot;Random generator to use.\n&quot;
+-                  &quot;N.B. use EITHER this or a seed, not both.&quot;);
++    declareOption(ol, &quot;own_seed&quot;, &amp;BootstrapVMatrix::own_seed,
++                  (OptionBase::learntoption | OptionBase::nosave),
++        &quot;DEPRECATED: old random generator seed&quot;,
++        &quot;&quot;, OptionBase::deprecated_level);
+ 
+     inherited::declareOptions(ol);
+ 
+@@ -150,36 +149,19 @@
+ {
+     if (source) 
+     {
+-        if(rgen)
+-        {
+-            if(own_seed != 0 || own_seed == -2 &amp;&amp; seed != 0 )
+-                PLERROR(&quot;PRandom::build_ : cannot specify both an rgen and a seed.&quot;);
++        // Ensure we are not using the deprecated 'own_seed' option.
++        if (own_seed != -3) {
++            PLDEPRECATED(&quot;In BootstrapVMatrix::build_ - The 'own_seed' option &quot;
++                    &quot;is deprecated: please use 'seed' instead&quot;);
++            PLASSERT( seed == 0 ); // Old default value for 'seed' was 0.
++            seed = own_seed;
++            own_seed = -3;
+         }
+-        else
+-            rgen= new PRandom(own_seed);
+-        
+-        ///***///***///*** ===&gt;
+-        // what follows should not exist anymore
+-        if (seed != 0)
+-            own_seed = -2;
+-        if (own_seed == -2) 
+-        {
+-            //PLDEPRECATED(&quot;In BootstrapVMatrix::build_ - You are using the deprecated option 'seed', &quot;
+-            //             &quot;the 'own_seed' option (the one you should use) will thus be ignored&quot;);
+-            PLERROR(&quot;In BootstrapVMatrix::build_ - You are using the deprecated option 'seed', &quot;
+-                    &quot;which is not supported anymore. &quot;
+-                    &quot;The 'own_seed' option is the one you should use.&quot;);
+-            if (seed == -1)
+-                PLearn::seed();
+-            else if (seed &gt; 0)
+-                manual_seed(seed);
+-            else if (seed != 0)
+-                PLERROR(&quot;In BootstrapVMatrix::build_ - The seed must be either -1 or &gt;= 0&quot;);
+-            shuffleElements(indices);
+-        } 
+-        // what precedes should not exist anymore
+-        ///***///***///*** &lt;===
+ 
++        // Initialize RNG.
++        rgen-&gt;manual_seed(seed);
++
++        // Create bootstrap sample.
+         int l= source.length();
+         int nsamp= (n_elems &gt;= 0) ? n_elems : int(round(frac*l));
+         if(allow_repetitions)
+@@ -196,8 +178,6 @@
+             if (!shuffle) sortElements(indices);
+         }
+ 
+-        //perr &lt;&lt; indices &lt;&lt; endl;
+-
+         // Because we changed the indices, a rebuild may be needed.
+         inherited::build();
+     }
+
+Modified: trunk/plearn/vmat/BootstrapVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/BootstrapVMatrix.h	2007-03-26 20:53:42 UTC (rev 6790)
++++ trunk/plearn/vmat/BootstrapVMatrix.h	2007-03-26 20:57:52 UTC (rev 6791)
+@@ -72,12 +72,12 @@
+     BootstrapVMatrix();
+ 
+     //! Construct a boostrap of another VMatrix.
+-    //! Note: 'the_seed' sets the new 'own_seed' option, not the old 'seed' one.
+-    BootstrapVMatrix(VMat m, real frac, bool shuffle = false, long the_seed = -2,
++    BootstrapVMatrix(VMat m, real frac, bool shuffle = false,
++                     long the_seed = 1827,
+                      bool allow_rep= false);
+ 
+-    //! Constructor which takes an rgen instead of a seed
+-    BootstrapVMatrix(VMat m, real frac, PP&lt;PRandom&gt; rgen_,
++    //! Constructor which takes directly a PRandom object instead of a seed.
++    BootstrapVMatrix(VMat m, real frac, PP&lt;PRandom&gt; the_rgen,
+                      bool shuffle = false,
+                      bool allow_rep= false);
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000239.html">[Plearn-commits] r6790 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="000241.html">[Plearn-commits] r6792 - trunk/python_modules/plearn/pymake
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#240">[ date ]</a>
+              <a href="thread.html#240">[ thread ]</a>
+              <a href="subject.html#240">[ subject ]</a>
+              <a href="author.html#240">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

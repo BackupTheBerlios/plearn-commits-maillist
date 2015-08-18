@@ -1,0 +1,201 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8547 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8547%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200802202001.m1KK15wP000694%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001994.html">
+   <LINK REL="Next"  HREF="001996.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8547 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8547%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200802202001.m1KK15wP000694%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8547 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Wed Feb 20 21:01:05 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001994.html">[Plearn-commits] r8546 - trunk/plearn_learners/generic
+</A></li>
+        <LI>Next message: <A HREF="001996.html">[Plearn-commits] r8548 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1995">[ date ]</a>
+              <a href="thread.html#1995">[ thread ]</a>
+              <a href="subject.html#1995">[ subject ]</a>
+              <a href="author.html#1995">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-02-20 21:01:04 +0100 (Wed, 20 Feb 2008)
+New Revision: 8547
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+Log:
+- Can now ask for more than one sample at a time
+- Can now obtain samples even if there is nothing readily available to initialize the Gibbs chain (in which case we start from zero)
+- Added progress bar when during Gibbs sampling, for verbosity &gt;= 2
+- Gibbs_step is now properly reset in forget() and when we restart the Gibbs chain
+- Added some safety asserts
+
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2008-02-20 19:57:42 UTC (rev 8546)
++++ trunk/plearn_learners/online/RBMModule.cc	2008-02-20 20:01:04 UTC (rev 8547)
+@@ -1102,27 +1102,65 @@
+         }
+         else // sample unconditionally: Gibbs sample after k steps
+         {
++            // Find out how many samples we want.
++            int n_samples = -1;
++            if (visible_sample_is_output)
++                n_samples = visible_sample-&gt;length();
++            if (visible_expectation_is_output) {
++                PLASSERT( n_samples == -1 ||
++                          n_samples == visible_expectation-&gt;length() );
++                n_samples = visible_expectation-&gt;length();
++            }
++            if (hidden_sample_is_output) {
++                PLASSERT( n_samples == -1 ||
++                          n_samples == hidden_sample-&gt;length() );
++                n_samples = hidden_sample-&gt;length();
++            }
++            PLCHECK( n_samples &gt; 0 );
++            
+             // the visible_layer-&gt;expectations contain the &quot;state&quot; from which we
+             // start or continue the chain
+-            if (visible_layer-&gt;samples.isEmpty())
++            if (visible_layer-&gt;samples.length() != n_samples)
+             {
+-                if (visible &amp;&amp; !visible_is_output)
++                // There are no samples already available to continue the
++                // chain: we restart it.
++                Gibbs_step = 0;
++                if (visible &amp;&amp; !visible_is_output
++                            &amp;&amp; visible-&gt;length() == n_samples)
+                     visible_layer-&gt;samples &lt;&lt; *visible;
+-                else if (!visible_layer-&gt;getExpectations().isEmpty())
++                else if (visible_layer-&gt;getExpectations().length() ==
++                                                                    n_samples)
+                     visible_layer-&gt;samples &lt;&lt; visible_layer-&gt;getExpectations();
+-                else if (!hidden_layer-&gt;samples.isEmpty())
++                else if (hidden_layer-&gt;samples.length() == n_samples)
+                     sampleVisibleGivenHidden(hidden_layer-&gt;samples);
+-                else if (!hidden_layer-&gt;getExpectations().isEmpty())
++                else if (hidden_layer-&gt;getExpectations().length() == n_samples)
+                     sampleVisibleGivenHidden(hidden_layer-&gt;getExpectations());
++                else {
++                    // There is no available data to initialize the chain: we
++                    // initialize it with a zero vector.
++                    Mat&amp; zero_vector = visible_layer-&gt;samples;
++                    PLASSERT( zero_vector.width() &gt; 0 );
++                    zero_vector.resize(n_samples, zero_vector.width());
++                    zero_vector.clear();
++                }
++                PLASSERT( visible_layer-&gt;samples.length() == n_samples );
+             }
+             int min_n = max(Gibbs_step+n_Gibbs_steps_per_generated_sample,
+                             min_n_Gibbs_steps);
+             //cout &lt;&lt; &quot;Gibbs sampling &quot; &lt;&lt; Gibbs_step+1;
++            PP&lt;ProgressBar&gt; pb =
++                verbosity &gt;= 2 ? new ProgressBar(&quot;Gibbs sampling&quot;,
++                                                 min_n - Gibbs_step)
++                               : NULL;
+             for (;Gibbs_step&lt;min_n;Gibbs_step++)
+             {
+                 sampleHiddenGivenVisible(visible_layer-&gt;samples);
+                 sampleVisibleGivenHidden(hidden_layer-&gt;samples);
++                if (pb)
++                    pb-&gt;updateone();
+             }
++            if (pb)
++                pb = NULL;
+             hidden_activations_are_computed = false;
+             //cout &lt;&lt; &quot; -&gt; &quot; &lt;&lt; Gibbs_step &lt;&lt; endl;
+         }
+@@ -1137,6 +1175,8 @@
+         if (visible_sample &amp;&amp; visible_sample_is_output)
+             // provide sample of the visible units
+         {
++            PLASSERT( visible_sample-&gt;length() ==
++                      visible_layer-&gt;samples.length() );
+             visible_sample-&gt;resize(visible_layer-&gt;samples.length(),
+                                    visible_layer-&gt;samples.width());
+             *visible_sample &lt;&lt; visible_layer-&gt;samples;
+@@ -1144,6 +1184,8 @@
+         if (hidden_sample &amp;&amp; hidden_sample_is_output)
+             // provide sample of the hidden units
+         {
++            PLASSERT( hidden_sample-&gt;length() ==
++                      hidden_layer-&gt;samples.length() );
+             hidden_sample-&gt;resize(hidden_layer-&gt;samples.length(),
+                                   hidden_layer-&gt;samples.width());
+             *hidden_sample &lt;&lt; hidden_layer-&gt;samples;
+@@ -1152,18 +1194,23 @@
+             // provide expectation of the visible units
+         {
+             const Mat&amp; to_store = visible_layer-&gt;getExpectations();
++            PLASSERT( visible_expectation-&gt;length() == to_store.length() );
+             visible_expectation-&gt;resize(to_store.length(),
+                                         to_store.width());
+             *visible_expectation &lt;&lt; to_store;
+         }
+         if (hidden &amp;&amp; hidden_is_output)
+         {
++            PLASSERT( hidden-&gt;length() ==
++                      hidden_layer-&gt;getExpectations().length() );
+             hidden-&gt;resize(hidden_layer-&gt;getExpectations().length(),
+                            hidden_layer-&gt;getExpectations().width());
+             *hidden &lt;&lt; hidden_layer-&gt;getExpectations();
+         }
+         if (hidden_act &amp;&amp; hidden_act_is_output)
+         {
++            PLASSERT( hidden_act-&gt;length() ==
++                      hidden_layer-&gt;activations.length() );
+             hidden_act-&gt;resize(hidden_layer-&gt;activations.length(),
+                                hidden_layer-&gt;activations.width());
+             *hidden_act &lt;&lt; hidden_layer-&gt;activations;
+@@ -1966,6 +2013,7 @@
+     if (reconstruction_connection &amp;&amp; reconstruction_connection != connection)
+         // We avoid to call forget() twice if the connections are the same.
+         reconstruction_connection-&gt;forget();
++    Gibbs_step = 0;
+ }
+ 
+ //////////////////
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001994.html">[Plearn-commits] r8546 - trunk/plearn_learners/generic
+</A></li>
+	<LI>Next message: <A HREF="001996.html">[Plearn-commits] r8548 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1995">[ date ]</a>
+              <a href="thread.html#1995">[ thread ]</a>
+              <a href="subject.html#1995">[ subject ]</a>
+              <a href="author.html#1995">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

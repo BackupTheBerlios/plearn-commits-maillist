@@ -1,0 +1,185 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7514 - in trunk/plearn_learners/online: .	test/ModuleTester
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7514%20-%20in%20trunk/plearn_learners/online%3A%20.%0A%09test/ModuleTester&In-Reply-To=%3C200706041403.l54E3YXV019006%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000962.html">
+   <LINK REL="Next"  HREF="000964.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7514 - in trunk/plearn_learners/online: .	test/ModuleTester</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7514%20-%20in%20trunk/plearn_learners/online%3A%20.%0A%09test/ModuleTester&In-Reply-To=%3C200706041403.l54E3YXV019006%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7514 - in trunk/plearn_learners/online: .	test/ModuleTester">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Mon Jun  4 16:03:34 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000962.html">[Plearn-commits] r7513 - in	trunk/plearn_learners/online/test/ModuleTester: .	.pytest/PL_ModuleTester_RBM/expected_results
+</A></li>
+        <LI>Next message: <A HREF="000964.html">[Plearn-commits] r7515 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#963">[ date ]</a>
+              <a href="thread.html#963">[ thread ]</a>
+              <a href="subject.html#963">[ subject ]</a>
+              <a href="author.html#963">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-06-04 16:03:33 +0200 (Mon, 04 Jun 2007)
+New Revision: 7514
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+   trunk/plearn_learners/online/RBMModule.h
+   trunk/plearn_learners/online/test/ModuleTester/PL_ModuleTester_RBM.pyplearn
+Log:
+Changed default computation of CD gradient w.r.t. external hidden biases: the default behavior is now to use the standard CD gradient instead of the 'true' one. This is to ensure consistent behavior between external and hidden biases.
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-06-04 13:55:39 UTC (rev 7513)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-06-04 14:03:33 UTC (rev 7514)
+@@ -101,8 +101,9 @@
+     Gibbs_step(0),
+     log_partition_function(0),
+     partition_function_is_stale(true),
++    standard_cd_grad(true),
++    standard_cd_bias_grad(true),
+     standard_cd_weights_grad(true),
+-    standard_cd_grad(true),
+     hidden_bias(NULL),
+     weights(NULL),
+     hidden_act(NULL),
+@@ -155,6 +156,15 @@
+         &quot;and connections. Currently, this option works only with layers of\n&quot;
+         &quot;the type 'RBMBinomialLayer', connected by a 'RBMMatrixConnection'.&quot;);
+ 
++    declareOption(ol, &quot;standard_cd_bias_grad&quot;,
++                  &amp;RBMModule::standard_cd_bias_grad,
++                  OptionBase::buildoption,
++        &quot;This option is only used when biases of the hidden layer are given\n&quot;
++        &quot;through the 'hidden_bias' port. When this is the case, the gradient\n&quot;
++        &quot;of contrastive divergence w.r.t. these biases is either computed:\n&quot;
++        &quot;- by the usual formula if 'standard_cd_bias_grad' is true\n&quot;
++        &quot;- by the true gradient if 'standard_cd_bias_grad' is false.&quot;);
++
+     declareOption(ol, &quot;standard_cd_weights_grad&quot;,
+                   &amp;RBMModule::standard_cd_weights_grad,
+                   OptionBase::buildoption,
+@@ -319,6 +329,10 @@
+                     &quot;update will be performed AND no contrastive divergence &quot;
+                     &quot;gradient will be propagated.&quot;);
+     }
++
++    PLCHECK_MSG(!(!standard_cd_grad &amp;&amp; standard_cd_bias_grad), &quot;You cannot &quot;
++            &quot;compute the standard CD gradient w.r.t. external hidden bias and &quot;
++            &quot;use the 'true' CD gradient w.r.t. internal hidden bias&quot;);
+ }
+ 
+ ///////////
+@@ -1229,6 +1243,7 @@
+                     real p_i_n = (*negative_phase_hidden_expectations)(k, i);
+                     real a_i_n = (*negative_phase_hidden_activations)(k, i);
+                     (*hidden_bias_g)(k, i) +=
++                        standard_cd_bias_grad ? p_i_p - p_i_n :
+                         - p_i_p * (1 - p_i_p) * a_i_p + p_i_p    // Pos. phase
+                      -( - p_i_n * (1 - p_i_n) * a_i_n + p_i_n ); // Neg. phase
+ 
+
+Modified: trunk/plearn_learners/online/RBMModule.h
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.h	2007-06-04 13:55:39 UTC (rev 7513)
++++ trunk/plearn_learners/online/RBMModule.h	2007-06-04 14:03:33 UTC (rev 7514)
+@@ -90,9 +90,10 @@
+     real log_partition_function;
+     bool partition_function_is_stale;
+ 
++    bool standard_cd_grad;
++    bool standard_cd_bias_grad;
+     bool standard_cd_weights_grad;
+     
+-    bool standard_cd_grad;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+
+Modified: trunk/plearn_learners/online/test/ModuleTester/PL_ModuleTester_RBM.pyplearn
+===================================================================
+--- trunk/plearn_learners/online/test/ModuleTester/PL_ModuleTester_RBM.pyplearn	2007-06-04 13:55:39 UTC (rev 7513)
++++ trunk/plearn_learners/online/test/ModuleTester/PL_ModuleTester_RBM.pyplearn	2007-06-04 14:03:33 UTC (rev 7514)
+@@ -3,7 +3,7 @@
+ from plearn.pyplearn import pl
+ 
+ def rbm(cd_learning_rate, grad_learning_rate, visible_size, hidden_size, name,
+-        compute_cd = False, standard_cd_weights_grad = True):
++        compute_cd = False, standard_cd_weights_grad = True, standard_cd_bias_grad = True):
+     # Return a standard binomial RBM.
+     return pl.RBMModule(
+             name = name,
+@@ -13,6 +13,7 @@
+             visible_layer = pl.RBMBinomialLayer(size = visible_size),
+             hidden_layer = pl.RBMBinomialLayer(size = hidden_size),
+             standard_cd_weights_grad = standard_cd_weights_grad,
++            standard_cd_bias_grad = standard_cd_bias_grad,
+             connection = pl.RBMMatrixConnection(
+                 down_size = visible_size,
+                 up_size = hidden_size))
+@@ -76,19 +77,19 @@
+ 
+     # Test of gradient of contrastive divergence w.r.t. bias.
+     pl.ModuleTester(
+-            module = rbm(1e-3, 0, 10, 20, 'rbm', True),
++            module = rbm(1e-3, 0, 10, 20, 'rbm', True, True, False),
+             configurations = [ conf_bias_cd ],
+             min_out_grad = 1,
+             max_out_grad = 1),
+ 
+     # Test of backpropagation gradient w.r.t. bias.
+     pl.ModuleTester(
+-            module = rbm(0, 1e-3, 10, 20, 'rbm'),
++            module = rbm(0, 1e-3, 10, 20, 'rbm', False, True, False),
+             configurations = [ conf_bias_grad ]),
+ 
+     # Test of both backpropagation and contrastive divergence gradients w.r.t. bias.
+     pl.ModuleTester(
+-            module = rbm(1e-2, 1e-3, 10, 20, 'rbm', True),
++            module = rbm(1e-2, 1e-3, 10, 20, 'rbm', True, True, False),
+             configurations = [ conf_bias_both ],
+             min_out_grad = 1,
+             max_out_grad = 1),
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000962.html">[Plearn-commits] r7513 - in	trunk/plearn_learners/online/test/ModuleTester: .	.pytest/PL_ModuleTester_RBM/expected_results
+</A></li>
+	<LI>Next message: <A HREF="000964.html">[Plearn-commits] r7515 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#963">[ date ]</a>
+              <a href="thread.html#963">[ thread ]</a>
+              <a href="subject.html#963">[ subject ]</a>
+              <a href="author.html#963">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,541 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8633 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8633%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200803062007.m26K7twQ026965%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002080.html">
+   <LINK REL="Next"  HREF="002082.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8633 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8633%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200803062007.m26K7twQ026965%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8633 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Thu Mar  6 21:07:55 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002080.html">[Plearn-commits] r8632 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="002082.html">[Plearn-commits] r8634 - in trunk/plearn: misc vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2081">[ date ]</a>
+              <a href="thread.html#2081">[ thread ]</a>
+              <a href="subject.html#2081">[ subject ]</a>
+              <a href="author.html#2081">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-03-06 21:07:55 +0100 (Thu, 06 Mar 2008)
+New Revision: 8633
+
+Modified:
+   trunk/plearn_learners/online/RBMGaussianLayer.cc
+   trunk/plearn_learners/online/RBMGaussianLayer.h
+Log:
+Added an option to fix the quad_coeffs to a particular standard deviation.
+
+
+Modified: trunk/plearn_learners/online/RBMGaussianLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMGaussianLayer.cc	2008-03-06 20:01:53 UTC (rev 8632)
++++ trunk/plearn_learners/online/RBMGaussianLayer.cc	2008-03-06 20:07:55 UTC (rev 8633)
+@@ -55,6 +55,7 @@
+     min_quad_coeff( 0. ),
+     share_quad_coeff( false ),
+     size_quad_coeff( 0 ),
++    fixed_std_deviation( -1 ),
+     sigma_is_up_to_date( false )
+ {
+ }
+@@ -64,6 +65,7 @@
+     min_quad_coeff( 0. ),
+     share_quad_coeff( false ),
+     size_quad_coeff( 0 ),
++    fixed_std_deviation( -1 ),
+     quad_coeff( the_size, 1. ), // or 1./M_SQRT2 ?
+     quad_coeff_pos_stats( the_size ),
+     quad_coeff_neg_stats( the_size ),
+@@ -83,6 +85,7 @@
+                                     bool do_share_quad_coeff ) :
+     inherited( the_learning_rate ),
+     min_quad_coeff( 0. ),
++    fixed_std_deviation( -1 ),
+     quad_coeff_pos_stats( the_size ),
+     quad_coeff_neg_stats( the_size ),
+     sigma_is_up_to_date( false )
+@@ -326,7 +329,11 @@
+ void RBMGaussianLayer::forget()
+ {
+     clearStats();
+-    quad_coeff.fill( 1. );
++
++    if( fixed_std_deviation &gt; 0 )
++        quad_coeff.fill( 1 / ( M_SQRT2 * fixed_std_deviation ) );
++    else
++        quad_coeff.fill( 1. );
+     inherited::forget();
+ }
+ 
+@@ -346,7 +353,15 @@
+                   &quot;Suitable to avoid unstability (overfitting)  in cases where\n&quot;
+                   &quot;all the units have the same 'meaning'  (pixels of an image)&quot;);
+ 
++    declareOption(ol, &quot;fixed_std_deviation&quot;, &amp;RBMGaussianLayer::fixed_std_deviation,
++                  OptionBase::buildoption,
++                  &quot;Value for the usually learned standard deviation, &quot;
++                  &quot;if it should not be learned.\n&quot;
++                  &quot;This will fix the value of the quad coeffs to the &quot;
++                  &quot;appropriate value.\n&quot;
++                  &quot;If &lt; 0, then this option is ignored.\n&quot;);
+ 
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -368,6 +383,15 @@
+         needs_forget = true;
+     }
+ 
++    if ( fixed_std_deviation &gt; 0 &amp;&amp; share_quad_coeff )
++    {
++        if( share_quad_coeff ) 
++            PLERROR(&quot;In RBMGaussianLayer::build_(): fixed_std_deviation should not &quot;
++                    &quot;be &gt; 0 when share_quad_coeff is true.&quot;);
++        quad_coeff.fill( 1 / ( M_SQRT2 * fixed_std_deviation ) );
++    }
++
++
+     quad_coeff_pos_stats.resize( size );
+     quad_coeff_neg_stats.resize( size );
+ 
+@@ -398,103 +422,112 @@
+ 
+ void RBMGaussianLayer::accumulatePosStats( const Vec&amp; pos_values )
+ {
+-    if (share_quad_coeff)
+-       for( int i=0 ; i&lt;size ; i++ )
+-       {
++    if ( fixed_std_deviation &lt;= 0 )
++    {
++        if (share_quad_coeff)
++            for( int i=0 ; i&lt;size ; i++ )
++            {
+            real x_i = pos_values[i];
+            quad_coeff_pos_stats[i] += 2 * quad_coeff[0] * x_i * x_i;
+-       }
+-    else
+-       for( int i=0 ; i&lt;size ; i++ )
+-       {
+-           real x_i = pos_values[i];
+-           quad_coeff_pos_stats[i] += 2 * quad_coeff[i] * x_i * x_i;
+-       }
++            }
++        else
++            for( int i=0 ; i&lt;size ; i++ )
++            {
++                real x_i = pos_values[i];
++                quad_coeff_pos_stats[i] += 2 * quad_coeff[i] * x_i * x_i;
++            }
++    }
+ 
+     inherited::accumulatePosStats( pos_values );
+ }
+ 
+ void RBMGaussianLayer::accumulateNegStats( const Vec&amp; neg_values )
+ {
+-    if (share_quad_coeff)
+-        for( int i=0 ; i&lt;size ; i++ )
+-        {
+-            real x_i = neg_values[i];
+-            quad_coeff_neg_stats[i] += 2 * quad_coeff[0] * x_i * x_i;
+-        }
+-    else
+-        for( int i=0 ; i&lt;size ; i++ )
+-        {
+-            real x_i = neg_values[i];
+-            quad_coeff_neg_stats[i] += 2 * quad_coeff[i] * x_i * x_i;
+-        }
+-    inherited::accumulateNegStats( neg_values );
+-}
+-
+-void RBMGaussianLayer::update()
+-{
+-    // quad_coeff -= learning_rate * (quad_coeff_pos_stats/pos_count
+-    //                                - quad_coeff_neg_stats/neg_count)
+-    real pos_factor = -learning_rate / pos_count;
+-    real neg_factor = learning_rate / neg_count;
+-
+-    real* a = quad_coeff.data();
+-    real* aps = quad_coeff_pos_stats.data();
+-    real* ans = quad_coeff_neg_stats.data();
+-
+-    if( momentum == 0. )
++    if ( fixed_std_deviation &lt;= 0 )
+     {
+-        if(share_quad_coeff)
+-        {
+-            real update=0;
++        if (share_quad_coeff)
+             for( int i=0 ; i&lt;size ; i++ )
+             {
+-                update += pos_factor * aps[i] + neg_factor * ans[i];
++                real x_i = neg_values[i];
++                quad_coeff_neg_stats[i] += 2 * quad_coeff[0] * x_i * x_i;
+             }
+-            a[0] += update/(real)size;
+-            if( a[0] &lt; min_quad_coeff )
+-                a[0] = min_quad_coeff;
+-        }
+         else
+             for( int i=0 ; i&lt;size ; i++ )
+             {
+-                a[i] += pos_factor * aps[i] + neg_factor * ans[i];
+-                if( a[i] &lt; min_quad_coeff )
+-                    a[i] = min_quad_coeff;
++                real x_i = neg_values[i];
++                quad_coeff_neg_stats[i] += 2 * quad_coeff[i] * x_i * x_i;
+             }
+     }
+-    else
++    inherited::accumulateNegStats( neg_values );
++}
++
++void RBMGaussianLayer::update()
++{
++    // quad_coeff -= learning_rate * (quad_coeff_pos_stats/pos_count
++    //                                - quad_coeff_neg_stats/neg_count)
++    if ( fixed_std_deviation &lt;= 0 )
+     {
+-        if(share_quad_coeff)
++        real pos_factor = -learning_rate / pos_count;
++        real neg_factor = learning_rate / neg_count;
++        
++        real* a = quad_coeff.data();
++        real* aps = quad_coeff_pos_stats.data();
++        real* ans = quad_coeff_neg_stats.data();
++
++        if( momentum == 0. )
+         {
+-            quad_coeff_inc.resize( 1 );
+-            real* ainc = quad_coeff_inc.data();
+-            for( int i=0 ; i&lt;size ; i++ )
++            if(share_quad_coeff)
+             {
+-                ainc[0] = momentum*ainc[0] + pos_factor*aps[i] + neg_factor*ans[i];
+-                ainc[0] /= (real)size;
+-                a[0] += ainc[0];
++                real update=0;
++                for( int i=0 ; i&lt;size ; i++ )
++                {
++                    update += pos_factor * aps[i] + neg_factor * ans[i];
++                }
++                a[0] += update/(real)size;
++                if( a[0] &lt; min_quad_coeff )
++                    a[0] = min_quad_coeff;
+             }
+-            if( a[0] &lt; min_quad_coeff )
+-                a[0] = min_quad_coeff;
++            else
++                for( int i=0 ; i&lt;size ; i++ )
++                {
++                    a[i] += pos_factor * aps[i] + neg_factor * ans[i];
++                    if( a[i] &lt; min_quad_coeff )
++                        a[i] = min_quad_coeff;
++                }
+         }
+         else
+         {
+-            quad_coeff_inc.resize( size );
+-            real* ainc = quad_coeff_inc.data();
+-            for( int i=0 ; i&lt;size ; i++ )
++            if(share_quad_coeff)
+             {
+-                ainc[i] = momentum*ainc[i] + pos_factor*aps[i] + neg_factor*ans[i];
+-                a[i] += ainc[i];
+-                if( a[i] &lt; min_quad_coeff )
+-                    a[i] = min_quad_coeff;
++                quad_coeff_inc.resize( 1 );
++                real* ainc = quad_coeff_inc.data();
++                for( int i=0 ; i&lt;size ; i++ )
++                {
++                    ainc[0] = momentum*ainc[0] + pos_factor*aps[i] + neg_factor*ans[i];
++                    ainc[0] /= (real)size;
++                    a[0] += ainc[0];
++                }
++                if( a[0] &lt; min_quad_coeff )
++                    a[0] = min_quad_coeff;
+             }
++            else
++            {
++                quad_coeff_inc.resize( size );
++                real* ainc = quad_coeff_inc.data();
++                for( int i=0 ; i&lt;size ; i++ )
++                {
++                    ainc[i] = momentum*ainc[i] + pos_factor*aps[i] + neg_factor*ans[i];
++                    a[i] += ainc[i];
++                    if( a[i] &lt; min_quad_coeff )
++                        a[i] = min_quad_coeff;
++                }
++            }
+         }
++
++        // We will need to recompute sigma
++        sigma_is_up_to_date = false;
+     }
+-
+-    // We will need to recompute sigma
+-    sigma_is_up_to_date = false;
+-
++    
+     // will update the bias, and clear the statistics
+     inherited::update();
+ }
+@@ -503,65 +536,68 @@
+ {
+     // quad_coeff[i] -= learning_rate * 2 * quad_coeff[i] * (pos_values[i]^2
+     //                                                       - neg_values[i]^2)
+-    real two_lr = 2 * learning_rate;
+-    real* a = quad_coeff.data();
+-    real* pv = pos_values.data();
+-    real* nv = neg_values.data();
++    if ( fixed_std_deviation &lt;= 0 )
++    {
++        real two_lr = 2 * learning_rate;
++        real* a = quad_coeff.data();
++        real* pv = pos_values.data();
++        real* nv = neg_values.data();
+ 
+-    if( momentum == 0. )
+-    {
+-        if (share_quad_coeff)
++        if( momentum == 0. )
+         {
+-            real update=0;
+-            for( int i=0 ; i&lt;size ; i++ )
++            if (share_quad_coeff)
+             {
+-                update += two_lr * a[0] * (nv[i]*nv[i] - pv[i]*pv[i]);
++                real update=0;
++                for( int i=0 ; i&lt;size ; i++ )
++                {
++                    update += two_lr * a[0] * (nv[i]*nv[i] - pv[i]*pv[i]);
++                }
++                a[0] += update/(real)size;
++                if( a[0] &lt; min_quad_coeff )
++                    a[0] = min_quad_coeff;
+             }
+-            a[0] += update/(real)size;
+-            if( a[0] &lt; min_quad_coeff )
+-                a[0] = min_quad_coeff;
++            else
++                for( int i=0 ; i&lt;size ; i++ )
++                {
++                    a[i] += two_lr * a[i] * (nv[i]*nv[i] - pv[i]*pv[i]);
++                    if( a[i] &lt; min_quad_coeff )
++                        a[i] = min_quad_coeff;
++                }
+         }
+         else
+-            for( int i=0 ; i&lt;size ; i++ )
+-            {
+-                a[i] += two_lr * a[i] * (nv[i]*nv[i] - pv[i]*pv[i]);
+-                if( a[i] &lt; min_quad_coeff )
+-                    a[i] = min_quad_coeff;
+-            }
+-    }
+-    else
+-    {
+-        real* ainc = quad_coeff_inc.data();
+-        if(share_quad_coeff)
+         {
+-            quad_coeff_inc.resize( 1 );
+-            for( int i=0 ; i&lt;size ; i++ )
++            real* ainc = quad_coeff_inc.data();
++            if(share_quad_coeff)
+             {
+-                ainc[0] = momentum*ainc[0]
+-                    + two_lr * a[0] * (nv[i]*nv[i] - pv[i]*pv[i]);
+-                ainc[0] /= (real)size;
+-                a[0] += ainc[0];
++                quad_coeff_inc.resize( 1 );
++                for( int i=0 ; i&lt;size ; i++ )
++                {
++                    ainc[0] = momentum*ainc[0]
++                        + two_lr * a[0] * (nv[i]*nv[i] - pv[i]*pv[i]);
++                    ainc[0] /= (real)size;
++                    a[0] += ainc[0];
++                }
++                if( a[0] &lt; min_quad_coeff )
++                    a[0] = min_quad_coeff;
+             }
+-            if( a[0] &lt; min_quad_coeff )
+-                a[0] = min_quad_coeff;
+-        }
+-        else
+-        {
+-            quad_coeff_inc.resize( size );
+-            for( int i=0 ; i&lt;size ; i++ )
++            else
+             {
+-                ainc[i] = momentum*ainc[i]
+-                    + two_lr * a[i] * (nv[i]*nv[i] - pv[i]*pv[i]);
+-                a[i] += ainc[i];
+-                if( a[i] &lt; min_quad_coeff )
+-                    a[i] = min_quad_coeff;
++                quad_coeff_inc.resize( size );
++                for( int i=0 ; i&lt;size ; i++ )
++                {
++                    ainc[i] = momentum*ainc[i]
++                        + two_lr * a[i] * (nv[i]*nv[i] - pv[i]*pv[i]);
++                    a[i] += ainc[i];
++                    if( a[i] &lt; min_quad_coeff )
++                        a[i] = min_quad_coeff;
++                }
+             }
+         }
++
++        // We will need to recompute sigma
++        sigma_is_up_to_date = false;
+     }
+-
+-    // We will need to recompute sigma
+-    sigma_is_up_to_date = false;
+-
++    
+     // update the bias
+     inherited::update( pos_values, neg_values );
+ }
+@@ -577,46 +613,48 @@
+ 
+     // quad_coeff[i] -= learning_rate * 2 * quad_coeff[i] * (pos_values[i]^2
+     //                                                       - neg_values[i]^2)
++    if ( fixed_std_deviation &lt;= 0 )
++    {
++        real two_lr = 2 * learning_rate / batch_size;
++        real* a = quad_coeff.data();
+ 
+-    real two_lr = 2 * learning_rate / batch_size;
+-    real* a = quad_coeff.data();
+-
+-    if( momentum == 0. )
+-    {
+-        if (share_quad_coeff)
+-            for( int k=0; k&lt;batch_size; k++ )
+-            {
+-                real *pv_k = pos_values[k];
+-                real *nv_k = neg_values[k];
+-                real update=0;
+-                for( int i=0; i&lt;size; i++ )
++        if( momentum == 0. )
++        {
++            if (share_quad_coeff)
++                for( int k=0; k&lt;batch_size; k++ )
+                 {
+-                    update += two_lr * a[0] * (nv_k[i]*nv_k[i] - pv_k[i]*pv_k[i]);
++                    real *pv_k = pos_values[k];
++                    real *nv_k = neg_values[k];
++                    real update=0;
++                    for( int i=0; i&lt;size; i++ )
++                    {
++                        update += two_lr * a[0] * (nv_k[i]*nv_k[i] - pv_k[i]*pv_k[i]);
++                    }
++                    a[0] += update/(real)size;
++                    if( a[0] &lt; min_quad_coeff )
++                        a[0] = min_quad_coeff;
+                 }
+-                a[0] += update/(real)size;
+-                if( a[0] &lt; min_quad_coeff )
+-                    a[0] = min_quad_coeff;
+-            }
+-        else
+-            for( int k=0; k&lt;batch_size; k++ )
+-            {
+-                real *pv_k = pos_values[k];
+-                real *nv_k = neg_values[k];
+-                for( int i=0; i&lt;size; i++ )
++            else
++                for( int k=0; k&lt;batch_size; k++ )
+                 {
+-                    a[i] += two_lr * a[i] * (nv_k[i]*nv_k[i] - pv_k[i]*pv_k[i]);
+-                    if( a[i] &lt; min_quad_coeff )
+-                        a[i] = min_quad_coeff;
++                    real *pv_k = pos_values[k];
++                    real *nv_k = neg_values[k];
++                    for( int i=0; i&lt;size; i++ )
++                    {
++                        a[i] += two_lr * a[i] * (nv_k[i]*nv_k[i] - pv_k[i]*pv_k[i]);
++                        if( a[i] &lt; min_quad_coeff )
++                            a[i] = min_quad_coeff;
++                    }
+                 }
+-            }
++        }
++        else
++            PLCHECK_MSG( false,
++                         &quot;momentum and minibatch are not compatible yet&quot; );
++
++        // We will need to recompute sigma
++        sigma_is_up_to_date = false;
+     }
+-    else
+-        PLCHECK_MSG( false,
+-                     &quot;momentum and minibatch are not compatible yet&quot; );
+ 
+-    // We will need to recompute sigma
+-    sigma_is_up_to_date = false;
+-
+     // Update the bias
+     inherited::update( pos_values, neg_values );
+ }
+
+Modified: trunk/plearn_learners/online/RBMGaussianLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMGaussianLayer.h	2008-03-06 20:01:53 UTC (rev 8632)
++++ trunk/plearn_learners/online/RBMGaussianLayer.h	2008-03-06 20:07:55 UTC (rev 8633)
+@@ -64,6 +64,10 @@
+     //! or 1 when share_quad_coeff is True
+     int size_quad_coeff;
+ 
++    //! Value for the usually learned standard deviation, if it should not be learned.
++    //! This will fix the value of the quad coeffs to the appropriate value.
++    //! If &lt; 0, then this option is ignored.
++    real fixed_std_deviation;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002080.html">[Plearn-commits] r8632 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="002082.html">[Plearn-commits] r8634 - in trunk/plearn: misc vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2081">[ date ]</a>
+              <a href="thread.html#2081">[ thread ]</a>
+              <a href="subject.html#2081">[ subject ]</a>
+              <a href="author.html#2081">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

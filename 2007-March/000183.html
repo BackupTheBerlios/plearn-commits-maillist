@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6734 - in trunk: plearn/math	plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6734%20-%20in%20trunk%3A%20plearn/math%0A%09plearn_learners/online&In-Reply-To=%3C200703151317.l2FDH0R0032596%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000182.html">
+   <LINK REL="Next"  HREF="000184.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6734 - in trunk: plearn/math	plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6734%20-%20in%20trunk%3A%20plearn/math%0A%09plearn_learners/online&In-Reply-To=%3C200703151317.l2FDH0R0032596%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6734 - in trunk: plearn/math	plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Thu Mar 15 14:17:00 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000182.html">[Plearn-commits] r6733 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="000184.html">[Plearn-commits] r6735 - trunk/doc
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#183">[ date ]</a>
+              <a href="thread.html#183">[ thread ]</a>
+              <a href="subject.html#183">[ subject ]</a>
+              <a href="author.html#183">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-03-15 14:16:59 +0100 (Thu, 15 Mar 2007)
+New Revision: 6734
+
+Modified:
+   trunk/plearn/math/TMat_maths_impl.h
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+Log:
+
+
+Modified: trunk/plearn/math/TMat_maths_impl.h
+===================================================================
+--- trunk/plearn/math/TMat_maths_impl.h	2007-03-15 02:04:25 UTC (rev 6733)
++++ trunk/plearn/math/TMat_maths_impl.h	2007-03-15 13:16:59 UTC (rev 6734)
+@@ -2711,21 +2711,32 @@
+     int n2=U.width();
+     int n3=V.width();
+     T *r_ij = result.data();
+-    for (int i=0;i&lt;n1;i++)
+-    {
+-        T *u_i = U[i];
+-        for (int j=0;j&lt;n3;j++,r_ij++)
++    if (accumulate)
++        for (int i=0;i&lt;n1;i++)
+         {
+-            T* d_k = d.data();
+-            T res=0;
+-            for (int k=0;k&lt;n2;k++,d_k++)
+-                res += *d_k * u_i[k] * V(k,j);
+-            if (accumulate)
++            T *u_i = U[i];
++            for (int j=0;j&lt;n3;j++,r_ij++)
++            {
++                T* d_k = d.data();
++                T res=0;
++                for (int k=0;k&lt;n2;k++,d_k++)
++                    res += *d_k * u_i[k] * V(k,j);
+                 *r_ij += res;
+-            else
++            }
++        }
++    else
++        for (int i=0;i&lt;n1;i++)
++        {
++            T *u_i = U[i];
++            for (int j=0;j&lt;n3;j++,r_ij++)
++            {
++                T* d_k = d.data();
++                T res=0;
++                for (int k=0;k&lt;n2;k++,d_k++)
++                    res += *d_k * u_i[k] * V(k,j);
+                 *r_ij = res;
++            }
+         }
+-    }
+ }
+ 
+ //! GIVEN that res(i,j) = sum_k U_{ik} d_k V_{kj}, and given dC/dres, U,d and V, accumulate
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-03-15 02:04:25 UTC (rev 6733)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-03-15 13:16:59 UTC (rev 6734)
+@@ -57,6 +57,7 @@
+     grad_decrease_ct( 0. ),
+     // grad_weight_decay( 0. ),
+     use_classification_cost( true ),
++    reconstruct_layerwise( false ),
+     n_layers( 0 ),
+     online ( false ),
+     final_module_has_learning_rate( false ),
+@@ -115,6 +116,17 @@
+                   &quot;approximation (undirected softmax) than layer-wise&quot;
+                   &quot; mean-field.\n&quot;);
+ 
++    declareOption(ol, &quot;reconstruct_layerwise&quot;,
++                  &amp;DeepBeliefNet::reconstruct_layerwise,
++                  OptionBase::buildoption,
++                  &quot;Minimize reconstruction error of each layer as an auto-encoder.\n&quot;
++                  &quot;This is done using cross-entropy between actual and reconstructed.\n&quot;
++                  &quot;This option automatically adds the following cost names:\n&quot;
++                  &quot;   layerwise_reconstruction_error (sum over all layers)\n&quot;
++                  &quot;   layer1_reconstruction_error (only layer 1)\n&quot;
++                  &quot;   layer2_reconstruction_error (only layer 2)\n&quot;
++                  &quot;   etc.\n&quot;);
++
+     declareOption(ol, &quot;layers&quot;, &amp;DeepBeliefNet::layers,
+                   OptionBase::buildoption,
+                   &quot;The layers of units in the network&quot;);
+@@ -743,11 +755,10 @@
+ 
+     layers[0]-&gt;expectation &lt;&lt; input;
+     // FORWARD PHASE
++    Vec layer_input;
+     for( int i=0 ; i&lt;n_layers-1 ; i++ )
+     {
+         // mean-field fprop from layer i to layer i+1
+-        Vec input;
+-
+         connections[i]-&gt;setAsDownInput( layers[i]-&gt;expectation );
+         // this does the actual matrix-vector computation
+         layers[i+1]-&gt;getAllActivations( connections[i] );
+@@ -770,6 +781,22 @@
+         }
+         else
+             expectation_gradients[i+1].clear();
++/*
++        if( reconstruct_layerwise )
++        {
++            // layer_input, reconstruction_cost_indices
++            layer_input.resize(layers[i]-&gt;size);
++            layer_input &lt;&lt; layers[i]-&gt;expectation; // fpropNLL writes in expectation
++            connections[i]-&gt;setAsUpInput( layers[i+1]-&gt;expectation );
++            layers[i]-&gt;getAllActivations( connections[i] );
++            real rc = train_costs[reconstruction_cost_indices[i+1]] 
++                = layer[i]-&gt;fpropNLL( layer_input ); // or use a NLLCostModule::fprop
++            train_costs[reconstruction_cost_indices[0]] +=
++                train_costs[reconstruction_cost_indices[i+1]];
++            ... layers[i]-&gt;bpropNLL( layer_input, rc, bias_gradient );
++            layers[i]-&gt;expectation &lt;&lt; layer_input;
++        }
++*/
+     }
+ 
+     // top layer may be connected to a final_module followed by a
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2007-03-15 02:04:25 UTC (rev 6733)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2007-03-15 13:16:59 UTC (rev 6734)
+@@ -94,6 +94,15 @@
+     //! approximation (undirected softmax) than layer-wise mean-field.
+     bool use_classification_cost;
+ 
++    //! Minimize reconstruction error of each layer as an auto-encoder.
++    //! This is done using cross-entropy between actual and reconstructed.
++    //! This option automatically adds the following cost names:
++    //! layerwise_reconstruction_error (sum over all layers)
++    //!   layer1_reconstruction_error (only layer 1)
++    //!   layer2_reconstruction_error (only layer 2)
++    //!   etc.
++    bool reconstruct_layerwise;
++
+     //! The layers of units in the network
+     TVec&lt; PP&lt;RBMLayer&gt; &gt; layers;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000182.html">[Plearn-commits] r6733 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="000184.html">[Plearn-commits] r6735 - trunk/doc
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#183">[ date ]</a>
+              <a href="thread.html#183">[ thread ]</a>
+              <a href="subject.html#183">[ subject ]</a>
+              <a href="author.html#183">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,497 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8392 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8392%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200801210028.m0L0STHe007986%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001839.html">
+   <LINK REL="Next"  HREF="001841.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8392 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8392%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200801210028.m0L0STHe007986%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8392 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Mon Jan 21 01:28:29 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001839.html">[Plearn-commits] r8391 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="001841.html">[Plearn-commits] r8393 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1840">[ date ]</a>
+              <a href="thread.html#1840">[ thread ]</a>
+              <a href="subject.html#1840">[ subject ]</a>
+              <a href="author.html#1840">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-01-21 01:28:29 +0100 (Mon, 21 Jan 2008)
+New Revision: 8392
+
+Modified:
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+Log:
+Added the possibility to do unsupervised fine-tuning.
+
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2008-01-17 19:18:58 UTC (rev 8391)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2008-01-21 00:28:29 UTC (rev 8392)
+@@ -63,7 +63,11 @@
+     compute_all_test_costs( false ),
+     reconstruct_hidden( false ),
+     fraction_of_masked_inputs( 0 ),
++    unsupervised_nstages( 0 ),
++    unsupervised_fine_tuning_learning_rate( 0. ),
++    unsupervised_fine_tuning_decrease_ct( 0. ),
+     n_layers( 0 ),
++    unsupervised_stage( 0 ),
+     currently_trained_layer( 0 )
+ {
+     // random_gen will be initialized in PLearner::build_()
+@@ -210,6 +214,23 @@
+                   &quot;masked, i.e. unsused to reconstruct the input.\n&quot;
+         );
+ 
++    declareOption(ol, &quot;unsupervised_nstages&quot;, 
++                  &amp;StackedAutoassociatorsNet::unsupervised_nstages,
++                  OptionBase::buildoption,
++                  &quot;Number of samples to use for unsupervised fine-tuning.\n&quot;);
++
++    declareOption(ol, &quot;unsupervised_fine_tuning_learning_rate&quot;, 
++                  &amp;StackedAutoassociatorsNet::unsupervised_fine_tuning_learning_rate,
++                  OptionBase::buildoption,
++                  &quot;The learning rate used during the unsupervised &quot;
++                  &quot;fine tuning gradient descent&quot;);
++
++    declareOption(ol, &quot;unsupervised_fine_tuning_decrease_ct&quot;, 
++                  &amp;StackedAutoassociatorsNet::unsupervised_fine_tuning_decrease_ct,
++                  OptionBase::buildoption,
++                  &quot;The decrease constant of the learning rate used during\n&quot;
++                  &quot;unsupervised fine tuning gradient descent.\n&quot;);
++
+     declareOption(ol, &quot;greedy_stages&quot;, 
+                   &amp;StackedAutoassociatorsNet::greedy_stages,
+                   OptionBase::learntoption,
+@@ -222,6 +243,12 @@
+                   &quot;Number of layers&quot;
+         );
+ 
++    declareOption(ol, &quot;unsupervised_stage&quot;, 
++                  &amp;StackedAutoassociatorsNet::unsupervised_stage,
++                  OptionBase::learntoption,
++                  &quot;Number of samples visited so far during unsupervised &quot;
++                  &quot;fine-tuning.\n&quot;);
++
+     declareOption(ol, &quot;correlation_layers&quot;, 
+                   &amp;StackedAutoassociatorsNet::correlation_layers,
+                   OptionBase::learntoption,
+@@ -278,6 +305,11 @@
+                     &quot; - \n&quot;
+                     &quot;cannot use online setting with reconstruct_hidden=true.\n&quot;);
+ 
++        if( unsupervised_nstages &gt; 0 &amp;&amp; correlation_connections.length() != 0 )
++            PLERROR(&quot;StackedAutoassociatorsNet::build_()&quot;
++                    &quot; - \n&quot;
++                    &quot;cannot use unsupervised fine-tuning with correlation connections.\n&quot;);
++
+         if( fraction_of_masked_inputs &lt; 0 )
+             PLERROR(&quot;StackedAutoassociatorsNet::build_()&quot;
+                     &quot; - \n&quot;
+@@ -565,7 +597,7 @@
+                         &quot;partial_costs[%i] should have an input_size of %d.\n&quot;, 
+                         i,layers[i+1]-&gt;size);
+             if(i==0)
+-                partial_costs_positions[i] = n_layers-1;
++                partial_costs_positions[i] = n_layers;
+             else
+                 partial_costs_positions[i] = partial_costs_positions[i-1]
+                     + partial_costs[i-1]-&gt;name().length();
+@@ -613,6 +645,10 @@
+     deepCopyField(reconstruction_activations, copies);
+     deepCopyField(reconstruction_activation_gradients, copies);
+     deepCopyField(reconstruction_expectation_gradients, copies);
++    deepCopyField(fine_tuning_reconstruction_activations, copies);
++    deepCopyField(fine_tuning_reconstruction_expectations, copies);
++    deepCopyField(fine_tuning_reconstruction_activation_gradients, copies);
++    deepCopyField(fine_tuning_reconstruction_expectation_gradients, copies);
+     deepCopyField(reconstruction_activation_gradients_from_hid_rec, copies);
+     deepCopyField(reconstruction_expectation_gradients_from_hid_rec, copies);
+     deepCopyField(hidden_reconstruction_activations, copies);
+@@ -631,6 +667,9 @@
+     deepCopyField(final_cost_value, copies);
+     deepCopyField(final_cost_gradient, copies);
+     deepCopyField(masked_autoassociator_input, copies);
++    deepCopyField(masked_autoassociator_expectations, copies);
++    deepCopyField(autoassociator_input_indices, copies);
++    deepCopyField(autoassociator_expectation_indices, copies);
+     deepCopyField(greedy_stages, copies);
+ }
+ 
+@@ -688,6 +727,7 @@
+     }
+ 
+     stage = 0;
++    unsupervised_stage = 0;
+     greedy_stages.clear();
+ }
+ 
+@@ -818,6 +858,78 @@
+             }
+         }
+ 
++        /***** unsupervised fine-tuning by gradient descent *****/
++        if( unsupervised_stage &lt; unsupervised_nstages )
++        {
++            if( unsupervised_nstages &gt; 0 &amp;&amp; correlation_connections.length() != 0 )
++                PLERROR(&quot;StackedAutoassociatorsNet::train()&quot;
++                        &quot; - \n&quot;
++                        &quot;cannot use unsupervised fine-tuning with correlation connections.\n&quot;);
++            
++            MODULE_LOG &lt;&lt; &quot;Unsupervised fine-tuning all parameters, &quot;;
++            MODULE_LOG &lt;&lt; &quot;by gradient descent&quot; &lt;&lt; endl;
++            MODULE_LOG &lt;&lt; &quot;  unsupervised_stage = &quot; &lt;&lt; unsupervised_stage &lt;&lt; endl;
++            MODULE_LOG &lt;&lt; &quot;  unsupervised_nstages = &quot; &lt;&lt; 
++                unsupervised_nstages &lt;&lt; endl;
++            MODULE_LOG &lt;&lt; &quot;  unsupervised_fine_tuning_learning_rate = &quot; &lt;&lt; 
++                unsupervised_fine_tuning_learning_rate &lt;&lt; endl;
++
++            init_stage = unsupervised_stage;
++            if( report_progress &amp;&amp; unsupervised_stage &lt; unsupervised_nstages )
++                pb = new ProgressBar( &quot;Fine-tuning parameters of all layers of &quot;
++                                      + classname(),
++                                      unsupervised_nstages - init_stage );
++
++            fine_tuning_reconstruction_activations.resize( n_layers );
++            fine_tuning_reconstruction_expectations.resize( n_layers );
++            fine_tuning_reconstruction_activation_gradients.resize( n_layers );
++            fine_tuning_reconstruction_expectation_gradients.resize( n_layers );
++            for( int i=0 ; i&lt;n_layers ; i++ )
++            {
++                fine_tuning_reconstruction_activations[i].resize( 
++                    layers[i]-&gt;size );
++                fine_tuning_reconstruction_expectations[i].resize( 
++                    layers[i]-&gt;size );
++                fine_tuning_reconstruction_activation_gradients[i].resize( 
++                    layers[i]-&gt;size );
++                fine_tuning_reconstruction_expectation_gradients[i].resize( 
++                    layers[i]-&gt;size );
++            }
++
++            if( fraction_of_masked_inputs &gt; 0 )
++            {
++                masked_autoassociator_expectations.resize( n_layers-1 );
++                autoassociator_expectation_indices.resize( n_layers-1 );
++                
++                for( int i=0 ; i&lt;n_layers-1 ; i++ )
++                {
++                    masked_autoassociator_expectations[i].resize( layers[i]-&gt;size );
++                    autoassociator_expectation_indices[i].resize( layers[i]-&gt;size );
++                    for( int j=0 ; j &lt; autoassociator_expectation_indices[i].length() ; j++ )
++                        autoassociator_expectation_indices[i][j] = j;
++                }
++            }
++
++            setLearningRate( unsupervised_fine_tuning_learning_rate );
++            train_costs.fill(MISSING_VALUE);
++            for( ; unsupervised_stage&lt;unsupervised_nstages ; unsupervised_stage++ )
++            {
++                sample = unsupervised_stage % nsamples;
++                if( !fast_exact_is_equal( unsupervised_fine_tuning_decrease_ct, 0. ) )
++                    setLearningRate( 
++                        unsupervised_fine_tuning_learning_rate
++                        / (1. + unsupervised_fine_tuning_decrease_ct 
++                           * unsupervised_stage ) );
++
++                train_set-&gt;getExample( sample, input, target, weight );
++                unsupervisedFineTuningStep( input, target, train_costs );
++                train_stats-&gt;update( train_costs );
++
++                if( pb )
++                    pb-&gt;update( unsupervised_stage - init_stage + 1 );
++            }
++        }
++
+         /***** fine-tuning by gradient descent *****/
+         if( stage &lt; nstages )
+         {
+@@ -868,6 +980,12 @@
+     }
+     else
+     {
++
++        if( unsupervised_nstages &gt; 0 )
++            PLERROR(&quot;StackedAutoassociatorsNet::train()&quot;
++                    &quot; - \n&quot;
++                    &quot;unsupervised fine-tuning with online=true is not implemented.\n&quot;);
++        
+         // Train all layers simultaneously AND fine-tuning as well!
+         if( stage &lt; nstages )
+         {
+@@ -1178,8 +1296,96 @@
+ 
+ }
+ 
++void StackedAutoassociatorsNet::unsupervisedFineTuningStep( const Vec&amp; input, 
++                                                            const Vec&amp; target,
++                                                            Vec&amp; train_costs )
++{
++    // fprop
++    expectations[0] &lt;&lt; input;
++
++    if( fraction_of_masked_inputs &gt; 0 )
++    {
++        for( int i=0; i&lt;autoassociator_expectation_indices.length(); i++ )
++            random_gen-&gt;shuffleElements(autoassociator_expectation_indices[i]);
++        
++        for( int i=0 ; i&lt;n_layers-1; i++ )
++        {
++            masked_autoassociator_expectations[i] &lt;&lt; expectations[i];
++            for( int j=0 ; j &lt; round(fraction_of_masked_inputs*layers[i]-&gt;size) ; j++)
++                masked_autoassociator_expectations[i][ autoassociator_expectation_indices[i][j] ] = 0; 
++            
++            connections[i]-&gt;fprop( masked_autoassociator_expectations[i], 
++                                   activations[i+1] );
++            layers[i+1]-&gt;fprop(activations[i+1],expectations[i+1]);
++        }
++    }
++    else
++    {
++        for( int i=0 ; i&lt;n_layers-1; i++ )
++        {
++            connections[i]-&gt;fprop( expectations[i], activations[i+1] );
++            layers[i+1]-&gt;fprop(activations[i+1],expectations[i+1]);
++        }
++    }
++
++    fine_tuning_reconstruction_expectations[ n_layers-1 ] &lt;&lt; 
++        expectations[ n_layers-1 ];
++
++    for( int i=n_layers-2 ; i&gt;=0; i-- )
++    {
++        reconstruction_connections[i]-&gt;fprop( 
++            fine_tuning_reconstruction_expectations[i+1], 
++            fine_tuning_reconstruction_activations[i] );
++        layers[i]-&gt;fprop( fine_tuning_reconstruction_activations[i],
++                          fine_tuning_reconstruction_expectations[i]);
++    }
++    
++    layers[ 0 ]-&gt;setExpectation( fine_tuning_reconstruction_expectations[ 0 ] );
++    layers[ 0 ]-&gt;activation &lt;&lt; fine_tuning_reconstruction_activations[0];
++    real rec_err = layers[ 0 ]-&gt;fpropNLL( input );
++    train_costs[n_layers-1] = rec_err;
++    
++    layers[ 0 ]-&gt;bpropNLL( input, rec_err,
++                           fine_tuning_reconstruction_activation_gradients[ 0 ] );
++
++    layers[ 0 ]-&gt;update( fine_tuning_reconstruction_activation_gradients[ 0 ] );
++
++    for( int i=0 ; i&lt;n_layers-1; i++ )
++    {
++        if( i != 0)
++            layers[i]-&gt;bpropUpdate( fine_tuning_reconstruction_activations[i],
++                                    fine_tuning_reconstruction_expectations[i],
++                                    fine_tuning_reconstruction_activation_gradients[i],
++                                    fine_tuning_reconstruction_expectation_gradients[i]);
++        reconstruction_connections[i]-&gt;bpropUpdate( 
++            fine_tuning_reconstruction_expectations[i+1], 
++            fine_tuning_reconstruction_activations[i],
++            fine_tuning_reconstruction_expectation_gradients[i+1], 
++            fine_tuning_reconstruction_activation_gradients[i]);
++    }
++
++    expectation_gradients[ n_layers-1 ] &lt;&lt; 
++        fine_tuning_reconstruction_expectation_gradients[ n_layers-1 ];
++    
++    for( int i=n_layers-2 ; i&gt;=0; i-- )
++    {
++        layers[i+1]-&gt;bpropUpdate(
++            activations[i+1],expectations[i+1],
++            activation_gradients[i+1],expectation_gradients[i+1]);
++        if( fraction_of_masked_inputs &gt; 0 )
++            connections[i]-&gt;bpropUpdate( 
++                masked_autoassociator_expectations[i], activations[i+1],
++                expectation_gradients[i], activation_gradients[i+1] );
++        else
++            connections[i]-&gt;bpropUpdate( 
++                expectations[i], activations[i+1],
++                expectation_gradients[i], activation_gradients[i+1] );
++
++    }
++}
++
+ void StackedAutoassociatorsNet::fineTuningStep( const Vec&amp; input, const Vec&amp; target,
+-                                    Vec&amp; train_costs )
++                                                Vec&amp; train_costs )
+ {
+     // fprop
+     expectations[0] &lt;&lt; input;
+@@ -1729,7 +1935,24 @@
+ 
+ TVec&lt;string&gt; StackedAutoassociatorsNet::getTrainCostNames() const
+ {
+-    return getTestCostNames() ;    
++    TVec&lt;string&gt; cost_names(0);
++
++    for( int i=0; i&lt;layers.size()-1; i++)
++        cost_names.push_back(&quot;reconstruction_error_&quot; + tostring(i+1));
++
++    cost_names.push_back(&quot;global_reconstruction_error&quot;);
++    
++    for( int i=0 ; i&lt;partial_costs.size() ; i++ )
++    {
++        TVec&lt;string&gt; names = partial_costs[i]-&gt;name();
++        for(int j=0; j&lt;names.length(); j++)
++            cost_names.push_back(&quot;partial&quot; + tostring(i) + &quot;.&quot; + 
++                names[j]);
++    }
++
++    cost_names.append( final_cost-&gt;name() );
++
++    return cost_names;
+ }
+ 
+ 
+@@ -1750,6 +1973,7 @@
+         {
+             direct_connections[i]-&gt;setLearningRate( the_learning_rate );
+         }
++        reconstruction_connections[i]-&gt;setLearningRate( the_learning_rate );
+     }
+     layers[n_layers-1]-&gt;setLearningRate( the_learning_rate );
+ 
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2008-01-17 19:18:58 UTC (rev 8391)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2008-01-21 00:28:29 UTC (rev 8392)
+@@ -150,11 +150,24 @@
+     //! masked, i.e. unsused to reconstruct the input.
+     real fraction_of_masked_inputs;
+ 
++    //! Number of samples to use for unsupervised fine-tuning
++    int unsupervised_nstages;
++
++    //! The learning rate used during the unsupervised fine tuning gradient descent
++    real unsupervised_fine_tuning_learning_rate;
++
++    //! The decrease constant of the learning rate used during 
++    //! unsupervised fine tuning gradient descent
++    real unsupervised_fine_tuning_decrease_ct;
++
+     //#####  Public Learnt Options  ###########################################
+ 
+     //! Number of layers
+     int n_layers;
+ 
++    //! Number of samples visited so far during unsupervised fine-tuning
++    int unsupervised_stage;
++
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+@@ -197,6 +210,9 @@
+     void greedyStep( const Vec&amp; input, const Vec&amp; target, int index, 
+                      Vec train_costs );
+ 
++    void unsupervisedFineTuningStep( const Vec&amp; input, const Vec&amp; target,
++                                     Vec&amp; train_costs );
++
+     void fineTuningStep( const Vec&amp; input, const Vec&amp; target,
+                          Vec&amp; train_costs );
+ 
+@@ -241,15 +257,24 @@
+     //! Reconstruction activations
+     mutable Vec reconstruction_activations;
+     
+-    //! Reconstruction expectations
+-    mutable Vec reconstruction_expectations;
+-        
+     //! Reconstruction activation gradients
+     mutable Vec reconstruction_activation_gradients;
+ 
+     //! Reconstruction expectation gradients
+     mutable Vec reconstruction_expectation_gradients;
+ 
++    //! Unsupervised fine-tuning reconstruction activations
++    TVec&lt; Vec &gt; fine_tuning_reconstruction_activations;
++    
++    //! Unsupervised fine-tuning reconstruction expectations
++    TVec&lt; Vec &gt; fine_tuning_reconstruction_expectations;
++
++    //! Unsupervised fine-tuning reconstruction activations gradients
++    TVec&lt; Vec &gt; fine_tuning_reconstruction_activation_gradients;
++    
++    //! Unsupervised fine-tuning reconstruction expectations gradients
++    TVec&lt; Vec &gt; fine_tuning_reconstruction_expectation_gradients;
++
+     //! Reconstruction activation gradients coming from hidden reconstruction
+     mutable Vec reconstruction_activation_gradients_from_hid_rec;
+     
+@@ -305,9 +330,15 @@
+     //! have been masked (set to 0) randomly.
+     Vec masked_autoassociator_input;
+ 
++    //! Layers randomly masked, for unsupervised fine-tuning.
++    TVec&lt; Vec &gt; masked_autoassociator_expectations;
++
+     //! Indices of the input components
+     TVec&lt;int&gt; autoassociator_input_indices;
+ 
++    //! Indices of the expectation components
++    TVec&lt; TVec&lt;int&gt; &gt; autoassociator_expectation_indices;
++
+     //! Stages of the different greedy phases
+     TVec&lt;int&gt; greedy_stages;
+ 
+@@ -315,12 +346,6 @@
+     //! n_layers means the output layer)
+     int currently_trained_layer;
+ 
+-    //! Indication whether final_module has learning rate
+-    bool final_module_has_learning_rate;
+-    
+-    //! Indication whether final_cost has learning rate
+-    bool final_cost_has_learning_rate;
+-
+ protected:
+     //#####  Protected Member Functions  ######################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001839.html">[Plearn-commits] r8391 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="001841.html">[Plearn-commits] r8393 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1840">[ date ]</a>
+              <a href="thread.html#1840">[ thread ]</a>
+              <a href="subject.html#1840">[ subject ]</a>
+              <a href="author.html#1840">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

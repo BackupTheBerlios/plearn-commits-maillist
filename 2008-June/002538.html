@@ -1,0 +1,465 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9090 - trunk/plearn/var/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9090%20-%20trunk/plearn/var/EXPERIMENTAL&In-Reply-To=%3C200806032058.m53Kw6Ho005987%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002537.html">
+   <LINK REL="Next"  HREF="002539.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9090 - trunk/plearn/var/EXPERIMENTAL</H1>
+    <B>plearner at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9090%20-%20trunk/plearn/var/EXPERIMENTAL&In-Reply-To=%3C200806032058.m53Kw6Ho005987%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9090 - trunk/plearn/var/EXPERIMENTAL">plearner at mail.berlios.de
+       </A><BR>
+    <I>Tue Jun  3 22:58:06 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002537.html">[Plearn-commits] r9089 - trunk/plearn/math
+</A></li>
+        <LI>Next message: <A HREF="002539.html">[Plearn-commits] r9091 - trunk/python_modules/plearn/utilities
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2538">[ date ]</a>
+              <a href="thread.html#2538">[ thread ]</a>
+              <a href="subject.html#2538">[ subject ]</a>
+              <a href="author.html#2538">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: plearner
+Date: 2008-06-03 22:58:06 +0200 (Tue, 03 Jun 2008)
+New Revision: 9090
+
+Added:
+   trunk/plearn/var/EXPERIMENTAL/ConstrainVariable.cc
+   trunk/plearn/var/EXPERIMENTAL/ConstrainVariable.h
+Modified:
+   trunk/plearn/var/EXPERIMENTAL/ConstrainedSourceVariable.cc
+   trunk/plearn/var/EXPERIMENTAL/ConstrainedSourceVariable.h
+Log:
+Experimental variables that ensure constraints.
+
+
+Added: trunk/plearn/var/EXPERIMENTAL/ConstrainVariable.cc
+===================================================================
+--- trunk/plearn/var/EXPERIMENTAL/ConstrainVariable.cc	2008-06-03 20:56:55 UTC (rev 9089)
++++ trunk/plearn/var/EXPERIMENTAL/ConstrainVariable.cc	2008-06-03 20:58:06 UTC (rev 9090)
+@@ -0,0 +1,208 @@
++// -*- C++ -*-
++
++// ConstrainVariable.cc
++//
++// Copyright (C) 2008 Pascal Vincent
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++// 
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++// 
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++// 
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++// 
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++// 
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Vincent
++
++/*! \file ConstrainVariable.cc */
++
++#include &quot;ConstrainVariable.h&quot;
++// #include &quot;Var_operators.h&quot;
++//#include &quot;Var_utils.h&quot;
++
++namespace PLearn {
++using namespace std;
++
++
++/** ConstrainVariable **/
++
++PLEARN_IMPLEMENT_OBJECT(
++        ConstrainVariable,
++        &quot;Correctly enforces the box constraint defined by min_value and max_value on each element.&quot;,
++        &quot;Also makes sure the sum of each row does not exceed max_rowsum.\n&quot;
++        &quot;If a row sum exceeds max_rowsum, then all its elements are scaled by max_rowsum/current_row_sum.\n&quot;
++        &quot;BEWARE: the gradient backprop depends on the sign of the gradient received.\n&quot;
++        &quot;it is intentioally *not* symmetric w.r.t. that sign when stuck a box constraint.\n&quot;
++        &quot;It is designed to work correctly if the sign of the gradient received indicates the direction \n&quot;
++        &quot;in which the downstream variables would like this variable's output to move. \n&quot;
++        &quot;This means for ex. that if you are doing gradient descent, then the cost should have been\n&quot;
++        &quot;given a negative value (ex: -1) in its 'gradient'&quot;
++);
++
++////////////////////
++// ConstrainVariable //
++////////////////////
++
++ConstrainVariable::ConstrainVariable():
++    max_rowsum(FLT_MAX)
++{}
++
++ConstrainVariable::ConstrainVariable(Variable* input, bool call_build_):
++    inherited(input, min(input-&gt;length(), input-&gt;width()), 1, call_build_),
++    max_rowsum(FLT_MAX)
++{
++    if (call_build_)
++        build_();
++}
++
++////////////////////
++// declareOptions //
++////////////////////
++void Variable::declareOptions(OptionList&amp; ol)
++{
++    declareOption(ol, &quot;max_rowsum&quot;, &amp;ConstrainVariable::max_rowsum, OptionBase::buildoption, 
++                  &quot;maximum value the sum of elements in a row is allowed to reach\n&quot;);
++
++    inherited::declareOptions(ol);
++}
++
++///////////
++// build //
++///////////
++void ConstrainVariable::build() {
++    inherited::build();
++    build_();
++}
++
++////////////
++// build_ //
++////////////
++void ConstrainVariable::build_() {
++    // Nothing to do here.
++}
++
++///////////////////
++// recomputeSize //
++///////////////////
++void ConstrainVariable::recomputeSize(int&amp; l, int&amp; w) const
++{
++    if (input) 
++    {
++        l = input-&gt;length();
++        w = input-&gt;width();
++    } 
++    else
++        l = w = 0;
++}
++
++
++void ConstrainVariable::fprop()
++{
++    Mat U = input-&gt;matValue;
++    int l = U.length();
++    int w = U.width();
++    for(int i=0; i&lt;l; i++)
++    {
++        real* ui = U[i];
++        real* vi = matValue[i];
++        real tot = 0;
++        for(int j=0; j&lt;w; j++)
++        {
++            real x = box_constrain(ui[j]);
++            tot += x;
++            vi[j] = x;
++        }
++        if(tot&gt;max_rowsum)
++        {
++            real coef = max_rowsum/tot;
++            for(int j=0; j&lt;w; j++)
++                vi[j] *= coef;
++        }
++    }
++}
++
++void ConstrainVariable::bprop()
++{
++    Mat U = input-&gt;matValue;
++    Mat Ug = input-&gt;matGradient;
++    int l = U.length();
++    int w = U.width();
++    for(int i=0; i&lt;l; i++)
++    {
++        real* ui = U[i];
++        real* ugi = Ug[i];
++        real* vgi = matGradient[i];
++
++        real tot = 0;
++        for(int j=0; j&lt;w; j++)
++            tot += box_constrain(ui[j]);
++
++        real coef = 1;
++        if(tot&gt;max_rowsum)
++            coef = max_rowsum/tot;
++
++        for(int j=0; j&lt;w; j++)
++        {
++            real v = ui[j];
++            real g = vgi[j];                
++            if((g&lt;0 &amp;&amp; v&gt;min_value) || (g&gt;0 &amp;&amp; v&lt;max_value))
++                ugi[j] += g*coef;
++        }
++    }
++
++}
++
++
++void ConstrainVariable::bbprop()
++{
++    PLERROR(&quot;bbprop not implemented for this variable&quot;);
++}
++
++
++void ConstrainVariable::symbolicBprop()
++{
++    PLERROR(&quot;symbolic bprop not yet implemented for this variable&quot;);
++}
++
++
++void ConstrainVariable::rfprop()
++{
++    PLERROR(&quot;rfprop no yet implemented for this vairable&quot;);
++}
++
++
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn/var/EXPERIMENTAL/ConstrainVariable.h
+===================================================================
+--- trunk/plearn/var/EXPERIMENTAL/ConstrainVariable.h	2008-06-03 20:56:55 UTC (rev 9089)
++++ trunk/plearn/var/EXPERIMENTAL/ConstrainVariable.h	2008-06-03 20:58:06 UTC (rev 9090)
+@@ -0,0 +1,101 @@
++// -*- C++ -*-
++
++// ConstrainVariable.h
++//
++// Copyright (C) 2008 Pascal Vincent
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++// 
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++// 
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++// 
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++// 
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++// 
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Vincent
++
++/*! \file ConstrainVariable.h */
++
++#ifndef ConstrainVariable_INC
++#define ConstrainVariable_INC
++
++#include &lt;plearn/var/UnaryVariable.h&gt;
++
++namespace PLearn {
++using namespace std;
++
++
++class ConstrainVariable: public UnaryVariable
++{
++    typedef UnaryVariable inherited;
++
++public:
++    double max_rowsum;
++
++    //! Default constructor.
++    ConstrainVariable();
++
++    ConstrainVariable(Variable* input, bool call_build_ = true);
++
++    PLEARN_DECLARE_OBJECT(ConstrainVariable);
++
++    virtual void build();
++
++    virtual void recomputeSize(int&amp; l, int&amp; w) const;
++    virtual void fprop();
++    virtual void bprop();
++    //!  here don't approximate, do d2C/dx^2 = 4 x^2 d2C/dy^2 + 2 dC/dy 
++    virtual void bbprop();
++    virtual void symbolicBprop();
++    virtual void rfprop();
++
++    inline real box_constrain(real x) const
++    { return x&lt;min_value ?min_value :(x&gt;max_value ?max_value :x); }
++
++private:
++
++    void build_();
++
++};
++
++DECLARE_OBJECT_PTR(ConstrainVariable);
++
++inline Var diag(Var v)
++{ return new ConstrainVariable(v); }
++
++} // end of namespace PLearn
++
++#endif 
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Modified: trunk/plearn/var/EXPERIMENTAL/ConstrainedSourceVariable.cc
+===================================================================
+--- trunk/plearn/var/EXPERIMENTAL/ConstrainedSourceVariable.cc	2008-06-03 20:56:55 UTC (rev 9089)
++++ trunk/plearn/var/EXPERIMENTAL/ConstrainedSourceVariable.cc	2008-06-03 20:58:06 UTC (rev 9090)
+@@ -49,17 +49,21 @@
+     ConstrainedSourceVariable,
+     &quot;SourceVariable that after each update, modifies values as needed to satisfy simple constraints&quot;,
+     &quot;The currently supported constraint is rows having norm 1.\n&quot;
+-    &quot;i.e. after each update rows are divided by their norm.\n&quot;);
++    &quot;i.e. after each update rows are divided by their norm (L2 or L1).\n&quot;);
+ 
+ 
+ void ConstrainedSourceVariable::satisfyConstraints()
+ {
+     switch(constraint_mode)
+     {
+-    case 0:
++    case 2:
+         for(int i=0; i&lt;matValue.length(); i++)
+             normalize(matValue(i), 2);
+         break;
++    case 1:
++        for(int i=0; i&lt;matValue.length(); i++)
++            normalize(matValue(i), 1);
++        break;
+     default:
+         PLERROR(&quot;Invalid constraint_mode %d&quot;,constraint_mode);
+     }
+@@ -71,7 +75,8 @@
+     declareOption(
+         ol, &quot;constraint_mode&quot;, &amp;ConstrainedSourceVariable::constraint_mode, OptionBase::buildoption,
+         &quot;The constraint_mode: \n&quot;
+-        &quot;0: divide each row by its L2 norm after each update&quot;);
++        &quot;2: divide each row by its L2 norm after each update\n&quot;
++        &quot;1: divide each row by its L1 norm after each update&quot;);
+     inherited::declareOptions(ol);
+ }
+ 
+
+Modified: trunk/plearn/var/EXPERIMENTAL/ConstrainedSourceVariable.h
+===================================================================
+--- trunk/plearn/var/EXPERIMENTAL/ConstrainedSourceVariable.h	2008-06-03 20:56:55 UTC (rev 9089)
++++ trunk/plearn/var/EXPERIMENTAL/ConstrainedSourceVariable.h	2008-06-03 20:58:06 UTC (rev 9090)
+@@ -64,20 +64,20 @@
+     //!  Default constructor for persistence
+     ConstrainedSourceVariable()
+         :SourceVariable(), 
+-         constraint_mode(0)
++         constraint_mode(2)
+     {}
+ 
+-    ConstrainedSourceVariable(int thelength, int thewidth, int the_constraint_mode=0, bool call_build_ = true)
++    ConstrainedSourceVariable(int thelength, int thewidth, int the_constraint_mode=2, bool call_build_ = true)
+         :SourceVariable(thelength, thewidth, call_build_), 
+          constraint_mode(the_constraint_mode)
+     {}
+ 
+-    ConstrainedSourceVariable(const Vec&amp; v, bool vertical=true, int the_constraint_mode=0, bool call_build_ = true)
++    ConstrainedSourceVariable(const Vec&amp; v, bool vertical=true, int the_constraint_mode=2, bool call_build_ = true)
+         :SourceVariable(v, vertical, call_build_), 
+          constraint_mode(the_constraint_mode)
+     {}
+ 
+-    ConstrainedSourceVariable(const Mat&amp; m, int the_constraint_mode=0, bool call_build_ = true)
++    ConstrainedSourceVariable(const Mat&amp; m, int the_constraint_mode=2, bool call_build_ = true)
+         :SourceVariable(m, call_build_), 
+          constraint_mode(the_constraint_mode)
+     {}
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002537.html">[Plearn-commits] r9089 - trunk/plearn/math
+</A></li>
+	<LI>Next message: <A HREF="002539.html">[Plearn-commits] r9091 - trunk/python_modules/plearn/utilities
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2538">[ date ]</a>
+              <a href="thread.html#2538">[ thread ]</a>
+              <a href="subject.html#2538">[ subject ]</a>
+              <a href="author.html#2538">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

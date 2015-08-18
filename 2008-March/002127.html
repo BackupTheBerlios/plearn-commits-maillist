@@ -1,0 +1,322 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8679 - in trunk: commands plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8679%20-%20in%20trunk%3A%20commands%20plearn_learners/online&In-Reply-To=%3C200803130320.m2D3Knnq030162%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002126.html">
+   <LINK REL="Next"  HREF="002128.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8679 - in trunk: commands plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8679%20-%20in%20trunk%3A%20commands%20plearn_learners/online&In-Reply-To=%3C200803130320.m2D3Knnq030162%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8679 - in trunk: commands plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Thu Mar 13 04:20:49 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002126.html">[Plearn-commits] r8678 - trunk/python_modules/plearn/pymake
+</A></li>
+        <LI>Next message: <A HREF="002128.html">[Plearn-commits] r8680 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2127">[ date ]</a>
+              <a href="thread.html#2127">[ thread ]</a>
+              <a href="subject.html#2127">[ subject ]</a>
+              <a href="author.html#2127">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2008-03-13 04:20:48 +0100 (Thu, 13 Mar 2008)
+New Revision: 8679
+
+Modified:
+   trunk/commands/plearn_noblas_inc.h
+   trunk/plearn_learners/online/InferenceRBM.cc
+   trunk/plearn_learners/online/InferenceRBM.h
+Log:
+Module that scales (or stops) the propagation of a gradient.
+
+
+Modified: trunk/commands/plearn_noblas_inc.h
+===================================================================
+--- trunk/commands/plearn_noblas_inc.h	2008-03-12 20:05:48 UTC (rev 8678)
++++ trunk/commands/plearn_noblas_inc.h	2008-03-13 03:20:48 UTC (rev 8679)
+@@ -238,6 +238,7 @@
+ #include &lt;plearn_learners/online/RBMMultinomialLayer.h&gt;
+ #include &lt;plearn_learners/online/RBMTrainer.h&gt;
+ #include &lt;plearn_learners/online/RBMTruncExpLayer.h&gt;
++#include &lt;plearn_learners/online/ScaleGradientModule.h&gt;
+ #include &lt;plearn_learners/online/SoftmaxModule.h&gt;
+ #include &lt;plearn_learners/online/SplitModule.h&gt;
+ #include &lt;plearn_learners/online/SquaredErrorCostModule.h&gt;
+
+Modified: trunk/plearn_learners/online/InferenceRBM.cc
+===================================================================
+--- trunk/plearn_learners/online/InferenceRBM.cc	2008-03-12 20:05:48 UTC (rev 8678)
++++ trunk/plearn_learners/online/InferenceRBM.cc	2008-03-13 03:20:48 UTC (rev 8679)
+@@ -78,11 +78,14 @@
+     deepCopyField(input_layer, copies);
+     deepCopyField(target_layer, copies);
+     deepCopyField(hidden_layer, copies);
+-    deepCopyField(visible_layer, copies);
+-
+     deepCopyField(input_to_hidden, copies);
+     deepCopyField(target_to_hidden, copies);
++    deepCopyField(random_gen, copies);
++    deepCopyField(visible_layer, copies);
+     deepCopyField(visible_to_hidden, copies);
++    deepCopyField(v0, copies);
++    deepCopyField(h0, copies);
++
+ }
+ 
+ void InferenceRBM::declareOptions(OptionList&amp; ol)
+@@ -128,7 +131,12 @@
+                   OptionBase::buildoption,
+                   &quot;Random numbers generator&quot;);
+ 
++    declareOption(ol, &quot;use_fast_approximations&quot;,
++                  &amp;InferenceRBM::use_fast_approximations,
++                  OptionBase::buildoption,
++                  &quot;Whether to use fast approximations in softplus computation&quot;);
+ 
++
+     declareOption(ol, &quot;visible_layer&quot;, &amp;InferenceRBM::visible_layer,
+                   OptionBase::learntoption,
+                   &quot;Visible layer (input+target)&quot;);
+@@ -181,6 +189,14 @@
+          ArgDoc (&quot;input&quot;, &quot;Input layer's values&quot;)));
+ 
+     declareMethod(
++        rmm, &quot;hiddenExpGivenInputTarget&quot;,
++        &amp;InferenceRBM::hiddenExpGivenInputTarget,
++        (BodyDoc(&quot;Computes the hidden layer's expectation given the input\n&quot;
++                 &quot;and the target&quot;),
++         ArgDoc (&quot;input&quot;, &quot;Input layer's values&quot;),
++         ArgDoc (&quot;target&quot;, &quot;Target (as an index)&quot;)));
++
++    declareMethod(
+         rmm, &quot;targetExpGivenInput&quot;,
+         &amp;InferenceRBM::targetExpGivenInput,
+         (BodyDoc(&quot;Computes the target layer's expectation given the input&quot;),
+@@ -201,11 +217,30 @@
+          RetDoc (&quot;Hidden layer's expectation&quot;)));
+ 
+     declareMethod(
++        rmm, &quot;getHiddenExpGivenInputTarget&quot;,
++        &amp;InferenceRBM::getHiddenExpGivenInputTarget,
++        (BodyDoc(&quot;Computes the hidden layer's expectation given the input\n&quot;
++                 &quot;and the target&quot;),
++         ArgDoc (&quot;input&quot;, &quot;Input layer's values&quot;),
++         ArgDoc (&quot;target&quot;, &quot;Target (as an index)&quot;),
++         RetDoc (&quot;Hidden layer's expectation&quot;)));
++
++    declareMethod(
+         rmm, &quot;getTargetExpGivenInput&quot;,
+         &amp;InferenceRBM::getTargetExpGivenInput,
+         (BodyDoc(&quot;Computes the target layer's expectation given the input&quot;),
+          ArgDoc (&quot;input&quot;, &quot;Input layer's values&quot;),
+          RetDoc (&quot;Target layer's expectation&quot;)));
++
++    declareMethod(
++        rmm, &quot;supCDStep&quot;, &amp;InferenceRBM::supCDStep,
++        (BodyDoc(&quot;Performs one step of CD and updates the parameters&quot;),
++         ArgDoc (&quot;visible&quot;, &quot;Visible layer's values&quot;)));
++
++    declareMethod(
++        rmm, &quot;setLearningRate&quot;, &amp;InferenceRBM::setLearningRate,
++        (BodyDoc(&quot;Sets the learning rate of underlying modules&quot;),
++         ArgDoc (&quot;the_learning_rate&quot;, &quot;The learning rate&quot;)));
+ }
+ 
+ 
+@@ -300,6 +335,23 @@
+     hidden_layer-&gt;computeExpectations();
+ }
+ 
++void InferenceRBM::hiddenExpGivenInputTarget(const Mat&amp; input,
++                                             const TVec&lt;int&gt;&amp; target)
++{
++    int batch_size = input.length();
++    PLASSERT(input.width() == input_size);
++    PLASSERT(target.length() == batch_size);
++
++    input_to_hidden-&gt;setAsDownInputs(input);
++    hidden_layer-&gt;getAllActivations(get_pointer(input_to_hidden), 0, true);
++
++    for (int k=0; k&lt;batch_size; k++)
++        hidden_layer-&gt;activations(k) += target_to_hidden-&gt;weights(target[k]);
++
++    hidden_layer-&gt;expectations_are_up_to_date = false;
++    hidden_layer-&gt;computeExpectations();
++}
++
+ void InferenceRBM::targetExpGivenInput(const Mat&amp; input)
+ {
+     PLASSERT(input.width() == input_size);
+@@ -336,7 +388,11 @@
+                 PLASSERT(*t_to_h_w_ji == t_to_h_w(j,i));
+                 PLASSERT(*hidden_act_kj == hidden_act(k,j));
+ 
+-                *target_act_ki += softplus(*t_to_h_w_ji + *hidden_act_kj);
++                if (use_fast_approximations)
++                    *target_act_ki +=
++                        tabulated_softplus(*t_to_h_w_ji + *hidden_act_kj);
++                else
++                    *target_act_ki += softplus(*t_to_h_w_ji + *hidden_act_kj);
+             }
+         }
+     }
+@@ -378,6 +434,13 @@
+     return hidden_layer-&gt;getExpectations();
+ }
+ 
++Mat InferenceRBM::getHiddenExpGivenInputTarget(const Mat&amp; input,
++                                               const TVec&lt;int&gt;&amp; target)
++{
++    hiddenExpGivenInputTarget(input, target);
++    return hidden_layer-&gt;getExpectations();
++}
++
+ Mat InferenceRBM::getTargetExpGivenInput(const Mat&amp; input)
+ {
+     targetExpGivenInput(input);
+@@ -390,6 +453,47 @@
+     return hidden_layer-&gt;getExpectations();
+ }
+ 
++void InferenceRBM::supCDStep(const Mat&amp; visible)
++{
++    PLASSERT(visible.width() == visible_size);
++    int batch_size = visible.length();
++
++    v0.resize(batch_size,visible_size);
++    v0 &lt;&lt; visible;
++
++    // positive phase
++    hiddenExpGivenVisible(visible);
++    h0.resize(batch_size, hidden_size);
++    h0 &lt;&lt; hidden_layer-&gt;getExpectations();
++
++    // Down propagation
++    visible_to_hidden-&gt;setAsUpInputs(h0);
++    visible_layer-&gt;getAllActivations(get_pointer(visible_to_hidden), 0, true);
++    visible_layer-&gt;computeExpectations();
++    visible_layer-&gt;generateSamples();
++
++    // Negative phase
++    hiddenExpGivenVisible(visible_layer-&gt;samples);
++
++    // Update
++    visible_layer-&gt;update(v0, visible_layer-&gt;samples);
++    visible_to_hidden-&gt;update(v0, h0, visible_layer-&gt;samples,
++                              hidden_layer-&gt;getExpectations());
++    hidden_layer-&gt;update(h0, hidden_layer-&gt;getExpectations());
++}
++
++void InferenceRBM::unsupCDStep(const Mat&amp; input)
++{
++    PLCHECK_MSG(false, &quot;Not implemented yet&quot;);
++}
++
++void InferenceRBM::setLearningRate(real the_learning_rate)
++{
++    visible_layer-&gt;setLearningRate(the_learning_rate);
++    visible_to_hidden-&gt;setLearningRate(the_learning_rate);
++    hidden_layer-&gt;setLearningRate(the_learning_rate);
++}
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/online/InferenceRBM.h
+===================================================================
+--- trunk/plearn_learners/online/InferenceRBM.h	2008-03-12 20:05:48 UTC (rev 8678)
++++ trunk/plearn_learners/online/InferenceRBM.h	2008-03-13 03:20:48 UTC (rev 8679)
+@@ -92,8 +92,11 @@
+     //! Random numbers generator
+     PP&lt;PRandom&gt; random_gen;
+ 
++    //! Whether to use fast approximations in softplus computation
++    bool use_fast_approximations;
+ 
+ 
++
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+@@ -105,14 +108,20 @@
+     // Your other public member functions go here
+ 
+     void hiddenExpGivenVisible(const Mat&amp; visible);
++    void hiddenExpGivenInputTarget(const Mat&amp; input, const TVec&lt;int&gt;&amp; target);
+     void hiddenExpGivenInput(const Mat&amp; input);
+     void targetExpGivenInput(const Mat&amp; input);
+ 
+     Mat getHiddenExpGivenVisible(const Mat&amp; visible);
++    Mat getHiddenExpGivenInputTarget(const Mat&amp; input, const TVec&lt;int&gt;&amp; target);
+     Mat getHiddenExpGivenInput(const Mat&amp; input);
+     Mat getTargetExpGivenInput(const Mat&amp; input);
+ 
++    void supCDStep(const Mat&amp; visible);
++    void unsupCDStep(const Mat&amp; input);
+ 
++    virtual void setLearningRate(real the_learning_rate);
++
+     //#####  PLearn::Object Protocol  #########################################
+ 
+     // Declares other standard object methods.
+@@ -159,13 +168,16 @@
+     //#####  Private Member Functions  ########################################
+ 
+     //! This does the actual building.
+-    // (PLEASE IMPLEMENT IN .cc)
+     void build_();
+ 
++    void build_rbms();
++
+ private:
+     //#####  Private Data Members  ############################################
+ 
+     // The rest of the private stuff goes here
++    mutable Mat v0;
++    mutable Mat h0;
+ };
+ 
+ // Declares a few other classes and functions related to this class
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002126.html">[Plearn-commits] r8678 - trunk/python_modules/plearn/pymake
+</A></li>
+	<LI>Next message: <A HREF="002128.html">[Plearn-commits] r8680 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2127">[ date ]</a>
+              <a href="thread.html#2127">[ thread ]</a>
+              <a href="subject.html#2127">[ subject ]</a>
+              <a href="author.html#2127">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

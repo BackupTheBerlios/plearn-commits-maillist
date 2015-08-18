@@ -1,0 +1,225 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6932 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6932%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704241500.l3OF0hGp014404%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000380.html">
+   <LINK REL="Next"  HREF="000382.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6932 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6932%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704241500.l3OF0hGp014404%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6932 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue Apr 24 17:00:43 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000380.html">[Plearn-commits] r6931 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000382.html">[Plearn-commits] r6933 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#381">[ date ]</a>
+              <a href="thread.html#381">[ thread ]</a>
+              <a href="subject.html#381">[ subject ]</a>
+              <a href="author.html#381">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-04-24 17:00:43 +0200 (Tue, 24 Apr 2007)
+New Revision: 6932
+
+Modified:
+   trunk/plearn_learners/online/CostModule.cc
+   trunk/plearn_learners/online/CostModule.h
+Log:
+Added new mini-batch methods and implemented deepCopy
+
+Modified: trunk/plearn_learners/online/CostModule.cc
+===================================================================
+--- trunk/plearn_learners/online/CostModule.cc	2007-04-24 14:54:16 UTC (rev 6931)
++++ trunk/plearn_learners/online/CostModule.cc	2007-04-24 15:00:43 UTC (rev 6932)
+@@ -83,12 +83,25 @@
+ }
+ 
+ 
++/////////////////////////////////
++// makeDeepCopyFromShallowCopy //
++/////////////////////////////////
+ void CostModule::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
++
++    deepCopyField(tmp_costs,                            copies);
++    deepCopyField(tmp_input_and_target,                 copies);
++    deepCopyField(tmp_input_and_target_gradient,        copies);
++    deepCopyField(tmp_input_and_target_diag_hessian,    copies);
++    deepCopyField(tmp_costs_mat,                        copies);
++    deepCopyField(tmp_input_gradients,                  copies);
+ }
+ 
+ 
++///////////
++// fprop //
++///////////
+ void CostModule::fprop(const Vec&amp; input, const Vec&amp; target, Vec&amp; cost) const
+ {
+     PLERROR(&quot;CostModule::fprop(const Vec&amp; input, const Vec&amp; target, Vec&amp; cost)&quot;
+@@ -96,14 +109,38 @@
+             &quot;is not implemented. You have to implement it in your class.\n&quot;);
+ }
+ 
+-//! keeps only the first cost
++void CostModule::fprop(const Mat&amp; inputs, const Mat&amp; targets, Mat&amp; costs) const
++{
++    //PLWARNING(&quot;CostModule::fprop - Not implemented for class %s&quot;,
++    //       classname().c_str());
++    // Default (possibly inefficient) implementation.
++    costs.resize(inputs.length(), output_size);
++    Vec input, target, cost;
++    for (int i = 0; i &lt; inputs.length(); i++) {
++        input = inputs(i);
++        target = targets(i);
++        cost = costs(i);
++        this-&gt;fprop(input, target, cost);
++    }
++}
++
+ void CostModule::fprop(const Vec&amp; input, const Vec&amp; target, real&amp; cost) const
+ {
++    // Keep only the first cost.
+     fprop( input, target, tmp_costs );
+-
+     cost = tmp_costs[0];
+ }
+ 
++void CostModule::fprop(const Mat&amp; inputs, const Mat&amp; targets, Vec&amp; costs)
++{
++    //PLWARNING(&quot;In CostModule::fprop - Using default (possibly inefficient) &quot;
++    //        &quot;implementation for class %s&quot;, classname().c_str());
++    // Keep only the first cost.
++    tmp_costs_mat.resize(inputs.length(), output_size);
++    fprop(inputs, targets, tmp_costs_mat);
++    costs &lt;&lt; tmp_costs_mat.column(0);
++}
++
+ //! for compatibility with OnlineLearningModule interface
+ void CostModule::fprop(const Vec&amp; input_and_target, Vec&amp; output) const
+ {
+@@ -114,6 +151,9 @@
+ }
+ 
+ 
++/////////////////
++// bpropUpdate //
++/////////////////
+ void CostModule::bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost,
+                              Vec&amp; input_gradient, bool accumulate)
+ {
+@@ -147,6 +187,14 @@
+     bpropUpdate( input, target, cost, tmp_input_gradient );
+ }
+ 
++void CostModule::bpropUpdate(const Mat&amp; inputs, const Mat&amp; targets,
++        const Vec&amp; costs)
++{
++    PLWARNING(&quot;In CostModule::bpropUpdate - Using default (possibly &quot;
++        &quot;inefficient) version for class %s&quot;, classname().c_str());
++    bpropUpdate( inputs, targets, costs, tmp_input_gradients );
++}
++
+ void CostModule::bpropUpdate(const Vec&amp; input_and_target, const Vec&amp; output,
+                              Vec&amp; input_and_target_gradient,
+                              const Vec&amp; output_gradient,
+
+Modified: trunk/plearn_learners/online/CostModule.h
+===================================================================
+--- trunk/plearn_learners/online/CostModule.h	2007-04-24 14:54:16 UTC (rev 6931)
++++ trunk/plearn_learners/online/CostModule.h	2007-04-24 15:00:43 UTC (rev 6932)
+@@ -71,15 +71,15 @@
+     //! given the input and target, compute the main output (cost)
+     virtual void fprop(const Vec&amp; input, const Vec&amp; target, real&amp; cost ) const;
+ 
++    //! Mini-batch version.
++    virtual void fprop(const Mat&amp; inputs, const Mat&amp; targets, Vec&amp; costs );
+ 
+     //! this version allows for several costs
+     virtual void fprop(const Vec&amp; input, const Vec&amp; target, Vec&amp; cost ) const;
+ 
+-    // TODO Document and implement (sub-classes too).
+-    virtual void fprop(const Mat&amp; inputs, const Mat&amp; targets, Mat&amp; costs ) const
+-    {
+-        PLASSERT( false );
+-    }
++    //! Mini-batch version with several costs..
++    virtual void fprop(const Mat&amp; inputs, const Mat&amp; targets, Mat&amp; costs)
++        const;
+ 
+     //! this version is provided for compatibility with the parent class
+     virtual void fprop(const Vec&amp; input_and_target, Vec&amp; output) const;
+@@ -88,9 +88,21 @@
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost,
+                              Vec&amp; input_gradient, bool accumulate=false);
+ 
++    //! Adapt based on the mini-batch cost gradient, and obtain the mini-batch
++    //! input gradient.
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; targets,
++            const Vec&amp; costs, Mat&amp; input_gradients, bool accumulate = false)
++    {
++        PLERROR(&quot;bpropUpdate on mini-batches not implemented in class %s&quot;,
++                classname().c_str());
++    }
++
+     //! Without the input gradient
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost );
+ 
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; targets,
++            const Vec&amp; costs);
++
+     //! this version is provided for compatibility with the parent class.
+     virtual void bpropUpdate(const Vec&amp; input_and_target, const Vec&amp; output,
+                              Vec&amp; input_and_target_gradient,
+@@ -151,6 +163,8 @@
+     mutable Vec tmp_input_and_target;
+     mutable Vec tmp_input_and_target_gradient;
+     mutable Vec tmp_input_and_target_diag_hessian;
++    Mat tmp_costs_mat;
++    Mat tmp_input_gradients;
+ 
+ private:
+     //#####  Private Member Functions  ########################################
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000380.html">[Plearn-commits] r6931 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000382.html">[Plearn-commits] r6933 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#381">[ date ]</a>
+              <a href="thread.html#381">[ thread ]</a>
+              <a href="subject.html#381">[ subject ]</a>
+              <a href="author.html#381">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

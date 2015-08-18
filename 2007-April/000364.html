@@ -1,0 +1,225 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6915 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6915%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704181234.l3ICYnpQ013098%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000363.html">
+   <LINK REL="Next"  HREF="000365.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6915 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6915%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704181234.l3ICYnpQ013098%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6915 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Wed Apr 18 14:34:49 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000363.html">[Plearn-commits] r6914 - trunk/scripts
+</A></li>
+        <LI>Next message: <A HREF="000365.html">[Plearn-commits] r6916 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#364">[ date ]</a>
+              <a href="thread.html#364">[ thread ]</a>
+              <a href="subject.html#364">[ subject ]</a>
+              <a href="author.html#364">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-04-18 14:34:48 +0200 (Wed, 18 Apr 2007)
+New Revision: 6915
+
+Modified:
+   trunk/plearn_learners/online/OnlineLearningModule.cc
+   trunk/plearn_learners/online/OnlineLearningModule.h
+   trunk/plearn_learners/online/RBMLayer.h
+Log:
+Modifications to move towards efficient mini-batch computations
+
+
+Modified: trunk/plearn_learners/online/OnlineLearningModule.cc
+===================================================================
+--- trunk/plearn_learners/online/OnlineLearningModule.cc	2007-04-17 19:39:35 UTC (rev 6914)
++++ trunk/plearn_learners/online/OnlineLearningModule.cc	2007-04-18 12:34:48 UTC (rev 6915)
+@@ -64,6 +64,22 @@
+ {
+ }
+ 
++//! default inefficient implementation of mini-batch fprop
++void OnlineLearningModule::fprop(const Mat&amp; input, Mat&amp; output) const
++{
++    int n=input.length();
++#ifdef BOUNDCHECK
++    if (n!=output.length())
++        PLERROR(&quot;OnlineLearningModule::fprop for matrices: inconsistent lengths of argument matrices\n&quot;);
++#endif
++    for (int i=0;i&lt;n;i++)
++    {
++        Vec input_i = input(i);
++        Vec output_i = output(i);
++        fprop(input_i,output_i);
++    }
++}
++
+ void OnlineLearningModule::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+                                        Vec&amp; input_gradient,
+                                        const Vec&amp; output_gradient,
+@@ -81,6 +97,34 @@
+     bpropUpdate(input, output, tmp_input_gradient, output_gradient);
+ }
+ 
++void OnlineLearningModule::bpropUpdate(const Mat&amp; input, const Mat&amp; output,
++                                       Mat&amp; input_gradient,
++                                       const Mat&amp; output_gradient,
++                                       bool accumulate)
++{
++    int n=input.length();
++#ifdef BOUNDCHECK
++    if (n!=output.length() || n!=output_gradient.length())
++        PLERROR(&quot;OnlineLearningModule::bpropUpdate for matrices: inconsistent lengths of argument matrices\n&quot;);
++#endif
++    if (n!=input_gradient.length())
++        input_gradient.resize(n,input.width());
++    for (int i=0;i&lt;n;i++)
++    {
++        Vec input_i = input(i);
++        Vec output_i = output(i);
++        Vec input_gradient_i = input_gradient(i);
++        Vec output_gradient_i = output_gradient(i);
++        bpropUpdate(input_i,output_i,input_gradient_i,output_gradient_i,accumulate);
++    }
++}
++
++void OnlineLearningModule::bpropUpdate(const Mat&amp; input, const Mat&amp; output,
++                                       const Mat&amp; output_gradient)
++{
++    bpropUpdate(input, output, tmpm_input_gradient, output_gradient);
++}
++
+ //! Default method for bbpropUpdate functions, so that it compiles but crashes
+ //! if not implemented but used.
+ void OnlineLearningModule::bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
+
+Modified: trunk/plearn_learners/online/OnlineLearningModule.h
+===================================================================
+--- trunk/plearn_learners/online/OnlineLearningModule.h	2007-04-17 19:39:35 UTC (rev 6914)
++++ trunk/plearn_learners/online/OnlineLearningModule.h	2007-04-18 12:34:48 UTC (rev 6915)
+@@ -99,6 +99,7 @@
+ 
+     //! given the input, compute the output (possibly resize it appropriately)
+     virtual void fprop(const Vec&amp; input, Vec&amp; output) const = 0;
++    virtual void fprop(const Mat&amp; input, Mat&amp; output) const;
+ 
+     //! Adapt based on the output gradient: this method should only
+     //! be called just after a corresponding fprop; it should be
+@@ -111,6 +112,8 @@
+     //! AND IGNORES INPUT GRADIENT.
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+                              const Vec&amp; output_gradient);
++    virtual void bpropUpdate(const Mat&amp; input, const Mat&amp; output,
++                             const Mat&amp; output_gradient);
+ 
+     //! this version allows to obtain the input gradient as well
+     //! N.B. THE DEFAULT IMPLEMENTATION JUST RAISES A PLERROR.
+@@ -119,6 +122,9 @@
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+                              Vec&amp; input_gradient, const Vec&amp; output_gradient,
+                              bool accumulate=false);
++    virtual void bpropUpdate(const Mat&amp; input, const Mat&amp; output,
++                             Mat&amp; input_gradient, const Mat&amp; output_gradient,
++                             bool accumulate=false);
+ 
+     //! Similar to bpropUpdate, but adapt based also on the estimation
+     //! of the diagonal of the Hessian matrix, and propagates this
+@@ -181,6 +187,7 @@
+ protected:
+     // Also used in CostModule for instance
+     mutable Vec tmp_input_gradient;
++    mutable Mat tmpm_input_gradient;
+     mutable Vec tmp_input_diag_hessian;
+ 
+ 
+
+Modified: trunk/plearn_learners/online/RBMLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.h	2007-04-17 19:39:35 UTC (rev 6914)
++++ trunk/plearn_learners/online/RBMLayer.h	2007-04-18 12:34:48 UTC (rev 6915)
+@@ -82,12 +82,15 @@
+ 
+     //! activation value: \sum Wx + b
+     Vec activation;
++    Mat activations; // for mini-batch operations
+ 
+     //! Contains a sample of the random variable in this layer
+     Vec sample;
++    Mat samples;  
+ 
+     //! Contains the expected value of the random variable in this layer
+     Vec expectation;
++    Mat expectations; // for mini-batch operations
+ 
+     //! flags that expectation was computed based on most recently computed
+     //! value of activation
+@@ -149,22 +152,27 @@
+     //! Computes the negative log-likelihood of target given the
+     //! internal activations of the layer
+     virtual real fpropNLL(const Vec&amp; target);
++    virtual real fpropNLL(const Mat&amp; target);
+ 
+     //! Computes the gradient of the negative log-likelihood of target
+     //! with respect to the layer's bias, given the internal activations
+     virtual void bpropNLL(const Vec&amp; target, real nll, Vec&amp; bias_gradient);
++    virtual void bpropNLL(const Mat&amp; target, real nll, Mat&amp; bias_gradient);
+ 
+     //! Accumulates positive phase statistics
+     virtual void accumulatePosStats( const Vec&amp; pos_values );
++    virtual void accumulatePosStats( const Mat&amp; pos_values );
+ 
+     //! Accumulates negative phase statistics
+     virtual void accumulateNegStats( const Vec&amp; neg_values );
++    virtual void accumulateNegStats( const Mat&amp; neg_values );
+ 
+     //! Update parameters according to accumulated statistics
+     virtual void update();
+ 
+     //! Update parameters according to one pair of vectors
+     virtual void update( const Vec&amp; pos_values, const Vec&amp; neg_values );
++    virtual void update( const Mat&amp; pos_values, const Mat&amp; neg_values );
+ 
+     //! resets activations, sample and expectation fields
+     virtual void reset();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000363.html">[Plearn-commits] r6914 - trunk/scripts
+</A></li>
+	<LI>Next message: <A HREF="000365.html">[Plearn-commits] r6916 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#364">[ date ]</a>
+              <a href="thread.html#364">[ thread ]</a>
+              <a href="subject.html#364">[ subject ]</a>
+              <a href="author.html#364">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

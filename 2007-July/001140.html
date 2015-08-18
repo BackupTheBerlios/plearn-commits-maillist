@@ -1,0 +1,934 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7692 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7692%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200707040834.l648Yo5P018865%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001139.html">
+   <LINK REL="Next"  HREF="001141.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7692 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7692%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200707040834.l648Yo5P018865%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7692 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Wed Jul  4 10:34:50 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001139.html">[Plearn-commits] r7691 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001141.html">[Plearn-commits] r7693 - trunk/python_modules/plearn/analysis
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1140">[ date ]</a>
+              <a href="thread.html#1140">[ thread ]</a>
+              <a href="subject.html#1140">[ subject ]</a>
+              <a href="author.html#1140">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-07-04 10:34:49 +0200 (Wed, 04 Jul 2007)
+New Revision: 7692
+
+Modified:
+   trunk/plearn_learners/online/MaxSubsampling2DModule.cc
+   trunk/plearn_learners/online/RBMConnection.cc
+   trunk/plearn_learners/online/RBMConnection.h
+   trunk/plearn_learners/online/RBMConv2DConnection.cc
+   trunk/plearn_learners/online/RBMConv2DConnection.h
+   trunk/plearn_learners/online/RBMMatrixConnection.cc
+   trunk/plearn_learners/online/RBMMatrixConnection.h
+   trunk/plearn_learners/online/RBMMixedConnection.cc
+   trunk/plearn_learners/online/RBMMixedConnection.h
+   trunk/plearn_learners/online/RBMModule.cc
+Log:
+  - RBMModule does not use RBMMatrixTransposeConnection as
+reconstruction connection, but any other RBMConnection
+  - Implementation of bpropAccUpdate in RBMConnection and sub-classes
+
+
+Modified: trunk/plearn_learners/online/MaxSubsampling2DModule.cc
+===================================================================
+--- trunk/plearn_learners/online/MaxSubsampling2DModule.cc	2007-07-04 03:31:17 UTC (rev 7691)
++++ trunk/plearn_learners/online/MaxSubsampling2DModule.cc	2007-07-04 08:34:49 UTC (rev 7692)
+@@ -230,16 +230,14 @@
+         PLCHECK_MSG( false, &quot;Unknown port configuration&quot; );
+ }
+ 
+-/////////////////
+-// bpropUpdate //
+-/////////////////
+-
+-
++////////////////////
++// bpropAccUpdate //
++////////////////////
+ void MaxSubsampling2DModule::bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
+                                             const TVec&lt;Mat*&gt;&amp; ports_gradient)
+ {
+     PLASSERT( ports_value.length() == nPorts()
+-              &amp;&amp; ports_gradient.length() == nPorts());
++              &amp;&amp; ports_gradient.length() == nPorts() );
+     // check which ports are input
+     // (ports_value[i] &amp;&amp; !ports_value[i]-&gt;isEmpty())
+     // which ports are output (ports_value[i] &amp;&amp; ports_value[i]-&gt;isEmpty())
+
+Modified: trunk/plearn_learners/online/RBMConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMConnection.cc	2007-07-04 03:31:17 UTC (rev 7691)
++++ trunk/plearn_learners/online/RBMConnection.cc	2007-07-04 08:34:49 UTC (rev 7692)
+@@ -136,6 +136,17 @@
+         up_size = output_size;
+     else
+         output_size = up_size;
++
++    ports.resize(2);
++    ports[0] = &quot;down&quot;;
++    ports[1] = &quot;up&quot;;
++    // NOT weights here, because it only makes sense with an
++    // RBMMatrixConnection
++
++    port_sizes.resize(nPorts(), 2);
++    port_sizes.column(0).fill(-1);
++    port_sizes(0, 1) = down_size;
++    port_sizes(1, 1) = up_size;
+ }
+ 
+ ///////////
+@@ -286,7 +297,7 @@
+     PLERROR(&quot;In RBMConnection::getAllWeights(): not implemented&quot;);
+ }
+ 
+-void RBMConnection::setAllWeights(const Mat&amp; rbm_weights) 
++void RBMConnection::setAllWeights(const Mat&amp; rbm_weights)
+ {
+     PLERROR(&quot;In RBMConnection::setAllWeights(): not implemented&quot;);
+ }
+@@ -294,7 +305,7 @@
+ void RBMConnection::petiteCulotteOlivierUpdate(
+     const Vec&amp; input, const Mat&amp; rbm_weights,
+     const Vec&amp; output,
+-    Vec&amp; input_gradient, 
++    Vec&amp; input_gradient,
+     Mat&amp; rbm_weights_gradient,
+     const Vec&amp; output_gradient,
+     bool accumulate)
+@@ -302,7 +313,7 @@
+     PLERROR(&quot;In RBMConnection::bpropUpdate(): not implemented&quot;);
+ }
+ 
+- 
++
+ /////////////
+ // bpropCD //
+ /////////////
+@@ -312,17 +323,32 @@
+     PLERROR(&quot;In RBMConnection::petiteCulotteOlivierCD(): not implemented&quot;);
+ }
+ 
+-void RBMConnection::petiteCulotteOlivierCD( const Vec&amp; pos_down_values, 
+-                                            const Vec&amp; pos_up_values,   
+-                                            const Vec&amp; neg_down_values, 
+-                                            const Vec&amp; neg_up_values, 
++void RBMConnection::petiteCulotteOlivierCD( const Vec&amp; pos_down_values,
++                                            const Vec&amp; pos_up_values,
++                                            const Vec&amp; neg_down_values,
++                                            const Vec&amp; neg_up_values,
+                                             Mat&amp; weights_gradient,
+                                             bool accumulate)
+ {
+     PLERROR(&quot;In RBMConnection::petiteCulotteOlivierCD(): not implemented&quot;);
+ }
+ 
++//////////////
++// getPorts //
++//////////////
++const TVec&lt;string&gt;&amp; RBMConnection::getPorts()
++{
++    return ports;
++}
+ 
++//////////////////
++// getPortSizes //
++//////////////////
++const TMat&lt;int&gt;&amp; RBMConnection::getPortSizes()
++{
++    return port_sizes;
++}
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/online/RBMConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMConnection.h	2007-07-04 03:31:17 UTC (rev 7691)
++++ trunk/plearn_learners/online/RBMConnection.h	2007-07-04 08:34:49 UTC (rev 7692)
+@@ -202,12 +202,12 @@
+         Vec&amp; input_gradient, Mat&amp; rbm_weights_gradient,
+         const Vec&amp; output_gradient,
+         bool accumulate = false);
+-    
++
+     //! Computes the contrastive divergence gradient with respect to the weights
+     //! It should be noted that bpropCD does not call clearstats().
+-    virtual void petiteCulotteOlivierCD(Mat&amp; weights_gradient, 
++    virtual void petiteCulotteOlivierCD(Mat&amp; weights_gradient,
+                                         bool accumulate = false);
+-    
++
+     //! Computes the contrastive divergence gradient with respect to the weights
+     //! given the positive and negative phase values.
+     virtual void petiteCulotteOlivierCD(const Vec&amp; pos_down_values,
+@@ -216,7 +216,13 @@
+                                         const Vec&amp; neg_up_values,
+                                         Mat&amp; weights_gradient,
+                                         bool accumulate = false);
+-    
++
++    //! Return the list of ports in the module.
++    virtual const TVec&lt;string&gt;&amp; getPorts();
++
++    //! Return the size of all ports
++    virtual const TMat&lt;int&gt;&amp; getPortSizes();
++
+     //! return the number of parameters
+     virtual int nParameters() const = 0;
+ 
+@@ -256,6 +262,9 @@
+     //! Number of examples accumulated in *_neg_stats
+     int neg_count;
+ 
++    //! Port names
++    TVec&lt;string&gt; ports;
++
+ protected:
+     //#####  Protected Member Functions  ######################################
+ 
+
+Modified: trunk/plearn_learners/online/RBMConv2DConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMConv2DConnection.cc	2007-07-04 03:31:17 UTC (rev 7691)
++++ trunk/plearn_learners/online/RBMConv2DConnection.cc	2007-07-04 08:34:49 UTC (rev 7692)
+@@ -632,6 +632,113 @@
+     // kernel -= learning_rate/n * kernel_gradient
+     multiplyAcc( kernel, kernel_gradient, -learning_rate/batch_size );
+ }
++
++////////////////////
++// bpropAccUpdate //
++////////////////////
++void RBMConv2DConnection::bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                         const TVec&lt;Mat*&gt;&amp; ports_gradient)
++{
++    PLASSERT( ports_value.length() == nPorts()
++              &amp;&amp; ports_gradient.length() == nPorts() );
++
++    Mat* down = ports_value[0];
++    Mat* up = ports_value[1];
++    Mat* down_grad = ports_gradient[0];
++    Mat* up_grad = ports_gradient[1];
++
++    PLASSERT( down &amp;&amp; !down-&gt;isEmpty() );
++    PLASSERT( up &amp;&amp; !up-&gt;isEmpty() );
++
++    int batch_size = down-&gt;length();
++    PLASSERT( up-&gt;length() == batch_size );
++
++    // If we have up_grad
++    if( up_grad &amp;&amp; !up_grad-&gt;isEmpty() )
++    {
++        // down_grad should not be provided
++        PLASSERT( !down_grad || down_grad-&gt;isEmpty() );
++        PLASSERT( up_grad-&gt;length() == batch_size );
++        PLASSERT( up_grad-&gt;width() == up_size );
++
++        // If we want down_grad
++        bool compute_down_grad = false;
++        if( down_grad &amp;&amp; down_grad-&gt;isEmpty() )
++        {
++            PLASSERT( down_grad-&gt;width() == down_size );
++            down_grad-&gt;resize(batch_size, down_size);
++            compute_down_grad = true;
++        }
++
++        kernel_gradient.clear();
++        for (int k=0; k&lt;batch_size; k++)
++        {
++            down_image = (*down)(k).toMat(down_image_length, down_image_width);
++            up_image = (*up)(k).toMat(up_image_length, up_image_width);
++            up_image_gradient = (*up_grad)(k)
++                .toMat(up_image_length, up_image_width);
++
++            if( compute_down_grad )
++            {
++                down_image_gradient = (*down_grad)(k)
++                    .toMat(down_image_length, down_image_width);
++                convolve2Dbackprop(down_image, kernel,
++                                   up_image_gradient, down_image_gradient,
++                                   kernel_gradient,
++                                   kernel_step1, kernel_step2, true);
++            }
++            else
++                convolve2Dbackprop(down_image, up_image_gradient,
++                                   kernel_gradient,
++                                   kernel_step1, kernel_step2, true);
++        }
++        // kernel -= learning_rate/n * kernel_gradient
++        multiplyAcc(kernel, kernel_gradient, -learning_rate/batch_size);
++    }
++    else if( down_grad &amp;&amp; !down_grad-&gt;isEmpty() )
++    {
++        PLASSERT( down_grad-&gt;length() == batch_size );
++        PLASSERT( down_grad-&gt;width() == down_size );
++
++        // If we want up_grad
++        bool compute_up_grad = false;
++        if( up_grad &amp;&amp; up_grad-&gt;isEmpty() )
++        {
++            PLASSERT( up_grad-&gt;width() == up_size );
++            up_grad-&gt;resize(batch_size, up_size);
++            compute_up_grad = true;
++        }
++
++        kernel_gradient.clear();
++        for (int k=0; k&lt;batch_size; k++)
++        {
++            down_image = (*down)(k).toMat(down_image_length, down_image_width);
++            up_image = (*up)(k).toMat(up_image_length, up_image_width);
++            down_image_gradient = (*down_grad)(k)
++                .toMat(down_image_length, down_image_width);
++
++            if( compute_up_grad )
++            {
++                up_image_gradient = (*up_grad)(k)
++                    .toMat(up_image_length, up_image_width);
++                backConvolve2Dbackprop(kernel, up_image, up_image_gradient,
++                                       down_image_gradient, kernel_gradient,
++                                       kernel_step1, kernel_step2, true);
++            }
++            else
++                backConvolve2Dbackprop(up_image, down_image_gradient,
++                                       kernel_gradient,
++                                       kernel_step1, kernel_step2, true);
++        }
++        // kernel -= learning_rate/n * kernel_gradient
++        multiplyAcc(kernel, kernel_gradient, -learning_rate/batch_size);
++    }
++    else
++        PLCHECK_MSG( false,
++                     &quot;Unknown port configuration&quot; );
++}
++
++
+ //! reset the parameters to the state they would be BEFORE starting training.
+ //! Note that this method is necessarily called from build().
+ void RBMConv2DConnection::forget()
+
+Modified: trunk/plearn_learners/online/RBMConv2DConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMConv2DConnection.h	2007-07-04 03:31:17 UTC (rev 7691)
++++ trunk/plearn_learners/online/RBMConv2DConnection.h	2007-07-04 08:34:49 UTC (rev 7692)
+@@ -180,6 +180,9 @@
+                              const Mat&amp; output_gradients,
+                              bool accumulate=false);
+ 
++    virtual void bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                const TVec&lt;Mat*&gt;&amp; ports_gradient);
++
+     //! reset the parameters to the state they would be BEFORE starting
+     //! training.  Note that this method is necessarily called from
+     //! build().
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-07-04 03:31:17 UTC (rev 7691)
++++ trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-07-04 08:34:49 UTC (rev 7692)
+@@ -497,7 +497,7 @@
+ ///////////
+ // fprop //
+ ///////////
+-void RBMMatrixConnection::fprop(const Vec&amp; input, const Mat&amp; rbm_weights, 
++void RBMMatrixConnection::fprop(const Vec&amp; input, const Mat&amp; rbm_weights,
+                           Vec&amp; output) const
+ {
+     product( output, rbm_weights, input );
+@@ -584,7 +584,7 @@
+ void RBMMatrixConnection::petiteCulotteOlivierUpdate(
+     const Vec&amp; input, const Mat&amp; rbm_weights,
+     const Vec&amp; output,
+-    Vec&amp; input_gradient, 
++    Vec&amp; input_gradient,
+     Mat&amp; rbm_weights_gradient,
+     const Vec&amp; output_gradient,
+     bool accumulate)
+@@ -602,7 +602,7 @@
+         transposeProductAcc( input_gradient, rbm_weights, output_gradient );
+ 
+         // rbm_weights_gradient += output_gradient' * input
+-        externalProductAcc( rbm_weights_gradient, output_gradient, 
++        externalProductAcc( rbm_weights_gradient, output_gradient,
+                             input);
+ 
+     }
+@@ -614,13 +614,81 @@
+         transposeProduct( input_gradient, rbm_weights, output_gradient );
+ 
+         // rbm_weights_gradient = output_gradient' * input
+-        externalProduct( rbm_weights_gradient, output_gradient, 
++        externalProduct( rbm_weights_gradient, output_gradient,
+                          input);
+     }
+ 
+ }
+ 
+- 
++
++////////////////////
++// bpropAccUpdate //
++////////////////////
++void RBMMatrixConnection::bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                         const TVec&lt;Mat*&gt;&amp; ports_gradient)
++{
++    //TODO: add weights as port?
++    PLASSERT( ports_value.length() == nPorts()
++              &amp;&amp; ports_gradient.length() == nPorts() );
++
++    Mat* down = ports_value[0];
++    Mat* up = ports_value[1];
++    Mat* down_grad = ports_gradient[0];
++    Mat* up_grad = ports_gradient[1];
++
++    PLASSERT( down &amp;&amp; !down-&gt;isEmpty() );
++    PLASSERT( up &amp;&amp; !up-&gt;isEmpty() );
++
++    int batch_size = down-&gt;length();
++    PLASSERT( up-&gt;length() == batch_size );
++
++    // If we have up_grad
++    if( up_grad &amp;&amp; !up_grad-&gt;isEmpty() )
++    {
++        // down_grad should not be provided
++        PLASSERT( !down_grad || down_grad-&gt;isEmpty() );
++        PLASSERT( up_grad-&gt;length() == batch_size );
++        PLASSERT( up_grad-&gt;width() == up_size );
++
++        // If we want down_grad
++        if( down_grad &amp;&amp; down_grad-&gt;isEmpty() )
++        {
++            PLASSERT( down_grad-&gt;width() == down_size );
++            down_grad-&gt;resize(batch_size, down_size);
++
++            // down_grad = up_grad * weights
++            product(*down_grad, *up_grad, weights);
++        }
++
++        // weights -= learning_rate/n * up_grad' * down
++        transposeProductScaleAcc(weights, *up_grad, *down,
++                                 -learning_rate/batch_size, real(1));
++    }
++    else if( down_grad &amp;&amp; !down_grad-&gt;isEmpty() )
++    {
++        PLASSERT( down_grad-&gt;length() == batch_size );
++        PLASSERT( down_grad-&gt;width() == down_size );
++
++        // If we wand up_grad
++        if( up_grad &amp;&amp; up_grad-&gt;isEmpty() )
++        {
++            PLASSERT( up_grad-&gt;width() == up_size );
++            up_grad-&gt;resize(batch_size, up_size);
++
++            // up_grad = down_grad * weights'
++            productTranspose(*up_grad, *down_grad, weights);
++        }
++
++        // weights = -learning_rate/n * up' * down_grad
++        transposeProductScaleAcc(weights, *up, *down_grad,
++                                 -learning_rate/batch_size, real(1));
++    }
++    else
++        PLCHECK_MSG( false,
++                     &quot;Unknown port configuration&quot; );
++}
++
++
+ /////////////
+ // bpropCD //
+ /////////////
+@@ -636,7 +704,7 @@
+     int w_mod = weights_gradient.mod();
+     int wps_mod = weights_pos_stats.mod();
+     int wns_mod = weights_neg_stats.mod();
+-    
++
+     if(accumulate)
+     {
+         for( int i=0 ; i&lt;l ; i++, w_i+=w_mod, wps_i+=wps_mod, wns_i+=wns_mod )
+@@ -653,13 +721,13 @@
+ 
+ // Instead of using the statistics, we assume we have only one markov chain
+ // runned and we update the parameters from the first 4 values of the chain
+-void RBMMatrixConnection::petiteCulotteOlivierCD( 
++void RBMMatrixConnection::petiteCulotteOlivierCD(
+     const Vec&amp; pos_down_values, // v_0
+     const Vec&amp; pos_up_values,   // h_0
+     const Vec&amp; neg_down_values, // v_1
+     const Vec&amp; neg_up_values, // h_1
+     Mat&amp; weights_gradient,
+-    bool accumulate) 
++    bool accumulate)
+ {
+     int l = weights.length();
+     int w = weights.width();
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.h	2007-07-04 03:31:17 UTC (rev 7691)
++++ trunk/plearn_learners/online/RBMMatrixConnection.h	2007-07-04 08:34:49 UTC (rev 7692)
+@@ -68,11 +68,11 @@
+ 
+     //#####  Learned Options  #################################################
+ 
+-    //! Matrix containing unit-to-unit weights (output_size &#195;&#151; input_size)
++    //! Matrix containing unit-to-unit weights (output_size &#215; input_size)
+     Mat weights;
+ 
+     //! used for Gibbs chain methods only
+-    real gibbs_ma_coefficient; 
++    real gibbs_ma_coefficient;
+ 
+ 
+     //#####  Not Options  #####################################################
+@@ -177,7 +177,7 @@
+     // virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+     //                          const Vec&amp; output_gradient);
+ 
+-    //! given the input and the conneciton weights, 
++    //! given the input and the connection weights,
+     //! compute the output (possibly resize it  appropriately)
+     virtual void fprop(const Vec&amp; input, const Mat&amp; rbm_weights,
+                        Vec&amp; output) const;
+@@ -200,6 +200,9 @@
+                              const Mat&amp; output_gradients,
+                              bool accumulate = false);
+ 
++    virtual void bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                const TVec&lt;Mat*&gt;&amp; ports_gradient);
++
+     //! back-propagates the output gradient to the input and the weights
+     //! (the weights are not updated)
+     virtual void petiteCulotteOlivierUpdate(
+@@ -208,12 +211,12 @@
+         Vec&amp; input_gradient, Mat&amp; rbm_weights_gradient,
+         const Vec&amp; output_gradient,
+         bool accumulate = false);
+-    
++
+     //! Computes the contrastive divergence gradient with respect to the weights
+     //! It should be noted that bpropCD does not call clearstats().
+     virtual void petiteCulotteOlivierCD(Mat&amp; weights_gradient,
+                                         bool accumulate = false);
+-    
++
+     //! Computes the contrastive divergence gradient with respect to the weights
+     //! given the positive and negative phase values.
+     virtual void petiteCulotteOlivierCD(const Vec&amp; pos_down_values,
+
+Modified: trunk/plearn_learners/online/RBMMixedConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedConnection.cc	2007-07-04 03:31:17 UTC (rev 7691)
++++ trunk/plearn_learners/online/RBMMixedConnection.cc	2007-07-04 08:34:49 UTC (rev 7692)
+@@ -863,6 +863,141 @@
+     }
+ }
+ 
++////////////////////
++// bpropAccUpdate //
++////////////////////
++void RBMMixedConnection::bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                        const TVec&lt;Mat*&gt;&amp; ports_gradient)
++{
++    PLASSERT( ports_value.length() == nPorts()
++              &amp;&amp; ports_gradient.length() == nPorts() );
++
++    Mat* down = ports_value[0];
++    Mat* up = ports_value[1];
++    Mat* down_grad = ports_gradient[0];
++    Mat* up_grad = ports_gradient[1];
++
++    PLASSERT( down &amp;&amp; !down-&gt;isEmpty() );
++    PLASSERT( up &amp;&amp; !up-&gt;isEmpty() );
++
++    int batch_size = down-&gt;length();
++    PLASSERT( up-&gt;length() == batch_size );
++
++    // If we have up_grad
++    if( up_grad &amp;&amp; !up_grad-&gt;isEmpty() )
++    {
++        // down_grad should not be provided
++        PLASSERT( !down_grad || down_grad-&gt;isEmpty() );
++        PLASSERT( up_grad-&gt;length() == batch_size );
++        PLASSERT( up_grad-&gt;width() == up_size );
++
++        // If we want down_grad
++        bool compute_down_grad = false;
++        if( down_grad &amp;&amp; down_grad-&gt;isEmpty() )
++        {
++            PLASSERT( down_grad-&gt;width() == down_size );
++            down_grad-&gt;resize(batch_size, down_size);
++            compute_down_grad = true;
++        }
++
++        for (int j=0; j&lt;n_down_blocks; j++)
++        {
++            int init_j = down_init_positions[j];
++            int down_size_j = down_block_sizes[j];
++            Mat sub_down = down-&gt;subMatColumns(init_j, down_size_j);
++            Mat sub_down_grad;
++            Mat* p_sub_down_grad = NULL;
++            if( compute_down_grad )
++            {
++                sub_down_grad = down_grad-&gt;subMatColumns(init_j, down_size_j);
++                p_sub_down_grad = &amp;sub_down_grad;
++            }
++
++            for (int i=0; i&lt;n_up_blocks; i++)
++            {
++                if(sub_connections(i,j))
++                {
++                    int init_i = up_init_positions[i];
++                    int up_size_i = up_block_sizes[i];
++                    Mat sub_up = up-&gt;subMatColumns(init_i, up_size_i);
++                    Mat sub_up_grad =
++                        up_grad-&gt;subMatColumns(init_i, up_size_i);
++
++                    TVec&lt;Mat*&gt; sub_ports_value(2);
++                    sub_ports_value[0] = &amp;sub_down;
++                    sub_ports_value[1] = &amp;sub_up;
++                    TVec&lt;Mat*&gt; sub_ports_gradient(2);
++                    // NOT &amp;sub_down_grad because we may want a NULL pointer
++                    sub_ports_gradient[0] = p_sub_down_grad;
++                    sub_ports_gradient[1] = &amp;sub_up_grad;
++
++                    if( compute_down_grad )
++                        sub_down_grad.resize(0, down_size_j);
++
++                    sub_connections(i,j)-&gt;bpropAccUpdate( sub_ports_value,
++                                                          sub_ports_gradient );
++                }
++            }
++        }
++    }
++    else if( down_grad &amp;&amp; !down_grad-&gt;isEmpty() )
++    {
++        PLASSERT( down_grad-&gt;length() == batch_size );
++        PLASSERT( down_grad-&gt;width() == down_size );
++
++        // If we wand up_grad
++        bool compute_up_grad = false;
++        if( up_grad &amp;&amp; up_grad-&gt;isEmpty() )
++        {
++            PLASSERT( up_grad-&gt;width() == up_size );
++            up_grad-&gt;resize(batch_size, up_size);
++            compute_up_grad = true;
++        }
++
++        for (int i=0; i&lt;n_up_blocks; i++)
++        {
++            int init_i = up_init_positions[i];
++            int up_size_i = up_block_sizes[i];
++            Mat sub_up = up-&gt;subMatColumns(init_i, up_size_i);
++            Mat sub_up_grad;
++            Mat* p_sub_up_grad = NULL;
++            if( compute_up_grad )
++            {
++                sub_up_grad = up_grad-&gt;subMatColumns(init_i, up_size_i);
++                p_sub_up_grad = &amp;sub_up_grad;
++            }
++
++            for (int j=0; j&lt;n_down_blocks; j++)
++            {
++                int init_j = down_init_positions[j];
++                int down_size_j = down_block_sizes[j];
++                Mat sub_down = down-&gt;subMatColumns(init_j, down_size_j);
++                Mat sub_down_grad =
++                    down_grad-&gt;subMatColumns(init_j, down_size_j);
++
++                TVec&lt;Mat*&gt; sub_ports_value(2);
++                sub_ports_value[0] = &amp;sub_down;
++                sub_ports_value[1] = &amp;sub_up;
++                TVec&lt;Mat*&gt; sub_ports_gradient(2);
++                sub_ports_gradient[0] = &amp;sub_down_grad;
++                // NOT &amp;sub_up_grad because we may want a NULL pointer
++                sub_ports_gradient[1] = p_sub_up_grad;
++
++                if( compute_up_grad )
++                    sub_up_grad.resize(0, up_size_i);
++
++                sub_connections(i,j)-&gt;bpropAccUpdate( sub_ports_value,
++                                                      sub_ports_gradient );
++            }
++        }
++    }
++    else
++        PLCHECK_MSG( false,
++                     &quot;Unknown port configuration&quot; );
++
++}
++
++
+ //! reset the parameters to the state they would be BEFORE starting training.
+ //! Note that this method is necessarily called from build().
+ void RBMMixedConnection::forget()
+
+Modified: trunk/plearn_learners/online/RBMMixedConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedConnection.h	2007-07-04 03:31:17 UTC (rev 7691)
++++ trunk/plearn_learners/online/RBMMixedConnection.h	2007-07-04 08:34:49 UTC (rev 7692)
+@@ -163,6 +163,9 @@
+                              const Mat&amp; output_gradients,
+                              bool accumulate=false);
+ 
++    virtual void bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                const TVec&lt;Mat*&gt;&amp; ports_gradient);
++
+     //! reset the parameters to the state they would be BEFORE starting
+     //! training.  Note that this method is necessarily called from
+     //! build().
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-07-04 03:31:17 UTC (rev 7691)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-07-04 08:34:49 UTC (rev 7692)
+@@ -133,7 +133,7 @@
+     declareOption(ol, &quot;reconstruction_connection&quot;,
+                   &amp;RBMModule::reconstruction_connection,
+                   OptionBase::buildoption,
+-        &quot;Reconstuction connection between the hidden and visible layers.&quot;);
++        &quot;Reconstruction connection between the hidden and visible layers.&quot;);
+ 
+     declareOption(ol, &quot;grad_learning_rate&quot;, &amp;RBMModule::grad_learning_rate,
+                   OptionBase::buildoption,
+@@ -531,13 +531,14 @@
+     if (using_reconstruction_connection)
+     {
+         PLASSERT( reconstruction_connection );
+-        reconstruction_connection-&gt;setAsDownInputs(hidden);
++        reconstruction_connection-&gt;setAsUpInputs(hidden);
+         visible_layer-&gt;getAllActivations(reconstruction_connection, 0, true);
+     }
+     else
+     {
+         if(weights &amp;&amp; !weights-&gt;isEmpty())
+         {
++            PLASSERT( connection-&gt;classname() == &quot;RBMMatrixConnection&quot; );
+             Mat old_weights;
+             Vec old_activation;
+             connection-&gt;getAllWeights(old_weights);
+@@ -983,7 +984,7 @@
+ 
+         // Don't need to verify if they are asked in a port, this was done previously
+ 
+-        computeVisibleActivations(hidden_layer-&gt;getExpectations(),true);
++        computeVisibleActivations(hidden_layer-&gt;getExpectations(), true);
+         if(visible_reconstruction_activations)
+         {
+             PLASSERT( visible_reconstruction_activations-&gt;isEmpty() );
+@@ -1000,7 +1001,7 @@
+                 PLASSERT( visible_reconstruction-&gt;isEmpty() );
+                 const Mat&amp; to_store = visible_layer-&gt;getExpectations();
+                 visible_reconstruction-&gt;resize(to_store.length(),
+-                                                           to_store.width());
++                                               to_store.width());
+                 *visible_reconstruction &lt;&lt; to_store;
+             }
+             if(reconstruction_error)
+@@ -1120,67 +1121,67 @@
+         // Note: we need to perform the following steps even if the gradient
+         // learning rate is equal to 0. This is because we must propagate the
+         // gradient to the visible layer, even though no update is required.
+-            setAllLearningRates(grad_learning_rate);
+-            PLASSERT( hidden &amp;&amp; hidden_act );
+-            // Compute gradient w.r.t. activations of the hidden layer.
+-            hidden_layer-&gt;bpropUpdate(
+-                    *hidden_act, *hidden, hidden_act_grad, *hidden_grad,
+-                    false);
+-            if (hidden_bias_grad)
+-            {
+-                PLASSERT( hidden_bias_grad-&gt;isEmpty() &amp;&amp;
+-                          hidden_bias_grad-&gt;width() == hidden_layer-&gt;size );
+-                hidden_bias_grad-&gt;resize(mbs,hidden_layer-&gt;size);
+-                *hidden_bias_grad += hidden_act_grad;
+-            }
+-            // Compute gradient w.r.t. expectations of the visible layer (=
+-            // inputs).
+-            Mat* store_visible_grad = NULL;
+-            if (compute_visible_grad) {
+-                PLASSERT( visible_grad-&gt;width() == visible_layer-&gt;size );
+-                store_visible_grad = visible_grad;
+-            } else {
+-                // We do not actually need to store the gradient, but since it
+-                // is required in bpropUpdate, we provide a dummy matrix to
+-                // store it.
+-                store_visible_grad = &amp;visible_exp_grad;
+-            }
+-            store_visible_grad-&gt;resize(mbs,visible_layer-&gt;size);
++        setAllLearningRates(grad_learning_rate);
++        PLASSERT( hidden &amp;&amp; hidden_act );
++        // Compute gradient w.r.t. activations of the hidden layer.
++        hidden_layer-&gt;bpropUpdate(
++                *hidden_act, *hidden, hidden_act_grad, *hidden_grad,
++                false);
++        if (hidden_bias_grad)
++        {
++            PLASSERT( hidden_bias_grad-&gt;isEmpty() &amp;&amp;
++                      hidden_bias_grad-&gt;width() == hidden_layer-&gt;size );
++            hidden_bias_grad-&gt;resize(mbs,hidden_layer-&gt;size);
++            *hidden_bias_grad += hidden_act_grad;
++        }
++        // Compute gradient w.r.t. expectations of the visible layer (=
++        // inputs).
++        Mat* store_visible_grad = NULL;
++        if (compute_visible_grad) {
++            PLASSERT( visible_grad-&gt;width() == visible_layer-&gt;size );
++            store_visible_grad = visible_grad;
++        } else {
++            // We do not actually need to store the gradient, but since it
++            // is required in bpropUpdate, we provide a dummy matrix to
++            // store it.
++            store_visible_grad = &amp;visible_exp_grad;
++        }
++        store_visible_grad-&gt;resize(mbs,visible_layer-&gt;size);
+ 
+-            if (weights)
++        if (weights)
++        {
++            int up = connection-&gt;up_size;
++            int down = connection-&gt;down_size;
++            PLASSERT( !weights-&gt;isEmpty() &amp;&amp;
++                      weights_grad &amp;&amp; weights_grad-&gt;isEmpty() &amp;&amp;
++                      weights_grad-&gt;width() == up * down );
++            weights_grad-&gt;resize(mbs, up * down);
++            Mat w, wg;
++            Vec v,h,vg,hg;
++            for(int i=0; i&lt;mbs; i++)
+             {
+-                int up = connection-&gt;up_size;
+-                int down = connection-&gt;down_size;
+-                PLASSERT( !weights-&gt;isEmpty() &amp;&amp;
+-                          weights_grad &amp;&amp; weights_grad-&gt;isEmpty() &amp;&amp;
+-                          weights_grad-&gt;width() == up * down );
+-                weights_grad-&gt;resize(mbs, up * down);
+-                Mat w, wg;
+-                Vec v,h,vg,hg;
+-                for(int i=0; i&lt;mbs; i++)
+-                {
+-                    w = Mat(up, down,(*weights)(i));
+-                    wg = Mat(up, down,(*weights_grad)(i));
+-                    v = (*visible)(i);
+-                    h = (*hidden_act)(i);
+-                    vg = (*store_visible_grad)(i);
+-                    hg = hidden_act_grad(i);
+-                    connection-&gt;petiteCulotteOlivierUpdate(
+-                        v,
+-                        w,
+-                        h,
+-                        vg,
+-                        wg,
+-                        hg,true);
+-                }
++                w = Mat(up, down,(*weights)(i));
++                wg = Mat(up, down,(*weights_grad)(i));
++                v = (*visible)(i);
++                h = (*hidden_act)(i);
++                vg = (*store_visible_grad)(i);
++                hg = hidden_act_grad(i);
++                connection-&gt;petiteCulotteOlivierUpdate(
++                    v,
++                    w,
++                    h,
++                    vg,
++                    wg,
++                    hg,true);
+             }
+-            else
+-            {
+-                connection-&gt;bpropUpdate(
+-                    *visible, *hidden_act, *store_visible_grad,
+-                    hidden_act_grad, true);
+-            }
+-            partition_function_is_stale = true;
++        }
++        else
++        {
++            connection-&gt;bpropUpdate(
++                *visible, *hidden_act, *store_visible_grad,
++                hidden_act_grad, true);
++        }
++        partition_function_is_stale = true;
+     }
+ 
+     if (cd_learning_rate &gt; 0 &amp;&amp; minimize_log_likelihood) {
+@@ -1479,14 +1480,24 @@
+             visible_act_grad(t) *= (*reconstruction_error_grad)(t,0);
+ 
+         // Visible bias update
+-        columnSum(visible_act_grad,visible_bias_grad);
++        columnMean(visible_act_grad, visible_bias_grad);
+         visible_layer-&gt;update(visible_bias_grad);
+ 
+         // Reconstruction connection update
+-        reconstruction_connection-&gt;bpropUpdate(
+-            *hidden, *visible_reconstruction_activations,
+-            hidden_exp_grad, visible_act_grad, false);
++        hidden_exp_grad.resize(mbs, hidden_layer-&gt;size);
++        hidden_exp_grad.clear();
++        hidden_exp_grad.resize(0, hidden_layer-&gt;size);
+ 
++        TVec&lt;Mat*&gt; rec_ports_value(2);
++        rec_ports_value[0] = visible_reconstruction_activations;
++        rec_ports_value[1] = hidden;
++        TVec&lt;Mat*&gt; rec_ports_gradient(2);
++        rec_ports_gradient[0] = &amp;visible_act_grad;
++        rec_ports_gradient[1] = &amp;hidden_exp_grad;
++
++        reconstruction_connection-&gt;bpropAccUpdate( rec_ports_value,
++                                                   rec_ports_gradient );
++
+         // Hidden layer bias update
+         hidden_layer-&gt;bpropUpdate(*hidden_act,
+                                   *hidden, hidden_act_grad,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001139.html">[Plearn-commits] r7691 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001141.html">[Plearn-commits] r7693 - trunk/python_modules/plearn/analysis
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1140">[ date ]</a>
+              <a href="thread.html#1140">[ thread ]</a>
+              <a href="subject.html#1140">[ subject ]</a>
+              <a href="author.html#1140">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,247 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9545 - in trunk: python_modules/plearn/parallel	scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9545%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200810091718.m99HIQtX014972%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002984.html">
+   <LINK REL="Next"  HREF="002986.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9545 - in trunk: python_modules/plearn/parallel	scripts</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9545%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200810091718.m99HIQtX014972%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9545 - in trunk: python_modules/plearn/parallel	scripts">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Thu Oct  9 19:18:26 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002984.html">[Plearn-commits] r9544 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="002986.html">[Plearn-commits] r9546 - tags
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2985">[ date ]</a>
+              <a href="thread.html#2985">[ thread ]</a>
+              <a href="subject.html#2985">[ subject ]</a>
+              <a href="author.html#2985">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-10-09 19:18:25 +0200 (Thu, 09 Oct 2008)
+New Revision: 9545
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+first try to renew the kerberos ticket for pkdilly.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2008-10-09 16:19:01 UTC (rev 9544)
++++ trunk/python_modules/plearn/parallel/dbi.py	2008-10-09 17:18:25 UTC (rev 9545)
+@@ -711,6 +711,7 @@
+         self.condor_home = os.getenv('CONDOR_HOME')
+         self.condor_submit_exec = &quot;condor_submit&quot;
+         self.condor_submit_dag_exec = &quot;condor_submit_dag&quot;
++        self.pkdilly = False
+ 
+         DBIBase.__init__(self, commands, **args)
+         self.mem=int(self.mem)*1024
+@@ -826,7 +827,7 @@
+             #keeps a list of the temporary files created, so that they can be deleted at will
+ 
+     def get_pkdilly_var(self, condor_submit_file):
+-        cmd=self.condor_submit_exec+&quot; -S &quot;+condor_submit_file
++        cmd=&quot;pkdilly -S &quot;+condor_submit_file
+         self.p = Popen( cmd, shell=True, stdout=PIPE, stderr=PIPE)
+         self.p.wait()
+         assert self.p.stdout.readline()==&quot;&quot;
+@@ -856,6 +857,46 @@
+         get=[x for x in get if not x.startswith(&quot;KRVEXECUTE=&quot;)]
+         return get
+ 
++    def renew_launch_file(self,launch_file, renew_out_file,
++                          condor_submit_file, bash_exec, seconds=3600):
++        pid=os.fork()
++        if pid==0:#in the childreen
++            #renew each hour
++            out=open(renew_out_file+&quot;.out&quot;,&quot;w&quot;)
++            err=open(renew_out_file+&quot;.err&quot;,&quot;w&quot;)
++            sys.stdout = out
++            sys.stderr = err
++            cmd=&quot;condor_wait -wait &quot;+str(seconds)+&quot; &quot;+self.log_file
++            launch_tmp_file=launch_file+&quot;.tmp&quot;
++            while True:
++                p = Popen( cmd, shell=True, stdout=out, stderr=err)
++                ret = p.wait()
++                out.write(&quot;[DBICondor] &quot;+str(datetime.datetime.now())+
++                          &quot; condor_wait return code &quot;+
++                          str(ret)+&quot;\n&quot;)
++                if ret==0:
++                    out.write(&quot;[DBICondor] &quot;+str(datetime.datetime.now())+
++                              &quot; all condor jobs finished. Exiting\n&quot;)
++                    break
++                elif ret!=1:
++                    #condor_wait should return only 0 or 1
++                    out.write(&quot;[DBICondor] &quot;+str(datetime.datetime.now())+
++                              &quot; expected a return code of 0 or 1.&quot; +
++                              &quot; Exiting\n&quot;)
++                    break
++                #we write in a temp file then move it to be sure no jobs will 
++                # read a partially writed file
++                out.write(&quot;[DBICondor] &quot;+str(datetime.datetime.now())+
++                          &quot;renew the launch file &quot;+launch_file+&quot;\n&quot;)
++                self.make_launch_script(launch_tmp_file, bash_exec,
++                                        condor_submit_file)
++                os.rename(launch_tmp_file, launch_file)
++            out.close()
++            err.close()
++        else:
++            #pkboost of the childreen...
++            os.system(&quot;pkboost +d &quot;+str(pid))
++
+     def make_launch_script(self, launch_file, bash_exec, condor_submit_file):
+         dbi_file=get_plearndir()+'/python_modules/plearn/parallel/dbi.py'
+         overwrite_launch_file=False
+@@ -901,7 +942,7 @@
+                     #echo -n /usr/bin/python version: 1&gt;&amp;2
+                     #/usr/bin/python -V 1&gt;&amp;2
+                     '''))
+-                if self.condor_submit_exec==&quot;pkdilly&quot;:
++                if self.pkdilly:
+                     get=self.get_pkdilly_var(condor_submit_file)
+ 
+                     for g in get:
+@@ -914,7 +955,6 @@
+                     echo &quot;ARGS=$ARGS&quot; 1&gt;&amp;2
+                     /usr/sbin/circus $ARGS
+                     '''))
+-                    self.condor_submit_exec=&quot;condor_submit&quot;
+                 else:
+                     launch_fd.write(dedent('''\
+                     echo &quot;Running: command: \\&quot;$@\\&quot;&quot; 1&gt;&amp;2
+@@ -942,7 +982,7 @@
+                     #echo ${PROGRAM} $@
+                     #${PROGRAM} &quot;$@&quot;
+                     '''))
+-                if self.condor_submit_exec==&quot;pkdilly&quot;:
++                if self.pkdilly:
+                     get=self.get_pkdilly_var(condor_submit_file)
+                     for g in get:
+                         sg = g.split(&quot;=&quot;,1)
+@@ -954,7 +994,6 @@
+                     echo &quot;ARGS=$ARGS&quot;
+                     /usr/sbin/circus $ARGS
+                     '''))
+-                    self.condor_submit_exec=&quot;condor_submit&quot;
+                 else:
+                     launch_fd.write(dedent('''\
+                     echo &quot;Running command: $argv&quot;
+@@ -964,6 +1003,10 @@
+ 
+             launch_fd.close()
+             os.chmod(launch_file, 0755)
++            if self.pkdilly:
++                self.renew_launch_file(launch_file,
++                                       os.path.join(self.log_dir,&quot;renew.outerr&quot;)
++                                       , condor_submit_file, bash_exec)
+ 
+     def run_dag(self):
+         condor_submit_file = os.path.join(self.log_dir, &quot;dag.condor&quot;)
+@@ -1101,7 +1144,7 @@
+                        self.log_dir,
+                        self.log_dir,
+                        self.log_file,str(self.getenv),str(self.nice))))
+-        if self.condor_submit_exec==&quot;pkdilly&quot;:
++        if self.pkdilly:
+             condor_submit_fd.write(dedent(&quot;&quot;&quot;
+             stream_error = True
+             stream_output = True
+@@ -1174,7 +1217,7 @@
+ 
+ 
+     def run(self):
+-        if (self.condor_submit_exec==&quot;pkdilly&quot; and self.nb_proc &gt; 0):
++        if (self.pkdilly and self.nb_proc &gt; 0):
+             print &quot;curently pkdilly with nb_proc &gt;0 is not supported!&quot;
+ 
+         print &quot;[DBI] The Log file are under %s&quot;%self.log_dir
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2008-10-09 16:19:01 UTC (rev 9544)
++++ trunk/scripts/dbidispatch	2008-10-09 17:18:25 UTC (rev 9545)
+@@ -238,17 +238,12 @@
+         tasks_filename = val
+     elif argv in  [&quot;--force&quot;, &quot;--interruptible&quot;, &quot;--long&quot;, 
+                    &quot;--getenv&quot;, &quot;--cwait&quot;, &quot;--clean_up&quot; ,&quot;--nice&quot;,
+-                   &quot;--set_special_env&quot;, &quot;--abs_path&quot;]:
++                   &quot;--set_special_env&quot;, &quot;--abs_path&quot;, &quot;--pkdilly&quot;]:
+         dbi_param[argv[2:]]=True
+     elif argv in [&quot;--no_force&quot;, &quot;--no_interruptible&quot;, &quot;--no_long&quot;,
+                   &quot;--no_getenv&quot;, &quot;--no_cwait&quot;, &quot;--no_clean_up&quot; , &quot;--no_nice&quot;,
+-                  &quot;--no_set_special_env&quot;, &quot;--no_abs_path&quot;]:
++                  &quot;--no_set_special_env&quot;, &quot;--no_abs_path&quot;, &quot;--no_pkdilly&quot;]:
+         dbi_param[argv[5:]]=False
+-    elif argv==&quot;--pkdilly&quot;:
+-        dbi_param[&quot;condor_submit_exec&quot;]=&quot;pkdilly&quot;
+-    elif argv==&quot;--no_pkdilly&quot;:
+-        if dbi_param.has_key(&quot;condor_submit_exec&quot;):
+-            del dbi_param[&quot;condor_submit_exec&quot;]
+     elif argv==&quot;--testdbi&quot;:
+         dbi_param[&quot;test&quot;]=True
+     elif argv==&quot;--no_testdbi&quot;:
+@@ -313,7 +308,7 @@
+                        &quot;duree&quot;,&quot;cpu&quot;,&quot;mem&quot;,&quot;os&quot;]
+ elif launch_cmd==&quot;Condor&quot;:
+     valid_dbi_param +=[&quot;req&quot;, &quot;arch&quot;, &quot;getenv&quot;, &quot;nice&quot;, &quot;files&quot;, &quot;rank&quot;, &quot;env&quot;,
+-                       &quot;raw&quot;, &quot;os&quot;, &quot;set_special_env&quot;, &quot;mem&quot;, &quot;cpu&quot;]
++                       &quot;raw&quot;, &quot;os&quot;, &quot;set_special_env&quot;, &quot;mem&quot;, &quot;cpu&quot;, &quot;pkdilly&quot;]
+ elif launch_cmd==&quot;Bqtools&quot;:
+     valid_dbi_param +=[&quot;micro&quot;, &quot;long&quot;, &quot;duree&quot;]
+ 
+@@ -322,7 +317,7 @@
+     p = os.path.abspath(os.path.curdir)
+     if any([p.startswith(x) for x in [&quot;/home/fringant1/&quot;,&quot;/home/fringant2/&quot;,&quot;/cluster/&quot;]]) or dbi_param.get('files'):
+         pass
+-    elif dbi_param.get(&quot;condor_submit_exec&quot;)==&quot;pkdilly&quot;:
++    elif dbi_param.get(&quot;pkdilly&quot;):
+         pass
+     else:
+         raise Exception(&quot;You must be in a subfolder of /home/fringant2/&quot;)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002984.html">[Plearn-commits] r9544 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="002986.html">[Plearn-commits] r9546 - tags
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2985">[ date ]</a>
+              <a href="thread.html#2985">[ thread ]</a>
+              <a href="subject.html#2985">[ subject ]</a>
+              <a href="author.html#2985">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

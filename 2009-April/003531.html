@@ -1,0 +1,203 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10091 - trunk/plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10091%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200904061921.n36JLRen009491%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003530.html">
+   <LINK REL="Next"  HREF="003532.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10091 - trunk/plearn_learners/regressors</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10091%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200904061921.n36JLRen009491%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10091 - trunk/plearn_learners/regressors">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Apr  6 21:21:27 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003530.html">[Plearn-commits] r10090 - trunk
+</A></li>
+        <LI>Next message: <A HREF="003532.html">[Plearn-commits] r10092 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3531">[ date ]</a>
+              <a href="thread.html#3531">[ thread ]</a>
+              <a href="subject.html#3531">[ subject ]</a>
+              <a href="author.html#3531">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-04-06 21:21:27 +0200 (Mon, 06 Apr 2009)
+New Revision: 10091
+
+Modified:
+   trunk/plearn_learners/regressors/RegressionTreeNode.cc
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+Log:
+made a little bit more generic last optimisation in RegressionTree.
+
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.cc	2009-04-06 19:05:41 UTC (rev 10090)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.cc	2009-04-06 19:21:27 UTC (rev 10091)
+@@ -255,8 +255,8 @@
+     Vec right_error(3);
+     Vec missing_error(3);
+     missing_error.clear();
+-    bool one_pass_on_data=!RTR_HAVE_MISSING &amp;&amp; leave-&gt;classname()==&quot;RegressionTreeLeave&quot;;
+     PP&lt;RegressionTreeRegisters&gt; train_set = tree-&gt;getSortedTrainingSet();
++    bool one_pass_on_data=!train_set-&gt;haveMissing() &amp;&amp; leave-&gt;classname()==&quot;RegressionTreeLeave&quot;;
+ 
+     int inputsize = train_set-&gt;inputsize();
+ #ifdef RCMP
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2009-04-06 19:05:41 UTC (rev 10090)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2009-04-06 19:21:27 UTC (rev 10091)
+@@ -68,6 +68,7 @@
+     next_id(0),
+     do_sort_rows(true),
+     mem_tsource(true),
++    have_missing(true),
+     compact_reg_leave(-1)
+ {
+     build();
+@@ -85,6 +86,7 @@
+     next_id(0),
+     do_sort_rows(do_sort_rows_),
+     mem_tsource(mem_tsource_),
++    have_missing(true),
+     compact_reg_leave(-1)
+ {
+     source = source_;
+@@ -92,6 +94,7 @@
+     if(tsource-&gt;classname()==&quot;MemoryVMatrixNoSave&quot;)
+         tsource_mat = tsource.toMat();
+     tsorted_row = tsorted_row_;
++    checkMissing();
+     build();
+ }
+ 
+@@ -105,6 +108,7 @@
+     next_id(0),
+     do_sort_rows(do_sort_rows_),
+     mem_tsource(mem_tsource_),
++    have_missing(true),
+     compact_reg_leave(-1)
+ {
+     source = source_;
+@@ -423,9 +427,7 @@
+     Vec left_error, Vec right_error,
+     Vec missing_error) const
+ {
+-//    fill reg, t_w et value and candidate
+     PLCHECK(missing_leave-&gt;classname()==&quot;RegressionTreeLeave&quot;);
+-    PLCHECK(RTR_HAVE_MISSING==false);//need to modif the code to make it work with missing value.
+ 
+     PLASSERT(tsource_mat.length()==tsource.length());
+     getAllRegisteredRow(leave_id,col,reg);
+@@ -589,6 +591,7 @@
+     if(isUpToDate(f)){
+         DBG_LOG&lt;&lt;&quot;RegressionTreeRegisters:: Reloading the sorted source VMatrix: &quot;&lt;&lt;f&lt;&lt;endl;
+         PLearn::load(f,tsorted_row);
++        checkMissing();
+         return;
+     }
+ 
+@@ -615,6 +618,7 @@
+         sortEachDim(sample_dim);
+         if (report_progress) pb-&gt;update(sample_dim+1);
+     }
++    checkMissing();
+     if (report_progress) pb-&gt;close();//in case of parallel sort.
+     if(source-&gt;hasMetaDataDir()){
+         DBG_LOG&lt;&lt;&quot;RegressionTreeRegisters:: Saving the sorted source VMatrix: &quot;&lt;&lt;f&lt;&lt;endl;
+@@ -622,7 +626,21 @@
+     }else{
+     }
+ }
+-                                                  
++
++//!check if their is missing in the input value.
++void RegressionTreeRegisters::checkMissing()
++{
++    if(have_missing==false)
++        return;
++    bool found_missing=false;
++    for(int j=0;j&lt;inputsize()&amp;&amp;!found_missing;j++)
++        for(int i=0;i&lt;length()&amp;&amp;!found_missing;i++)
++            if(is_missing(tsource(j,i)))
++                found_missing=true;
++    if(!found_missing)
++        have_missing=false;
++}
++
+ void RegressionTreeRegisters::sortEachDim(int dim)
+ {
+     PLCHECK_MSG(tsource-&gt;classname()==&quot;MemoryVMatrixNoSave&quot;,tsource-&gt;classname().c_str());
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2009-04-06 19:05:41 UTC (rev 10090)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2009-04-06 19:21:27 UTC (rev 10091)
+@@ -105,6 +105,7 @@
+ 
+     bool do_sort_rows;
+     bool mem_tsource;
++    bool have_missing;
+ 
+     mutable vector&lt;bool&gt; compact_reg;
+     mutable int compact_reg_leave;
+@@ -148,6 +149,7 @@
+     inline void         setWeight(int row,real val){
+         target_weight[row].second = val;
+     }
++    inline bool         haveMissing(){return have_missing;}
+     inline RTR_type_id     getNextId(){
+         PLCHECK(next_id&lt;std::numeric_limits&lt;RTR_type_id&gt;::max());
+         next_id += 1;return next_id;}
+@@ -190,6 +192,7 @@
+     void         sortRows();
+     void         sortEachDim(int dim);
+     void         verbose(string msg, int level);
++    void         checkMissing();
+ 
+ };
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003530.html">[Plearn-commits] r10090 - trunk
+</A></li>
+	<LI>Next message: <A HREF="003532.html">[Plearn-commits] r10092 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3531">[ date ]</a>
+              <a href="thread.html#3531">[ thread ]</a>
+              <a href="subject.html#3531">[ subject ]</a>
+              <a href="author.html#3531">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

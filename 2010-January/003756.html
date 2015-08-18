@@ -1,0 +1,636 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10316 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2010-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10316%20-%20trunk/plearn_learners/online&In-Reply-To=%3C201001212302.o0LN2JBV006439%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003755.html">
+   <LINK REL="Next"  HREF="003757.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10316 - trunk/plearn_learners/online</H1>
+    <B>islaja at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10316%20-%20trunk/plearn_learners/online&In-Reply-To=%3C201001212302.o0LN2JBV006439%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10316 - trunk/plearn_learners/online">islaja at mail.berlios.de
+       </A><BR>
+    <I>Fri Jan 22 00:02:19 CET 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003755.html">[Plearn-commits] r10315 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="003757.html">[Plearn-commits] r10317 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3756">[ date ]</a>
+              <a href="thread.html#3756">[ thread ]</a>
+              <a href="subject.html#3756">[ subject ]</a>
+              <a href="author.html#3756">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: islaja
+Date: 2010-01-22 00:02:18 +0100 (Fri, 22 Jan 2010)
+New Revision: 10316
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+Log:
+-Option to save the learner just after the pre-train
+    -Use 'learnerExpdir' and 'save_learner_before_fine_tuning'.
+
+-Variante DBN with corruption during pre-training
+    -Use 'use_corrupted_posDownVal': 
+	 = 'none' , no corruption (basic RBM)
+         = 'for_cd_fprop': a corrupted version of the positive input vector is used during the fprop phase of CD
+         = 'for_cd_update': a corrupted version of the positive input vector is used during the update phase of CD.
+    -Implemented for noises of type 'mask to zero' or 'pepper salt'
+
+-Added the functions 'fantasizeKTime'  and 'fantasizeKTimeOnMultiSrcImg' for a generative scenario of encoding-decoding with or without sampling during the decoding phase.
+
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2010-01-21 22:31:33 UTC (rev 10315)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2010-01-21 23:02:18 UTC (rev 10316)
+@@ -41,6 +41,7 @@
+ #include &quot;DeepBeliefNet.h&quot;
+ #include &quot;RBMMatrixTransposeConnection.h&quot;
+ #include &lt;plearn/io/pl_log.h&gt;
++#include &lt;plearn/io/load_and_save.h&gt;
+ 
+ #define minibatch_hack 0 // Do we force the minibatch setting? (debug hack)
+ 
+@@ -70,7 +71,14 @@
+     use_classification_cost( true ),
+     reconstruct_layerwise( false ),
+     i_output_layer( -1 ),
++    learnerExpdir(&quot;&quot;),
++    save_learner_before_fine_tuning( false ),
+     use_sample_for_up_layer( false ),
++    use_corrupted_posDownVal( &quot;none&quot; ),
++    noise_type( &quot;masking_noise&quot; ),
++    fraction_of_masked_inputs( 0 ),
++    mask_with_pepper_salt( false ),
++    prob_salt_noise( 0.5 ),
+     online ( false ),
+     background_gibbs_update_ratio(0),
+     gibbs_chain_reinit_freq( INT_MAX ),
+@@ -93,6 +101,49 @@
+     n_layers = 0;
+ }
+ 
++
++void DeepBeliefNet::declareMethods(RemoteMethodMap&amp; rmm)
++{
++    // Insert a backpointer to remote methods; note that this is different from declareOptions().
++    rmm.inherited(inherited::_getRemoteMethodMap_());
++    declareMethod(
++        rmm, &quot;fantasizeKTime&quot;,
++        &amp;DeepBeliefNet::fantasizeKTime,
++        (BodyDoc(&quot;On a trained learner, computes a codage-decodage (fantasize) through a specified number of hidden layer.&quot;),
++         ArgDoc (&quot;kTime&quot;, &quot;Number of time we want to fantasize. \n&quot;
++                 &quot;Next input image will again be the source Image (if alwaysFromSrcImg is True) \n&quot;
++                 &quot;or next input image will be the last fantasize image (if alwaysFromSrcImg is False), and so on for kTime.)&quot;),
++         ArgDoc (&quot;srcImg&quot;, &quot;Source image vector (should have same width as raws layer)&quot;),
++         ArgDoc (&quot;sampling&quot;, &quot;Vector of bool indicating whether or not a sampling will be done for each hidden layer\n&quot;
++                &quot;during decodage. Its width indicates how many hidden layer will be used.)\n&quot;
++                &quot; (should have same width as maskNoiseFractOrProb)\n&quot;
++                &quot;smaller element of the vector correspond to lower layer&quot;),
++         ArgDoc (&quot;alwaysFromSrcImg&quot;, &quot;Booleen indicating whether each encode-decode \n&quot;
++                &quot;steps are done from the source image (sets to True) or \n&quot;
++                &quot;if the next input image is the last fantasize image (sets to False). &quot;),
++         RetDoc (&quot;Fantasize images obtained for each kTime.&quot;)));
++
++
++    declareMethod(
++        rmm, &quot;fantasizeKTimeOnMultiSrcImg&quot;,
++        &amp;DeepBeliefNet::fantasizeKTimeOnMultiSrcImg,
++        (BodyDoc(&quot;Call the 'fantasizeKTime' function for each source images found in the matrix 'srcImg'.&quot;),
++         ArgDoc (&quot;kTime&quot;, &quot;Number of time we want to fantasize for each source images. \n&quot;
++                 &quot;Next input image will again be the source Image (if alwaysFromSrcImg is True) \n&quot;
++                 &quot;or next input image will be the last fantasize image (if alwaysFromSrcImg is False), and so on for kTime.)&quot;),
++         ArgDoc (&quot;srcImg&quot;, &quot;Source images matrix (should have same width as raws layer)&quot;),
++         ArgDoc (&quot;sampling&quot;, &quot;Vector of bool indicating whether or not a sampling will be done for each hidden layer\n&quot;
++                &quot;during decodage. Its width indicates how many hidden layer will be used.)\n&quot;
++                &quot; (should have same width as maskNoiseFractOrProb)\n&quot;
++                &quot;smaller element of the vector correspond to lower layer&quot;),
++         ArgDoc (&quot;alwaysFromSrcImg&quot;, &quot;Booleen indicating whether each encode-decode \n&quot;
++                &quot;steps are done from the source image (sets to True) or \n&quot;
++                &quot;if the next input image is the preceding fantasize image obtained (sets to False). &quot;),
++         RetDoc (&quot;For each source images, fantasize images obtained for each kTime.&quot;)));
++}
++
++
++
+ ////////////////////
+ // declareOptions //
+ ////////////////////
+@@ -209,6 +260,19 @@
+                   OptionBase::buildoption,
+                   &quot;Optional target matrix connections for greedy layer-wise pretraining&quot;);
+ 
++    declareOption(ol, &quot;learnerExpdir&quot;,
++                  &amp;DeepBeliefNet::learnerExpdir,
++                  OptionBase::buildoption,
++                  &quot;Experiment directory where the learner will be save\n&quot;
++                  &quot;if save_learner_before_fine_tuning is true.&quot;
++        );
++
++    declareOption(ol, &quot;save_learner_before_fine_tuning&quot;,
++                  &amp;DeepBeliefNet::save_learner_before_fine_tuning,
++                  OptionBase::buildoption,
++                  &quot;Saves the learner before the supervised fine-tuning.&quot;
++        );
++
+     declareOption(ol, &quot;classification_module&quot;,
+                   &amp;DeepBeliefNet::classification_module,
+                   OptionBase::learntoption,
+@@ -267,6 +331,41 @@
+                   &quot;Indication that the update of the top layer during CD uses\n&quot;
+                   &quot;a sample, not the expectation.\n&quot;);
+ 
++    declareOption(ol, &quot;use_corrupted_posDownVal&quot;,
++                  &amp;DeepBeliefNet::use_corrupted_posDownVal,
++                  OptionBase::buildoption,
++                  &quot;Indicates whether we will use a corrupted version of the\n&quot;
++                  &quot;positive down value during the CD step.\n&quot;
++                  &quot;Choose among:\n&quot;
++                  &quot; - \&quot;for_cd_fprop\&quot;\n&quot;
++                  &quot; - \&quot;for_cd_update\&quot;\n&quot;
++                  &quot; - \&quot;none\&quot;\n&quot;);
++
++    declareOption(ol, &quot;noise_type&quot;,
++                  &amp;DeepBeliefNet::noise_type,
++                  OptionBase::buildoption,
++                  &quot;Type of noise that corrupts the pos_down_val. &quot;
++                  &quot;Choose among:\n&quot;
++                  &quot; - \&quot;masking_noise\&quot;\n&quot;
++                  &quot; - \&quot;none\&quot;\n&quot;);
++
++    declareOption(ol, &quot;fraction_of_masked_inputs&quot;,
++                  &amp;DeepBeliefNet::fraction_of_masked_inputs,
++                  OptionBase::buildoption,
++                  &quot;Fraction of the pos_down_val components which\n&quot;
++                  &quot;will be masked.\n&quot;);
++
++    declareOption(ol, &quot;mask_with_pepper_salt&quot;,
++                  &amp;DeepBeliefNet::mask_with_pepper_salt,
++                  OptionBase::buildoption,
++                  &quot;Indication that inputs should be masked with &quot;
++                  &quot;0 or 1 according to prob_salt_noise.\n&quot;);
++
++    declareOption(ol, &quot;prob_salt_noise&quot;,
++                  &amp;DeepBeliefNet::prob_salt_noise,
++                  OptionBase::buildoption,
++                  &quot;Probability that we mask the input by 1 instead of 0.\n&quot;);
++
+     declareOption(ol, &quot;online&quot;, &amp;DeepBeliefNet::online,
+                   OptionBase::buildoption,
+                   &quot;If true then all unsupervised training stages (as well as\n&quot;
+@@ -388,6 +487,12 @@
+         PLERROR(&quot;In DeepBeliefNet::build_ - mean_field_contrastive_divergence_ratio should &quot;
+             &quot;be in [0,1].&quot;);
+ 
++    if( use_corrupted_posDownVal != &quot;for_cd_fprop&quot; &amp;&amp;
++        use_corrupted_posDownVal != &quot;for_cd_update&quot; &amp;&amp;
++        use_corrupted_posDownVal != &quot;none&quot; )
++        PLERROR(&quot;In DeepBeliefNet::build_ - use_corrupted_posDownVal should &quot;
++            &quot;be chosen among {\&quot;for_cd_fprop\&quot;,\&quot;for_cd_update\&quot;,\&quot;none\&quot;}.&quot;);
++
+     if( !online )
+     {
+         if( training_schedule.length() != n_layers )
+@@ -546,6 +651,7 @@
+     expectation_gradients.resize( n_layers );
+     expectations_gradients.resize( n_layers );
+     gibbs_down_state.resize( n_layers-1 );
++    expectation_indices.resize( n_layers-1 );
+ 
+     for( int i=0 ; i&lt;n_layers-1 ; i++ )
+     {
+@@ -647,6 +753,39 @@
+                 greedy_target_layers[i]-&gt;forget();
+             }
+         }
++        if( use_corrupted_posDownVal != &quot;none&quot; )
++        {
++            if( greedy_target_layers.length() != 0 )
++                PLERROR(&quot;DeepBeliefNet::build_layers_and_connections() - \n&quot;
++                        &quot;use_corrupted_posDownVal not implemented for greedy_target_layers.&quot;);
++
++            if( online )
++                PLERROR(&quot;DeepBeliefNet::build_layers_and_connections() - \n&quot;
++                        &quot;use_corrupted_posDownVal not implemented for online.&quot;);
++
++            if( use_classification_cost )
++                PLERROR(&quot;DeepBeliefNet::build_layers_and_connections() - \n&quot;
++                        &quot;use_classification_cost not implemented for use_corrupted_posDownVal.&quot;);
++
++            if( background_gibbs_update_ratio != 0 )
++                PLERROR(&quot;DeepBeliefNet::build_layers_and_connections() - \n&quot;
++                        &quot;use_corrupted_posDownVal not implemented with background_gibbs_update_ratio!=0.&quot;);
++
++            if( batch_size != 1 || minibatch_hack )
++                PLERROR(&quot;DeepBeliefNet::build_layers_and_connections() - \n&quot;
++                        &quot;use_corrupted_posDownVal not implemented for batch_size != 1 or minibatch_hack.&quot;);
++    
++            if( !partial_costs.isEmpty() )
++                PLERROR(&quot;DeepBeliefNet::build_layers_and_connections() - \n&quot;
++                        &quot;use_corrupted_posDownVal not implemented for partial_costs.&quot;);
++
++            if( noise_type == &quot;masking_noise&quot; &amp;&amp; fraction_of_masked_inputs &gt; 0 )
++            {
++                expectation_indices[i].resize( layers[i]-&gt;size );
++                for( int j=0 ; j &lt; expectation_indices[i].length() ; j++ )
++                    expectation_indices[i][j] = j;
++            }
++        }
+     }
+     if( !(layers[n_layers-1]-&gt;random_gen) )
+     {
+@@ -852,6 +991,7 @@
+     deepCopyField(save_layer_activations,   copies);
+     deepCopyField(save_layer_expectations,  copies);
+     deepCopyField(pos_down_val,             copies);
++    deepCopyField(corrupted_pos_down_val,   copies);
+     deepCopyField(pos_up_val,               copies);
+     deepCopyField(pos_down_vals,            copies);
+     deepCopyField(pos_up_vals,              copies);
+@@ -872,6 +1012,7 @@
+     deepCopyField(generative_connections,   copies);
+     deepCopyField(up_sample,                copies);
+     deepCopyField(down_sample,              copies);
++    deepCopyField(expectation_indices,      copies);
+ }
+ 
+ 
+@@ -1246,6 +1387,16 @@
+             }
+         }
+ 
++        if( save_learner_before_fine_tuning )
++        {
++            if( learnerExpdir == &quot;&quot; )
++                PLWARNING(&quot;DeepBeliefNet::train() - \n&quot;
++                    &quot;cannot save model before fine-tuning because\n&quot;
++                    &quot;no experiment directory has been set.&quot;);
++            else
++                PLearn::save(learnerExpdir + &quot;/learner_before_finetuning.psave&quot;,*this);
++        }
++
+         /***** fine-tuning by gradient descent *****/
+         end_stage = min(cumulative_schedule[n_layers], nstages);
+         if( stage &gt;= end_stage )
+@@ -1866,7 +2017,14 @@
+         }
+         else
+         {
+-            connections[i]-&gt;setAsDownInput( layers[i]-&gt;expectation );
++            if( i == index &amp;&amp; use_corrupted_posDownVal == &quot;for_cd_fprop&quot; )
++            {
++                corrupted_pos_down_val.resize( layers[i]-&gt;size );
++                corrupt_input( layers[i]-&gt;expectation, corrupted_pos_down_val, index );
++                connections[i]-&gt;setAsDownInput( corrupted_pos_down_val );
++            }
++            else
++                connections[i]-&gt;setAsDownInput( layers[i]-&gt;expectation );
+             layers[i+1]-&gt;getAllActivations( connections[i] );
+             layers[i+1]-&gt;computeExpectation();
+         }
+@@ -1950,6 +2108,7 @@
+ 
+     for( int i=0 ; i&lt;=index ; i++ )
+     {
++        
+         connections[i]-&gt;setAsDownInputs( layers[i]-&gt;getExpectations() );
+         layers[i+1]-&gt;getAllActivations( connections[i], 0, true );
+         layers[i+1]-&gt;computeExpectations();
+@@ -2656,7 +2815,14 @@
+             up_layer-&gt;getAllActivations( connection, 0, true );
+             up_layer-&gt;computeExpectations();
+         } else {
+-            connection-&gt;setAsDownInput( down_layer-&gt;expectation );
++            if( use_corrupted_posDownVal == &quot;for_cd_fprop&quot; )
++            {
++                corrupted_pos_down_val.resize( down_layer-&gt;size );
++                corrupt_input( down_layer-&gt;expectation, corrupted_pos_down_val, layer_index );
++                connection-&gt;setAsDownInput( corrupted_pos_down_val );
++            }
++            else
++                connection-&gt;setAsDownInput( down_layer-&gt;expectation );
+             up_layer-&gt;getAllActivations( connection );
+             up_layer-&gt;computeExpectation();
+         }
+@@ -2835,6 +3001,7 @@
+         Vec neg_up_val;
+ 
+         pos_down_val &lt;&lt; down_layer-&gt;expectation;
++
+         pos_up_val &lt;&lt; up_layer-&gt;expectation;
+         up_layer-&gt;generateSample();
+             
+@@ -2886,10 +3053,21 @@
+             down_layer-&gt;setLearningRate(lr_dl * (1-mean_field_contrastive_divergence_ratio));
+             up_layer-&gt;setLearningRate(lr_ul * (1-mean_field_contrastive_divergence_ratio));
+             connection-&gt;setLearningRate(lr_c * (1-mean_field_contrastive_divergence_ratio));
+-            
+-            down_layer-&gt;update( pos_down_val, neg_down_val );
+-            connection-&gt;update( pos_down_val, pos_up_val,
++           
++            if( use_corrupted_posDownVal == &quot;for_cd_update&quot; )
++            {
++                corrupted_pos_down_val.resize( down_layer-&gt;size );
++                corrupt_input( pos_down_val, corrupted_pos_down_val, layer_index );
++                down_layer-&gt;update( corrupted_pos_down_val, neg_down_val );
++                connection-&gt;update( corrupted_pos_down_val, pos_up_val,
+                                 neg_down_val, neg_up_val );
++            }
++            else
++            {
++                down_layer-&gt;update( pos_down_val, neg_down_val );
++                connection-&gt;update( pos_down_val, pos_up_val,
++                                neg_down_val, neg_up_val );
++            }
+             up_layer-&gt;update( pos_up_val, neg_up_val );
+             
+             down_layer-&gt;setLearningRate(lr_dl);
+@@ -2907,9 +3085,20 @@
+             up_layer-&gt;setLearningRate(lr_ul * mean_field_contrastive_divergence_ratio);
+             connection-&gt;setLearningRate(lr_c * mean_field_contrastive_divergence_ratio);
+             
+-            down_layer-&gt;update( pos_down_val, mf_cd_neg_down_val );
+-            connection-&gt;update( pos_down_val, pos_up_val,
++            if( use_corrupted_posDownVal == &quot;for_cd_update&quot; )
++            {
++                corrupted_pos_down_val.resize( down_layer-&gt;size );
++                corrupt_input( pos_down_val, corrupted_pos_down_val, layer_index );
++                down_layer-&gt;update( corrupted_pos_down_val, mf_cd_neg_down_val );
++                connection-&gt;update( corrupted_pos_down_val, pos_up_val,
+                                 mf_cd_neg_down_val, mf_cd_neg_up_val );
++            }
++            else
++            {
++                down_layer-&gt;update( pos_down_val, mf_cd_neg_down_val );
++                connection-&gt;update( pos_down_val, pos_up_val,
++                                mf_cd_neg_down_val, mf_cd_neg_up_val );
++            }
+             up_layer-&gt;update( pos_up_val, mf_cd_neg_up_val );
+             
+             down_layer-&gt;setLearningRate(lr_dl);
+@@ -3235,6 +3424,50 @@
+                 &quot;(expectations are not up to date in the batch version)&quot;);
+ }
+ 
++/////////////////////
++//  corrupt_input  //
++/////////////////////
++void DeepBeliefNet::corrupt_input(const Vec&amp; input, Vec&amp; corrupted_input, int layer)
++{
++    corrupted_input.resize(input.length());
++
++    if( noise_type == &quot;masking_noise&quot; )
++    {
++        corrupted_input &lt;&lt; input;
++        if( fraction_of_masked_inputs != 0 )
++        {
++            random_gen-&gt;shuffleElements(expectation_indices[layer]);
++            if( mask_with_pepper_salt )
++                for( int j=0 ; j &lt; round(fraction_of_masked_inputs*input.length()) ; j++)
++                    corrupted_input[ expectation_indices[layer][j] ] = random_gen-&gt;binomial_sample(prob_salt_noise);
++            else
++                for( int j=0 ; j &lt; round(fraction_of_masked_inputs*input.length()) ; j++)
++                    corrupted_input[ expectation_indices[layer][j] ] = 0;
++        }
++    }
++ /*   else if( noise_type == &quot;binary_sampling&quot; )
++    {
++        for( int i=0; i&lt;corrupted_input.length(); i++ )
++            corrupted_input[i] = random_gen-&gt;binomial_sample((input[i]-0.5)*binary_sampling_noise_parameter+0.5);
++    }
++    else if( noise_type == &quot;gaussian&quot; )
++    {
++        for( int i=0; i&lt;corrupted_input.length(); i++ )
++            corrupted_input[i] = input[i] +
++                random_gen-&gt;gaussian_01() * gaussian_std;
++    }
++    else
++            PLERROR(&quot;In StackedAutoassociatorsNet::corrupt_input(): &quot;
++                    &quot;missing_data_method %s not valid with noise_type %s&quot;,
++                     missing_data_method.c_str(), noise_type.c_str());
++    }*/
++    else if( noise_type == &quot;none&quot; )
++        corrupted_input &lt;&lt; input;
++    else
++        PLERROR(&quot;In DeepBeliefNet::corrupt_input(): noise_type %s not valid&quot;, noise_type.c_str());
++}
++
++
+ void DeepBeliefNet::test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats, VMat testoutputs, VMat testcosts) const
+ {
+ 
+@@ -3336,6 +3569,71 @@
+         greedy_target_layers[i]-&gt;setLearningRate( the_learning_rate );
+ }
+ 
++
++
++
++TVec&lt;Vec&gt; DeepBeliefNet::fantasizeKTimeOnMultiSrcImg(const int KTime, const Mat&amp; srcImg, const Vec&amp; sample, bool alwaysFromSrcImg)
++{
++    int n=srcImg.length();
++    TVec&lt;Vec&gt; output(0);
++
++    for( int i=0; i&lt;n; i++ )
++    {
++        const Vec img_i = srcImg(i);
++        TVec&lt;Vec&gt; outputTmp;
++        outputTmp = fantasizeKTime(KTime, img_i, sample, alwaysFromSrcImg);
++        output = concat(output, outputTmp);
++    }
++
++    return output;
++}
++
++
++TVec&lt;Vec&gt; DeepBeliefNet::fantasizeKTime(const int KTime, const Vec&amp; srcImg, const Vec&amp; sample, bool alwaysFromSrcImg)
++{
++    if(sample.size() &gt; n_layers-1)
++        PLERROR(&quot;In DeepBeliefNet::fantasize():&quot;
++        &quot; Size of sample (%i) should be &lt;= &quot;
++        &quot;number of hidden layer (%i).&quot;,sample.size(), n_layers-1);
++
++    int n_hlayers_used = sample.size();
++
++    TVec&lt;Vec&gt; fantaImagesObtained(KTime+1);
++    fantaImagesObtained[0].resize(srcImg.size());
++    fantaImagesObtained[0] &lt;&lt; srcImg;
++    layers[0]-&gt;setExpectation(srcImg);
++
++    for( int k=0 ; k&lt;KTime ; k++ )
++    {
++        fantaImagesObtained[k+1].resize(srcImg.size());
++        for( int i=0 ; i&lt;n_hlayers_used; i++ )
++        {
++            connections[i]-&gt;setAsDownInput( layers[i]-&gt;expectation );
++            layers[i+1]-&gt;getAllActivations( connections[i], 0, false );
++            layers[i+1]-&gt;computeExpectation();
++        }
++
++        for( int i=n_hlayers_used-1 ; i&gt;=0; i-- )
++        {
++            if( sample[i] == 1 )
++            {
++                Vec expectDecode(layers[i+1]-&gt;size);
++                expectDecode &lt;&lt; layers[i+1]-&gt;expectation;
++                for( int j=0; j&lt;expectDecode.size(); j++ )
++                    expectDecode[j] = random_gen-&gt;binomial_sample(expectDecode[j]);
++                layers[i+1]-&gt;setExpectation(expectDecode);
++            }
++            connections[i]-&gt;setAsUpInput( layers[i+1]-&gt;expectation );
++                layers[i]-&gt;getAllActivations( connections[i], 0, false );
++                layers[i]-&gt;computeExpectation();
++        }
++        fantaImagesObtained[k+1] &lt;&lt; layers[0]-&gt;expectation;
++        if( alwaysFromSrcImg )
++            layers[0]-&gt;setExpectation(srcImg);
++    }
++    return fantaImagesObtained;
++}
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2010-01-21 22:31:33 UTC (rev 10315)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2010-01-21 23:02:18 UTC (rev 10316)
+@@ -137,6 +137,13 @@
+     //! (when the final module is external)
+     int i_output_layer;
+ 
++    //! Experiment directory where the learner will be save
++    //! if save_learner_before_fine_tuning is true.
++    string learnerExpdir;
++ 
++    //! Saves the learner before the supervised fine_tuning.
++    bool save_learner_before_fine_tuning;
++  
+     //! The weights of the connections between the layers
+     TVec&lt; PP&lt;RBMConnection&gt; &gt; connections;
+ 
+@@ -169,6 +176,30 @@
+     //! a sample, not the expectation.
+     bool use_sample_for_up_layer;
+ 
++    //! Indicates whether we will use a corrupted version of the
++    //! positive down value during the CD step. 
++    //! &quot;Choose among:
++    //! - \&quot;for_cd_fprop\&quot;
++    //! - \&quot;for_cd_update\&quot;
++    //!   \&quot;none\&quot; 
++    string use_corrupted_posDownVal;
++    
++    //! Type of noise that corrupts the pos_down_val
++    string noise_type;
++    
++    //! Fraction of components that will be corrupted in
++    //! function corrupt_input.
++    real fraction_of_masked_inputs;
++    
++    //! Indication that inputs should be
++    //! masked with 0 or 1 according to prop_salt_noise.
++    bool mask_with_pepper_salt;
++    
++    //! Probability that we mask by 1 instead of 0 when
++    //! using mask_with_pepper_salt
++    real prob_salt_noise;
++
++
+     //#####  Public Learnt Options  ###########################################
+     //! The module computing the probabilities of the different classes.
+     PP&lt;RBMClassificationModule&gt; classification_module;
+@@ -272,7 +303,6 @@
+     // (PLEASE IMPLEMENT IN .cc)
+     virtual TVec&lt;std::string&gt; getTrainCostNames() const;
+ 
+-
+     void onlineStep(const Vec&amp; input, const Vec&amp; target, Vec&amp; train_costs);
+     void onlineStep(const Mat&amp; inputs, const Mat&amp; targets, Mat&amp; train_costs);
+ 
+@@ -381,6 +411,7 @@
+ 
+     //! Store a copy of the positive phase values
+     mutable Vec pos_down_val;
++    mutable Vec corrupted_pos_down_val;
+     mutable Vec pos_up_val;
+     mutable Mat pos_down_vals;
+     mutable Mat pos_up_vals;
+@@ -452,11 +483,17 @@
+     mutable TVec&lt;Vec&gt; up_sample;
+     mutable TVec&lt;Vec&gt; down_sample;
+ 
++    //! Indices of the expectation components
++    TVec&lt; TVec&lt;int&gt; &gt; expectation_indices;
++
+ protected:
+     //#####  Protected Member Functions  ######################################
+ 
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
++   
++    //! Declare the methods that are remote-callable
++    static void declareMethods(RemoteMethodMap&amp; rmm);
+ 
+ private:
+     //#####  Private Member Functions  ########################################
+@@ -472,8 +509,15 @@
+ 
+     void build_final_cost();
+ 
++    void corrupt_input(const Vec&amp; input, Vec&amp; corrupted_input, int layer);
++
+     void setLearningRate( real the_learning_rate );
+ 
++    TVec&lt;Vec&gt; fantasizeKTime(const int KTime, const Vec&amp; srcImg, const Vec&amp; sample,
++                         bool alwaysFromSrcImg);
++    TVec&lt;Vec&gt; fantasizeKTimeOnMultiSrcImg(const int KTime, const Mat&amp; srcImg, const Vec&amp; sample,
++                         bool alwaysFromSrcImg);
++
+ private:
+     //#####  Private Data Members  ############################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003755.html">[Plearn-commits] r10315 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="003757.html">[Plearn-commits] r10317 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3756">[ date ]</a>
+              <a href="thread.html#3756">[ thread ]</a>
+              <a href="subject.html#3756">[ subject ]</a>
+              <a href="author.html#3756">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,200 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7945 - trunk/python_modules/plearn/parallel
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7945%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200708071952.l77JqATm016995%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001392.html">
+   <LINK REL="Next"  HREF="001394.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7945 - trunk/python_modules/plearn/parallel</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7945%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200708071952.l77JqATm016995%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7945 - trunk/python_modules/plearn/parallel">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Aug  7 21:52:10 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001392.html">[Plearn-commits] r7944 - trunk/python_modules/plearn/plide
+</A></li>
+        <LI>Next message: <A HREF="001394.html">[Plearn-commits] r7946 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1393">[ date ]</a>
+              <a href="thread.html#1393">[ thread ]</a>
+              <a href="subject.html#1393">[ subject ]</a>
+              <a href="author.html#1393">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-08-07 21:52:10 +0200 (Tue, 07 Aug 2007)
+New Revision: 7945
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+Add dbi backend call exec_pre_batch() and exec_post_batch()
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2007-08-07 19:40:48 UTC (rev 7944)
++++ trunk/python_modules/plearn/parallel/dbi.py	2007-08-07 19:52:10 UTC (rev 7945)
+@@ -37,7 +37,7 @@
+         # the( human readable) time format used in log file
+         self.time_format = &quot;%Y-%m-%d/%H:%M:%S&quot;
+ 
+-        # Commands to be executed once before the entire batch
++        # Commands to be executed once before the entire batch on the submit node
+         self.pre_batch = []
+         # Commands to be executed before every task in tasks
+         self.pre_tasks = []
+@@ -45,7 +45,7 @@
+         self.tasks = []
+         # Commands to be executed after each task in tasks
+         self.post_tasks = []
+-        # Commands to be executed once after the entire batch
++        # Commands to be executed once after the entire batch on the submit node
+         self.post_batch = []
+ 
+         # the default directory where to keep all the log files
+@@ -263,6 +263,7 @@
+             task.p = Popen(command, shell=True,stdout=output,stderr=error)
+ 
+     def run(self):
++        print &quot;The Log file are under %s&quot;%self.log_dir
+         if self.test:
+             print &quot;Test mode, we only print the command to be executed, we don't execute them&quot;
+         # Execute pre-batch
+@@ -278,6 +279,7 @@
+             exec_post_batch()
+ 
+         print &quot;The Log file are under %s&quot;%self.log_dir
++
+     def clean(self):
+         #TODO: delete all log files for the current batch
+         pass
+@@ -363,10 +365,12 @@
+                 concurrentJobs = 200
+ 
+                 ''') )
+-#                preBatch = ''' + pre_batch_command + '''
+-#                postBatch = ''' + post_batch_command +'''
+         bqsubmit_dat.close()
+ 
++        # Execute pre-batch
++        if len(self.pre_batch)&gt;0:
++            exec_pre_batch()
++
+         # Launch bqsubmit
+         output = PIPE
+         error = PIPE
+@@ -378,6 +382,11 @@
+ 
+         os.chdir('parent')
+ 
++        # Execute post-batchs
++        if len(self.post_batch)&gt;0:
++            exec_post_batch()
++
++            
+ class DBICondor(DBIBase):
+ 
+     def __init__( self, commands, **args ):
+@@ -507,8 +516,6 @@
+                        self.log_dir,self.targetcondorplatform,self.unique_id,
+                        self.log_dir,self.targetcondorplatform,self.unique_id,
+                        self.log_dir,self.targetcondorplatform)))
+-#                preBatch = ''' + pre_batch_command + '''
+-#                postBatch = ''' + post_batch_command +'''
+ 
+         if len(condor_datas)!=0:
+             for i in condor_datas:
+@@ -594,6 +601,8 @@
+ 
+ 
+     def run(self):
++        print &quot;The Log file are under %s&quot;%self.log_dir
++
+         if len(self.pre_batch)&gt;0:
+             exec_pre_batch()
+         self.run_all_job()
+@@ -645,16 +654,9 @@
+         #keeps a list of the temporary files created, so that they can be deleted at will            
+ 
+     def run_one_job(self,task):
+-        launch_file = os.path.join(self.tmp_dir, 'launch.sh')
+-
+-        # Launch condor
++            
+         output = PIPE
+         error = PIPE
+-        if not self.file_redirect_stdout and self.nb_proc&gt;1:
+-            print &quot;[DBI] WARNING: many process but all their stdout are redirected to the parent&quot;
+-        if not self.file_redirect_stderr and self.nb_proc&gt;1:
+-            print &quot;[DBI] WARNING: many process but all their stderr are redirected to the parent&quot;
+-            
+         if int(self.file_redirect_stdout):
+             output = file(self.log_file + '.out', 'w')
+         if int(self.file_redirect_stderr):
+@@ -682,11 +684,14 @@
+ 
+     def run(self):
+         if self.test:
+-            print &quot;Test mode, we only print the command to be executed, we don't execute them&quot;
++            print &quot;[DBI] Test mode, we only print the command to be executed, we don't execute them&quot;
++        if not self.file_redirect_stdout and self.nb_proc&gt;1:
++            print &quot;[DBI] WARNING: many process but all their stdout are redirected to the parent&quot;
++        if not self.file_redirect_stderr and self.nb_proc&gt;1:
++            print &quot;[DBI] WARNING: many process but all their stderr are redirected to the parent&quot;
++        print &quot;The Log file are under %s&quot;%self.log_dir
+ 
+         # Execute pre-batch
+-        output = PIPE
+-        error = PIPE
+         if len(self.pre_batch)&gt;0:
+             exec_pre_batch()
+         
+@@ -801,6 +806,8 @@
+         task.p = Popen(command, shell=True,stdout=output,stderr=error)
+ 
+     def run(self):
++        print &quot;The Log file are under %s&quot;%self.log_dir
++
+         # Execute pre-batch
+         if len(self.pre_batch)&gt;0:
+             exec_pre_batch()
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001392.html">[Plearn-commits] r7944 - trunk/python_modules/plearn/plide
+</A></li>
+	<LI>Next message: <A HREF="001394.html">[Plearn-commits] r7946 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1393">[ date ]</a>
+              <a href="thread.html#1393">[ thread ]</a>
+              <a href="subject.html#1393">[ subject ]</a>
+              <a href="author.html#1393">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

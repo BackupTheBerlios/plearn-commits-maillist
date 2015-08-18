@@ -1,0 +1,254 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7427 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7427%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705301545.l4UFjQss009066%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000875.html">
+   <LINK REL="Next"  HREF="000877.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7427 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7427%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705301545.l4UFjQss009066%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7427 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Wed May 30 17:45:26 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000875.html">[Plearn-commits] r7426 - in trunk/plearn_learners/online: .	test/DeepBeliefNet
+</A></li>
+        <LI>Next message: <A HREF="000877.html">[Plearn-commits] r7428 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#876">[ date ]</a>
+              <a href="thread.html#876">[ thread ]</a>
+              <a href="subject.html#876">[ subject ]</a>
+              <a href="author.html#876">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-05-30 17:45:25 +0200 (Wed, 30 May 2007)
+New Revision: 7427
+
+Modified:
+   trunk/plearn_learners/online/RBMMultinomialLayer.cc
+   trunk/plearn_learners/online/RBMMultinomialLayer.h
+Log:
+Implement batch version of some needed functions
+
+
+Modified: trunk/plearn_learners/online/RBMMultinomialLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMultinomialLayer.cc	2007-05-30 15:41:31 UTC (rev 7426)
++++ trunk/plearn_learners/online/RBMMultinomialLayer.cc	2007-05-30 15:45:25 UTC (rev 7427)
+@@ -1,5 +1,5 @@
+-// -*- C++ -*-
+ 
++
+ // RBMMultinomialLayer.cc
+ //
+ // Copyright (C) 2006 Pascal Lamblin &amp; Dan Popovici
+@@ -97,6 +97,21 @@
+     fill_one_hot( sample, i, real(0.), real(1.) );
+ }
+ 
++void RBMMultinomialLayer::generateSamples()
++{
++    PLASSERT_MSG(random_gen,
++                 &quot;random_gen should be initialized before generating samples&quot;);
++
++    computeExpectations();
++    PLASSERT( samples.width() == size &amp;&amp; samples.length() == batch_size );
++
++    for (int k = 0; k &lt; batch_size; k++)
++    {
++        int i = random_gen-&gt;multinomial_sample( expectations(k) );
++        fill_one_hot( samples(k), i, real(0.), real(1.) );
++    }
++}
++
+ void RBMMultinomialLayer::computeExpectation()
+ {
+     if( expectation_is_up_to_date )
+@@ -107,7 +122,22 @@
+     expectation_is_up_to_date = true;
+ }
+ 
++void RBMMultinomialLayer::computeExpectations()
++{
++    if( expectations_are_up_to_date )
++        return;
+ 
++    PLASSERT( expectations.width() == size
++              &amp;&amp; expectations.length() == batch_size );
++
++    // expectation = softmax(-activation)
++    for (int k = 0; k &lt; batch_size; k++)
++        softmaxMinus(activations(k), expectations(k));
++
++    expectations_are_up_to_date = true;
++}
++
++
+ void RBMMultinomialLayer::fprop( const Vec&amp; input, Vec&amp; output ) const
+ {
+     PLASSERT( input.size() == input_size );
+@@ -188,14 +218,18 @@
+ }
+ 
+ void RBMMultinomialLayer::bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
+-        Mat&amp; input_gradients,
+-        const Mat&amp; output_gradients,
+-        bool accumulate)
++                                      Mat&amp; input_gradients,
++                                      const Mat&amp; output_gradients,
++                                      bool accumulate)
+ {
+     PLASSERT( inputs.width() == size );
+     PLASSERT( outputs.width() == size );
+     PLASSERT( output_gradients.width() == size );
+ 
++    int mbatch_size = inputs.length();
++    PLASSERT( outputs.length() == mbatch_size );
++    PLASSERT( output_gradients.length() == mbatch_size );
++
+     if( accumulate )
+     {
+         PLASSERT_MSG( input_gradients.width() == size &amp;&amp;
+@@ -205,46 +239,46 @@
+     else
+     {
+         input_gradients.resize(inputs.length(), size);
+-        input_gradients.fill(0);
++        input_gradients.clear();
+     }
+ 
+-    PLERROR(&quot;In RBMMultinomialLayer::bpropUpdate - Not yet fully implemented &quot;
+-            &quot;for mini-batches&quot;);
+ 
+-    /*
+-
+     if( momentum != 0. )
+         bias_inc.resize( size );
+ 
+-    // input_gradient[i] =
+-    //      (output_gradient . output - output_gradient[i] ) output[i]
+-    real outg_dot_out = dot( output_gradient, output );
+-    real* out = output.data();
+-    real* outg = output_gradient.data();
+-    real* ing = input_gradient.data();
+-    real* b = bias.data();
+-    real* binc = momentum==0?0:bias_inc.data();
++    // TODO see if we can have a speed-up by reorganizing the different steps
+ 
+-    for( int i=0 ; i&lt;size ; i++ )
++    // input_gradients[k][i] =
++    //   (output_gradients[k].outputs[k]-output_gradients[k][i]) outputs[k][i]
++    for( int k=0; k&lt;mbatch_size; k++ )
+     {
+-        real ing_i = (outg_dot_out - outg[i]) * out[i];
+-        ing[i] += ing_i;
++        real outg_dot_out = dot( output_gradients(k), outputs(k) );
++        real* out = outputs(k).data();
++        real* outg = output_gradients(k).data();
++        real* ing = input_gradients(k).data();
++        real* b = bias.data();
++        real* binc = momentum==0?0:bias_inc.data();
+ 
+-        if( momentum == 0. )
++        for( int i=0 ; i&lt;size ; i++ )
+         {
+-            // update the bias: bias -= learning_rate * input_gradient
+-            b[i] -= learning_rate * ing_i;
++            real ing_ki = (outg_dot_out - outg[i]) * out[i];
++            ing[i] += ing_ki;
++
++            if( momentum == 0. )
++            {
++                // update the bias: bias -= learning_rate * input_gradient
++                b[i] -= learning_rate * ing_ki;
++            }
++            else
++            {
++                // The update rule becomes:
++                // bias_inc = momentum*bias_inc - learning_rate*input_gradient
++                // bias += bias_inc
++                binc[i] = momentum * binc[i] - learning_rate * ing_ki;
++                b[i] += binc[i];
++            }
+         }
+-        else
+-        {
+-            // The update rule becomes:
+-            // bias_inc = momentum * bias_inc - learning_rate * input_gradient
+-            // bias += bias_inc
+-            binc[i] = momentum * binc[i] - learning_rate * ing_i;
+-            b[i] += binc[i];
+-        }
+     }
+-    */
+ }
+ 
+ //! TODO: add &quot;accumulate&quot; here
+
+Modified: trunk/plearn_learners/online/RBMMultinomialLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMultinomialLayer.h	2007-05-30 15:41:31 UTC (rev 7426)
++++ trunk/plearn_learners/online/RBMMultinomialLayer.h	2007-05-30 15:45:25 UTC (rev 7427)
+@@ -70,16 +70,16 @@
+ 
+ 
+     //! generate a sample, and update the sample field
+-    virtual void generateSample() ;
++    virtual void generateSample();
+ 
+-    //! Not implemented.
+-    virtual void generateSamples() { PLASSERT( false ); }
++    //! batch version
++    virtual void generateSamples();
+ 
+     //! compute the expectation
+-    virtual void computeExpectation() ;
++    virtual void computeExpectation();
+ 
+-    //! Not implemented.
+-    virtual void computeExpectations() { PLASSERT( false ); }
++    //! batch version
++    virtual void computeExpectations();
+ 
+     //! forward propagation
+     virtual void fprop( const Vec&amp; input, Vec&amp; output ) const;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000875.html">[Plearn-commits] r7426 - in trunk/plearn_learners/online: .	test/DeepBeliefNet
+</A></li>
+	<LI>Next message: <A HREF="000877.html">[Plearn-commits] r7428 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#876">[ date ]</a>
+              <a href="thread.html#876">[ thread ]</a>
+              <a href="subject.html#876">[ subject ]</a>
+              <a href="author.html#876">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

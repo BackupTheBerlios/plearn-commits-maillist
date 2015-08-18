@@ -1,0 +1,222 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10225 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10225%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200906022151.n52Lpd6P017145%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="003666.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10225 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>plearner at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10225%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200906022151.n52Lpd6P017145%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10225 - trunk/plearn_learners/generic/EXPERIMENTAL">plearner at mail.berlios.de
+       </A><BR>
+    <I>Tue Jun  2 23:51:39 CEST 2009</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="003666.html">[Plearn-commits] r10226 - trunk/scripts/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3665">[ date ]</a>
+              <a href="thread.html#3665">[ thread ]</a>
+              <a href="subject.html#3665">[ subject ]</a>
+              <a href="author.html#3665">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: plearner
+Date: 2009-06-02 23:51:38 +0200 (Tue, 02 Jun 2009)
+New Revision: 10225
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h
+Log:
+minor fix to experimental learner
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc	2009-05-30 15:51:50 UTC (rev 10224)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc	2009-06-02 21:51:38 UTC (rev 10225)
+@@ -103,8 +103,17 @@
+ 
+     declareOption(ol, &quot;reconstructed_layers&quot;, &amp;DeepReconstructorNet::reconstructed_layers,
+                   OptionBase::buildoption,
+-                  &quot;reconstructed_layers[k] is the reconstruction of layer k from layers[k+1]&quot;);
++                  &quot;reconstructed_layers[k] is the reconstruction of layer k from hidden_for_reconstruction[k]\n&quot;
++                  &quot;(which corresponds to a version of layer k+1. See further explanation of hidden_for_reconstruction.\n&quot;);
+ 
++    declareOption(ol, &quot;hidden_for_reconstruction&quot;, &amp;DeepReconstructorNet::hidden_for_reconstruction,
++                  OptionBase::buildoption,
++                  &quot;reconstructed_layers[k] is reconstructed from hidden_for_reconstruction[k]\n&quot;
++                  &quot;which corresponds to a version of layer k+1.\n&quot;
++                  &quot;hidden_for_reconstruction[k] can however be different from layers[k+1] \n&quot;
++                  &quot;since e.g. layers[k+1] may be obtained by transforming a clean input, while \n&quot;
++                  &quot;hidden_for_reconstruction[k] may be obtained by transforming a corrupted input \n&quot;);
++
+     declareOption(ol, &quot;reconstruction_optimizers&quot;, &amp;DeepReconstructorNet::reconstruction_optimizers,
+                   OptionBase::buildoption,
+                   &quot;&quot;);
+@@ -267,6 +276,48 @@
+     Func f(input&amp;target, fullcost);
+     parameters = f-&gt;parameters;
+     outmat.resize(n_rec_costs);
++
++
++    // older versions did not specify hidden_for_reconstruction
++    // if it's not there, let's try to infer it
++    if( (reconstructed_layers.length()!=0) &amp;&amp; (hidden_for_reconstruction.length()==0) ) 
++    {
++        int n = reconstructed_layers.length();
++        for(int k=0; k&lt;n; k++)
++        {
++            VarArray proppath = propagationPath(layers[k+1],reconstructed_layers[k]);
++            if(proppath.length()&gt;0) // great, we found a path from layers[k+1] !
++                hidden_for_reconstruction.append(layers[k+1]);
++            else // ok this is getting much more difficult, let's try to guess
++            {
++                // let's consider the full path from sources to reconstructed_layers[k]
++                VarArray fullproppath = propagationPath(reconstructed_layers[k]);
++                // look for a variable with same type and dimension as layers[k+1]
++                int pos;
++                for(pos = fullproppath.length()-2; pos&gt;=0; pos--)
++                {
++                    if( fullproppath[pos]-&gt;length()    == layers[k+1]-&gt;length() &amp;&amp;
++                        fullproppath[pos]-&gt;width()     == layers[k+1]-&gt;width() &amp;&amp;
++                        fullproppath[pos]-&gt;classname() == layers[k+1]-&gt;classname() )
++                        break; // found a matching one!
++                }
++                if(pos&gt;=0) // found a match at pos, let's use it
++                {
++                    hidden_for_reconstruction.append(fullproppath[pos]);
++                    perr &lt;&lt; &quot;Found match for hidden_for_reconstruction &quot; &lt;&lt; k &lt;&lt; endl;
++                    //displayVarGraph(propagationPath(hidden_for_reconstruction[k],reconstructed_layers[k])
++                    //                ,true, 333, &quot;reconstr&quot;);        
++                }
++                else
++                {
++                    PLERROR(&quot;Unable to guess hidden_for_reconstruction variable. Unable to find match.&quot;);
++                }
++            }
++        }
++    }
++
++    if( reconstructed_layers.length() != hidden_for_reconstruction.length() )
++        PLERROR(&quot;reconstructed_layers and hidden_for_reconstruction should have the same number of elements.&quot;);
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+@@ -301,6 +352,7 @@
+     deepCopyField(layers, copies);
+     deepCopyField(reconstruction_costs, copies);
+     deepCopyField(reconstructed_layers, copies);
++    deepCopyField(hidden_for_reconstruction, copies);
+     deepCopyField(reconstruction_optimizers, copies);
+     deepCopyField(reconstruction_optimizer, copies);
+     varDeepCopyField(target, copies);
+@@ -483,15 +535,34 @@
+     return representations;
+ }
+ 
++
+ void DeepReconstructorNet::reconstructInputFromLayer(int layer)
+ {
+     for(int k=layer; k&gt;0; k--)
++        layers[k-1]-&gt;matValue &lt;&lt; reconstructOneLayer(k);
++    /*
++    for(int k=layer; k&gt;0; k--)
+     {
+-        VarArray proppath = propagationPath(layers[k],reconstructed_layers[k-1]);
++        VarArray proppath = propagationPath(hidden_for_reconstruction[k-1],reconstructed_layers[k-1]);
++
++        perr &lt;&lt; &quot;RECONSTRUCTING reconstructed_layers[&quot;&lt;&lt;k-1
++             &lt;&lt; &quot;] from layers[&quot;&lt;&lt; k
++             &lt;&lt; &quot;] &quot; &lt;&lt; endl;
++        perr &lt;&lt; &quot;proppath:&quot; &lt;&lt; endl;
++        perr &lt;&lt; proppath &lt;&lt; endl;
++        perr &lt;&lt; &quot;proppath length: &quot; &lt;&lt; proppath.length() &lt;&lt; endl;
++
++        //perr &lt;&lt; &quot;&gt;&gt;&gt;&gt; reconstructed layers before fprop:&quot; &lt;&lt; endl;
++        //perr &lt;&lt; reconstructed_layers[k-1]-&gt;matValue &lt;&lt; endl;
++
+         proppath.fprop();
+-        // perr &lt;&lt; &quot;Graph for reconstructing layer &quot; &lt;&lt; k-1 &lt;&lt; &quot; from layer &quot; &lt;&lt; k &lt;&lt; endl;
+-        //displayVarGraph(proppath,true, 333, &quot;reconstr&quot;);
+ 
++        //perr &lt;&lt; &quot;&gt;&gt;&gt;&gt; reconstructed layers after fprop:&quot; &lt;&lt; endl;
++        //perr &lt;&lt; reconstructed_layers[k-1]-&gt;matValue &lt;&lt; endl;
++
++        perr &lt;&lt; &quot;Graph for reconstructing layer &quot; &lt;&lt; k-1 &lt;&lt; &quot; from layer &quot; &lt;&lt; k &lt;&lt; endl;
++        displayVarGraph(proppath,true, 333, &quot;reconstr&quot;);        
++
+         //WARNING MEGA-HACK
+         if (reconstructed_layers[k-1].width() == 2*layers[k-1].width())
+         {
+@@ -505,6 +576,7 @@
+         else
+             reconstructed_layers[k-1]-&gt;matValue &gt;&gt; layers[k-1]-&gt;matValue;
+     }
++    */
+ }
+ 
+ TVec&lt;Mat&gt; DeepReconstructorNet::computeReconstructions(Mat input)
+@@ -832,7 +904,8 @@
+ 
+ Mat DeepReconstructorNet::reconstructOneLayer(int layer)
+ {
+-    VarArray proppath = propagationPath(layers[layer],reconstructed_layers[layer-1]);
++    layers[layer]-&gt;matValue &gt;&gt; hidden_for_reconstruction[layer-1]-&gt;matValue;
++    VarArray proppath = propagationPath(hidden_for_reconstruction[layer-1],reconstructed_layers[layer-1]);
+     proppath.fprop();       
+     return reconstructed_layers[layer-1]-&gt;matValue;
+ }
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h	2009-05-30 15:51:50 UTC (rev 10224)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h	2009-06-02 21:51:38 UTC (rev 10225)
+@@ -88,6 +88,10 @@
+     // reconstructed_layers[k] is the reconstruction of layer k from layers[k+1]
+     VarArray reconstructed_layers;
+ 
++    // hidden_for_reconstruction[k] is the hidden representation used to reconstruct reconstructed_layers[k] 
++    // i.e. it is the representation at layer k+1 but possibly obtained from a corrupted input (contrary to layers[k+1]).
++    VarArray hidden_for_reconstruction;
++
+     // optimizers if we use different ones for each layer
+     TVec&lt; PP&lt;Optimizer&gt; &gt; reconstruction_optimizers;
+     
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="003666.html">[Plearn-commits] r10226 - trunk/scripts/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3665">[ date ]</a>
+              <a href="thread.html#3665">[ thread ]</a>
+              <a href="subject.html#3665">[ subject ]</a>
+              <a href="author.html#3665">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

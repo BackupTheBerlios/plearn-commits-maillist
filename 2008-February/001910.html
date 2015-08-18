@@ -1,0 +1,810 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8462 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8462%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200802042257.m14MvRD1003408%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001909.html">
+   <LINK REL="Next"  HREF="001911.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8462 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8462%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200802042257.m14MvRD1003408%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8462 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Mon Feb  4 23:57:27 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001909.html">[Plearn-commits] r8461 -	trunk/plearn_learners/regressors/test/RegressionTree/.pytest/PL_RegressionTree
+</A></li>
+        <LI>Next message: <A HREF="001911.html">[Plearn-commits] r8463 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1910">[ date ]</a>
+              <a href="thread.html#1910">[ thread ]</a>
+              <a href="subject.html#1910">[ subject ]</a>
+              <a href="author.html#1910">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2008-02-04 23:57:27 +0100 (Mon, 04 Feb 2008)
+New Revision: 8462
+
+Added:
+   trunk/plearn_learners/online/RBMTrainer.cc
+   trunk/plearn_learners/online/RBMTrainer.h
+Log:
+Trains an RBM
+
+
+Added: trunk/plearn_learners/online/RBMTrainer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMTrainer.cc	2008-02-04 22:56:42 UTC (rev 8461)
++++ trunk/plearn_learners/online/RBMTrainer.cc	2008-02-04 22:57:27 UTC (rev 8462)
+@@ -0,0 +1,535 @@
++// -*- C++ -*-
++
++// RBMTrainer.cc
++//
++// Copyright (C) 2007 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file RBMTrainer.cc */
++
++
++#include &quot;RBMTrainer.h&quot;
++
++#include &lt;plearn_learners/online/RBMBinomialLayer.h&gt;
++#include &lt;plearn_learners/online/RBMGaussianLayer.h&gt;
++#include &lt;plearn_learners/online/RBMMatrixConnection.h&gt;
++#include &lt;plearn/vmat/AutoVMatrix.h&gt;
++#include &lt;plearn/vmat/SubVMatrix.h&gt;
++#include &lt;plearn/io/openFile.h&gt;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    RBMTrainer,
++    &quot;Trains an RBM&quot;,
++    &quot;Glop&quot;
++    );
++
++RBMTrainer::RBMTrainer():
++    n_visible(-1),
++    n_hidden(-1),
++    visible_type(&quot;binomial&quot;),
++    update_with_h0_sample(false),
++    sample_v1_in_chain(true),
++    compute_log_likelihood(true),
++    n_stages(1),
++    learning_rate(0.01),
++    seed(1827),
++    n_train(-1),
++    n_valid(-1),
++    n_test(-1),
++    batch_size(1),
++    print_debug(false),
++    use_fast_approximations(false),
++    n_ports(0),
++    n_state_ports(0),
++    nll_index(-1),
++    visible_index(-1),
++    rec_err_index(-1)
++{
++}
++
++// ### Nothing to add here, simply calls build_
++void RBMTrainer::build()
++{
++    inherited::build();
++    build_();
++}
++
++void RBMTrainer::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    // deepCopyField(trainvec, copies);
++}
++
++void RBMTrainer::declareOptions(OptionList&amp; ol)
++{
++    declareOption(ol, &quot;n_visible&quot;, &amp;RBMTrainer::n_visible,
++                  OptionBase::buildoption,
++                  &quot;n_visible&quot;);
++
++    declareOption(ol, &quot;n_hidden&quot;, &amp;RBMTrainer::n_hidden,
++                  OptionBase::buildoption,
++                  &quot;n_hidden&quot;);
++
++    declareOption(ol, &quot;visible_type&quot;, &amp;RBMTrainer::visible_type,
++                  OptionBase::buildoption,
++                  &quot;visible_type&quot;);
++
++    declareOption(ol, &quot;update_with_h0_sample&quot;,
++                  &amp;RBMTrainer::update_with_h0_sample,
++                  OptionBase::buildoption,
++                  &quot;update_with_h0_sample&quot;);
++
++    declareOption(ol, &quot;sample_v1_in_chain&quot;, &amp;RBMTrainer::sample_v1_in_chain,
++                  OptionBase::buildoption,
++                  &quot;sample_v1_in_chain&quot;);
++
++    declareOption(ol, &quot;compute_log_likelihood&quot;,
++                  &amp;RBMTrainer::compute_log_likelihood,
++                  OptionBase::buildoption,
++                  &quot;compute_log_likelihood&quot;);
++
++    declareOption(ol, &quot;n_stages&quot;, &amp;RBMTrainer::n_stages,
++                  OptionBase::buildoption,
++                  &quot;n_stages&quot;);
++
++    declareOption(ol, &quot;learning_rate&quot;, &amp;RBMTrainer::learning_rate,
++                  OptionBase::buildoption,
++                  &quot;learning_rate&quot;);
++
++    declareOption(ol, &quot;seed&quot;, &amp;RBMTrainer::seed,
++                  OptionBase::buildoption,
++                  &quot;seed&quot;);
++
++    declareOption(ol, &quot;n_train&quot;, &amp;RBMTrainer::n_train,
++                  OptionBase::buildoption,
++                  &quot;n_train&quot;);
++
++    declareOption(ol, &quot;n_valid&quot;, &amp;RBMTrainer::n_valid,
++                  OptionBase::buildoption,
++                  &quot;n_valid&quot;);
++
++    declareOption(ol, &quot;n_test&quot;, &amp;RBMTrainer::n_test,
++                  OptionBase::buildoption,
++                  &quot;n_test&quot;);
++
++    declareOption(ol, &quot;batch_size&quot;, &amp;RBMTrainer::batch_size,
++                  OptionBase::buildoption,
++                  &quot;batch_size&quot;);
++
++    declareOption(ol, &quot;data_filename&quot;, &amp;RBMTrainer::data_filename,
++                  OptionBase::buildoption,
++                  &quot;data_filename&quot;);
++
++    declareOption(ol, &quot;save_path&quot;, &amp;RBMTrainer::save_path,
++                  OptionBase::buildoption,
++                  &quot;save_path&quot;);
++
++    declareOption(ol, &quot;save_name&quot;, &amp;RBMTrainer::save_name,
++                  OptionBase::buildoption,
++                  &quot;save_name&quot;);
++
++    declareOption(ol, &quot;print_debug&quot;, &amp;RBMTrainer::print_debug,
++                  OptionBase::buildoption,
++                  &quot;print_debug&quot;);
++
++    declareOption(ol, &quot;use_fast_approximations&quot;,
++                  &amp;RBMTrainer::use_fast_approximations,
++                  OptionBase::buildoption,
++                  &quot;use_fast_approximations&quot;);
++
++    declareOption(ol, &quot;data&quot;, &amp;RBMTrainer::data,
++                  OptionBase::learntoption,
++                  &quot;data&quot;);
++
++    declareOption(ol, &quot;train_input&quot;, &amp;RBMTrainer::train_input,
++                  OptionBase::learntoption,
++                  &quot;train_input&quot;);
++
++    declareOption(ol, &quot;valid_input&quot;, &amp;RBMTrainer::valid_input,
++                  OptionBase::learntoption,
++                  &quot;valid_input&quot;);
++
++    declareOption(ol, &quot;test_input&quot;, &amp;RBMTrainer::test_input,
++                  OptionBase::learntoption,
++                  &quot;test_input&quot;);
++
++    declareOption(ol, &quot;rbm&quot;, &amp;RBMTrainer::rbm,
++                  OptionBase::learntoption,
++                  &quot;rbm&quot;);
++
++    declareOption(ol, &quot;visible&quot;, &amp;RBMTrainer::visible,
++                  OptionBase::learntoption,
++                  &quot;visible&quot;);
++
++    declareOption(ol, &quot;hidden&quot;, &amp;RBMTrainer::hidden,
++                  OptionBase::learntoption,
++                  &quot;hidden&quot;);
++
++    declareOption(ol, &quot;connection&quot;, &amp;RBMTrainer::connection,
++                  OptionBase::learntoption,
++                  &quot;connection&quot;);
++
++    /*
++    declareOption(ol, &quot;&quot;, &amp;RBMTrainer::,
++                  OptionBase::learntoption,
++                  &quot;&quot;);
++    */
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++void RBMTrainer::declareMethods(RemoteMethodMap&amp; rmm)
++{
++    // Make sure that inherited methods are declared
++    rmm.inherited(inherited::_getRemoteMethodMap_());
++
++    declareMethod(rmm, &quot;NLL&quot;, &amp;RBMTrainer::NLL,
++                  (BodyDoc(&quot;Computes NLL&quot;),
++                   ArgDoc (&quot;examples&quot;, &quot;The examples&quot;),
++                   RetDoc (&quot;The NLL&quot;)
++                  ));
++
++    declareMethod(rmm, &quot;recError&quot;, &amp;RBMTrainer::recError,
++                  (BodyDoc(&quot;Computes reconstruction error&quot;),
++                   ArgDoc (&quot;examples&quot;, &quot;The examples&quot;),
++                   RetDoc (&quot;The reconstruction error&quot;)
++                  ));
++
++    declareMethod(rmm, &quot;CD1&quot;, &amp;RBMTrainer::CD1,
++                  (BodyDoc(&quot;Performs one step of CD&quot;),
++                   ArgDoc (&quot;examples&quot;, &quot;The examples&quot;)));
++}
++
++void RBMTrainer::build_()
++{
++    visible_type = lowerstring(visible_type);
++    PLCHECK( visible_type == &quot;binomial&quot; || visible_type == &quot;gaussian&quot; );
++
++    // visible
++    if (visible_type == &quot;binomial&quot;)
++        visible = new RBMBinomialLayer();
++    else if (visible_type == &quot;gaussian&quot;)
++        visible = new RBMGaussianLayer();
++    else
++        PLERROR(&quot;Unknown visible_type (%s).&quot;, visible_type.c_str());
++
++    visible-&gt;size = n_visible;
++    visible-&gt;setLearningRate(learning_rate);
++    visible-&gt;use_fast_approximations = use_fast_approximations;
++    visible-&gt;build();
++
++    // hidden
++    hidden = new RBMBinomialLayer();
++    hidden-&gt;size = n_hidden;
++    hidden-&gt;setLearningRate(learning_rate);
++    hidden-&gt;use_fast_approximations = use_fast_approximations;
++    hidden-&gt;build();
++
++    // connection
++    connection = new RBMMatrixConnection();
++    connection-&gt;down_size = n_visible;
++    connection-&gt;up_size = n_hidden;
++    connection-&gt;setLearningRate(learning_rate);
++    connection-&gt;use_fast_approximations = use_fast_approximations;
++    connection-&gt;build();
++
++    // RBM
++    rbm = new RBMModule();
++    rbm-&gt;visible_layer = visible;
++    rbm-&gt;hidden_layer = hidden;
++    rbm-&gt;connection = connection;
++    rbm-&gt;reconstruction_connection = connection;
++    rbm-&gt;compute_log_likelihood = compute_log_likelihood;
++    rbm-&gt;random_gen = new PRandom(seed);
++    rbm-&gt;cd_learning_rate = learning_rate;
++    rbm-&gt;use_fast_approximations = use_fast_approximations;
++    rbm-&gt;build();
++
++    // data
++    PP&lt;AutoVMatrix&gt; data_ = new AutoVMatrix();
++    data_-&gt;filename = data_filename;
++    data_-&gt;defineSizes(n_visible, 1);
++    data_-&gt;build();
++    data = get_pointer(data_);
++
++    // train_input
++    train_input = new SubVMatrix(data,      // source
++                                 0,         // istart
++                                 0,         // jstart
++                                 n_train,   // length
++                                 n_visible, // width
++                                 true       // call_build
++                                 );
++
++    // valid_input
++    valid_input = new SubVMatrix(data,
++                                 n_train,
++                                 0,
++                                 n_valid,
++                                 n_visible,
++                                 true
++                                 );
++
++    // valid_input
++    test_input = new SubVMatrix(data,
++                                n_train + n_valid,
++                                0,
++                                n_test,
++                                n_visible,
++                                true
++                                );
++
++    // ports
++    ports = rbm-&gt;getPorts();
++    n_ports = ports.length();
++    for (int i=0; i&lt;n_ports; i++)
++    {
++        if (ports[i].find(&quot;.state&quot;, 0) != string::npos)
++        {
++            state_ports.append(ports[i]);
++            state_ports_indices.append(i);
++        }
++    }
++
++    n_state_ports = state_ports.length();
++    nll_index = rbm-&gt;getPortIndex(&quot;neg_log_likelihood&quot;);
++    visible_index = rbm-&gt;getPortIndex(&quot;visible&quot;);
++    rec_err_index = rbm-&gt;getPortIndex(&quot;reconstruction_error.state&quot;);
++
++    // nll_values
++    nll_values.resize(n_ports);
++    for (int i=0; i&lt;n_state_ports; i++)
++        nll_values[state_ports_indices[i]] = new Mat();
++
++    // rec_err_values
++    rec_err_values.resize(n_ports);
++    for (int i=0; i&lt;n_state_ports; i++)
++        rec_err_values[state_ports_indices[i]] = new Mat();
++}
++
++Mat RBMTrainer::NLL(const Mat&amp; examples)
++{
++    Mat nll;
++
++    for (int i=0; i&lt;n_state_ports; i++)
++        nll_values[state_ports_indices[i]]-&gt;resize(0,0);
++
++    nll_values[nll_index] = &nll;
++    nll_values[visible_index] = const_cast&lt;Mat *&gt;(&amp;examples);
++
++    rbm-&gt;fprop(nll_values);
++
++    if (print_debug)
++    {
++        pout &lt;&lt; &quot;In NLL:&quot; &lt;&lt; endl;
++        for (int i=0; i&lt;n_state_ports; i++)
++        {
++            int portnum = state_ports_indices[i];
++            string portname = rbm-&gt;getPortName(portnum);
++            pout &lt;&lt; portname &lt;&lt; &quot;: &quot; &lt;&lt; nll_values[portnum]-&gt;size() &lt;&lt; endl;
++        }
++    }
++
++    PLASSERT(nll.length() == examples.length() &amp;&amp; nll.width() == 1);
++    return nll;
++}
++
++Mat RBMTrainer::recError(const Mat&amp; examples)
++{
++    Mat rec_err;
++    for (int i=0; i&lt;n_state_ports; i++)
++        rec_err_values[state_ports_indices[i]]-&gt;resize(0,0);
++
++    rec_err_values[rec_err_index] = &amp;rec_err;
++    rec_err_values[visible_index] = const_cast&lt;Mat *&gt;(&amp;examples);
++
++    rbm-&gt;fprop(rec_err_values);
++
++    if (print_debug)
++    {
++        pout &lt;&lt; &quot;In recError:&quot; &lt;&lt; endl;
++        for (int i=0; i&lt;n_state_ports; i++)
++        {
++            int portnum = state_ports_indices[i];
++            string portname = rbm-&gt;getPortName(portnum);
++            pout &lt;&lt; portname &lt;&lt; &quot;: &quot; &lt;&lt; rec_err_values[portnum]-&gt;size() &lt;&lt; endl;
++        }
++    }
++
++    PLASSERT(rec_err.length() == examples.length()
++             &amp;&amp; rec_err.width() == 1);
++    return rec_err;
++}
++
++void RBMTrainer::CD1(const Mat&amp; examples)
++{
++    int n_examples = examples.length();
++    if (print_debug)
++    {
++        pout &lt;&lt; &quot;v0 = &quot; &lt;&lt; endl &lt;&lt; examples &lt;&lt; endl;
++    }
++
++    // Positive phase
++    connection-&gt;setAsDownInputs(examples);
++    hidden-&gt;getAllActivations(connection, 0, true);
++    hidden-&gt;computeExpectations();
++    hidden-&gt;generateSamples();
++
++    h0_a = hidden-&gt;activations;
++    h0_e.resize(n_examples, n_hidden);
++    h0_e &lt;&lt; hidden-&gt;getExpectations();
++    h0_s.resize(n_examples, n_hidden);
++    h0_s &lt;&lt; hidden-&gt;samples.copy();
++
++    if (update_with_h0_sample)
++        h0 = h0_s;
++    else
++        h0 = h0_e;
++
++    if (print_debug)
++    {
++        pout &lt;&lt; &quot;h0_a = &quot; &lt;&lt; endl &lt;&lt; h0_a &lt;&lt; endl;
++        pout &lt;&lt; &quot;h0_e = &quot; &lt;&lt; endl &lt;&lt; h0_e &lt;&lt; endl;
++        pout &lt;&lt; &quot;h0_s = &quot; &lt;&lt; endl &lt;&lt; h0_s &lt;&lt; endl;
++    }
++
++    // Downward pass
++    connection-&gt;setAsUpInputs(h0_s);
++    visible-&gt;getAllActivations(connection, 0, true);
++    visible-&gt;computeExpectations();
++    visible-&gt;generateSamples();
++
++    v1_a = visible-&gt;activations;
++    v1_e = visible-&gt;getExpectations();
++    v1_s = visible-&gt;samples;
++
++    // Negative phase
++    if (sample_v1_in_chain)
++        v1 = v1_s;
++    else
++        v1 = v1_e;
++
++    if (print_debug)
++    {
++        pout &lt;&lt; &quot;v1_a = &quot; &lt;&lt; endl &lt;&lt; v1_a &lt;&lt; endl;
++        pout &lt;&lt; &quot;v1_e = &quot; &lt;&lt; endl &lt;&lt; v1_e &lt;&lt; endl;
++        pout &lt;&lt; &quot;v1_s = &quot; &lt;&lt; endl &lt;&lt; v1_s &lt;&lt; endl;
++    }
++
++    connection-&gt;setAsDownInputs(v1);
++    hidden-&gt;getAllActivations(connection, 0, true);
++    hidden-&gt;computeExpectations();
++
++    Mat h1 = hidden-&gt;getExpectations();
++    if (print_debug)
++        pout &lt;&lt; &quot;h1 = &quot; &lt;&lt; endl &lt;&lt; h1 &lt;&lt; endl;
++
++    rbm-&gt;CDUpdate(examples, h0, v1, h1);
++}
++
++void RBMTrainer::run()
++{
++    Mat results(n_stages+1, 6);
++    for (int stage=0; stage&lt;n_stages; stage++)
++    {
++        pout &lt;&lt; &quot;stage: &quot; &lt;&lt; stage &lt;&lt; endl;
++        results(stage, 0) = mean(NLL(train_input));
++        results(stage, 3) = mean(recError(train_input));
++
++        if (n_valid &gt; 0)
++        {
++            results(stage, 1) = mean(NLL(valid_input));
++            results(stage, 4) = mean(recError(valid_input));
++        }
++
++        if (n_test &gt; 0)
++        {
++            results(stage, 2) = mean(NLL(test_input));
++            results(stage, 5) = mean(recError(test_input));
++        }
++
++        pout &lt;&lt; &quot;NLL:      &quot; &lt;&lt; results(stage).subVec(0,3) &lt;&lt; endl;
++        pout &lt;&lt; &quot;RecError: &quot; &lt;&lt; results(stage).subVec(3,3) &lt;&lt; endl;
++
++        for (int i=0; i&lt;n_train/batch_size; i++)
++            CD1(train_input.subMatRows(i*batch_size, batch_size));
++    }
++    pout &lt;&lt; &quot;stage: &quot; &lt;&lt; n_stages &lt;&lt; endl;
++    results(n_stages, 0) = mean(NLL(train_input));
++    results(n_stages, 3) = mean(recError(train_input));
++    if (n_valid &gt; 0)
++    {
++        results(n_stages, 1) = mean(NLL(valid_input));
++        results(n_stages, 4) = mean(recError(valid_input));
++    }
++    if (n_test &gt; 0)
++    {
++        results(n_stages, 2) = mean(NLL(test_input));
++        results(n_stages, 5) = mean(recError(test_input));
++    }
++    pout &lt;&lt; &quot;NLL:      &quot; &lt;&lt; results(n_stages).subVec(0,3) &lt;&lt; endl;
++    pout &lt;&lt; &quot;RecError: &quot; &lt;&lt; results(n_stages).subVec(3,3) &lt;&lt; endl;
++    pout &lt;&lt; &quot;results = &quot; &lt;&lt; endl &lt;&lt; results &lt;&lt; endl;
++
++    if (!save_path.isEmpty())
++    {
++        PPath filename;
++        if (save_name.isEmpty())
++            filename = save_path / &quot;results.amat&quot;;
++        else
++            filename = save_path / save_name;
++
++        PStream file = openFile(filename, PStream::raw_ascii, &quot;w&quot;);
++        file &lt;&lt; results &lt;&lt; endl;
++    }
++}
++
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/online/RBMTrainer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMTrainer.h	2008-02-04 22:56:42 UTC (rev 8461)
++++ trunk/plearn_learners/online/RBMTrainer.h	2008-02-04 22:57:27 UTC (rev 8462)
+@@ -0,0 +1,191 @@
++// -*- C++ -*-
++
++// RBMTrainer.h
++//
++// Copyright (C) 2007 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file RBMTrainer.h */
++
++
++#ifndef RBMTrainer_INC
++#define RBMTrainer_INC
++
++#include &lt;plearn/base/Object.h&gt;
++#include &lt;plearn/vmat/VMat.h&gt;
++#include &lt;plearn_learners/online/RBMModule.h&gt;
++
++namespace PLearn {
++
++/**
++ * The first sentence should be a BRIEF DESCRIPTION of what the class does.
++ * Place the rest of the class programmer documentation here.  Doxygen supports
++ * Javadoc-style comments.  See <A HREF="http://www.doxygen.org/manual.html">http://www.doxygen.org/manual.html</A>
++ *
++ * @todo Write class to-do's here if there are any.
++ *
++ * @deprecated Write deprecated stuff here if there is any.  Indicate what else
++ * should be used instead.
++ */
++class RBMTrainer : public Object
++{
++    typedef Object inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! ### declare public option fields (such as build options) here
++    //! Start your comments with Doxygen-compatible comments such as //!
++    int n_visible;
++    int n_hidden;
++    string visible_type;
++    bool update_with_h0_sample;
++    bool sample_v1_in_chain;
++    bool compute_log_likelihood;
++    int n_stages;
++    real learning_rate;
++    int32_t seed;
++    int n_train;
++    int n_valid;
++    int n_test;
++    int batch_size;
++    PPath data_filename;
++    PPath save_path;
++    PPath save_name;
++    bool print_debug;
++    bool use_fast_approximations;
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    RBMTrainer();
++
++    // Your other public member functions go here
++    Mat NLL(const Mat&amp; examples);
++
++    Mat recError(const Mat&amp; examples);
++
++    void CD1(const Mat&amp; examples);
++
++    virtual void run();
++
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    PLEARN_DECLARE_OBJECT(RBMTrainer);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++    //#####  Protected Options  ###############################################
++
++    // ### Declare protected option fields (such as learned parameters) here
++    VMat data;
++    VMat train_input;
++    VMat valid_input;
++    VMat test_input;
++
++    PP&lt;RBMModule&gt; rbm;
++    PP&lt;RBMLayer&gt; visible;
++    PP&lt;RBMLayer&gt; hidden;
++    PP&lt;RBMConnection&gt; connection;
++
++    TVec&lt;string&gt; ports;
++    TVec&lt;string&gt; state_ports;
++    int n_ports;
++    int n_state_ports;
++    TVec&lt;int&gt; state_ports_indices;
++    int nll_index;
++    int visible_index;
++    int rec_err_index;
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++    static void declareMethods(RemoteMethodMap&amp; rmm);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++    mutable TVec&lt;Mat*&gt; nll_values;
++    mutable TVec&lt;Mat*&gt; rec_err_values;
++
++    mutable Mat h0_a;
++    mutable Mat h0_e;
++    mutable Mat h0_s;
++    mutable Mat h0;
++
++    mutable Mat v1_a;
++    mutable Mat v1_e;
++    mutable Mat v1_s;
++    mutable Mat v1;
++
++
++
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(RBMTrainer);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001909.html">[Plearn-commits] r8461 -	trunk/plearn_learners/regressors/test/RegressionTree/.pytest/PL_RegressionTree
+</A></li>
+	<LI>Next message: <A HREF="001911.html">[Plearn-commits] r8463 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1910">[ date ]</a>
+              <a href="thread.html#1910">[ thread ]</a>
+              <a href="subject.html#1910">[ subject ]</a>
+              <a href="author.html#1910">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

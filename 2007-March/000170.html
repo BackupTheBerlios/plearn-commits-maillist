@@ -1,0 +1,193 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6721 - trunk/plearn/misc
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6721%20-%20trunk/plearn/misc&In-Reply-To=%3C200703071836.l27IaIBc018922%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000169.html">
+   <LINK REL="Next"  HREF="000171.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6721 - trunk/plearn/misc</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6721%20-%20trunk/plearn/misc&In-Reply-To=%3C200703071836.l27IaIBc018922%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6721 - trunk/plearn/misc">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Wed Mar  7 19:36:18 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000169.html">[Plearn-commits] r6720 - trunk/plearn/io
+</A></li>
+        <LI>Next message: <A HREF="000171.html">[Plearn-commits] r6722 - trunk/plearn/io
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#170">[ date ]</a>
+              <a href="thread.html#170">[ thread ]</a>
+              <a href="subject.html#170">[ subject ]</a>
+              <a href="author.html#170">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-03-07 19:36:17 +0100 (Wed, 07 Mar 2007)
+New Revision: 6721
+
+Modified:
+   trunk/plearn/misc/PLearnService.cc
+   trunk/plearn/misc/PLearnService.h
+Log:
+- Fixed compilation error with Intel Compiler: the default value for an argument cannot have the same name as the argument itself
+- Also removed a couple of warning with Intel Compiler
+
+
+Modified: trunk/plearn/misc/PLearnService.cc
+===================================================================
+--- trunk/plearn/misc/PLearnService.cc	2007-03-07 18:03:31 UTC (rev 6720)
++++ trunk/plearn/misc/PLearnService.cc	2007-03-07 18:36:17 UTC (rev 6721)
+@@ -237,8 +237,8 @@
+ 
+ 
+ int PLearnService::watchServers(TVec&lt; PP&lt;RemotePLearnServer&gt; &gt; servers, 
+-                                log_callback_t log_callback, 
+-                                progress_callback_t progress_callback)
++                                log_callback_t the_log_callback, 
++                                progress_callback_t the_progress_callback)
+ {
+     Poll p;
+     int n = servers.size();
+@@ -283,7 +283,7 @@
+                 {
+                 case 'L' : // log message
+                     io &gt;&gt; module &gt;&gt; vlevel &gt;&gt; mesg;
+-                    log_callback(servers[the_k], module, vlevel, mesg);
++                    the_log_callback(servers[the_k], module, vlevel, mesg);
+                     break;
+                 case 'P' : // progress message
+                     c0= io.get(); // action: 'A'dd, 'U'pdate or 'K'ill
+@@ -292,7 +292,7 @@
+                         io &gt;&gt; pos;// Add: maxpos; Update: curpos
+                     if(static_cast&lt;char&gt;(c0) == 'A')
+                         io &gt;&gt; mesg;// pbar title
+-                    progress_callback(servers[the_k], ptr, static_cast&lt;char&gt;(c0), pos, mesg);
++                    the_progress_callback(servers[the_k], ptr, static_cast&lt;char&gt;(c0), pos, mesg);
+                     break;
+                 default:
+                     PLERROR(&quot;PLearnService::watchServers : Expected *L or *P, received *%c&quot;, c);
+@@ -307,14 +307,19 @@
+         else
+             PLERROR(&quot;stream returned by NextPendingEvent is none of the servers' io field. This should not happen!&quot;);
+     }
+-    return -1;  // To make the compiler happy (never reached).
++#ifndef __INTEL_COMPILER
++    // To make the compiler happy (never reached). This is unnecessary with
++    // Intel Compiler, which detects automatically that this statement is never
++    // reached, and actually gives a warning.
++    return -1;
++#endif
+ }
+ 
+ 
+ 
+ PP&lt;RemotePLearnServer&gt; PLearnService::waitForResult(TVec&lt; PP&lt;RemotePLearnServer&gt; &gt; servers, 
+-                                log_callback_t log_callback, 
+-                                progress_callback_t progress_callback)
++                                log_callback_t the_log_callback, 
++                                progress_callback_t the_progress_callback)
+ {
+     int min_server= 0;
+     if(servers.isEmpty())
+@@ -333,7 +338,7 @@
+ 
+     //send results from reserved servers only even if polling all servers
+     while(server &gt;= 0 &amp;&amp; server &lt; min_server || server == servers.length())
+-        server= watchServers(servers, log_callback, progress_callback);
++        server= watchServers(servers, the_log_callback, the_progress_callback);
+ 
+     if(server &lt; 0)
+         PLERROR(&quot;in PLearnService::waitForResult : no server returned anything.&quot;);
+@@ -342,12 +347,12 @@
+ 
+ 
+ void PLearnService::waitForResultFrom(PP&lt;RemotePLearnServer&gt; from,
+-                                      log_callback_t log_callback,
+-                                      progress_callback_t progress_callback)
++                                      log_callback_t the_log_callback,
++                                      progress_callback_t the_progress_callback)
+ {
+-    PP&lt;RemotePLearnServer&gt; server= waitForResult();
++    PP&lt;RemotePLearnServer&gt; server = waitForResult();
+     while(server != from)
+-        server= waitForResult();
++        server = waitForResult();
+ }
+ 
+ 
+@@ -384,7 +389,7 @@
+         {
+             for(;;) watchServers(servers, log_callback, progress_callback);
+         }
+-        catch(const PLearnError&amp; e)
++        catch(const PLearnError&amp;)
+         {
+             // do nothing...
+         }
+
+Modified: trunk/plearn/misc/PLearnService.h
+===================================================================
+--- trunk/plearn/misc/PLearnService.h	2007-03-07 18:03:31 UTC (rev 6720)
++++ trunk/plearn/misc/PLearnService.h	2007-03-07 18:36:17 UTC (rev 6721)
+@@ -122,16 +122,16 @@
+                                   unsigned int pos= 0, const string&amp; title= &quot;&quot;);
+ 
+     int watchServers(TVec&lt; PP&lt;RemotePLearnServer&gt; &gt; servers, 
+-                     log_callback_t log_callback,
+-                     progress_callback_t progress_callback);
++                     log_callback_t the_log_callback,
++                     progress_callback_t the_progress_callback);
+ 
+     PP&lt;RemotePLearnServer&gt; waitForResult(TVec&lt; PP&lt;RemotePLearnServer&gt; &gt; servers= TVec&lt; PP&lt;RemotePLearnServer&gt; &gt;(), 
+-                                         log_callback_t log_callback= log_callback,
+-                                         progress_callback_t progress_callback= progress_callback);
++                                         log_callback_t the_log_callback = log_callback,
++                                         progress_callback_t the_progress_callback = progress_callback);
+ 
+     void waitForResultFrom(PP&lt;RemotePLearnServer&gt; from,
+-                           log_callback_t log_callback= log_callback,
+-                           progress_callback_t progress_callback= progress_callback);
++                           log_callback_t the_log_callback = log_callback,
++                           progress_callback_t the_progress_callback = progress_callback);
+     
+     ~PLearnService();
+ };
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000169.html">[Plearn-commits] r6720 - trunk/plearn/io
+</A></li>
+	<LI>Next message: <A HREF="000171.html">[Plearn-commits] r6722 - trunk/plearn/io
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#170">[ date ]</a>
+              <a href="thread.html#170">[ thread ]</a>
+              <a href="subject.html#170">[ subject ]</a>
+              <a href="author.html#170">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

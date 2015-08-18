@@ -1,0 +1,1296 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6933 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6933%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704241506.l3OF6qkt014768%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000381.html">
+   <LINK REL="Next"  HREF="000383.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6933 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6933%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704241506.l3OF6qkt014768%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6933 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue Apr 24 17:06:52 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000381.html">[Plearn-commits] r6932 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000383.html">[Plearn-commits] r6934 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#382">[ date ]</a>
+              <a href="thread.html#382">[ thread ]</a>
+              <a href="subject.html#382">[ subject ]</a>
+              <a href="author.html#382">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-04-24 17:06:51 +0200 (Tue, 24 Apr 2007)
+New Revision: 6933
+
+Modified:
+   trunk/plearn_learners/online/ClassErrorCostModule.cc
+   trunk/plearn_learners/online/ClassErrorCostModule.h
+   trunk/plearn_learners/online/CombiningCostsModule.cc
+   trunk/plearn_learners/online/CombiningCostsModule.h
+   trunk/plearn_learners/online/NLLCostModule.cc
+   trunk/plearn_learners/online/NLLCostModule.h
+   trunk/plearn_learners/online/OnlineLearningModule.cc
+   trunk/plearn_learners/online/RBMBinomialLayer.cc
+   trunk/plearn_learners/online/RBMBinomialLayer.h
+   trunk/plearn_learners/online/RBMConnection.cc
+   trunk/plearn_learners/online/RBMConnection.h
+   trunk/plearn_learners/online/RBMConv2DConnection.h
+   trunk/plearn_learners/online/RBMGaussianLayer.h
+   trunk/plearn_learners/online/RBMLayer.cc
+   trunk/plearn_learners/online/RBMLayer.h
+   trunk/plearn_learners/online/RBMMatrixConnection.cc
+   trunk/plearn_learners/online/RBMMatrixConnection.h
+   trunk/plearn_learners/online/RBMMixedConnection.h
+   trunk/plearn_learners/online/RBMMixedLayer.cc
+   trunk/plearn_learners/online/RBMMixedLayer.h
+   trunk/plearn_learners/online/RBMMultinomialLayer.cc
+   trunk/plearn_learners/online/RBMMultinomialLayer.h
+   trunk/plearn_learners/online/RBMTruncExpLayer.h
+Log:
+More work towards mini-batches (big commit to fix compilation issue in previous commit)
+
+Modified: trunk/plearn_learners/online/ClassErrorCostModule.cc
+===================================================================
+--- trunk/plearn_learners/online/ClassErrorCostModule.cc	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/ClassErrorCostModule.cc	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -113,6 +113,13 @@
+         cost = ( argmax(input) == int(round(target[0])) ) ? 0. : 1.;
+ }
+ 
++void ClassErrorCostModule::fprop(const Mat&amp; inputs, const Mat&amp; targets,
++                                 Mat&amp; costs) const
++{
++    for (int i = 0; i &lt; inputs.length(); i++)
++        fprop(inputs(i), targets(i), costs(i, 0));
++}
++
+ /////////////////
+ // bpropUpdate //
+ /////////////////
+
+Modified: trunk/plearn_learners/online/ClassErrorCostModule.h
+===================================================================
+--- trunk/plearn_learners/online/ClassErrorCostModule.h	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/ClassErrorCostModule.h	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -69,6 +69,10 @@
+     //! (possibly resize it appropriately)
+     virtual void fprop(const Vec&amp; input, const Vec&amp; target, Vec&amp; cost) const;
+ 
++    //! Overridden from parent class.
++    virtual void fprop(const Mat&amp; inputs, const Mat&amp; targets, Mat&amp; costs)
++        const;
++
+     //! Given the input and the target, compute only the first cost
+     //! (of which we will compute the gradient)
+     virtual void fprop(const Vec&amp; input, const Vec&amp; target, real&amp; cost) const;
+@@ -76,7 +80,7 @@
+     //! Nothing to do
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost);
+ 
+-    /* Default implementation in super class raises a PLERROR
++    /*
+     //! No differentiable, so no gradient to backprop!
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost,
+                              Vec&amp; input_gradient);
+@@ -85,6 +89,10 @@
+     //! Nothing to do
+     virtual void bbpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost);
+ 
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; targets,
++            const Vec&amp; costs)
++    {}
++
+     /* Optional
+        N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS, WHICH
+        RAISES A PLERROR.
+
+Modified: trunk/plearn_learners/online/CombiningCostsModule.cc
+===================================================================
+--- trunk/plearn_learners/online/CombiningCostsModule.cc	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/CombiningCostsModule.cc	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -129,6 +129,9 @@
+     output_size = n_sub_costs+1;
+ }
+ 
++///////////
++// build //
++///////////
+ void CombiningCostsModule::build()
+ {
+     inherited::build();
+@@ -136,16 +139,25 @@
+ }
+ 
+ 
++/////////////////////////////////
++// makeDeepCopyFromShallowCopy //
++/////////////////////////////////
+ void CombiningCostsModule::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+-    deepCopyField(sub_costs, copies);
+-    deepCopyField(cost_weights, copies);
+-    deepCopyField(sub_costs_values, copies);
++    deepCopyField(sub_costs,            copies);
++    deepCopyField(cost_weights,         copies);
++    deepCopyField(sub_costs_values,     copies);
++    deepCopyField(sub_costs_mbatch_values, copies);
++    deepCopyField(partial_gradient,     copies);
++    deepCopyField(partial_diag_hessian, copies);
+ }
+ 
+ 
++///////////
++// fprop //
++///////////
+ void CombiningCostsModule::fprop(const Vec&amp; input, const Vec&amp; target,
+                                  Vec&amp; cost) const
+ {
+@@ -160,6 +172,34 @@
+     cost.subVec( 1, n_sub_costs ) &lt;&lt; sub_costs_values;
+ }
+ 
++void CombiningCostsModule::fprop(const Mat&amp; inputs, const Mat&amp; targets,
++                                 Mat&amp; costs) const
++{
++    PLASSERT( inputs.width() == input_size );
++    PLASSERT( targets.width() == target_size );
++    costs.resize(inputs.length(), output_size);
++
++    Mat final_cost = costs.column(0);
++    final_cost.fill(0);
++    Mat other_costs = costs.subMatColumns(1, n_sub_costs);
++    sub_costs_mbatch_values.resize(n_sub_costs, inputs.length());
++    for( int i=0 ; i&lt;n_sub_costs ; i++ ) {
++        Vec sub_costs_i = sub_costs_mbatch_values(i);
++        sub_costs[i]-&gt;fprop(inputs, targets, sub_costs_i);
++        Mat first_sub_cost = sub_costs_i.toMat(sub_costs_i.length(), 1);
++
++        // final_cost += weight_i * cost_i
++        multiplyAcc(final_cost, first_sub_cost, cost_weights[i]);
++
++        // Fill the rest of the costs matrix.
++        other_costs.column(i) &lt;&lt; first_sub_cost;
++    }
++}
++
++
++/////////////////
++// bpropUpdate //
++/////////////////
+ void CombiningCostsModule::bpropUpdate(const Vec&amp; input, const Vec&amp; target,
+                                        real cost, Vec&amp; input_gradient,
+                                        bool accumulate)
+@@ -202,6 +242,53 @@
+     }
+ }
+ 
++void CombiningCostsModule::bpropUpdate(const Mat&amp; inputs, const Mat&amp; targets,
++        const Vec&amp; costs, Mat&amp; input_gradients, bool accumulate)
++{
++    PLASSERT( inputs.width() == input_size );
++    PLASSERT( targets.width() == target_size );
++
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradients.width() == input_size &amp;&amp;
++                      input_gradients.length() == inputs.length(),
++                      &quot;Cannot resize input_gradients and accumulate into it&quot; );
++    }
++    else
++    {
++        input_gradients.resize(inputs.length(), input_size );
++        input_gradients.clear();
++    }
++
++
++    Vec sub;
++    for( int i=0 ; i&lt;n_sub_costs ; i++ )
++    {
++        sub = sub_costs_mbatch_values(i);
++        if( cost_weights[i] == 0. )
++        {
++            // Do not compute input_gradients.
++            sub_costs[i]-&gt;bpropUpdate( inputs, targets, sub );
++        }
++        else if( cost_weights[i] == 1. )
++        {
++            // Accumulate directly into input_gradients.
++
++            sub_costs[i]-&gt;bpropUpdate( inputs, targets, sub, input_gradients,
++                    true );
++        }
++        else
++        {
++            // Put the result into partial_gradients, then accumulate into
++            // input_gradients with the appropriate weight.
++            sub_costs[i]-&gt;bpropUpdate( inputs, targets, sub, partial_gradients,
++                    false);
++            multiplyAcc( input_gradients, partial_gradients, cost_weights[i] );
++        }
++    }
++}
++
++
+ void CombiningCostsModule::bpropUpdate(const Vec&amp; input, const Vec&amp; target,
+                                        real cost)
+ {
+
+Modified: trunk/plearn_learners/online/CombiningCostsModule.h
+===================================================================
+--- trunk/plearn_learners/online/CombiningCostsModule.h	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/CombiningCostsModule.h	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -78,11 +78,19 @@
+     //! given the input and target, compute the cost
+     virtual void fprop(const Vec&amp; input, const Vec&amp; target, Vec&amp; cost) const;
+ 
++    //! Overridden from parent class.
++    virtual void fprop(const Mat&amp; inputs, const Mat&amp; targets, Mat&amp; costs)
++        const;
++
+     //! Adapt based on the output gradient: this method should only
+     //! be called just after a corresponding fprop.
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost,
+                              Vec&amp; input_gradient, bool accumulate=false);
+ 
++    //! Overridden.
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; targets,
++            const Vec&amp; costs, Mat&amp; input_gradients, bool accumulate = false);
++
+     //! Calls this method on the sub_costs
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost);
+ 
+@@ -145,9 +153,16 @@
+     //! Stores the output values of the sub_costs
+     mutable Vec sub_costs_values;
+ 
++    //! Stores mini-batch outputs values of sub costs.
++    mutable Mat sub_costs_mbatch_values;
++
+     //! Stores intermediate values of the input gradient
+     mutable Vec partial_gradient;
+ 
++    //! Used to store intermediate values of input gradient in mini-batch
++    //! setting.
++    Mat partial_gradients;
++
+     //! Stores intermediate values of the input diagonal of Hessian
+     mutable Vec partial_diag_hessian;
+ };
+
+Modified: trunk/plearn_learners/online/NLLCostModule.cc
+===================================================================
+--- trunk/plearn_learners/online/NLLCostModule.cc	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/NLLCostModule.cc	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -84,6 +84,9 @@
+ }
+ 
+ 
++///////////
++// fprop //
++///////////
+ void NLLCostModule::fprop(const Vec&amp; input, const Vec&amp; target, Vec&amp; cost) const
+ {
+     PLASSERT( input.size() == input_size );
+@@ -94,6 +97,9 @@
+     cost[0] = -pl_log( input[ the_target ] );
+ }
+ 
++/////////////////
++// bpropUpdate //
++/////////////////
+ void NLLCostModule::bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost,
+                                 Vec&amp; input_gradient, bool accumulate)
+ {
+@@ -115,9 +121,36 @@
+     // input_gradient[ i ] = 0 if i != t,
+     // input_gradient[ t ] = -1/x[t]
+     input_gradient[ the_target ] = - 1. / input[ the_target ];
++    // TODO Is that a bug with accumulate?
+ }
+ 
++void NLLCostModule::bpropUpdate(const Mat&amp; inputs, const Mat&amp; targets,
++        const Vec&amp; costs, Mat&amp; input_gradients, bool accumulate)
++{
++    PLASSERT( inputs.width() == input_size );
++    PLASSERT( targets.width() == target_size );
+ 
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradients.width() == input_size &amp;&amp;
++                input_gradients.length() == inputs.length(),
++                &quot;Cannot resize input_gradients and accumulate into it&quot; );
++    }
++    else
++    {
++        input_gradients.resize(inputs.length(), input_size );
++        input_gradients.clear();
++    }
++
++    // input_gradient[ i ] = 0 if i != t,
++    // input_gradient[ t ] = -1/x[t]
++    for (int i = 0; i &lt; inputs.length(); i++) {
++        int the_target = (int) round( targets(i, 0) );
++        input_gradients(i, the_target) = - 1. / inputs(i, the_target);
++        // TODO Is that a bug with accumulate?
++    }
++}
++
+ void NLLCostModule::bbpropUpdate(const Vec&amp; input, const Vec&amp; target,
+                                  real cost,
+                                  Vec&amp; input_gradient, Vec&amp; input_diag_hessian,
+
+Modified: trunk/plearn_learners/online/NLLCostModule.h
+===================================================================
+--- trunk/plearn_learners/online/NLLCostModule.h	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/NLLCostModule.h	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -74,10 +74,13 @@
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost,
+                              Vec&amp; input_gradient, bool accumulate=false);
+ 
++    //! Overridden.
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; targets,
++            const Vec&amp; costs, Mat&amp; input_gradients, bool accumulate = false);
++
+     //! Does nothing
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost)
+-    {
+-    }
++    {}
+ 
+     //! Similar to bpropUpdate, but adapt based also on the estimation
+     //! of the diagonal of the Hessian matrix, and propagates this back.
+@@ -87,8 +90,7 @@
+ 
+     //! Does nothing
+     virtual void bbpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost)
+-    {
+-    }
++    {}
+ 
+     //! Overridden to do nothing (in particular, no warning).
+     virtual void setLearningRate(real dynamic_learning_rate) {}
+
+Modified: trunk/plearn_learners/online/OnlineLearningModule.cc
+===================================================================
+--- trunk/plearn_learners/online/OnlineLearningModule.cc	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/OnlineLearningModule.cc	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -64,9 +64,12 @@
+ {
+ }
+ 
+-//! default inefficient implementation of mini-batch fprop
++///////////
++// fprop //
++///////////
+ void OnlineLearningModule::fprop(const Mat&amp; input, Mat&amp; output) const
+ {
++    // Default (inefficient) implementation of mini-batch fprop.
+     int n=input.length();
+ #ifdef BOUNDCHECK
+     if (n!=output.length())
+@@ -80,6 +83,9 @@
+     }
+ }
+ 
++/////////////////
++// bpropUpdate //
++/////////////////
+ void OnlineLearningModule::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+                                        Vec&amp; input_gradient,
+                                        const Vec&amp; output_gradient,
+@@ -87,8 +93,8 @@
+ {
+     PLERROR(&quot;In OnlineLearningModule.cc: method 'bpropUpdate' not&quot;
+             &quot; implemented.\n&quot;
+-            &quot;Please implement it in your derived class or don't call&quot;
+-            &quot; bpropUpdate.\n&quot;);
++            &quot;Please implement it in your derived class (%s) or do not call&quot;
++            &quot; bpropUpdate.&quot;, classname().c_str());
+ }
+ 
+ void OnlineLearningModule::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+
+Modified: trunk/plearn_learners/online/RBMBinomialLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMBinomialLayer.cc	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMBinomialLayer.cc	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -146,6 +146,9 @@
+         output[i] = sigmoid( -input[i] - rbm_bias[i]);
+ }
+ 
++/////////////////
++// bpropUpdate //
++/////////////////
+ void RBMBinomialLayer::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+                                    Vec&amp; input_gradient,
+                                    const Vec&amp; output_gradient,
+@@ -191,6 +194,57 @@
+     }
+ }
+ 
++void RBMBinomialLayer::bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++        Mat&amp; input_gradients,
++        const Mat&amp; output_gradients,
++        bool accumulate)
++{
++    PLASSERT( inputs.width() == size );
++    PLASSERT( outputs.width() == size );
++    PLASSERT( output_gradients.width() == size );
++
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradients.width() == size &amp;&amp;
++                input_gradients.length() == inputs.length(),
++                &quot;Cannot resize input_gradients and accumulate into it&quot; );
++    }
++    else
++    {
++        input_gradients.resize(inputs.length(), size);
++        input_gradients.fill(0);
++    }
++
++    if( momentum != 0. )
++        bias_inc.resize( size );
++
++    for( int i=0 ; i&lt;size ; i++ )
++    {
++        for (int j = 0; j &lt; inputs.length(); j++) {
++            real output_i = outputs(j, i);
++            real in_grad_i = -output_i * (1-output_i) * output_gradients(j, i);
++            input_gradients(j, i) += in_grad_i;
++
++            if( momentum == 0. )
++            {
++                // update the bias: bias -= learning_rate * input_gradient
++                bias[i] -= learning_rate * in_grad_i;
++            }
++            else
++            {
++                PLERROR(&quot;In RBMBinomialLayer:bpropUpdate - Not implemented for &quot;
++                        &quot;momentum with mini-batches&quot;);
++                // The update rule becomes:
++                // bias_inc = momentum * bias_inc - learning_rate * input_gradient
++                // bias += bias_inc
++                bias_inc[i] = momentum * bias_inc[i] - learning_rate * in_grad_i;
++                bias[i] += bias_inc[i];
++            }
++        }
++    }
++}
++
++
+ //! TODO: add &quot;accumulate&quot; here
+ void RBMBinomialLayer::bpropUpdate(const Vec&amp; input, const Vec&amp; rbm_bias,
+                                    const Vec&amp; output,
+
+Modified: trunk/plearn_learners/online/RBMBinomialLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMBinomialLayer.h	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMBinomialLayer.h	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -97,6 +97,12 @@
+                              Vec&amp; input_gradient, Vec&amp; rbm_bias_gradient,
+                              const Vec&amp; output_gradient) ;
+ 
++    //! Back-propagate the output gradient to the input, and update parameters.
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             Mat&amp; input_gradients,
++                             const Mat&amp; output_gradients,
++                             bool accumulate = false);
++
+     //! Computes the negative log-likelihood of target given the
+     //! internal activations of the layer
+     virtual real fpropNLL(const Vec&amp; target);
+
+Modified: trunk/plearn_learners/online/RBMConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMConnection.cc	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMConnection.cc	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -229,6 +229,17 @@
+     update();
+ }
+ 
++void RBMConnection::update( const Mat&amp; pos_down_values,
++                            const Mat&amp; pos_up_values,
++                            const Mat&amp; neg_down_values,
++                            const Mat&amp; neg_up_values)
++{
++    // Not-so-efficient implementation.
++    accumulatePosStats( pos_down_values, pos_up_values );
++    accumulateNegStats( neg_down_values, neg_up_values );
++    update();
++}
++
+ ///////////
+ // fprop //
+ ///////////
+
+Modified: trunk/plearn_learners/online/RBMConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMConnection.h	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMConnection.h	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -115,14 +115,19 @@
+     //! afterwards.
+     virtual void setAsDownInputs( const Mat&amp; inputs ) const;
+ 
+-    //! Accumulates positive phase statistics to *_pos_stats
++    //! Accumulates positive phase statistics to *_pos_stats.
+     virtual void accumulatePosStats( const Vec&amp; down_values,
+                                      const Vec&amp; up_values ) = 0;
+ 
+-    //! Accumulates negative phase statistics to *_neg_stats
++    virtual void accumulatePosStats( const Mat&amp; down_values,
++                                     const Mat&amp; up_values ) = 0;
++
++    //! Accumulates negative phase statistics to *_neg_stats.
+     virtual void accumulateNegStats( const Vec&amp; down_values,
+                                      const Vec&amp; up_values ) = 0;
+ 
++    virtual void accumulateNegStats( const Mat&amp; down_values,
++                                     const Mat&amp; up_values ) = 0;
+ 
+     //! Updates parameters according to contrastive divergence gradient
+     virtual void update() = 0;
+@@ -134,14 +139,12 @@
+                          const Vec&amp; neg_down_values,
+                          const Vec&amp; neg_up_values);
+ 
+-    // TODO Implement (in sub-classes too).
++    //! Updates parameters according to contrastive divergence gradient,
++    //! not using the statistics but explicit matrix values.
+     virtual void update( const Mat&amp; pos_down_values,
+                          const Mat&amp; pos_up_values,
+                          const Mat&amp; neg_down_values,
+-                         const Mat&amp; neg_up_values)
+-    {
+-        PLASSERT( false );
+-    }
++                         const Mat&amp; neg_up_values);
+ 
+     //! Clear all information accumulated during stats
+     virtual void clearStats() = 0;
+
+Modified: trunk/plearn_learners/online/RBMConv2DConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMConv2DConnection.h	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMConv2DConnection.h	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -110,10 +110,22 @@
+     virtual void accumulatePosStats( const Vec&amp; down_values,
+                                      const Vec&amp; up_values );
+ 
++    virtual void accumulatePosStats( const Mat&amp; down_values,
++                                     const Mat&amp; up_values )
++    {
++        PLASSERT_MSG( false, &quot;Not implemented&quot; );
++    }
++
+     //! Accumulates negative phase statistics to *_neg_stats
+     virtual void accumulateNegStats( const Vec&amp; down_values,
+                                      const Vec&amp; up_values );
+ 
++    virtual void accumulateNegStats( const Mat&amp; down_values,
++                                     const Mat&amp; up_values )
++    {
++        PLASSERT_MSG( false, &quot;Not implemented&quot; );
++    }
++
+     //! Updates parameters according to contrastive divergence gradient
+     virtual void update();
+ 
+@@ -124,6 +136,15 @@
+                          const Vec&amp; neg_down_values,
+                          const Vec&amp; neg_up_values );
+ 
++    //! Not implemented.
++    virtual void update( const Mat&amp; pos_down_values,
++                         const Mat&amp; pos_up_values,
++                         const Mat&amp; neg_down_values,
++                         const Mat&amp; neg_up_values)
++    {
++        PLASSERT_MSG( false, &quot;Not implemented&quot; );
++    }
++
+     //! Clear all information accumulated during stats
+     virtual void clearStats();
+ 
+
+Modified: trunk/plearn_learners/online/RBMGaussianLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMGaussianLayer.h	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMGaussianLayer.h	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -95,6 +95,15 @@
+                              Vec&amp; input_gradient, const Vec&amp; output_gradient,
+                              bool accumulate=false);
+ 
++    //! Back-propagate the output gradient to the input, and update parameters.
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             Mat&amp; input_gradients,
++                             const Mat&amp; output_gradients,
++                             bool accumulate = false)
++    {
++        PLASSERT_MSG(false, &quot;Not implemented&quot;);
++    }
++
+     //! Accumulates positive phase statistics
+     virtual void accumulatePosStats( const Vec&amp; pos_values );
+ 
+@@ -107,6 +116,12 @@
+     //! Update parameters according to one pair of vectors
+     virtual void update( const Vec&amp; pos_values, const Vec&amp; neg_values );
+ 
++    //! Not implemented.
++    virtual void update( const Mat&amp; pos_values, const Mat&amp; neg_values )
++    {
++        PLASSERT_MSG(false, &quot;Not implemented&quot;);
++    }
++
+     //! resets activations, sample, expectation and sigma fields
+     virtual void reset();
+ 
+
+Modified: trunk/plearn_learners/online/RBMLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.cc	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMLayer.cc	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -120,6 +120,9 @@
+                     &quot;output_size = size&quot;);
+ }
+ 
++////////////
++// build_ //
++////////////
+ void RBMLayer::build_()
+ {
+     if( size &lt;= 0 )
+@@ -139,6 +142,9 @@
+     bias_neg_stats.resize( size );
+ }
+ 
++///////////
++// build //
++///////////
+ void RBMLayer::build()
+ {
+     inherited::build();
+@@ -146,6 +152,9 @@
+ }
+ 
+ 
++/////////////////////////////////
++// makeDeepCopyFromShallowCopy //
++/////////////////////////////////
+ void RBMLayer::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+@@ -156,10 +165,11 @@
+     deepCopyField(sample,         copies);
+     deepCopyField(samples,        copies);
+     deepCopyField(expectation,    copies);
+-    deepCopyField(expectations,   copies);
+     deepCopyField(bias_pos_stats, copies);
+     deepCopyField(bias_neg_stats, copies);
+     deepCopyField(bias_inc,       copies);
++    deepCopyField(ones,           copies);
++    deepCopyField(expectations,   copies);
+ }
+ 
+ 
+@@ -174,6 +184,9 @@
+ }
+ 
+ 
++///////////////////////
++// getUnitActivation //
++///////////////////////
+ void RBMLayer::getUnitActivation( int i, PP&lt;RBMConnection&gt; rbmc, int offset )
+ {
+     Vec act = activation.subVec(i,1);
+@@ -313,9 +326,6 @@
+     clearStats();
+ }
+ 
+-////////////
+-// update //
+-////////////
+ void RBMLayer::update( const Vec&amp; pos_values, const Vec&amp; neg_values)
+ {
+     // bias -= learning_rate * (pos_values - neg_values)
+@@ -340,6 +350,38 @@
+     }
+ }
+ 
++void RBMLayer::update( const Mat&amp; pos_values, const Mat&amp; neg_values)
++{
++    // bias -= learning_rate * (pos_values - neg_values)
++
++    if (ones.length() &lt; pos_values.length()) {
++        ones.resize(pos_values.length());
++        ones.fill(1);
++    } else if (ones.length() &gt; pos_values.length())
++        // No need to fill with ones since we are only shrinking the vector.
++        ones.resize(pos_values.length());
++
++
++    if( momentum == 0. )
++    {
++        productScaleAcc(bias, pos_values, true, ones, -learning_rate, 1);
++        productScaleAcc(bias, neg_values, true, ones,  learning_rate, 1);
++    }
++    else
++    {
++        PLERROR(&quot;RBMLayer::update - Not implemented yet&quot;);
++        /*
++        bias_inc.resize( size );
++        real* binc = bias_inc.data();
++        for( int i=0 ; i&lt;size ; i++ )
++        {
++            binc[i] = momentum*binc[i] + learning_rate*( nv[i] - pv[i] );
++            b[i] += binc[i];
++        }
++        */
++    }
++}
++
+ ////////////////
+ // setAllBias //
+ ////////////////
+
+Modified: trunk/plearn_learners/online/RBMLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.h	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMLayer.h	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -157,12 +157,11 @@
+                              const Vec&amp; output_gradient,
+                              bool accumulate=false) = 0 ;
+ 
++    //! Back-propagate the output gradient to the input, and update parameters.
+     virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
+                              Mat&amp; input_gradients,
+                              const Mat&amp; output_gradients,
+-                             bool accumulate=false) {
+-        PLASSERT( false );
+-    }
++                             bool accumulate=false) = 0;
+ 
+     //! back-propagates the output gradient to the input and the bias
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; rbm_bias,
+@@ -190,10 +189,8 @@
+     //! Update parameters according to one pair of vectors
+     virtual void update( const Vec&amp; pos_values, const Vec&amp; neg_values );
+ 
+-    // TODO Implement (in sub-classes too).
+-    virtual void update( const Mat&amp; pos_values, const Mat&amp; neg_values ) {
+-        PLASSERT( false );
+-    }
++    //! Update parameters according to one pair of matrices.
++    virtual void update( const Mat&amp; pos_values, const Mat&amp; neg_values );
+ 
+     //! resets activations, sample and expectation fields
+     virtual void reset();
+@@ -239,6 +236,9 @@
+     //! Stores the momentum of the gradient
+     Vec bias_inc;
+ 
++    //! A vector containing only ones, used to compute efficiently mini-batch
++    //! updates.
++    Vec ones;
+ 
+     //! Count of positive examples
+     int pos_count;
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -117,6 +117,9 @@
+     pos_count++;
+ }
+ 
++////////////////////////
++// accumulateNegStats //
++////////////////////////
+ void RBMMatrixConnection::accumulateNegStats( const Vec&amp; down_values,
+                                               const Vec&amp; up_values )
+ {
+@@ -126,6 +129,9 @@
+     neg_count++;
+ }
+ 
++////////////
++// update //
++////////////
+ void RBMMatrixConnection::update()
+ {
+     // updates parameters
+@@ -230,6 +236,54 @@
+     }
+ }
+ 
++void RBMMatrixConnection::update( const Mat&amp; pos_down_values, // v_0
++                                  const Mat&amp; pos_up_values,   // h_0
++                                  const Mat&amp; neg_down_values, // v_1
++                                  const Mat&amp; neg_up_values )  // h_1
++{
++    // weights -= learning_rate * ( h_0 v_0' - h_1 v_1' );
++    // or:
++    // weights[i][j] += learning_rate * (h_1[i] v_1[j] - h_0[i] v_0[j]);
++
++    PLASSERT( pos_up_values.width() == weights.length() );
++    PLASSERT( neg_up_values.width() == weights.length() );
++    PLASSERT( pos_down_values.width() == weights.width() );
++    PLASSERT( neg_down_values.width() == weights.width() );
++
++    if( momentum == 0. )
++    {
++        productScaleAcc(weights, pos_up_values, true, pos_down_values, false,
++                -learning_rate, 1);
++
++        productScaleAcc(weights, neg_up_values, true, neg_down_values, false,
++                learning_rate, 1);
++    }
++    else
++    {
++        PLERROR(&quot;RBMMatrixConnection::update - Not implemented&quot;);
++        /*
++        // ensure that weights_inc has the right size
++        weights_inc.resize( l, w );
++
++        // The update rule becomes:
++        // weights_inc = momentum * weights_inc
++        //               - learning_rate * ( h_0 v_0' - h_1 v_1' );
++        // weights += weights_inc;
++
++        real* winc_i = weights_inc.data();
++        int winc_mod = weights_inc.mod();
++        for( int i=0 ; i&lt;l ; i++, w_i += w_mod, winc_i += winc_mod,
++                             puv_i++, nuv_i++ )
++            for( int j=0 ; j&lt;w ; j++ )
++            {
++                winc_i[j] = momentum * winc_i[j]
++                    + learning_rate * (*nuv_i * ndv[j] - *puv_i * pdv[j]);
++                w_i[j] += winc_i[j];
++            }
++         */
++    }
++}
++
+ ////////////////
+ // clearStats //
+ ////////////////
+@@ -306,13 +360,13 @@
+         PLASSERT( start+length &lt;= down_size );
+         // activations(k, i-start) += sum_j weights(j,i) inputs_mat(k, j)
+         if( accumulate )
+-            transposeProductAcc( activations,
+-                                 weights.subMatColumns(start,length),
+-                                 inputs_mat );
++            productAcc(activations,
++                    inputs_mat,
++                    weights.subMatColumns(start,length) );
+         else
+-            transposeProduct( activations,
+-                              weights.subMatColumns(start,length),
+-                              inputs_mat );
++            product(activations,
++                    inputs_mat,
++                    weights.subMatColumns(start,length) );
+     }
+ }
+ 
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.h	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMMatrixConnection.h	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -85,10 +85,22 @@
+     virtual void accumulatePosStats( const Vec&amp; down_values,
+                                      const Vec&amp; up_values );
+ 
++    virtual void accumulatePosStats( const Mat&amp; down_values,
++                                     const Mat&amp; up_values )
++    {
++        PLASSERT_MSG( false, &quot;Not implemented&quot; );
++    }
++
+     //! Accumulates negative phase statistics to *_neg_stats
+     virtual void accumulateNegStats( const Vec&amp; down_values,
+                                      const Vec&amp; up_values );
+ 
++    virtual void accumulateNegStats( const Mat&amp; down_values,
++                                     const Mat&amp; up_values )
++    {
++        PLASSERT_MSG( false, &quot;Not implemented&quot; );
++    }
++
+     //! Updates parameters according to contrastive divergence gradient
+     virtual void update();
+ 
+@@ -99,6 +111,12 @@
+                          const Vec&amp; neg_down_values,
+                          const Vec&amp; neg_up_values );
+ 
++    //! Not implemented.
++    virtual void update( const Mat&amp; pos_down_values,
++                         const Mat&amp; pos_up_values,
++                         const Mat&amp; neg_down_values,
++                         const Mat&amp; neg_up_values);
++
+     //! Clear all information accumulated during stats
+     virtual void clearStats();
+ 
+
+Modified: trunk/plearn_learners/online/RBMMixedConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedConnection.h	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMMixedConnection.h	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -95,10 +95,22 @@
+     virtual void accumulatePosStats( const Vec&amp; down_values,
+                                      const Vec&amp; up_values );
+ 
++    virtual void accumulatePosStats( const Mat&amp; down_values,
++                                     const Mat&amp; up_values )
++    {
++        PLASSERT_MSG( false, &quot;Not implemented&quot; );
++    }
++
+     //! Accumulates negative phase statistics to *_neg_stats
+     virtual void accumulateNegStats( const Vec&amp; down_values,
+                                      const Vec&amp; up_values );
+ 
++    virtual void accumulateNegStats( const Mat&amp; down_values,
++                                     const Mat&amp; up_values )
++    {
++        PLASSERT_MSG( false, &quot;Not implemented&quot; );
++    }
++
+     //! Updates parameters according to contrastive divergence gradient
+     virtual void update();
+ 
+@@ -108,6 +120,16 @@
+                          const Vec&amp; pos_up_values,
+                          const Vec&amp; neg_down_values,
+                          const Vec&amp; neg_up_values );
++
++    //! Not implemented.
++    virtual void update( const Mat&amp; pos_down_values,
++                         const Mat&amp; pos_up_values,
++                         const Mat&amp; neg_down_values,
++                         const Mat&amp; neg_up_values)
++    {
++        PLASSERT_MSG( false, &quot;Not implemented&quot; );
++    }
++
+     //! Clear all information accumulated during stats
+     virtual void clearStats();
+ 
+
+Modified: trunk/plearn_learners/online/RBMMixedLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedLayer.cc	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMMixedLayer.cc	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -61,6 +61,9 @@
+ }
+ 
+ 
++/////////////////////
++// setLearningRate //
++/////////////////////
+ void RBMMixedLayer::setLearningRate( real the_learning_rate )
+ {
+     inherited::setLearningRate( the_learning_rate );
+@@ -69,6 +72,9 @@
+         sub_layers[i]-&gt;setLearningRate( the_learning_rate );
+ }
+ 
++/////////////////
++// setMomentum //
++/////////////////
+ void RBMMixedLayer::setMomentum( real the_momentum )
+ {
+     inherited::setMomentum( the_momentum );
+@@ -111,6 +117,9 @@
+         sub_layers[i]-&gt;generateSample();
+ }
+ 
++////////////////////////
++// computeExpectation //
++////////////////////////
+ void RBMMixedLayer::computeExpectation()
+ {
+     if( expectation_is_up_to_date )
+@@ -159,6 +168,9 @@
+ }
+ 
+ 
++/////////////////
++// bpropUpdate //
++/////////////////
+ void RBMMixedLayer::bpropUpdate( const Vec&amp; input, const Vec&amp; output,
+                                  Vec&amp; input_gradient,
+                                  const Vec&amp; output_gradient,
+@@ -175,6 +187,7 @@
+     }
+     else
+         input_gradient.resize( size );
++    // TODO Should we clear the input gradient here?
+ 
+     for( int i=0 ; i&lt;n_layers ; i++ )
+     {
+@@ -191,6 +204,42 @@
+     }
+ }
+ 
++void RBMMixedLayer::bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++        Mat&amp; input_gradients,
++        const Mat&amp; output_gradients,
++        bool accumulate)
++{
++    PLASSERT( inputs.width() == size );
++    PLASSERT( outputs.width() == size );
++    PLASSERT( output_gradients.width() == size );
++
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradients.width() == size &amp;&amp;
++                input_gradients.length() == inputs.length(),
++                &quot;Cannot resize input_gradients and accumulate into it&quot; );
++    }
++    else
++        input_gradients.resize(inputs.length(), size);
++    // TODO Should we clear the input gradient here?
++
++    for( int i=0 ; i&lt;n_layers ; i++ )
++    {
++        int begin = init_positions[i];
++        int size_i = sub_layers[i]-&gt;size;
++        Mat sub_inputs = inputs.subMatColumns( begin, size_i );
++        Mat sub_outputs = outputs.subMatColumns( begin, size_i );
++        Mat sub_input_gradients =
++            input_gradients.subMatColumns( begin, size_i );
++        Mat sub_output_gradients =
++            output_gradients.subMatColumns( begin, size_i );
++
++        sub_layers[i]-&gt;bpropUpdate( sub_inputs, sub_outputs,
++                sub_input_gradients, sub_output_gradients,
++                accumulate );
++    }
++}
++
+ void RBMMixedLayer::bpropUpdate(const Vec&amp; input, const Vec&amp; rbm_bias,
+                                 const Vec&amp; output,
+                                 Vec&amp; input_gradient, Vec&amp; rbm_bias_gradient,
+
+Modified: trunk/plearn_learners/online/RBMMixedLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedLayer.h	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMMixedLayer.h	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -111,6 +111,12 @@
+                              Vec&amp; input_gradient, const Vec&amp; output_gradient,
+                              bool accumulate=false);
+ 
++    //! Back-propagate the output gradient to the input, and update parameters.
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             Mat&amp; input_gradients,
++                             const Mat&amp; output_gradients,
++                             bool accumulate = false);
++
+     //! back-propagates the output gradient to the input and the bias
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; rbm_bias,
+                              const Vec&amp; output,
+@@ -137,6 +143,12 @@
+     //! Update parameters according to one pair of vectors
+     virtual void update( const Vec&amp; pos_values, const Vec&amp; neg_values );
+ 
++    //! Not implemented.
++    virtual void update( const Mat&amp; pos_values, const Mat&amp; neg_values )
++    {
++        PLASSERT_MSG(false, &quot;Not implemented&quot;);
++    }
++
+     //! resets activations, sample and expectation fields
+     virtual void reset();
+ 
+
+Modified: trunk/plearn_learners/online/RBMMultinomialLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMultinomialLayer.cc	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMMultinomialLayer.cc	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -114,6 +114,9 @@
+     softmaxMinus( input+bias, output );
+ }
+ 
++///////////
++// fprop //
++///////////
+ void RBMMultinomialLayer::fprop( const Vec&amp; input, const Vec&amp; rbm_bias,
+                                  Vec&amp; output ) const
+ {
+@@ -125,6 +128,9 @@
+     softmaxMinus( input+rbm_bias, output );
+ }
+ 
++/////////////////
++// bpropUpdate //
++/////////////////
+ void RBMMultinomialLayer::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+                                       Vec&amp; input_gradient,
+                                       const Vec&amp; output_gradient,
+@@ -178,6 +184,66 @@
+     }
+ }
+ 
++void RBMMultinomialLayer::bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++        Mat&amp; input_gradients,
++        const Mat&amp; output_gradients,
++        bool accumulate)
++{
++    PLASSERT( inputs.width() == size );
++    PLASSERT( outputs.width() == size );
++    PLASSERT( output_gradients.width() == size );
++
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradients.width() == size &amp;&amp;
++                input_gradients.length() == inputs.length(),
++                &quot;Cannot resize input_gradient and accumulate into it.&quot; );
++    }
++    else
++    {
++        input_gradients.resize(inputs.length(), size);
++        input_gradients.fill(0);
++    }
++
++    PLERROR(&quot;In RBMMultinomialLayer::bpropUpdate - Not yet fully implemented &quot;
++            &quot;for mini-batches&quot;);
++
++    /*
++
++    if( momentum != 0. )
++        bias_inc.resize( size );
++
++    // input_gradient[i] =
++    //      (output_gradient . output - output_gradient[i] ) output[i]
++    real outg_dot_out = dot( output_gradient, output );
++    real* out = output.data();
++    real* outg = output_gradient.data();
++    real* ing = input_gradient.data();
++    real* b = bias.data();
++    real* binc = momentum==0?0:bias_inc.data();
++
++    for( int i=0 ; i&lt;size ; i++ )
++    {
++        real ing_i = (outg_dot_out - outg[i]) * out[i];
++        ing[i] += ing_i;
++
++        if( momentum == 0. )
++        {
++            // update the bias: bias -= learning_rate * input_gradient
++            b[i] -= learning_rate * ing_i;
++        }
++        else
++        {
++            // The update rule becomes:
++            // bias_inc = momentum * bias_inc - learning_rate * input_gradient
++            // bias += bias_inc
++            binc[i] = momentum * binc[i] - learning_rate * ing_i;
++            b[i] += binc[i];
++        }
++    }
++    */
++}
++
+ //! TODO: add &quot;accumulate&quot; here
+ void RBMMultinomialLayer::bpropUpdate(const Vec&amp; input, const Vec&amp; rbm_bias,
+                                       const Vec&amp; output,
+@@ -204,6 +270,9 @@
+     rbm_bias_gradient &lt;&lt; input_gradient;
+ }
+ 
++//////////////
++// fpropNLL //
++//////////////
+ real RBMMultinomialLayer::fpropNLL(const Vec&amp; target)
+ {
+     computeExpectation();
+
+Modified: trunk/plearn_learners/online/RBMMultinomialLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMultinomialLayer.h	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMMultinomialLayer.h	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -93,6 +93,12 @@
+                              Vec&amp; input_gradient, const Vec&amp; output_gradient,
+                              bool accumulate=false);
+ 
++    //! Back-propagate the output gradient to the input, and update parameters.
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             Mat&amp; input_gradients,
++                             const Mat&amp; output_gradients,
++                             bool accumulate = false);
++
+     //! back-propagates the output gradient to the input and the bias
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; rbm_bias,
+                              const Vec&amp; output,
+
+Modified: trunk/plearn_learners/online/RBMTruncExpLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMTruncExpLayer.h	2007-04-24 15:00:43 UTC (rev 6932)
++++ trunk/plearn_learners/online/RBMTruncExpLayer.h	2007-04-24 15:06:51 UTC (rev 6933)
+@@ -90,6 +90,15 @@
+                              Vec&amp; input_gradient, const Vec&amp; output_gradient,
+                              bool accumulate=false);
+ 
++    //! Back-propagate the output gradient to the input, and update parameters.
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             Mat&amp; input_gradients,
++                             const Mat&amp; output_gradients,
++                             bool accumulate = false)
++    {
++        PLASSERT_MSG(false, &quot;Not implemented&quot;);
++    }
++
+     //#####  PLearn::Object Protocol  #########################################
+ 
+     // Declares other standard object methods.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000381.html">[Plearn-commits] r6932 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000383.html">[Plearn-commits] r6934 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#382">[ date ]</a>
+              <a href="thread.html#382">[ thread ]</a>
+              <a href="subject.html#382">[ subject ]</a>
+              <a href="author.html#382">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

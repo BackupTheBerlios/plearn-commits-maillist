@@ -1,0 +1,476 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6977 - trunk/plearn/math
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6977%20-%20trunk/plearn/math&In-Reply-To=%3C200705030052.l430qtSd000224%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000425.html">
+   <LINK REL="Next"  HREF="000427.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6977 - trunk/plearn/math</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6977%20-%20trunk/plearn/math&In-Reply-To=%3C200705030052.l430qtSd000224%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6977 - trunk/plearn/math">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Thu May  3 02:52:55 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000425.html">[Plearn-commits] r6976 - trunk/plearn/sys
+</A></li>
+        <LI>Next message: <A HREF="000427.html">[Plearn-commits] r6978 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#426">[ date ]</a>
+              <a href="thread.html#426">[ thread ]</a>
+              <a href="subject.html#426">[ subject ]</a>
+              <a href="author.html#426">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-05-03 02:52:53 +0200 (Thu, 03 May 2007)
+New Revision: 6977
+
+Modified:
+   trunk/plearn/math/TMat_maths_impl.h
+   trunk/plearn/math/TMat_maths_specialisation.h
+Log:
+Add productScaleAcc function (and their friends) to TMat_mat_impl.h, so
+we can use them even without blas.
+
+
+
+Modified: trunk/plearn/math/TMat_maths_impl.h
+===================================================================
+--- trunk/plearn/math/TMat_maths_impl.h	2007-05-02 22:43:55 UTC (rev 6976)
++++ trunk/plearn/math/TMat_maths_impl.h	2007-05-03 00:52:53 UTC (rev 6977)
+@@ -2689,6 +2689,46 @@
+     }
+ }
+ 
++//!  vec[i] = alpha * sum_j m[i,j] * v[j] + beta * v[i]
++//! (Will use the transpose of m if transpose_m is true)
++template &lt;class T&gt;
++void productScaleAcc(const TVec&lt;T&gt;&amp; vec, const TMat&lt;T&gt;&amp; m, bool transpose_m,
++                     const TVec&lt;T&gt;&amp; v, T alpha, T beta)
++{
++    if (transpose_m)
++        transposeProductScaleAcc(vec, m, v, alpha, beta);
++    else
++        productScaleAcc(vec, m, v, alpha, beta);
++}
++
++//!  vec[i] = alpha * sum_j m[i,j] * v[j] + beta * v[i]
++template &lt;class T&gt;
++void productScaleAcc(const TVec&lt;T&gt;&amp; vec, const TMat&lt;T&gt;&amp; m, const TVec&lt;T&gt;&amp; v,
++                     T alpha, T beta)
++{
++    int l = m.length();
++    int w = m.width();
++#ifdef BOUNDCHECK
++    if (w!=v.length() || l!=vec.length())
++        PLERROR(&quot;productScaleAcc(TVec,TMat,TVec), incompatible arguments %dx%d times %d -&gt; %d&quot;,
++                m.length(),m.width(), v.length(),vec.length());
++#endif
++    T* rp = vec.data();
++    T* mp = m.data();
++    T* vdata = v.data();
++    int deltam = m.mod()-m.width();
++    for (int i=0;i&lt;l;i++)
++    {
++        T *vp = vdata;
++        T s = 0;
++        for (int j=0;j&lt;w;j++)
++            s += *mp++ * *vp++;
++        *rp = alpha * s + beta * (*rp);
++        ++rp;
++        mp += deltam;
++    }
++}
++
+ //! result[i] = sum_j m[j,i] * v[j]
+ //! Equivalently: rowvec(result) = rowvec(v) . m
+ //! Equivalently: columnvec(result) = transpose(m).columnvec(v)
+@@ -2756,6 +2796,36 @@
+     }
+ }
+ 
++//!  result[i] = alpha * sum_j m[j,i] * v[j] + beta * result[i]
++template &lt;class T&gt;
++void transposeProductScaleAcc(const TVec&lt;T&gt;&amp; result, const TMat&lt;T&gt;&amp; m,
++                              const TVec&lt;T&gt;&amp; v, T alpha, T beta)
++{
++    int l=m.length();
++    int w=m.width();
++    if (l!=v.length() || w!=result.length())
++        PLERROR(&quot;transposeProductScaleAcc(TVec,TMat,TVec), incompatible arguments %dx%d' times %d -&gt; %d&quot;,
++                m.length(),m.width(), v.length(),result.length());
++    T* vecdata = result.data();
++    T* vp = v.data();
++    T* mp = m.data();
++    int deltam = m.mod()-m.width();
++
++    T* rp = vecdata;
++    // initial scaling
++    for (int i=0;i&lt;w;i++)
++        *rp++ *= beta;
++
++    for (int j=0;j&lt;l;j++)
++    {
++        T vj = *vp++;
++        rp = vecdata;
++        for (int i=0;i&lt;w;i++)
++            *rp++ += alpha * vj * *mp++;
++        mp += deltam;
++    }
++}
++
+ //!  result[i] += alpha * sum_j m[j,i] * v[j]
+ template &lt;class T&gt;
+ void transposeProductAcc(const TVec&lt;T&gt;&amp; result, const TMat&lt;T&gt;&amp; m, const TVec&lt;T&gt;&amp; v, T alpha)
+@@ -3366,6 +3436,55 @@
+     }
+ }
+ 
++// mat[i,j] = alpha sum_k m1[i,k] * m2[k,j] + beta mat[i,j]
++// ( Will use the transpose of m1 and/or m2 instead,
++// if you set the corresponding flags to true)
++template&lt;class T&gt;
++void productScaleAcc(const TMat&lt;T&gt;&amp; mat,
++                     const TMat&lt;T&gt;&amp; m1, bool transpose_m1,
++                     const TMat&lt;T&gt;&amp; m2, bool transpose_m2,
++                     T alpha, T beta)
++{
++    if (transpose_m1)
++        if (transpose_m2) // transpose_m1 &amp;&amp; transpose_m2
++           transposeTransposeProductScaleAcc(mat, m1, m2, alpha, beta);
++        else // transpose_m1 &amp;&amp; !transpose_m2
++            transposeProductScaleAcc(mat, m1, m2, alpha, beta);
++    else
++        if (transpose_m2) // !transpose_m1 &amp;&amp; transpose_m2
++            productTransposeScaleAcc(mat, m1, m2, alpha, beta);
++        else // !transpose_m1 &amp;&amp; !transpose_m2
++            productScaleAcc(mat, m1, m2, alpha, beta);
++}
++
++// mat[i,j] = alpha * sum_k m1[i,k] * m2[k,j] + beta * mat[i,j]
++template&lt;class T&gt;
++void productScaleAcc(const TMat&lt;T&gt;&amp; mat, const TMat&lt;T&gt;&amp; m1, const TMat&lt;T&gt;&amp; m2,
++                     T alpha, T beta)
++{
++#ifdef BOUNDCHECK
++    if (m1.width()!=m2.length() || mat.length()!=m1.length() || mat.width()!=m2.width())
++        PLERROR(&quot;productScaleAcc(Mat,Mat,Mat), incompatible arguments %dx%d= %dx%d times %dx%d&quot;,
++                mat.length(),mat.width(),m1.length(),m1.width(), m2.length(),m2.width());
++#endif
++    int n=m1.length();
++    int m=m1.width();
++    int l=m2.width();
++    for (int i=0;i&lt;n;i++)
++    {
++        const T* m1i = m1[i];
++        T* mi = mat[i];
++        for (int j=0;j&lt;l;j++)
++        {
++            T s=0;
++            T* m2kj = m2.data()+j;
++            for (int k=0;k&lt;m;k++,m2kj+=m2.mod())
++                s += m1i[k] * (*m2kj);
++            mi[j] = alpha * s + beta * mi[j];
++        }
++    }
++}
++
+ // result[i,j] += sum_k m1[i,k] * m2[k,j]^2
+ template&lt;class T&gt;
+ void product2Acc(const TMat&lt;T&gt;&amp; mat, const TMat&lt;T&gt;&amp; m1, const TMat&lt;T&gt;&amp; m2)
+@@ -3682,6 +3801,34 @@
+     }
+ }
+ 
++// mat[i,j] = alpha * sum_k m1[i,k] * m2[j,k] + beta * mat[i,j]
++template&lt;class T&gt;
++void productTransposeScaleAcc(const TMat&lt;T&gt;&amp; mat, const TMat&lt;T&gt;&amp; m1,
++                              const TMat&lt;T&gt;&amp; m2, T alpha, T beta)
++{
++#ifdef BOUNDCHECK
++    if (m1.width()!=m2.width() || mat.length()!=m1.length() || mat.width()!=m2.length())
++        PLERROR(&quot;productTransposeScaleAcc(Mat,Mat,Mat), incompatible arguments %dx%d= %dx%d times %dx%d'&quot;,
++                mat.length(),mat.width(),m1.length(),m1.width(), m2.length(),m2.width());
++#endif
++    int n=m1.length();
++    int m=m1.width();
++    int l=m2.length();
++    for (int i=0;i&lt;n;i++)
++    {
++        const T* m1i = m1[i];
++        T* mi = mat[i];
++        for (int j=0;j&lt;l;j++)
++        {
++            T s=0;
++            const T* m2j = m2[j];
++            for (int k=0;k&lt;m;k++)
++                s += m1i[k] * m2j[k];
++            mi[j] = alpha * s + beta * mi[j];
++        }
++    }
++}
++
+ // result[i,j] += sum_k m1[i,k] * m2[j,k]^2
+ template&lt;class T&gt;
+ void product2TransposeAcc(const TMat&lt;T&gt;&amp; mat, const TMat&lt;T&gt;&amp; m1, const TMat&lt;T&gt;&amp; m2)
+@@ -3828,6 +3975,39 @@
+     }
+ }
+ 
++// mat[i,j] = alpha * sum_k m1[k,i] * m2[k,j] + beta * mat[i,j]
++template&lt;class T&gt;
++void transposeProductScaleAcc(const TMat&lt;T&gt;&amp; mat, const TMat&lt;T&gt;&amp; m1,
++                              const TMat&lt;T&gt;&amp; m2, T alpha, T beta)
++{
++    int n=m1.width();
++    int m=m1.length();
++    int l=m2.width();
++#ifdef BOUNDCHECK
++    if (m!=m2.length() || mat.length()!=n || mat.width()!=l)
++        PLERROR(&quot;transposeProductScaleAcc(Mat,Mat,Mat), incompatible arguments &quot;
++                &quot;%dx%d' times %dx%d into %dx%d&quot;,
++                m1.length(),m1.width(), m2.length(),m2.width(), mat.length(), mat.width());
++#endif
++    for (int i=0;i&lt;n;i++)
++    {
++        T* m1ki = m1.data()+i;
++        T* mi = mat[i];
++
++        // initial scaling
++        for (int j=0;j&lt;l;j++)
++            mi[j] *= beta;
++
++        for (int k=0;k&lt;m;k++,m1ki+=m1.mod())
++        {
++            const T* m2k = m2[k];
++            T m1_ki = *m1ki;
++            for (int j=0;j&lt;l;j++)
++                mi[j] += alpha * m1_ki * m2k[j];
++        }
++    }
++}
++
+ // result[i,j] += sum_k m1[k,i] * m2[k,j]^2
+ template&lt;class T&gt;
+ void transposeProduct2Acc(const TMat&lt;T&gt;&amp; mat, const TMat&lt;T&gt;&amp; m1, const TMat&lt;T&gt;&amp; m2)
+@@ -3912,7 +4092,34 @@
+     }
+ }
+ 
++// mat[i,j] = alpha * sum_k m1[k,i] * m2[j,k] + beta * mat[i,j]
+ template&lt;class T&gt;
++void transposeTransposeProductScaleAcc(const TMat&lt;T&gt;&amp; mat, const TMat&lt;T&gt;&amp; m1,
++                                       const TMat&lt;T&gt;&amp; m2, T alpha, T beta)
++{
++    if (m1.length()!=m2.width())
++        PLERROR(&quot;transposeTransposeProductScaleAcc(Mat,Mat,Mat), incompatible arguments %dx%d' times %dx%d&quot;,
++                m1.length(),m1.width(), m2.length(),m2.width());
++    int n=m1.width();
++    int m=m1.length();
++    int l=m2.width();
++    for (int i=0;i&lt;n;i++)
++    {
++        T* m1ki0 = m1.data()+i;
++        T* mi = mat[i];
++        for (int j=0;j&lt;l;j++)
++        {
++            T s=0;
++            const T* m2j = m2[j];
++            T* m1ki = m1ki0;
++            for (int k=0;k&lt;m;k++,m1ki+=m1.mod())
++                s += (*m1ki) * m2j[k];
++            mi[j] = alpha * s + beta * mi[j];
++        }
++    }
++}
++
++template&lt;class T&gt;
+ T trace(const TMat&lt;T&gt;&amp; mat)
+ {
+     if (!mat.isSquare())
+
+Modified: trunk/plearn/math/TMat_maths_specialisation.h
+===================================================================
+--- trunk/plearn/math/TMat_maths_specialisation.h	2007-05-02 22:43:55 UTC (rev 6976)
++++ trunk/plearn/math/TMat_maths_specialisation.h	2007-05-03 00:52:53 UTC (rev 6977)
+@@ -186,7 +186,7 @@
+ // productScaleAcc //
+ /////////////////////
+ //  C = alpha A.B + beta C
+-// ( Will use the transpose of A and/or B instead, if you set the correpsonding flags to true)
++// ( Will use the transpose of A and/or B instead, if you set the corresponding flags to true)
+ inline void productScaleAcc(const TMat&lt;double&gt;&amp; C, const TMat&lt;double&gt;&amp; A, bool transposeA, const TMat&lt;double&gt;&amp; B, bool transposeB, double alpha, double beta)
+ {
+ #ifdef BOUNDCHECK
+@@ -308,12 +308,22 @@
+ inline void productAcc(const TVec&lt;double&gt;&amp; vec, const TMat&lt;double&gt;&amp; m, const TVec&lt;double&gt;&amp; v)
+ { productScaleAcc(vec, m, false, v, 1., 1.); }
+ 
++inline void productScaleAcc(const TVec&lt;double&gt;&amp; vec, const TMat&lt;double&gt;&amp; m,
++                            const TVec&lt;double&gt;&amp; v, double alpha, double beta)
++{ productScaleAcc(vec, m, false, v, alpha, beta); }
++
+ inline void transposeProduct(const TVec&lt;double&gt;&amp; vec, const TMat&lt;double&gt;&amp; m, const TVec&lt;double&gt;&amp; v)
+ { productScaleAcc(vec, m, true, v, 1., 0.); }
+ 
+ inline void transposeProductAcc(const TVec&lt;double&gt;&amp; vec, const TMat&lt;double&gt;&amp; m, const TVec&lt;double&gt;&amp; v)
+ { productScaleAcc(vec, m, true, v, 1., 1.); }
+ 
++inline void transposeProductScaleAcc(const TVec&lt;double&gt;&amp; vec,
++                                     const TMat&lt;double&gt;&amp; m,
++                                     const TVec&lt;double&gt;&amp; v,
++                                     double alpha, double beta)
++{ productScaleAcc(vec, m, true, v, alpha, beta); }
++
+ inline void product(const TMat&lt;double&gt;&amp; mat, const TMat&lt;double&gt;&amp; m1, const TMat&lt;double&gt;&amp; m2)
+ { productScaleAcc(mat, m1, false, m2, false, 1., 0.); }
+ 
+@@ -329,22 +339,45 @@
+ inline void productAcc(const TMat&lt;double&gt;&amp; mat, const TMat&lt;double&gt;&amp; m1, const TMat&lt;double&gt;&amp; m2)
+ { productScaleAcc(mat, m1, false, m2, false, 1., 1.); }
+ 
++inline void productScaleAcc(const TMat&lt;double&gt;&amp; mat,
++                            const TMat&lt;double&gt;&amp; m1, const TMat&lt;double&gt;&amp; m2,
++                            double alpha, double beta)
++{ productScaleAcc(mat, m1, false, m2, false, alpha, beta); }
++
+ inline void transposeTransposeProductAcc(const TMat&lt;double&gt;&amp; mat, const TMat&lt;double&gt;&amp; m1, const TMat&lt;double&gt;&amp; m2)
+ { productScaleAcc(mat, m1, true, m2, true, 1., 1.); }
+ 
++inline void transposeTransposeProductScaleAcc(const TMat&lt;double&gt;&amp; mat,
++                                              const TMat&lt;double&gt;&amp; m1,
++                                              const TMat&lt;double&gt;&amp; m2,
++                                              double alpha, double beta)
++{ productScaleAcc(mat, m1, true, m2, true, alpha, beta); }
++
+ inline void transposeProductAcc(const TMat&lt;double&gt;&amp; mat, const TMat&lt;double&gt;&amp; m1, const TMat&lt;double&gt;&amp; m2)
+ { productScaleAcc(mat, m1, true, m2, false, 1., 1.); }
+ 
++inline void transposeProductScaleAcc(const TMat&lt;double&gt;&amp; mat,
++                                     const TMat&lt;double&gt;&amp; m1,
++                                     const TMat&lt;double&gt;&amp; m2,
++                                     double alpha, double beta)
++{ productScaleAcc(mat, m1, true, m2, false, alpha, beta); }
++
+ inline void productTransposeAcc(const TMat&lt;double&gt;&amp; mat, const TMat&lt;double&gt;&amp; m1, const TMat&lt;double&gt;&amp; m2)
+ { productScaleAcc(mat, m1, false, m2, true, 1., 1.); }
+ 
++inline void productTransposeScaleAcc(const TMat&lt;double&gt;&amp; mat,
++                                     const TMat&lt;double&gt;&amp; m1,
++                                     const TMat&lt;double&gt;&amp; m2,
++                                     double alpha, double beta)
++{ productScaleAcc(mat, m1, false, m2, true, alpha, beta); }
+ 
+ 
++
+ // float
+ 
+ 
+ //  C = alpha A.B + beta C
+-// ( Will use the transpose of A and/or B instead, if you set the correpsonding flags to true)
++// ( Will use the transpose of A and/or B instead, if you set the corresponding flags to true)
+ inline void productScaleAcc(const TMat&lt;float&gt;&amp; C, const TMat&lt;float&gt;&amp; A, bool transposeA, const TMat&lt;float&gt;&amp; B, bool transposeB, float alpha, float beta)
+ {
+ #ifdef BOUNDCHECK
+@@ -451,12 +484,22 @@
+ inline void productAcc(const TVec&lt;float&gt;&amp; vec, const TMat&lt;float&gt;&amp; m, const TVec&lt;float&gt;&amp; v)
+ { productScaleAcc(vec, m, false, v, 1., 1.); }
+ 
++inline void productScaleAcc(const TVec&lt;float&gt;&amp; vec, const TMat&lt;float&gt;&amp; m,
++                            const TVec&lt;float&gt;&amp; v, float alpha, float beta)
++{ productScaleAcc(vec, m, false, v, alpha, beta); }
++
+ inline void transposeProduct(const TVec&lt;float&gt;&amp; vec, const TMat&lt;float&gt;&amp; m, const TVec&lt;float&gt;&amp; v)
+ { productScaleAcc(vec, m, true, v, 1., 0.); }
+ 
+ inline void transposeProductAcc(const TVec&lt;float&gt;&amp; vec, const TMat&lt;float&gt;&amp; m, const TVec&lt;float&gt;&amp; v)
+ { productScaleAcc(vec, m, true, v, 1., 1.); }
+ 
++inline void transposeProductScaleAcc(const TVec&lt;float&gt;&amp; vec,
++                                     const TMat&lt;float&gt;&amp; m,
++                                     const TVec&lt;float&gt;&amp; v,
++                                     float alpha, float beta)
++{ productScaleAcc(vec, m, true, v, alpha, beta); }
++
+ inline void product(const TMat&lt;float&gt;&amp; mat, const TMat&lt;float&gt;&amp; m1, const TMat&lt;float&gt;&amp; m2)
+ { productScaleAcc(mat, m1, false, m2, false, 1., 0.); }
+ 
+@@ -472,16 +515,39 @@
+ inline void productAcc(const TMat&lt;float&gt;&amp; mat, const TMat&lt;float&gt;&amp; m1, const TMat&lt;float&gt;&amp; m2)
+ { productScaleAcc(mat, m1, false, m2, false, 1., 1.); }
+ 
++inline void productScaleAcc(const TMat&lt;float&gt;&amp; mat,
++                            const TMat&lt;float&gt;&amp; m1, const TMat&lt;float&gt;&amp; m2,
++                            float alpha, float beta)
++{ productScaleAcc(mat, m1, false, m2, false, alpha, beta); }
++
+ inline void transposeTransposeProductAcc(const TMat&lt;float&gt;&amp; mat, const TMat&lt;float&gt;&amp; m1, const TMat&lt;float&gt;&amp; m2)
+ { productScaleAcc(mat, m1, true, m2, true, 1., 1.); }
+ 
++inline void transposeTransposeProductScaleAcc(const TMat&lt;float&gt;&amp; mat,
++                                              const TMat&lt;float&gt;&amp; m1,
++                                              const TMat&lt;float&gt;&amp; m2,
++                                              float alpha, float beta)
++{ productScaleAcc(mat, m1, true, m2, true, alpha, beta); }
++
+ inline void transposeProductAcc(const TMat&lt;float&gt;&amp; mat, const TMat&lt;float&gt;&amp; m1, const TMat&lt;float&gt;&amp; m2)
+ { productScaleAcc(mat, m1, true, m2, false, 1., 1.); }
+ 
++inline void transposeProductScaleAcc(const TMat&lt;float&gt;&amp; mat,
++                                     const TMat&lt;float&gt;&amp; m1,
++                                     const TMat&lt;float&gt;&amp; m2,
++                                     float alpha, float beta)
++{ productScaleAcc(mat, m1, true, m2, false, alpha, beta); }
++
+ inline void productTransposeAcc(const TMat&lt;float&gt;&amp; mat, const TMat&lt;float&gt;&amp; m1, const TMat&lt;float&gt;&amp; m2)
+ { productScaleAcc(mat, m1, false, m2, true, 1., 1.); }
+ 
++inline void productTransposeScaleAcc(const TMat&lt;float&gt;&amp; mat,
++                                     const TMat&lt;float&gt;&amp; m1,
++                                     const TMat&lt;float&gt;&amp; m2,
++                                     float alpha, float beta)
++{ productScaleAcc(mat, m1, false, m2, true, alpha, beta); }
+ 
++
+ #endif // USE_BLAS_SPECIALISATIONS
+ 
+ // strange little functions of Yoshua for optimized computations in neural nets
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000425.html">[Plearn-commits] r6976 - trunk/plearn/sys
+</A></li>
+	<LI>Next message: <A HREF="000427.html">[Plearn-commits] r6978 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#426">[ date ]</a>
+              <a href="thread.html#426">[ thread ]</a>
+              <a href="subject.html#426">[ subject ]</a>
+              <a href="author.html#426">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

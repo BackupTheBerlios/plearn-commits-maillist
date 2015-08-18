@@ -1,0 +1,203 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7760 - in trunk/python_modules/plearn: math pytest
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7760%20-%20in%20trunk/python_modules/plearn%3A%20math%20pytest&In-Reply-To=%3C200707131545.l6DFjZAW021534%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001207.html">
+   <LINK REL="Next"  HREF="001209.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7760 - in trunk/python_modules/plearn: math pytest</H1>
+    <B>dorionc at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7760%20-%20in%20trunk/python_modules/plearn%3A%20math%20pytest&In-Reply-To=%3C200707131545.l6DFjZAW021534%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7760 - in trunk/python_modules/plearn: math pytest">dorionc at mail.berlios.de
+       </A><BR>
+    <I>Fri Jul 13 17:45:35 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001207.html">[Plearn-commits] r7759 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="001209.html">[Plearn-commits] r7761 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1208">[ date ]</a>
+              <a href="thread.html#1208">[ thread ]</a>
+              <a href="subject.html#1208">[ subject ]</a>
+              <a href="author.html#1208">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: dorionc
+Date: 2007-07-13 17:45:34 +0200 (Fri, 13 Jul 2007)
+New Revision: 7760
+
+Modified:
+   trunk/python_modules/plearn/math/arrays.py
+   trunk/python_modules/plearn/pytest/programs.py
+   trunk/python_modules/plearn/pytest/tests.py
+Log:
+- Added a 'dependencies' option to PyTest's Program instances
+- Added a stripMissings() function in arrays.py
+
+
+Modified: trunk/python_modules/plearn/math/arrays.py
+===================================================================
+--- trunk/python_modules/plearn/math/arrays.py	2007-07-13 15:35:13 UTC (rev 7759)
++++ trunk/python_modules/plearn/math/arrays.py	2007-07-13 15:45:34 UTC (rev 7760)
+@@ -210,6 +210,10 @@
+ def replace_nans(a, repl_with=0.0):
+     return choose(isNotNaN(a), (repl_with, a))
+ 
++def stripMissings(vec):    
++    nan_filter = isNotNaN(vec)
++    return vec[nan_filter]
++
+ def average(x, axis=0):
+     arrx = array(x)
+     return sum(arrx,axis) / arrx.shape[axis]
+
+Modified: trunk/python_modules/plearn/pytest/programs.py
+===================================================================
+--- trunk/python_modules/plearn/pytest/programs.py	2007-07-13 15:35:13 UTC (rev 7759)
++++ trunk/python_modules/plearn/pytest/programs.py	2007-07-13 15:45:34 UTC (rev 7760)
+@@ -81,11 +81,18 @@
+     #######  Options  #############################################################
+ 
+     name = PLOption(None)
++    
+     compiler = PLOption(None)
++
+     compile_options = PLOption(None)
+-    no_plearn_options = PLOption(False)
+ 
++    no_plearn_options = PLOption(False,
++        doc=&quot;PLearn commands usually receive the --no-progess and --no-version options. &quot;
++            &quot;If that option is False though, this won't be the case for this Program instance.&quot;)
+ 
++    dependencies = PLOption([], doc=&quot;A list of programs on which this one depends.&quot;)
++    
++
+     #######  Class Variables  #####################################################
+ 
+     # Default compiler: for programs assumed to be compilable but for which
+@@ -162,6 +169,8 @@
+             return &quot;&quot;
+         elif optname==&quot;no_plearn_options&quot; and not val:
+             return &quot;&quot; # Don't print the default value
++        elif optname==&quot;dependencies&quot; and not val:
++            return &quot;&quot; # Don't print the default value
+         else:
+             return super(Program, self)._optionFormat(option_pair, indent_level, inner_repr)
+ 
+@@ -173,9 +182,13 @@
+             raise core.PyTestUsageError(
+                 &quot;Called PyTest with --no-compile option but %s &quot;
+                 &quot;was not previously compiled.&quot; % self.getInternalExecPath())
+-            
+-        return no_need_to_compile or (self.__attempted_to_compile and exec_exists)
+ 
++        # Account for dependencies
++        success = no_need_to_compile or (self.__attempted_to_compile and exec_exists)
++        for dep in self.dependencies:
++            success = (success and dep.compilationSucceeded())
++        return success
++
+     def compile(self, publish_dirpath=&quot;&quot;):
+         # Remove old compile log if any
+         publish_target = os.path.join(publish_dirpath, os.path.basename(self.__log_file_path))
+@@ -194,13 +207,18 @@
+ 
+         # First compilation attempt
+         else:
+-            succeeded = self.__first_compilation_attempt()       
++            succeeded = self.__first_compilation_attempt()               
+ 
+         # Publish the compile log
+         if succeeded and publish_dirpath:
+             logging.debug(&quot;Publishing the compile log %s&quot;%self.__log_file_path)
+             toolkit.symlink(self.__log_file_path,
+                             moresh.relative_path(publish_target))
++
++        # Account for dependencies
++        for dep in self.dependencies:
++            succeeded = (succeeded and dep.compile(publish_dirpath))
++        
+         return succeeded
+         
+     def __first_compilation_attempt(self):
+@@ -347,6 +365,10 @@
+             # Otherwise assumed to be non-compilable
+             else:
+                 self.__is_compilable = False
++                for dep in dependencies:
++                    if dep.isCompilable():
++                        self.__is_compilable = True
++                        break
+ 
+             # It is now cached... 
+             return self.__is_compilable
+
+Modified: trunk/python_modules/plearn/pytest/tests.py
+===================================================================
+--- trunk/python_modules/plearn/pytest/tests.py	2007-07-13 15:35:13 UTC (rev 7759)
++++ trunk/python_modules/plearn/pytest/tests.py	2007-07-13 15:45:34 UTC (rev 7760)
+@@ -691,7 +691,7 @@
+         PyTestObject.__init__(self, **overrides) 
+         os.chdir( self.test.directory() )
+         
+-    def compile_program(self):
++    def compileProgram(self):
+         if not self.test.program.isCompilable():
+             return True
+ 
+@@ -712,7 +712,7 @@
+ class CompilationRoutine(Routine):
+     &quot;&quot;&quot;Launches the compilation of target tests' compilable files.&quot;&quot;&quot;    
+     def start(self):
+-        if self.compile_program():
++        if self.compileProgram():
+             self.test.setStatus(&quot;PASSED&quot;)
+ 
+ 
+@@ -735,7 +735,7 @@
+                 os.remove( fname )
+ 
+     def run_test(self, results):
+-        if not self.compile_program():
++        if not self.compileProgram():
+             logging.debug(&quot;%s bails out.&quot; % self.classname())
+             return 
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001207.html">[Plearn-commits] r7759 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="001209.html">[Plearn-commits] r7761 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1208">[ date ]</a>
+              <a href="thread.html#1208">[ thread ]</a>
+              <a href="subject.html#1208">[ subject ]</a>
+              <a href="author.html#1208">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

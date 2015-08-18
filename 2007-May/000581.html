@@ -1,0 +1,262 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7132 - in trunk:	plearn_learners/generic/EXPERIMENTAL python_modules/plearn/var
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7132%20-%20in%20trunk%3A%0A%09plearn_learners/generic/EXPERIMENTAL%20python_modules/plearn/var&In-Reply-To=%3C200705162210.l4GMAjUZ004532%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000580.html">
+   <LINK REL="Next"  HREF="000582.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7132 - in trunk:	plearn_learners/generic/EXPERIMENTAL python_modules/plearn/var</H1>
+    <B>simonl at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7132%20-%20in%20trunk%3A%0A%09plearn_learners/generic/EXPERIMENTAL%20python_modules/plearn/var&In-Reply-To=%3C200705162210.l4GMAjUZ004532%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7132 - in trunk:	plearn_learners/generic/EXPERIMENTAL python_modules/plearn/var">simonl at mail.berlios.de
+       </A><BR>
+    <I>Thu May 17 00:10:45 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000580.html">[Plearn-commits] r7131 - trunk/plearn_learners/regressors
+</A></li>
+        <LI>Next message: <A HREF="000582.html">[Plearn-commits] r7133 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#581">[ date ]</a>
+              <a href="thread.html#581">[ thread ]</a>
+              <a href="subject.html#581">[ subject ]</a>
+              <a href="author.html#581">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: simonl
+Date: 2007-05-17 00:10:44 +0200 (Thu, 17 May 2007)
+New Revision: 7132
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h
+   trunk/python_modules/plearn/var/Var.py
+Log:
+some changements in DeepReconstructorNet
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc	2007-05-16 21:11:31 UTC (rev 7131)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.cc	2007-05-16 22:10:44 UTC (rev 7132)
+@@ -38,6 +38,7 @@
+ 
+ 
+ #include &quot;DeepReconstructorNet.h&quot;
++#include &lt;plearn/display/DisplayUtils.h&gt; ////////// to remove
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -72,9 +73,9 @@
+     // ### (OptionBase::buildoption | OptionBase::nosave)
+ 
+     
+-    declareOption(ol, &quot;schedule&quot;, &amp;DeepReconstructorNet::schedule,
++    declareOption(ol, &quot;training_schedule&quot;, &amp;DeepReconstructorNet::training_schedule,
+                   OptionBase::buildoption,
+-                  &quot;schedule[k] conatins the number of nstages to run the optimizer for the training of the hidden layer taking layer k as input (k=0 corresponds to input layer).&quot;);
++                  &quot;training_schedule[k] conatins the number of epochs for the training of the hidden layer taking layer k as input (k=0 corresponds to input layer).&quot;);
+ 
+     declareOption(ol, &quot;layers&quot;, &amp;DeepReconstructorNet::layers,
+                   OptionBase::buildoption,
+@@ -256,18 +257,35 @@
+ 
+ void DeepReconstructorNet::trainHiddenLayer(int which_input_layer, VMat inputs)
+ {
++    int l = train_set-&gt;length();
++    int nepochs = training_schedule[which_input_layer];
++    perr &lt;&lt; &quot;\n\n*********************************************&quot; &lt;&lt; endl;
++    perr &lt;&lt; &quot;*** Training layer &quot; &lt;&lt; which_input_layer &lt;&lt; &quot; for &quot; &lt;&lt; nepochs &lt;&lt; &quot; epochs &quot; &lt;&lt; endl;
++    perr &lt;&lt; &quot;*** each epoch has &quot; &lt;&lt; l &lt;&lt; &quot; examples and &quot; &lt;&lt; l/minibatch_size &lt;&lt; &quot; optimizer stages (updates)&quot; &lt;&lt; endl;
+     Func f(layers[which_input_layer], reconstruction_costs[which_input_layer]);
++    displayVarGraph(reconstruction_costs[which_input_layer]);
++    // displayVarGraph(fproppath,true, 333, &quot;ffpp&quot;, false);
+     Var totalcost = sumOf(inputs, f, minibatch_size);
+     VarArray params = totalcost-&gt;parents();
+     reconstruction_optimizer-&gt;setToOptimize(params, totalcost);
+     reconstruction_optimizer-&gt;reset();
+     VecStatsCollector st;
+-    reconstruction_optimizer-&gt;nstages = schedule[which_input_layer];
+-    reconstruction_optimizer-&gt;optimizeN(st);
++    real prev_mean = -1;
++    for(int n=0; n&lt;nepochs; n++)
++    {
++        st.forget();
++        reconstruction_optimizer-&gt;nstages = l/minibatch_size;
++        reconstruction_optimizer-&gt;optimizeN(st);
++        const StatsCollector&amp; s = st.getStats(0);
++        real m = s.mean();
++        perr &lt;&lt; &quot;Epoch &quot; &lt;&lt; n &lt;&lt; &quot; mean error: &quot; &lt;&lt; m &lt;&lt; &quot; +- &quot; &lt;&lt; s.stderror() &lt;&lt; endl;
++        if(prev_mean&gt;0)
++            perr &lt;&lt; &quot;Relative improvement: &quot; &lt;&lt; ((prev_mean-m)/prev_mean)*100 &lt;&lt; endl;
++        prev_mean = m;
++    }
+ }
+ 
+ 
+-
+ void DeepReconstructorNet::computeOutput(const Vec&amp; input, Vec&amp; output) const
+ {
+     output.resize(nout);
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h	2007-05-16 21:11:31 UTC (rev 7131)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/DeepReconstructorNet.h	2007-05-16 22:10:44 UTC (rev 7132)
+@@ -70,12 +70,12 @@
+     //! Start your comments with Doxygen-compatible comments such as //!
+     
+ 
+-    //! schedule[k] conatins the number of nstages to run the optimizer for the
++    //! training_schedule[k] conatins the number of nstages to run the optimizer for the
+     //! training of the hidden layer taking layer k as input (k=0 corresponds to
+     //! input layer).
+ 
+-    TVec&lt;int&gt; schedule;
+-  
++    TVec&lt;int&gt; training_schedule;
++
+     // layers[0] is the input variable
+     // last layer is final output layer
+     TVec&lt;Var&gt; layers;
+
+Modified: trunk/python_modules/plearn/var/Var.py
+===================================================================
+--- trunk/python_modules/plearn/var/Var.py	2007-05-16 21:11:31 UTC (rev 7131)
++++ trunk/python_modules/plearn/var/Var.py	2007-05-16 22:10:44 UTC (rev 7132)
+@@ -33,19 +33,26 @@
+ from plearn.pyplearn import *
+ from plearn.pyplearn.plearn_repr import plearn_repr, format_list_elements
+ 
+-class Var:
++def Var(l, w=1, random_type='F', random_a=0., random_b=1., random_clear_first_row=False):
++    if isinstance(l, Variable):
++        return l;
++    elif isinstance(l,int):
++        return Variable(pl.SourceVariable(build_length=l,
++                                          build_width=w,
++                                          random_type=PLChar(random_type),
++                                          random_a=random_a,
++                                          random_b=random_b,
++                                          random_clear_first_row=random_clear_first_row))
++    else: # assume parameter l is a pl. plvar
++        return Variable(l)
+ 
+-    def __init__(self, l, w=1, random_type='F', random_a=0., random_b=1., random_clear_first_row=False):
+-        if isinstance(l,int):
+-            self.v = pl.SourceVariable(build_length=l,
+-                                       build_width=w,
+-                                       random_type=PLChar(random_type),
+-                                       random_a=random_a,
+-                                       random_b=random_b,
+-                                       random_clear_first_row=random_clear_first_row)
+-        else: # assume parameter l is a pl. plvar
+-            self.v = l
++    
++class Variable:
+ 
++    def __init__(self, plvar):
++        # parameter must be a pl. subclass of Variable
++        self.v = plvar
++
+     def sigmoid(self):
+         return Var(pl.SigmoidVariable(input=self.v))
+ 
+@@ -103,7 +110,7 @@
+ 
+ 
+ 
+-def addMultiSoftMaxDoubleProductTighedRLayer(input, iw, igs, ow, ogs):
++def addMultiSoftMaxDoubleProductTiedRLayer(input, iw, igs, ow, ogs):
+     &quot;&quot;&quot;iw is the input's width
+     igs is the input's group size
+     ow and ogs analog but for output&quot;&quot;&quot;
+@@ -113,16 +120,16 @@
+     cost = -hidden.transposeDoubleProduct(W,M).multiLogSoftMax(igs).dot(input)            
+     return hidden, cost, (W,M)
+ 
+-def addMultiSoftMaxDoubleProductNotTighedRLayer(input, iw, igs, ow, ogs):
++def addMultiSoftMaxDoubleProductNotTiedRLayer(input, iw, igs, ow, ogs):
+     return 1,2,3
+ 
+-def addMultiSoftMaxSimpleProductTighedRLayer(input, iw, igs, ow, ogs):
++def addMultiSoftMaxSimpleProductTiedRLayer(input, iw, igs, ow, ogs):
+     W = Var(iw, ow)
+     hidden = input.matrixProduct(W).multiSoftMax(ogs)
+     cost = -hidden.matrixTransposeProduct(W).multiLogSoftMax(igs).dot(input)
+     return hidden, cost, W
+ 
+-def addMultiSoftMaxSimpleProductNotTighedRLayer(input, iw, igs, ow, ogs):
++def addMultiSoftMaxSimpleProductNotTiedRLayer(input, iw, igs, ow, ogs):
+     W = Var(iw,ow)
+     hidden = input.matrixProduct(W).multiSoftMax(ogs)
+     Wr = Var(ow, iw)
+@@ -134,19 +141,19 @@
+ 
+ 
+ 
+-## def addMultiSoftmaxRLayer(input, ing, igs, ong, ogs, tighed=True, use_double_product=True):
++## def addMultiSoftmaxRLayer(input, ing, igs, ong, ogs, tied=True, use_double_product=True):
+ ##     &quot;&quot;&quot;ing is the input's number of groups
+ ##     igs is the input's group size
+ ##     ong is the output's number of groups
+ ##     ogs is the output's group size
+-##     If tighed is true we will use the transpose of the recognition weight matrix for reconstruction
++##     If tied is true we will use the transpose of the recognition weight matrix for reconstruction
+ ##     If use_double_product is false we'll use a regular weight matrix.
+ ##     If it's true, we'll use the decomposition as a 
+ ##     Returns a triple (hidden, params, reonstruction_cost)&quot;&quot;&quot;
+ ##     if not use_double_product:
+ ##         W = Var(ing*igs,ong*ogs)
+ ##         hidden = input.matrixProduct(W).multiSoftMax(ogs)
+-##         if tighed:
++##         if tied:
+ ##             cost = -hidden.matrixTransposeProduct(W).multiLogSoftMax(igs).dot(input)
+ ##             return hidden, cost, W
+ ##         else:
+@@ -160,7 +167,7 @@
+ ##         M = Var(ong, ing*igs, 'U', -1/ing/igs, 1/ing/igs, False)
+ ##         W = Var(ogs, ing*igs, 'U', -1/ing/igs, 1/ing/igs, False)
+ ##         hidden = input.doubleProduct(W,M).multiSoftMax(ogs)
+-##         if tighed:
++##         if tied:
+ ##             cost = -hidden.transposeDoubleProduct(W,M).multiLogSoftMax(igs).dot(input)            
+ ##             return hidden, cost, (W,M)
+ ##         else:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000580.html">[Plearn-commits] r7131 - trunk/plearn_learners/regressors
+</A></li>
+	<LI>Next message: <A HREF="000582.html">[Plearn-commits] r7133 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#581">[ date ]</a>
+              <a href="thread.html#581">[ thread ]</a>
+              <a href="subject.html#581">[ subject ]</a>
+              <a href="author.html#581">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

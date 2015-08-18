@@ -1,0 +1,557 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8515 - in trunk/plearn: misc vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8515%20-%20in%20trunk/plearn%3A%20misc%20vmat&In-Reply-To=%3C200802151626.m1FGQqXR027871%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001962.html">
+   <LINK REL="Next"  HREF="001964.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8515 - in trunk/plearn: misc vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8515%20-%20in%20trunk/plearn%3A%20misc%20vmat&In-Reply-To=%3C200802151626.m1FGQqXR027871%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8515 - in trunk/plearn: misc vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Feb 15 17:26:52 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001962.html">[Plearn-commits] r8514 - trunk/plearn/math
+</A></li>
+        <LI>Next message: <A HREF="001964.html">[Plearn-commits] r8516 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1963">[ date ]</a>
+              <a href="thread.html#1963">[ thread ]</a>
+              <a href="subject.html#1963">[ subject ]</a>
+              <a href="author.html#1963">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-02-15 17:26:50 +0100 (Fri, 15 Feb 2008)
+New Revision: 8515
+
+Modified:
+   trunk/plearn/misc/vmatmain.cc
+   trunk/plearn/vmat/VMatrix.cc
+   trunk/plearn/vmat/VMatrix.h
+Log:
+-added function max_fieldnames_size in VMatrix
+-VMatrix::compareStats now return the result instead of printing to pout
+-in vmatmain.cc
+  -use the new version of VMatrix::compareStats 
+  -added an option compare_stats_ks, that do the Kologorov Smirnov two sample test
+  -added an optino compare_stats_desjardins that will be used in the prototype for desjardins
+
+
+Modified: trunk/plearn/misc/vmatmain.cc
+===================================================================
+--- trunk/plearn/misc/vmatmain.cc	2008-02-15 15:38:21 UTC (rev 8514)
++++ trunk/plearn/misc/vmatmain.cc	2008-02-15 16:26:50 UTC (rev 8515)
+@@ -41,6 +41,7 @@
+ #include &lt;plearn/base/stringutils.h&gt;
+ #include &lt;plearn/base/lexical_cast.h&gt;
+ #include &lt;plearn/math/StatsCollector.h&gt;
++#include &lt;plearn/math/stats_utils.h&gt;
+ #include &lt;plearn/vmat/ConcatColumnsVMatrix.h&gt;
+ #include &lt;plearn/vmat/SelectColumnsVMatrix.h&gt;
+ #include &lt;plearn/vmat/SubVMatrix.h&gt;
+@@ -495,6 +496,10 @@
+             &quot;       A column separator can be provided. By default, \&quot;\t\&quot; is used.\n&quot;
+             &quot;   or: vmat compare_stats &lt;dataset1&gt; &lt;dataset2&gt; [stdev threshold] [missing threshold]\n&quot;
+             &quot;       Will compare stats from dataset1 to dataset2\n\n&quot;
++            &quot;   or: vmat compare_stats_ks &lt;dataset1&gt; &lt;dataset2&gt; [--mat_to_mem]&quot;
++            &quot;       Will compare stats from dataset2 to dataset2 with &quot;
++            &quot;Kolmogorov-Smirnov 2 samples statistic\n\n&quot;
++
+             &quot;&lt;dataset&gt; is a parameter understandable by getDataSet. This includes \n&quot;
+             &quot;all matrix file formats. Type 'vmat help dataset' to see what other\n&quot;
+             &quot;&lt;dataset&gt; strings are available.&quot; &lt;&lt; endl;
+@@ -954,7 +959,7 @@
+     else if(command==&quot;compare_stats&quot;)
+     {
+         if(!(argc==4||argc==5||argc==6))
+-            PLERROR(&quot;vmat compare_stats must be used that way: vmat compare_stats &lt;dataset1&gt; &lt;dataset2&gt; [stderror threshold] [missing threshold]&quot;);
++            PLERROR(&quot;vmat compare_stats must be used that way: vmat compare_stats &lt;dataset1&gt; &lt;dataset2&gt; [[stderror threshold [missing threshold]]&quot;);
+ 
+         VMat m1 = getVMat(argv[2], indexf);
+         VMat m2 = getVMat(argv[3], indexf);
+@@ -967,17 +972,298 @@
+             stderror_threshold=toreal(argv[4]);
+         if(argc&gt;5)
+             missing_threshold=toreal(argv[5]);
+-        real sumdiff_stderr = 0;
+-        real sumdiff_missing = 0;
++        Vec missing(m1-&gt;width());
++        Vec stderr(m1-&gt;width());
++
+         pout &lt;&lt; &quot;Test of difference that suppose gaussiane variable&quot;&lt;&lt;endl;
+-        int diff = m1-&gt;compareStats(m2, stderror_threshold, missing_threshold,
+-                                    &amp;sumdiff_stderr, &amp;sumdiff_missing);
+-        pout&lt;&lt;&quot;There are &quot;&lt;&lt;diff&lt;&lt;&quot;/&quot;&lt;&lt;m1.width()
++        m1-&gt;compareStats(m2, stderror_threshold, missing_threshold,
++                         stderr, missing);
++
++        Mat score(m1-&gt;width(),3);
++
++        for(int col = 0;col&lt;m1-&gt;width();col++)
++        {
++            score(col,0)=col;
++            score(col,1)=stderr[col];
++            score(col,2)=missing[col];
++        }
++        
++        int nbdiff = 0;
++
++        pout&lt;&lt;&quot;Print the field that do not pass the threshold sorted by the stderror&quot;&lt;&lt;endl;
++        sortRows(score,1,false);
++        for(int i=0;i&lt;score.length();i++)
++        {
++            if(score(i,1)&gt;stderror_threshold)
++            {
++                const StatsCollector tstats = m1-&gt;getStats(i);
++                const StatsCollector lstats = m2-&gt;getStats(i);
++                real tmean = tstats.mean();
++                real lmean = lstats.mean();
++                real tstderror = sqrt(pow(tstats.stderror(), 2) + 
++                                      pow(lstats.stderror(), 2));
++
++                pout&lt;&lt;i&lt;&lt;&quot;(&quot;&lt;&lt;m1-&gt;fieldName(int(round(score(i,0))))&lt;&lt;&quot;)&quot;
++                    &lt;&lt;&quot; differ by &quot;&lt;&lt;score(i,1)&lt;&lt;&quot; stderror.&quot;
++                    &lt;&lt;&quot; The mean is &quot;&lt;&lt;lmean&lt;&lt;&quot; while the target mean is &quot;&lt;&lt;tmean
++                    &lt;&lt;&quot; and the used stderror is &quot;&lt;&lt;tstderror&lt;&lt;endl;
++                nbdiff++;
++            }
++        }
++
++        cout&lt;&lt;&quot;Print the field that do not pass the threshold sorted by the missing error&quot;&lt;&lt;endl;
++        sortRows(score,2,false);
++        for(int i=0;i&lt;score.length();i++)
++        {
++            if(score(i,2)&gt;missing_threshold)
++            {
++                const StatsCollector tstats = m1-&gt;getStats(i);
++                const StatsCollector lstats = m2-&gt;getStats(i);
++                real tmissing = tstats.nmissing()/tstats.n();
++                real lmissing = lstats.nmissing()/lstats.n();
++                pout&lt;&lt;i&lt;&lt;&quot;(&quot;&lt;&lt;m1-&gt;fieldName(int(round(score(i,0))))&lt;&lt;&quot;)&quot;
++                    &lt;&lt;&quot; The missing stats difference is &quot;&lt;&lt; score(i,2)
++                    &lt;&lt;&quot;. Their is &quot;&lt;&lt;lmissing&lt;&lt;&quot; missing while target have &quot;
++                    &lt;&lt;tmissing&lt;&lt;&quot; missing.&quot;&lt;&lt;endl;
++                nbdiff++;
++            }
++        }
++
++        pout&lt;&lt;&quot;There are &quot;&lt;&lt;nbdiff&lt;&lt;&quot;/&quot;&lt;&lt;m1.width()
+             &lt;&lt;&quot; fields that have different stats&quot;&lt;&lt;endl;
+-        pout &lt;&lt;&quot;The sum of stderror difference is &quot;&lt;&lt;sumdiff_stderr&lt;&lt;endl;
+-        pout &lt;&lt;&quot;The sum of missing difference is &quot;&lt;&lt;sumdiff_missing&lt;&lt;endl;
+ 
+     }
++    else if(command==&quot;compare_stats_ks&quot;)
++    {
++        bool err = false;
++        real threashold = REAL_MAX;
++        bool mat_to_mem = false;
++        if(argc&lt;4||argc&gt;6)
++            err = true;
++        if(argc==5)
++        {
++            if(argv[4]==string(&quot;--mat_to_mem&quot;))
++                mat_to_mem=true;
++            else if(!pl_isnumber(string(argv[4]),&amp;threashold))
++                err = true;
++        }
++        else if(argc==6)
++        {
++             if(argv[5]!=string(&quot;--mat_to_mem&quot;))
++                 err = true;
++             else if(!pl_isnumber(string(argv[4]),&amp;threashold))
++                 err = true;
++        }
++        if(err)
++            PLERROR(&quot;vmat compare_stats_ks must be used that way:&quot;
++                    &quot; vmat compare_stats_ks &lt;dataset1&gt; &lt;dataset2&gt; [threashold]&quot;
++                    &quot; [--mat_to_mem]&quot;);
++
++        VMat m1 = getVMat(argv[2], indexf);
++        VMat m2 = getVMat(argv[3], indexf);
++        if(mat_to_mem)
++        {
++            m1.precompute();
++            m2.precompute();
++        }
++
++        m1-&gt;compatibleSizeError(m2);
++        int pc_value_99=0;
++        int pc_value_95=0;
++        int pc_value_90=0;
++        int pc_value_0=0;
++
++        uint size_fieldnames=m1-&gt;max_fieldnames_size();
++
++        Vec Ds(m1-&gt;width());
++        Vec p_values(m1-&gt;width());
++        KS_test(m1,m2,10,Ds,p_values);
++        Mat score(m1-&gt;width(),3);
++            
++        for(int col = 0;col&lt;m1-&gt;width();col++)
++        {
++            score(col,0)=col;
++            score(col,1)=Ds[col];
++            real p_value = p_values[col];
++            score(col,2)=p_value;
++            if(p_value&gt;0.99)
++                pc_value_99++;
++            if(p_value&gt;0.95)
++                pc_value_95++;
++            if(p_value&gt;0.90)
++                pc_value_90++;
++            else
++                pc_value_0++;
++        }
++
++        sortRows(score,2,false);
++        pout &lt;&lt;&quot;Kolmogorow Smirnow two sample test&quot;&lt;&lt;endl&lt;&lt;endl;
++        if(threashold==REAL_MAX)
++            pout&lt;&lt;&quot;Variables that are under the threashold&quot;&lt;&lt;endl;
++        pout&lt;&lt;&quot;Sorted by p_value&quot;&lt;&lt;endl;
++        cout &lt;&lt; std::left &lt;&lt; setw(8) &lt;&lt; &quot;# &quot;
++             &lt;&lt; setw(size_fieldnames) &lt;&lt; &quot; fieldname &quot; &lt;&lt; std::right
++             &lt;&lt; setw(15) &lt;&lt; &quot; D&quot;
++             &lt;&lt; setw(15) &lt;&lt; &quot; p_value&quot;
++             &lt;&lt;endl;
++        for(int col=0;col&lt;score.length();col++)
++        {
++            if(threashold&gt;=score(col,2))
++                cout &lt;&lt; std::left &lt;&lt; setw(8) &lt;&lt; tostring(col)+&quot;/&quot;+tostring(score(col,0))
++                     &lt;&lt; setw(size_fieldnames) &lt;&lt; m1-&gt;fieldName(int(round(score(col,0))))
++                     &lt;&lt; std::right
++                     &lt;&lt; setw(15) &lt;&lt; score(col,1)
++                     &lt;&lt; setw(15) &lt;&lt; score(col,2)
++                     &lt;&lt;endl;
++        }
++        if(threashold==REAL_MAX)
++        {
++            pout &lt;&lt; &quot;99% cutoff: &quot;&lt;&lt;pc_value_99&lt;&lt;endl;
++            pout &lt;&lt; &quot;95% cutoff: &quot;&lt;&lt;pc_value_95&lt;&lt;endl;
++            pout &lt;&lt; &quot;90% cutoff: &quot;&lt;&lt;pc_value_90&lt;&lt;endl;
++            pout &lt;&lt; &quot;0-90% cutoff: &quot;&lt;&lt;pc_value_0&lt;&lt;endl;
++        }
++        pout &lt;&lt;&quot;Kolmogorow Smirnow two sample test end&quot;&lt;&lt;endl&lt;&lt;endl;
++    }
++    else if(command==&quot;compare_stats_desjardins&quot;)
++    {      
++        if(argc!=8)
++            PLERROR(&quot;vmat compare_stats_desjardins must be used that way:&quot;
++                    &quot; vmat compare_stats_desjardins &lt;orig dataset1&gt; &lt;orig dataset2&gt; &lt;new dataset3&gt; &lt;ks_threashold&gt; &lt;stderror_threashold&gt; &lt;missing_threashold&gt;&quot;);
++        VMat m1 = getVMat(argv[2], indexf);
++        VMat m2 = getVMat(argv[3], indexf);
++        VMat m3 = getVMat(argv[4], indexf);
++        real ks_threashold = toreal(argv[5]);
++
++        m3-&gt;compatibleSizeError(m1);
++        m3-&gt;compatibleSizeError(m2);
++
++        Vec Ds(m1-&gt;width());
++        Vec p_values(m1-&gt;width());
++        KS_test(m1,m3,10,Ds,p_values);
++        Mat score(m1-&gt;width(),3);
++
++        uint size_fieldnames=m1-&gt;max_fieldnames_size();
++
++        for(int col = 0;col&lt;m1-&gt;width();col++)
++        {
++            score(col,0)=col;
++            score(col,1)=Ds[col];
++            real p_value = p_values[col];
++            score(col,2)=p_value;
++        }
++
++        KS_test(m2,m3,10,Ds,p_values);
++
++        for(int col = 0;col&lt;m1-&gt;width();col++)
++        {
++            if(p_values[col]&gt;score(col,2))
++            {
++                score(col,1)=Ds[col];
++                score(col,2)=p_values[col];
++            }
++        }
++
++        sortRows(score,2,false);
++        pout &lt;&lt;&quot;Kolmogorow Smirnow two sample test&quot;&lt;&lt;endl&lt;&lt;endl;
++        pout&lt;&lt;&quot;Variables that are under the kd_threashold&quot;&lt;&lt;endl;
++        pout&lt;&lt;&quot;Sorted by p_value&quot;&lt;&lt;endl;
++        cout &lt;&lt; std::left &lt;&lt; setw(8) &lt;&lt; &quot;# &quot;
++             &lt;&lt; setw(size_fieldnames) &lt;&lt; &quot; fieldname &quot; &lt;&lt; std::right
++             &lt;&lt; setw(15) &lt;&lt; &quot; D&quot;
++             &lt;&lt; setw(15) &lt;&lt; &quot; p_value&quot;
++             &lt;&lt;endl;
++        int threashold_fail = 0;
++        for(int col=0;col&lt;score.length();col++)
++        {
++            if(ks_threashold&gt;=score(col,2))
++            {
++                cout &lt;&lt; std::left &lt;&lt; setw(8) &lt;&lt; tostring(col)+&quot;/&quot;+tostring(score(col,0))
++                     &lt;&lt; setw(size_fieldnames) &lt;&lt; m1-&gt;fieldName(int(round(score(col,0))))
++                     &lt;&lt; std::right
++                     &lt;&lt; setw(15) &lt;&lt; score(col,1)
++                     &lt;&lt; setw(15) &lt;&lt; score(col,2)
++                     &lt;&lt;endl;
++            }
++            threashold_fail++;
++        }
++        pout &lt;&lt; &quot;Their is &quot;&lt;&lt;threashold_fail&lt;&lt;&quot; variable that are under the threashold&quot;&lt;&lt;endl;
++        pout &lt;&lt;&quot;Kolmogorow Smirnow two sample test end&quot;&lt;&lt;endl&lt;&lt;endl;
++
++
++//         real stderror_threshold = 1;
++//         real missing_threshold = 10;
++//         stderror_threshold=toreal(argv[6]);
++//         missing_threshold=toreal(argv[7]);
++
++//         pout &lt;&lt; &quot;Test of difference that suppose gaussiane variable&quot;&lt;&lt;endl;
++//         pout &lt;&lt; &quot;Comparing with dataset1&quot;&lt;&lt;endl;
++
++//         m3-&gt;compareStats(m1, stderror_threshold, missing_threshold,
++//                          stderr, missing);
++//         pout &lt;&lt; &quot;Comparing with dataset2&quot;&lt;&lt;endl;
++//         m3-&gt;compareStats(m2, stderror_threshold, missing_threshold,
++//                          stderr, missing);
++//         pout&lt;&lt;&quot;There are &quot;&lt;&lt;diff&lt;&lt;&quot;/&quot;&lt;&lt;m1.width()
++//             &lt;&lt;&quot; fields that have different stats&quot;&lt;&lt;endl;
++    }
++    else if(command==&quot;characterize&quot;)
++    {
++        if(argc!=3)
++            PLERROR(&quot;The command 'vmat characterize' must be used that way: vmat caracterize &lt;dataset1&gt;&quot;);
++        VMat m1 = getVMat(argv[2], indexf);
++        TVec&lt;StatsCollector&gt; stats = 
++            m1-&gt;getStats();//&quot;stats_all.psave&quot;,-1,true);
++        TVec&lt;string&gt; caracs;
++        uint size_fieldnames=m1-&gt;max_fieldnames_size();
++
++        for(int i=0;i&lt;stats.size();i++)
++        {
++            StatsCollector&amp; stat=stats[i];
++            string carac = tostring(i)+&quot;\t&quot;+left(m1-&gt;fieldName(i),size_fieldnames);
++            if(stat.isbinary())
++                carac += &quot;\tBinary&quot;;
++            else if(stat.isinteger())
++                carac+=&quot;\tInteger&quot;;
++            else
++                carac+=&quot;\tReal&quot;;
++
++            //find is normal or not
++            int m=min(100,int(round(sqrt(stat.nnonmissing()))));
++            int nelem=int(stat.nnonmissing()/m);
++            int row=0;
++            real gsum=0;
++            for(int bloc=0;bloc&lt;m;bloc++)
++            {
++                real bloc_sum=0;
++                for(int bloc_elem=0;bloc_elem&lt;nelem;)
++                {
++                    real v = m1-&gt;get(row,i);
++                    if(is_missing(v))
++                        continue;
++                    else
++                    {
++                        bloc_elem++;
++                        row++;
++                        bloc_sum+=v;
++                    }
++                    
++                }
++                gsum+=pow((bloc_sum/nelem)-stat.mean(),2);
++            }
++            real s2=(stat.variance()/nelem);
++            real mu_square = stat.mean()*stat.mean();
++            real th = ((1./(m-1))*gsum)/s2;
++            real th2= mu_square+s2-12*mu_square*s2+mu_square*mu_square
++                * s2*s2;
++            bool b = th&gt;(s2+2*th2)/s2;
++                carac+=&quot;\tnormal test value: &quot;+tostring(th)+&quot; &quot;+tostring(th2)
++                + &quot; &quot;+tostring(b);
++            caracs.append(carac);
++            pout&lt;&lt;carac&lt;&lt;endl;
++        }
++
++    }
+     else
+         PLERROR(&quot;Unknown command : %s&quot;,command.c_str());
+     return 0;
+
+Modified: trunk/plearn/vmat/VMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/VMatrix.cc	2008-02-15 15:38:21 UTC (rev 8514)
++++ trunk/plearn/vmat/VMatrix.cc	2008-02-15 16:26:50 UTC (rev 8515)
+@@ -1934,22 +1934,17 @@
+ //////////////////
+ // compareStats //
+ //////////////////
+-int VMatrix::compareStats(const VMat&amp; target,
++void VMatrix::compareStats(const VMat&amp; target,
+                           const real stderror_threshold,
+                           const real missing_threshold,
+-                          real* sumdiff_stderr,
+-                          real* sumdiff_missing) const
++                          Vec&amp; stderr,
++                          Vec&amp; missing) const
+ {
+     if(target-&gt;width()!=width())
+         PLERROR(&quot;In VecStatsCollector:: compareStats() - This VMatrix has &quot;
+                 &quot;width %d which differs from the target width of %d&quot;,
+                 width(), target-&gt;width());
+ 
+-    int nbdiff            = 0;
+-    real sumdiff_stderr_  = 0;
+-    real sumdiff_missing_ = 0;
+-    Mat score(width(),3);
+-
+     for(int i=0;i&lt;width();i++)
+     {
+         const StatsCollector tstats = target-&gt;getStats(i);
+@@ -1970,8 +1965,6 @@
+         }
+         else if(isnan(th_missing))
+             PLWARNING(&quot;In VMatrix::compareStats - should not happen!&quot;);
+-        else
+-            sumdiff_missing_ += th_missing;
+         
+         real tmean = tstats.mean();
+         real lmean = lstats.mean();
+@@ -1982,57 +1975,24 @@
+             PLWARNING(&quot;In VMatrix::compareStats - field %d(%s) have a&quot;
+                       &quot; stderror of 0 for both matrice.&quot;,
+                       i, fieldName(i).c_str());
+-        else
+-            sumdiff_stderr_+=th_stderror;
+-        score(i,0)=i;
+-        score(i,1)=th_stderror;
+-        score(i,2)=th_missing;
+-
++        stderr[i]=th_stderror;
++        missing[i]=th_missing;
+     }
+-    pout&lt;&lt;&quot;Print the field that do not pass the threshold sorted by the stderror&quot;&lt;&lt;endl;
+-    sortRows(score,1,false);
+-    for(int i=0;i&lt;score.length();i++)
+-    {
+-        if(score(i,1)&gt;stderror_threshold)
+-        {
+-            const StatsCollector tstats = target-&gt;getStats(i);
+-            const StatsCollector lstats = getStats(i);
+-            real tmean = tstats.mean();
+-            real lmean = lstats.mean();
+-            real tstderror = sqrt(pow(tstats.stderror(), 2) + 
+-                                  pow(lstats.stderror(), 2));
++    return;
++}
+ 
+-            pout&lt;&lt;i&lt;&lt;&quot;(&quot;&lt;&lt;fieldName(int(round(score(i,0))))&lt;&lt;&quot;)&quot;
+-                &lt;&lt;&quot; differ by &quot;&lt;&lt;score(i,1)&lt;&lt;&quot; stderror.&quot;
+-                &lt;&lt;&quot; The mean is &quot;&lt;&lt;lmean&lt;&lt;&quot; while the target mean is &quot;&lt;&lt;tmean
+-                &lt;&lt;&quot; and the used stderror is &quot;&lt;&lt;tstderror&lt;&lt;endl;
+-            nbdiff++;
+-        }
+-    }
+-
+-    cout&lt;&lt;&quot;Print the field that do not pass the threshold sorted by the missing error&quot;&lt;&lt;endl;
+-    sortRows(score,2,false);
+-    for(int i=0;i&lt;score.length();i++)
+-    {
+-        if(score(i,2)&gt;missing_threshold)
+-        {
+-            const StatsCollector tstats = target-&gt;getStats(i);
+-            const StatsCollector lstats = getStats(i);
+-            real tmissing = tstats.nmissing()/tstats.n();
+-            real lmissing = lstats.nmissing()/lstats.n();
+-            pout&lt;&lt;i&lt;&lt;&quot;(&quot;&lt;&lt;fieldName(int(round(score(i,0))))&lt;&lt;&quot;)&quot;
+-                &lt;&lt;&quot; The missing stats difference is &quot;&lt;&lt; score(i,2)
+-                &lt;&lt;&quot;. Their is &quot;&lt;&lt;lmissing&lt;&lt;&quot; missing while target have &quot;
+-                &lt;&lt;tmissing&lt;&lt;&quot; missing.&quot;&lt;&lt;endl;
+-            nbdiff++;
+-        }
+-    }
+-    if(sumdiff_stderr!=NULL)
+-        *sumdiff_stderr = sumdiff_stderr_;
+-    if(sumdiff_missing!=NULL)
+-        *sumdiff_missing = sumdiff_missing_;
+-    return nbdiff;
++/////////////////////////
++// max_fieldnames_size //
++/////////////////////////
++int VMatrix::max_fieldnames_size() const
++{
++    uint size_fieldnames=0;
++    for(int i=0;i&lt;width();i++)
++        if(fieldName(i).size()&gt;size_fieldnames)
++            size_fieldnames=fieldName(i).size();
++    return size_fieldnames;
+ }
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn/vmat/VMatrix.h
+===================================================================
+--- trunk/plearn/vmat/VMatrix.h	2008-02-15 15:38:21 UTC (rev 8514)
++++ trunk/plearn/vmat/VMatrix.h	2008-02-15 16:26:50 UTC (rev 8515)
+@@ -618,12 +618,16 @@
+      * @param sumdiff_missing The sum of all variable differences of missing
+      * @return The number of differences that were found
+      */
+-    int compareStats(const VMat&amp; target,
+-                     const real stderror_threshold = 2,
+-                     const real missing_threshold = 2,
+-                     real* sumdiff_stderr = NULL,
+-                     real* sumdiff_missing = NULL) const;
++    void compareStats(const VMat&amp; target,
++                     const real stderror_threshold ,
++                     const real missing_threshold,
++                     Vec&amp; stderr,
++                     Vec&amp; missing) const;
+ 
++    /**
++     * @return The size of the longuest fieldname
++     */
++    int max_fieldnames_size() const;
+ 
+     /**
+      *  Returns the bounding box of the data, as a vector of min:max pairs.  If
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001962.html">[Plearn-commits] r8514 - trunk/plearn/math
+</A></li>
+	<LI>Next message: <A HREF="001964.html">[Plearn-commits] r8516 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1963">[ date ]</a>
+              <a href="thread.html#1963">[ thread ]</a>
+              <a href="subject.html#1963">[ subject ]</a>
+              <a href="author.html#1963">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,254 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9513 - trunk/plearn_learners/meta
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9513%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200810031522.m93FMY47025234%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002952.html">
+   <LINK REL="Next"  HREF="002954.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9513 - trunk/plearn_learners/meta</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9513%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200810031522.m93FMY47025234%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9513 - trunk/plearn_learners/meta">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Oct  3 17:22:34 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002952.html">[Plearn-commits] r9512 - trunk/plearn/sys
+</A></li>
+        <LI>Next message: <A HREF="002954.html">[Plearn-commits] r9514 - trunk/commands/PLearnCommands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2953">[ date ]</a>
+              <a href="thread.html#2953">[ thread ]</a>
+              <a href="subject.html#2953">[ subject ]</a>
+              <a href="author.html#2953">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-10-03 17:22:34 +0200 (Fri, 03 Oct 2008)
+New Revision: 9513
+
+Modified:
+   trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+   trunk/plearn_learners/meta/MultiClassAdaBoost.h
+Log:
+implemented full training for plearn script.
+-implemented deepcopy
+-added option learner_template
+-better handling of the train_set
+
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-10-03 15:19:41 UTC (rev 9512)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-10-03 15:22:34 UTC (rev 9513)
+@@ -39,14 +39,18 @@
+ 
+ #include &quot;MultiClassAdaBoost.h&quot;
+ #include &lt;plearn/vmat/ProcessingVMatrix.h&gt;
++#ifdef _OPENMP
++#include &lt;omp.h&gt;
++#endif
+ 
+ namespace PLearn {
+ using namespace std;
+ 
+ PLEARN_IMPLEMENT_OBJECT(
+     MultiClassAdaBoost,
+-    &quot;ONE LINE DESCRIPTION&quot;,
+-    &quot;MULTI-LINE \nHELP&quot;);
++    &quot;Implementation of a 3 class AdaBoost learning algorithm.&quot;,
++    &quot;It divide the work in 2 sub learner AdaBoost, class 0 vs other&quot;
++    &quot; and 2 vs other.&quot;);
+ 
+ MultiClassAdaBoost::MultiClassAdaBoost():
+     forward_sub_learner_test_costs(false)
+@@ -82,15 +86,19 @@
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+     declareOption(ol, &quot;learner1&quot;, &amp;MultiClassAdaBoost::learner1,
+-                  OptionBase::buildoption,
++                  OptionBase::learntoption,
+                   &quot;The sub learner to use.&quot;);
+     declareOption(ol, &quot;learner2&quot;, &amp;MultiClassAdaBoost::learner2,
+-                  OptionBase::buildoption,
++                  OptionBase::learntoption,
+                   &quot;The sub learner to use.&quot;);
+     declareOption(ol, &quot;forward_sub_learner_test_costs&quot;, 
+                   &amp;MultiClassAdaBoost::forward_sub_learner_test_costs,
+                   OptionBase::buildoption,
+                   &quot;Did we add the learner1 and learner2 costs to our costs.\n&quot;);
++    declareOption(ol, &quot;learner_template&quot;, 
++                  &amp;MultiClassAdaBoost::learner_template,
++                  OptionBase::buildoption,
++                  &quot;The template to use for learner1 and learner2.\n&quot;);
+ 
+ }
+ 
+@@ -109,12 +117,25 @@
+     sub_target_tmp.resize(2);
+     for(int i=0;i&lt;sub_target_tmp.size();i++)
+         sub_target_tmp[i].resize(1);
++    
++    if(learner_template){
++        learner1= ::PLearn::deepCopy(learner_template);
++        learner2= ::PLearn::deepCopy(learner_template);
++    }
+     if(learner1)
+         output1.resize(learner1-&gt;outputsize());
+     if(learner2)
+         output2.resize(learner2-&gt;outputsize());
+     if(!train_stats)
+         train_stats=new VecStatsCollector();
++
++    if(train_set){
++        targetname = train_set-&gt;fieldName(train_set-&gt;inputsize());
++        input_prg  = &quot;[%0:%&quot;+tostring(train_set-&gt;inputsize()-1)+&quot;]&quot;;
++        target_prg1= &quot;@&quot;+targetname+&quot; 1 0 ifelse :&quot;+targetname;
++        target_prg2= &quot;@&quot;+targetname+&quot; 2 - 0 1 ifelse :&quot;+targetname;
++        weight_prg = &quot;1 :weight&quot;;
++    }
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+@@ -129,14 +150,14 @@
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+-    // ### Call deepCopyField on all &quot;pointer-like&quot; fields
+-    // ### that you wish to be deepCopied rather than
+-    // ### shallow-copied.
+-    // ### ex:
+-    // deepCopyField(trainvec, copies);
+-
+-    // ### Remove this line when you have fully implemented this method.
+-    PLERROR(&quot;MultiClassAdaBoost::makeDeepCopyFromShallowCopy not fully (correctly) implemented yet!&quot;);
++    deepCopyField(output1,           copies);
++    deepCopyField(output2,           copies);
++    deepCopyField(subcosts1,         copies);
++    deepCopyField(subcosts2,         copies);
++    deepCopyField(learner1,          copies);
++    deepCopyField(learner2,          copies);
++    //not needed as we only read it.
++    //deepCopyField(learner_template,  copies);
+ }
+ 
+ 
+@@ -177,17 +198,18 @@
+ //Otherwise this will cause crash due to the parallel printing to stdout stderr.
+ #ifdef _OPENMP
+     //the AdaBoost and the weak learner should not print anything as this will cause race condition on the printing
+-    PLCHECK(learner1-&gt;verbosity==0);
+-    PLCHECK(learner2-&gt;verbosity==0);
+-    PLCHECK(learner1-&gt;report_progress==false);
+-    PLCHECK(learner2-&gt;report_progress==false);
+-
+-    PLCHECK(learner1-&gt;weak_learner_template-&gt;verbosity==0);
+-    PLCHECK(learner2-&gt;weak_learner_template-&gt;verbosity==0);
+-    PLCHECK(learner1-&gt;weak_learner_template-&gt;report_progress==false);
+-    PLCHECK(learner2-&gt;weak_learner_template-&gt;report_progress==false);
+-
+-#pragma omp parallel sections
++    if(omp_get_max_threads()&gt;1){
++        PLCHECK(learner1-&gt;verbosity==0);
++        PLCHECK(learner2-&gt;verbosity==0);
++        PLCHECK(learner1-&gt;report_progress==false);
++        PLCHECK(learner2-&gt;report_progress==false);
++        
++        PLCHECK(learner1-&gt;weak_learner_template-&gt;verbosity==0);
++        PLCHECK(learner2-&gt;weak_learner_template-&gt;verbosity==0);
++        PLCHECK(learner1-&gt;weak_learner_template-&gt;report_progress==false);
++        PLCHECK(learner2-&gt;weak_learner_template-&gt;report_progress==false);
++    }
++#pragma omp parallel sections default(none)
+ {
+ #pragma omp section 
+     learner1-&gt;train();
+@@ -404,12 +426,12 @@
+ { 
+     PLCHECK(learner1 &amp;&amp; learner2);
+     inherited::setTrainingSet(training_set, call_forget);
+-    string targetname = training_set-&gt;fieldName(training_set-&gt;inputsize());
+-    string input_prg  = &quot;[%0:%&quot;+tostring(training_set-&gt;inputsize()-1)+&quot;]&quot;;
+-    string target_prg1= &quot;@&quot;+targetname+&quot; 1 0 ifelse :&quot;+targetname;
+-    string target_prg2= &quot;@&quot;+targetname+&quot; 2 - 0 1 ifelse :&quot;+targetname;
+-    string weight_prg = &quot;1 :weight&quot;;
+ 
++    targetname = training_set-&gt;fieldName(training_set-&gt;inputsize());
++    input_prg  = &quot;[%0:%&quot;+tostring(training_set-&gt;inputsize()-1)+&quot;]&quot;;
++    target_prg1= &quot;@&quot;+targetname+&quot; 1 0 ifelse :&quot;+targetname;
++    target_prg2= &quot;@&quot;+targetname+&quot; 2 - 0 1 ifelse :&quot;+targetname;
++
+     VMat vmat1 = new ProcessingVMatrix(training_set, input_prg,
+                                        target_prg1,  weight_prg);
+     VMat vmat2 = new ProcessingVMatrix(training_set, input_prg,
+@@ -428,7 +450,6 @@
+ {
+     Profiler::pl_profile_start(&quot;MultiClassAdaBoost::test&quot;);
+     inherited::test(testset,test_stats,testoutputs,testcosts);
+-
+     Profiler::pl_profile_end(&quot;MultiClassAdaBoost::test&quot;);
+ }
+ 
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.h	2008-10-03 15:19:41 UTC (rev 9512)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.h	2008-10-03 15:22:34 UTC (rev 9513)
+@@ -76,6 +76,7 @@
+     //! The learner1 and learner2 must be trained!
+     PP&lt;AdaBoost&gt; learner1;
+     PP&lt;AdaBoost&gt; learner2;
++    PP&lt;AdaBoost&gt; learner_template;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+@@ -184,6 +185,12 @@
+ private:
+     //#####  Private Data Members  ############################################
+     TVec&lt;Vec&gt; sub_target_tmp;
++
++    string targetname;
++    string input_prg;
++    string target_prg1;
++    string target_prg2;
++    string weight_prg;
+ };
+ 
+ // Declares a few other classes and functions related to this class
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002952.html">[Plearn-commits] r9512 - trunk/plearn/sys
+</A></li>
+	<LI>Next message: <A HREF="002954.html">[Plearn-commits] r9514 - trunk/commands/PLearnCommands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2953">[ date ]</a>
+              <a href="thread.html#2953">[ thread ]</a>
+              <a href="subject.html#2953">[ subject ]</a>
+              <a href="author.html#2953">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

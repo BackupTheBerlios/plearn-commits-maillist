@@ -1,0 +1,158 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8550 - trunk/plearn_learners/distributions
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8550%20-%20trunk/plearn_learners/distributions&In-Reply-To=%3C200802202212.m1KMCAoi019975%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001997.html">
+   <LINK REL="Next"  HREF="002000.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8550 - trunk/plearn_learners/distributions</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8550%20-%20trunk/plearn_learners/distributions&In-Reply-To=%3C200802202212.m1KMCAoi019975%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8550 - trunk/plearn_learners/distributions">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Wed Feb 20 23:12:10 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001997.html">[Plearn-commits] r8549 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="002000.html">[Plearn-commits] r8551 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1998">[ date ]</a>
+              <a href="thread.html#1998">[ thread ]</a>
+              <a href="subject.html#1998">[ subject ]</a>
+              <a href="author.html#1998">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-02-20 23:12:10 +0100 (Wed, 20 Feb 2008)
+New Revision: 8550
+
+Modified:
+   trunk/plearn_learners/distributions/RBMDistribution.cc
+   trunk/plearn_learners/distributions/RBMDistribution.h
+Log:
+Added an option to control the number of Gibbs chains being run simultaneously in generateN
+
+Modified: trunk/plearn_learners/distributions/RBMDistribution.cc
+===================================================================
+--- trunk/plearn_learners/distributions/RBMDistribution.cc	2008-02-20 20:10:33 UTC (rev 8549)
++++ trunk/plearn_learners/distributions/RBMDistribution.cc	2008-02-20 22:12:10 UTC (rev 8550)
+@@ -51,7 +51,8 @@
+ /////////////////////
+ // RBMDistribution //
+ /////////////////////
+-RBMDistribution::RBMDistribution()
++RBMDistribution::RBMDistribution():
++    n_gibbs_chains(-1)
+ {}
+ 
+ ////////////////////
+@@ -71,6 +72,15 @@
+                   OptionBase::buildoption,
+         &quot;Underlying RBM modeling the distribution.&quot;);
+ 
++    declareOption(ol, &quot;n_gibbs_chains&quot;, &amp;RBMDistribution::n_gibbs_chains,
++                  OptionBase::buildoption,
++        &quot;Number of Gibbs chains ran in parallel when generating multiple\n&quot;
++        &quot;samples with generateN(). If &lt;0, then there are as many chains as\n&quot;
++        &quot;samples. If in the (0,1) interval, then it is the given fraction of\n&quot;
++        &quot;the number of generated samples. If an integer &gt;= 1, it is the\n&quot;
++        &quot;absolute number of chains that are run simultaneously. Each chain\n&quot;
++        &quot;will sample about N/n_chains samples, so as to obtain N samples.&quot;);
++
+     // Now call the parent class' declareOptions().
+     inherited::declareOptions(ol);
+ }
+@@ -143,11 +153,36 @@
+ ///////////////
+ void RBMDistribution::generateN(const Mat&amp; Y) const
+ {
+-    work1.resize(Y.length(), 0);
+-    ports_val.fill(NULL);
+-    ports_val[rbm-&gt;getPortIndex(&quot;visible_sample&quot;)] = &amp;work1;
+-    rbm-&gt;fprop(ports_val);
+-    Y &lt;&lt; work1;
++    int n = Y.length(); // Number of samples to obtain.
++    int n_chains = Y.length();
++    if (n_gibbs_chains &gt; 0 &amp;&amp; n_gibbs_chains &lt; 1) {
++        // Fraction.
++        n_chains = min(1, int(round(n_gibbs_chains * n)));
++    } else if (n_gibbs_chains &gt; 0) {
++        n_chains = int(round(n_gibbs_chains));
++        PLCHECK( is_equal(real(n_chains), n_gibbs_chains) );
++    }
++    int n_gibbs_samples = n / n_chains;
++    if (n % n_chains &gt; 0)
++        n_gibbs_samples += 1;
++    work2.resize(n_chains * n_gibbs_samples, Y.width());
++    PP&lt;ProgressBar&gt; pb = verbosity &amp;&amp; n_gibbs_samples &gt; 10
++        ? new ProgressBar(&quot;Gibbs sampling&quot;, n_gibbs_samples)
++        : NULL;
++    for (int i = 0; i &lt; n_gibbs_samples; i++) {
++        work1.resize(n_chains, 0);
++        ports_val.fill(NULL);
++        ports_val[rbm-&gt;getPortIndex(&quot;visible_sample&quot;)] = &amp;work1;
++        rbm-&gt;fprop(ports_val);
++        work2.subMatRows(i * n_chains, n_chains) &lt;&lt; work1;
++        if (pb)
++            pb-&gt;updateone();
++    }
++    if (n_gibbs_samples &gt; 1)
++        // We shuffle rows to add more &quot;randomness&quot; since consecutive samples
++        // in the same Gibbs chain may be similar.
++        random_gen-&gt;shuffleRows(work2);
++    Y &lt;&lt; work2.subMatRows(0, Y.length());
+ }
+ 
+ /////////////////
+
+Modified: trunk/plearn_learners/distributions/RBMDistribution.h
+===================================================================
+--- trunk/plearn_learners/distributions/RBMDistribution.h	2008-02-20 20:10:33 UTC (rev 8549)
++++ trunk/plearn_learners/distributions/RBMDistribution.h	2008-02-20 22:12:10 UTC (rev 8550)
+@@ -65,6 +65,8 @@
+ 
+     PP&lt;RBMModule&gt; rbm;
+ 
++    real n_gibbs_chains;
++
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001997.html">[Plearn-commits] r8549 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="002000.html">[Plearn-commits] r8551 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1998">[ date ]</a>
+              <a href="thread.html#1998">[ thread ]</a>
+              <a href="subject.html#1998">[ subject ]</a>
+              <a href="author.html#1998">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

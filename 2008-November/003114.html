@@ -1,0 +1,154 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9674 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9674%20-%20trunk/plearn/vmat&In-Reply-To=%3C200811122052.mACKq25J012382%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003113.html">
+   <LINK REL="Next"  HREF="003115.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9674 - trunk/plearn/vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9674%20-%20trunk/plearn/vmat&In-Reply-To=%3C200811122052.mACKq25J012382%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9674 - trunk/plearn/vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed Nov 12 21:52:02 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003113.html">[Plearn-commits] r9673 - trunk/python_modules/plearn
+</A></li>
+        <LI>Next message: <A HREF="003115.html">[Plearn-commits] r9675 - in trunk/plearn/ker: . EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3114">[ date ]</a>
+              <a href="thread.html#3114">[ thread ]</a>
+              <a href="subject.html#3114">[ subject ]</a>
+              <a href="author.html#3114">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-11-12 21:52:01 +0100 (Wed, 12 Nov 2008)
+New Revision: 9674
+
+Modified:
+   trunk/plearn/vmat/VariableDeletionVMatrix.cc
+   trunk/plearn/vmat/VariableDeletionVMatrix.h
+Log:
+added option VariableDeletionVMatrix::warn_removed_var that print the reason why a variable is removed.
+
+
+Modified: trunk/plearn/vmat/VariableDeletionVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/VariableDeletionVMatrix.cc	2008-11-12 15:00:21 UTC (rev 9673)
++++ trunk/plearn/vmat/VariableDeletionVMatrix.cc	2008-11-12 20:52:01 UTC (rev 9674)
+@@ -69,6 +69,7 @@
+     min_non_missing_threshold(0),
+     max_constant_threshold(0),
+     number_of_train_samples(0),
++    warn_removed_var(false),
+     deletion_threshold(-1),
+     remove_columns_with_constant_value(-1)
+ {}
+@@ -125,6 +126,11 @@
+         &quot;If greater than or equal to 1, the integer portion will be\n&quot;
+         &quot;interpreted as the number of samples to use.&quot;);
+ 
++    declareOption(ol, &quot;warn_removed_var&quot;,
++                  &amp;VariableDeletionVMatrix::warn_removed_var,
++                  OptionBase::buildoption,
++                  &quot;If true, will print a warning about variable that are removed&quot;);
++
+     declareOption(ol, &quot;save_deleted_columns&quot;,
+                   &amp;VariableDeletionVMatrix::save_deleted_columns,
+                   OptionBase::buildoption,
+@@ -282,6 +288,11 @@
+             if (stats[i].nnonmissing() &gt;= min_non_missing 
+                 &amp;&amp; stats[i].nnonmissing() &gt; 0)
+                 indices.append(i);
++            else if (warn_removed_var)
++                PLWARNING(&quot;In VariableDeletionVMatrix::build_() var '%s'&quot;
++                          &quot; have too many missing value: %f/%f&quot;,
++                          source-&gt;fieldName(i).c_str(), stats[i].nmissing(),
++                          stats[i].n());
+     } else
+         for (int i = 0; i &lt; is; i++)
+             indices.append(i);
+@@ -293,6 +304,10 @@
+             StatsCollector stat = stats[i];
+             if(!(stat.min()==stat.max() &amp;&amp; stat.nnonmissing()&gt;0))
+                 final_indices.append(i);
++            else if (warn_removed_var)
++                PLWARNING(&quot;In VariableDeletionVMatrix::build_() var '%s'&quot;
++                          &quot; is constant with value: %f&quot;,
++                          source-&gt;fieldName(i).c_str(), stat.min());
+         }
+         indices.resize(final_indices.length());
+         indices &lt;&lt; final_indices; 
+@@ -304,13 +319,19 @@
+             map&lt;real, StatsCollectorCounts&gt;* counts = stats[i].getCounts();
+             map&lt;real, StatsCollectorCounts&gt;::const_iterator it;
+             bool ok = true;
++            int n;
+             for (it = counts-&gt;begin(); ok &amp;&amp; it != counts-&gt;end(); it++) {
+-                int n = int(round(it-&gt;second.n));
++                n = int(round(it-&gt;second.n));
+                 if (n &gt;= max_constant_absolute)
+                     ok = false;
+             }
+             if (ok)
+                 final_indices.append(i);
++            else if (warn_removed_var)
++                PLWARNING(&quot;In VariableDeletionVMatrix::build_() var '%s'&quot;
++                          &quot; is too constant. Value %f happen %d/%f&quot;,
++                          source-&gt;fieldName(i).c_str(), it-&gt;first, 
++                          n, stats[i].nnonmissing());
+         }
+         indices.resize(final_indices.length());
+         indices &lt;&lt; final_indices;
+
+Modified: trunk/plearn/vmat/VariableDeletionVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/VariableDeletionVMatrix.h	2008-11-12 15:00:21 UTC (rev 9673)
++++ trunk/plearn/vmat/VariableDeletionVMatrix.h	2008-11-12 20:52:01 UTC (rev 9674)
+@@ -58,6 +58,7 @@
+     real    min_non_missing_threshold;
+     real    max_constant_threshold;
+     int     number_of_train_samples;
++    bool    warn_removed_var;
+     VMat    train_set;
+     string  save_deleted_columns;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003113.html">[Plearn-commits] r9673 - trunk/python_modules/plearn
+</A></li>
+	<LI>Next message: <A HREF="003115.html">[Plearn-commits] r9675 - in trunk/plearn/ker: . EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3114">[ date ]</a>
+              <a href="thread.html#3114">[ thread ]</a>
+              <a href="subject.html#3114">[ subject ]</a>
+              <a href="author.html#3114">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,221 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8028 - trunk/python_modules/plearn/learners
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8028%20-%20trunk/python_modules/plearn/learners&In-Reply-To=%3C200708272109.l7RL9rtA029608%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001475.html">
+   <LINK REL="Next"  HREF="001477.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8028 - trunk/python_modules/plearn/learners</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8028%20-%20trunk/python_modules/plearn/learners&In-Reply-To=%3C200708272109.l7RL9rtA029608%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8028 - trunk/python_modules/plearn/learners">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Aug 27 23:09:53 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001475.html">[Plearn-commits] r8027 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+        <LI>Next message: <A HREF="001477.html">[Plearn-commits] r8029 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1476">[ date ]</a>
+              <a href="thread.html#1476">[ thread ]</a>
+              <a href="subject.html#1476">[ subject ]</a>
+              <a href="author.html#1476">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-08-27 23:09:53 +0200 (Mon, 27 Aug 2007)
+New Revision: 8028
+
+Modified:
+   trunk/python_modules/plearn/learners/AdaBoostMultiClasses.py
+Log:
+-Added cost train_time and conflict
+-Added option conf_rated_adaboost
+-Corrected and ameliorated load_old_learner()
+
+
+Modified: trunk/python_modules/plearn/learners/AdaBoostMultiClasses.py
+===================================================================
+--- trunk/python_modules/plearn/learners/AdaBoostMultiClasses.py	2007-08-27 21:01:56 UTC (rev 8027)
++++ trunk/python_modules/plearn/learners/AdaBoostMultiClasses.py	2007-08-27 21:09:53 UTC (rev 8028)
+@@ -1,7 +1,7 @@
+ from plearn.pyext import *
+ from plearn.pyplearn.plargs import *
++import time
+ 
+-
+ class AdaBoostMultiClasses:
+ #class AdaBoost3PLearner(pl.PLearner):
+     def __init__(self,trainSet1,trainSet2):
+@@ -16,6 +16,7 @@
+         self.learner2.setTrainingSet(trainSet2,True)
+         self.nstages = 0
+         self.stage = 0
++        self.train_time = 0
+ #        self.confusion_target=plargs.confusion_target
+         
+     def weakLearner(self):
+@@ -25,12 +26,13 @@
+             ,loss_function_weight = 1
+             ,missing_is_valid = plargs.missing_is_valid
+             ,multiclass_outputs = plargs.multiclass_output
+-            ,maximum_number_of_nodes = 500
++            ,maximum_number_of_nodes = 250
+             ,compute_train_stats = 0
+             ,complexity_penalty_factor = 0.0
+             ,verbosity = 0
+             ,report_progress = 1
+             ,forget_when_training_set_changes = 1
++            ,conf_rated_adaboost = plargs.conf_rated_adaboost
+             ,leave_template = pl.RegressionTreeLeave( )
+             )
+     
+@@ -44,12 +46,15 @@
+         return l
+ 
+     def train(self):
++        t1=time.time()
+         self.learner1.nstages = self.nstages
+         self.learner1.train()
+         self.learner2.nstages = self.nstages
+         self.learner2.train()
+         self.stage=self.learner1.stage
+-
++        t2=time.time()
++        self.train_time+=t2-t1
++        
+     def getTestCostNames(self):
+         costnames = [&quot;class_error&quot;,&quot;linear_class_error&quot;,&quot;square_class_error&quot;]
+         #    for i in range(len(conf_matrix)):
+@@ -57,8 +62,10 @@
+         for i in range(4):
+             for j in range(3):
+                 costnames.append(&quot;conf_matrix_%d_%d&quot;%(i,j))
++        costnames.append(&quot;train_time&quot;)
++        costnames.append(&quot;conflict&quot;)
+         return costnames
+-
++    
+     def computeOutput(self,example):
+         &quot;&quot;&quot; compute the output for the example in the parameter
+         
+@@ -89,7 +96,13 @@
+         for i in range(4):
+             for j in range(3):
+                 costs.append(0)
+-        costs[output[0]*3+target+3]=1  
++        costs[output[0]*3+target+3]=1
++        costs.append(self.train_time)
++        if output[0]==3:
++            costs.append(1)
++        else:
++            costs.append(0)
++        
+         return costs
+         
+     def outputsize(self):
+@@ -105,18 +118,53 @@
+         self.learner1.save(path+&quot;learner1_stage#&quot;+str(self.stage)+&quot;.psave&quot;,encoding)
+         self.learner2.save(path+&quot;learner2_stage#&quot;+str(self.stage)+&quot;.psave&quot;,encoding)
+     
+-    def load_old_learner(self,filepath,stage,trainSet1,trainSet2):
+-        print &quot;load_old_learner&quot;
+-        self.old_learner1=self.learner1
+-        self.old_learner2=self.learner2
+-        self.learner1=loadObject(filepath+&quot;/learner1_stage#&quot;+str(stage)+&quot;.psave&quot;)
+-        self.learner2=loadObject(filepath+&quot;/learner2_stage#&quot;+str(stage)+&quot;.psave&quot;)
+-        assert(self.learner1.stage==self.learner2.stage)
++    def load_old_learner(self,filepath=None,trainSet1=None,trainSet2=None,stage1=-1,stage2=-1):
++        assert(trainSet1 and trainSet2)
++        if not filepath:
++            assert(not self.learner1.expdir.endswith(&quot;/learner1&quot;) or not self.learner2.expdir.endswith(&quot;/learner2&quot;))
++            path=self.learner1.expdir[:-9]
++            assert(path==self.learner2.expdir[:-9])
++            i=path.rfind(&quot;-2007-&quot;)
++            (subdir,subfile)=os.path.split(path[:i])
++            tmp=[x for x in os.listdir(subdir) if x.startswith(subpath)]
++            assert(len(tmp)&gt;0)
++            filepath=max(tmp)
++        #if stage=-1 we find the last one
++        if stage1 == -1:
++            s=&quot;learner1_stage#&quot;
++            lens=len(s)
++            e=&quot;.psave&quot;
++            lene=len(e)
++            tmp=[ x for x in os.listdir(filepath) if x.startswith(s) and x.endswith(&quot;.psave&quot;) ]
++            for x in tmp:
++                t=int(x[lens:-lene])
++                if t&gt;stage1: stage1=t
++        #We must split stage1 and stage2 as one learner can early stop.
++        if stage2 == -1:
++            s=&quot;learner2_stage#&quot;
++            lens=len(s)
++            e=&quot;.psave&quot;
++            lene=len(e)
++            tmp=[ x for x in os.listdir(filepath) if x.startswith(s) and x.endswith(e) ]
++            for x in tmp:
++                t=int(x[lens:-lene])
++                if t&gt;stage2: stage2=t
++                
++        file1=filepath+&quot;/learner1_stage#&quot;+str(stage1)+&quot;.psave&quot;
++        file2=filepath+&quot;/learner2_stage#&quot;+str(stage2)+&quot;.psave&quot;
++        if (not os.path.exists(file1)) or (not os.path.exists(file2)):
++            print &quot;ERROR: no file to load in the gived directory&quot;
++            sys.exit(1)
++        self.learner1=loadObject(file1)
++        self.learner2=loadObject(file2)
++        if not self.learner1.found_zero_error_weak_learner and not self.learner2.found_zero_error_weak_learner:
++            assert(self.learner1.stage==self.learner2.stage)
+         self.stage=self.learner1.stage
+         self.nstages=self.learner1.nstages
+-#        self.learner1.expdir=plargs.expdirr+&quot;/learner1&quot;
+-        self.learner1.setTrainingSet(trainSet1,False)
+-        self.learner2.setTrainingSet(trainSet2,False)
+-        print self.stage
+-        print self.stage
+-        
++        if trainSet1:
++            self.learner1.setTrainingSet(trainSet1,False)
++        if trainSet2:
++            self.learner2.setTrainingSet(trainSet2,False)
++        self.learner1.setTrainStatsCollector(VecStatsCollector())
++        self.learner2.setTrainStatsCollector(VecStatsCollector())
++
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001475.html">[Plearn-commits] r8027 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+	<LI>Next message: <A HREF="001477.html">[Plearn-commits] r8029 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1476">[ date ]</a>
+              <a href="thread.html#1476">[ thread ]</a>
+              <a href="subject.html#1476">[ subject ]</a>
+              <a href="author.html#1476">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

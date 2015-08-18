@@ -1,0 +1,159 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7351 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7351%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705261544.l4QFiPfs012125%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000799.html">
+   <LINK REL="Next"  HREF="000801.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7351 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7351%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705261544.l4QFiPfs012125%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7351 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Sat May 26 17:44:25 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000799.html">[Plearn-commits] r7350 -	trunk/plearn_learners/online/test/ModuleLearner
+</A></li>
+        <LI>Next message: <A HREF="000801.html">[Plearn-commits] r7352 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#800">[ date ]</a>
+              <a href="thread.html#800">[ thread ]</a>
+              <a href="subject.html#800">[ subject ]</a>
+              <a href="author.html#800">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-05-26 17:44:24 +0200 (Sat, 26 May 2007)
+New Revision: 7351
+
+Modified:
+   trunk/plearn_learners/online/NetworkModule.cc
+   trunk/plearn_learners/online/RBMMatrixTransposeConnection.cc
+   trunk/plearn_learners/online/RBMMatrixTransposeConnection.h
+Log:
+Added matrix (minibatch) bpropUpdate in RBMMatrixTransposeConnection
+
+
+Modified: trunk/plearn_learners/online/NetworkModule.cc
+===================================================================
+--- trunk/plearn_learners/online/NetworkModule.cc	2007-05-25 23:08:09 UTC (rev 7350)
++++ trunk/plearn_learners/online/NetworkModule.cc	2007-05-26 15:44:24 UTC (rev 7351)
+@@ -445,7 +445,6 @@
+         in_conn[connection-&gt;getDestinationPort()] = connection;
+         out_connections[src][connection-&gt;getSourcePort()].append(connection);
+     }
+-
+     // The fprop and bprop paths can now be computed.
+     fprop_path.resize(0);
+     bprop_path.resize(all_modules.length());
+
+Modified: trunk/plearn_learners/online/RBMMatrixTransposeConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixTransposeConnection.cc	2007-05-25 23:08:09 UTC (rev 7350)
++++ trunk/plearn_learners/online/RBMMatrixTransposeConnection.cc	2007-05-26 15:44:24 UTC (rev 7351)
+@@ -192,9 +192,9 @@
+ // Instead of using the statistics, we assume we have only one markov chain
+ // runned and we update the parameters from the first 4 values of the chain
+ void RBMMatrixTransposeConnection::update( const Vec&amp; pos_down_values, // v_0
+-                                  const Vec&amp; pos_up_values,   // h_0
+-                                  const Vec&amp; neg_down_values, // v_1
+-                                  const Vec&amp; neg_up_values )  // h_1
++                                           const Vec&amp; pos_up_values,   // h_0
++                                           const Vec&amp; neg_down_values, // v_1
++                                           const Vec&amp; neg_up_values )  // h_1
+ {
+     // weights -= learning_rate * ( h_0 v_0' - h_1 v_1' );
+     // or:
+@@ -351,6 +351,37 @@
+     externalProductScaleAcc( weights, input, output_gradient, -learning_rate );
+ }
+ 
++void RBMMatrixTransposeConnection::bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                                       Mat&amp; input_gradients,
++                                       const Mat&amp; output_gradients,
++                                       bool accumulate)
++{
++    PLASSERT( inputs.width() == down_size );
++    PLASSERT( outputs.width() == up_size );
++    PLASSERT( output_gradients.width() == up_size );
++
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradients.width() == down_size &amp;&amp;
++                      input_gradients.length() == inputs.length(),
++                      &quot;Cannot resize input_gradients and accumulate into it&quot; );
++
++        // input_gradients += output_gradient * weights
++        productScaleAcc(input_gradients, output_gradients, false, weights, true, 1., 1.);
++    }
++    else
++    {
++        input_gradients.resize(inputs.length(), down_size);
++        // input_gradients = output_gradient * weights
++        productScaleAcc(input_gradients, output_gradients, false, weights, true, 1., 0.);
++    }
++
++    // weights -= learning_rate/n * output_gradients' * inputs
++    productScaleAcc(weights, inputs, true, output_gradients, false, 
++                    -learning_rate / inputs.length(), 1.);
++}
++
++
+ //! reset the parameters to the state they would be BEFORE starting training.
+ //! Note that this method is necessarily called from build().
+ void RBMMatrixTransposeConnection::forget()
+
+Modified: trunk/plearn_learners/online/RBMMatrixTransposeConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixTransposeConnection.h	2007-05-25 23:08:09 UTC (rev 7350)
++++ trunk/plearn_learners/online/RBMMatrixTransposeConnection.h	2007-05-26 15:44:24 UTC (rev 7351)
+@@ -151,6 +151,11 @@
+                              const Vec&amp; output_gradient,
+                              bool accumulate=false);
+ 
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             Mat&amp; input_gradients,
++                             const Mat&amp; output_gradients,
++                             bool accumulate = false);
++
+     //! reset the parameters to the state they would be BEFORE starting
+     //! training.  Note that this method is necessarily called from
+     //! build().
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000799.html">[Plearn-commits] r7350 -	trunk/plearn_learners/online/test/ModuleLearner
+</A></li>
+	<LI>Next message: <A HREF="000801.html">[Plearn-commits] r7352 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#800">[ date ]</a>
+              <a href="thread.html#800">[ thread ]</a>
+              <a href="subject.html#800">[ subject ]</a>
+              <a href="author.html#800">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,244 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6997 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6997%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705040217.l442HbSL024140%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000445.html">
+   <LINK REL="Next"  HREF="000447.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6997 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6997%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705040217.l442HbSL024140%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6997 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Fri May  4 04:17:37 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000445.html">[Plearn-commits] r6996 - trunk/commands
+</A></li>
+        <LI>Next message: <A HREF="000447.html">[Plearn-commits] r6998 - in	trunk/plearn_learners/online/test/DeepBeliefNet: .	.pytest/PL_DBN_SimpleRBM/expected_results	.pytest/PL_DBN_SimpleRBM/expected_results/expdir	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0/LearnerExpdir	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0/LearnerExpdir/Strat1results.pmat.metadata
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#446">[ date ]</a>
+              <a href="thread.html#446">[ thread ]</a>
+              <a href="subject.html#446">[ subject ]</a>
+              <a href="author.html#446">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-05-04 04:17:37 +0200 (Fri, 04 May 2007)
+New Revision: 6997
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+Log:
+Changed the meaning of &quot;training_schedule&quot;: it now contains the number
+of examples to see for each supervised step, then for the fine-tuning step.
+&quot;nstages&quot; is forced to be equal to sum(training_schedule).
+Please update your scripts.
+
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-04 02:17:19 UTC (rev 6996)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-04 02:17:37 UTC (rev 6997)
+@@ -119,11 +119,11 @@
+ 
+     declareOption(ol, &quot;training_schedule&quot;, &amp;DeepBeliefNet::training_schedule,
+                   OptionBase::buildoption,
+-                  &quot;Number of examples before starting each phase except the first\n&quot;
+-                  &quot;(first the greedy phases, and then the fine-tuning phase).\n&quot;
++                  &quot;Number of examples to use during each phase of learning:\n&quot;
++                  &quot;first the greedy phases, and then the fine-tuning phase.\n&quot;
+                   &quot;For example for 2 hidden layers, with 1000 examples in each\n&quot;
+-                  &quot;greedy phase, this option should be [1000 2000] and the last\n&quot;
+-                  &quot;nstages - 2000 examples will be used for fine-tuning.\n&quot;
++                  &quot;greedy phase, and 500 in the fine-tuning phase, this option\n&quot;
++                  &quot;should be [1000 1000 500], and nstages will be set to 2500.\n&quot;
+                   &quot;When online = true, this vector is ignored and should be empty.\n&quot;);
+ 
+     declareOption(ol, &quot;use_classification_cost&quot;,
+@@ -132,8 +132,7 @@
+                   &quot;Put the class target as an extra input of the top-level RBM\n&quot;
+                   &quot;and compute and maximize conditional class probability in that\n&quot;
+                   &quot;top layer (probability of the correct class given the other input\n&quot;
+-                  &quot;of the top-level RBM, which is the output of the rest of the network.\n&quot;
+-                  &quot;This only makes sense if a classification_module is provided.\n&quot;);
++                  &quot;of the top-level RBM, which is the output of the rest of the network.\n&quot;);
+ 
+     declareOption(ol, &quot;reconstruct_layerwise&quot;,
+                   &amp;DeepBeliefNet::reconstruct_layerwise,
+@@ -284,12 +283,26 @@
+     else
+         n_layers = layers.length();
+ 
+-    if( training_schedule.length() != n_layers-1  &amp;&amp; !online )
++    if( !online )
+     {
+-        MODULE_LOG &lt;&lt; &quot;training_schedule.length() != n_layers-1, resizing and&quot;
+-            &quot; zeroing&quot; &lt;&lt; endl;
+-        training_schedule.resize( n_layers-1 );
+-        training_schedule.fill( 0 );
++        if( training_schedule.length() != n_layers )
++        {
++            MODULE_LOG &lt;&lt; &quot;training_schedule.length() != n_layers,&quot;
++               &lt;&lt; &quot; resizing and zeroing&quot; &lt;&lt; endl;
++            training_schedule.resize( n_layers );
++            training_schedule.fill( 0 );
++        }
++
++        cumulative_schedule.resize( n_layers+1 );
++        cumulative_schedule[0] = 0;
++        for( int i=0 ; i&lt;n_layers ; i++ )
++        {
++            cumulative_schedule[i+1] = cumulative_schedule[i] +
++                training_schedule[i];
++        }
++
++        // nstages is the total number of previously seen examples
++        nstages = cumulative_schedule[n_layers];
+     }
+ 
+     build_layers_and_connections();
+@@ -585,6 +598,7 @@
+     deepCopyField(gibbs_down_state,         copies);
+     deepCopyField(optimized_costs,          copies);
+     deepCopyField(partial_costs_indices,    copies);
++    deepCopyField(cumulative_schedule,      copies);
+ }
+ 
+ 
+@@ -639,8 +653,22 @@
+ void DeepBeliefNet::train()
+ {
+     MODULE_LOG &lt;&lt; &quot;train() called &quot; &lt;&lt; endl;
++
++    if (!online)
++    {
++        // Enforce values of cumulative_schedule and nstages,
++        // because build_() might not be called if we change training_schedule
++        // inside a HyperLearner
++        for( int i=0 ; i&lt;n_layers ; i++ )
++            cumulative_schedule[i+1] = cumulative_schedule[i] +
++                training_schedule[i];
++        nstages = cumulative_schedule[n_layers];
++    }
++
+     MODULE_LOG &lt;&lt; &quot;  training_schedule = &quot; &lt;&lt; training_schedule &lt;&lt; endl;
+-    MODULE_LOG &lt;&lt; &quot;stage = &quot; &lt;&lt; stage &lt;&lt; &quot;, target nstages = &quot; &lt;&lt; nstages &lt;&lt; endl;
++    MODULE_LOG &lt;&lt; &quot;  cumulative_schedule = &quot; &lt;&lt; cumulative_schedule &lt;&lt; endl;
++    MODULE_LOG &lt;&lt; &quot;stage = &quot; &lt;&lt; stage
++        &lt;&lt; &quot;, target nstages = &quot; &lt;&lt; nstages &lt;&lt; endl;
+ 
+     PLASSERT( train_set );
+     if (stage == 0) {
+@@ -727,8 +755,7 @@
+             MODULE_LOG &lt;&lt; &quot;Training connection weights between layers &quot; &lt;&lt; i
+                        &lt;&lt; &quot; and &quot; &lt;&lt; i+1 &lt;&lt; endl;
+ 
+-            int first_stage = stage;
+-            int end_stage = min( training_schedule[i], nstages );
++            int end_stage = cumulative_schedule[i+1];
+ 
+             MODULE_LOG &lt;&lt; &quot;  stage = &quot; &lt;&lt; stage &lt;&lt; endl;
+             MODULE_LOG &lt;&lt; &quot;  end_stage = &quot; &lt;&lt; end_stage &lt;&lt; endl;
+@@ -737,7 +764,7 @@
+             if( report_progress &amp;&amp; stage &lt; end_stage )
+                 pb = new ProgressBar( &quot;Training layer &quot;+tostring(i)
+                                       +&quot; of &quot;+classname(),
+-                                      end_stage - first_stage);
++                                      end_stage - stage );
+ 
+             layers[i]-&gt;setLearningRate( cd_learning_rate );
+             connections[i]-&gt;setLearningRate( cd_learning_rate );
+@@ -762,10 +789,7 @@
+ 
+                 }
+                 if( pb )
+-                    pb-&gt;update( stage - first_stage + 1 );
+-/*                    if( i == 0 )
+-                    else
+-                    pb-&gt;update( stage - training_schedule[i-1] + 1 ); */
++                    pb-&gt;update( stage - cumulative_schedule[i] + 1 );
+             }
+         }
+ 
+@@ -777,7 +801,7 @@
+ 
+             MODULE_LOG &lt;&lt; &quot;Training the classification module&quot; &lt;&lt; endl;
+ 
+-            int end_stage = min( training_schedule[n_layers-2], nstages );
++            int end_stage = cumulative_schedule[n_layers-1];
+ 
+             MODULE_LOG &lt;&lt; &quot;  stage = &quot; &lt;&lt; stage &lt;&lt; endl;
+             MODULE_LOG &lt;&lt; &quot;  end_stage = &quot; &lt;&lt; end_stage &lt;&lt; endl;
+@@ -793,8 +817,7 @@
+                 cd_learning_rate );
+             layers[ n_layers-1 ]-&gt;setLearningRate( cd_learning_rate );
+ 
+-            int previous_stage = (n_layers &lt; 3) ? 0
+-                : training_schedule[n_layers-3];
++            int previous_stage = cumulative_schedule[n_layers-2];
+             for( ; stage&lt;end_stage ; stage++ )
+             {
+                 int sample = stage % nsamples;
+@@ -810,7 +833,6 @@
+         /***** fine-tuning by gradient descent *****/
+         if( stage &gt;= nstages )
+             return;
+-
+         MODULE_LOG &lt;&lt; &quot;Fine-tuning all parameters, by gradient descent&quot; &lt;&lt; endl;
+         MODULE_LOG &lt;&lt; &quot;  stage = &quot; &lt;&lt; stage &lt;&lt; endl;
+         MODULE_LOG &lt;&lt; &quot;  nstages = &quot; &lt;&lt; nstages &lt;&lt; endl;
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2007-05-04 02:17:19 UTC (rev 6996)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2007-05-04 02:17:37 UTC (rev 6997)
+@@ -367,6 +367,9 @@
+     //! Keeps the beginning index of the reconstruction costs in train_costs
+     int reconstruction_cost_index;
+ 
++    //! Cumulative training schedule
++    TVec&lt;int&gt; cumulative_schedule;
++
+     mutable Vec layer_input;
+     mutable Mat layer_inputs;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000445.html">[Plearn-commits] r6996 - trunk/commands
+</A></li>
+	<LI>Next message: <A HREF="000447.html">[Plearn-commits] r6998 - in	trunk/plearn_learners/online/test/DeepBeliefNet: .	.pytest/PL_DBN_SimpleRBM/expected_results	.pytest/PL_DBN_SimpleRBM/expected_results/expdir	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0/LearnerExpdir	.pytest/PL_DBN_SimpleRBM/expected_results/expdir/Split0/LearnerExpdir/Strat1results.pmat.metadata
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#446">[ date ]</a>
+              <a href="thread.html#446">[ thread ]</a>
+              <a href="subject.html#446">[ subject ]</a>
+              <a href="author.html#446">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

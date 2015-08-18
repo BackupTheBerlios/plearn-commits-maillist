@@ -1,0 +1,290 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9505 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9505%20-%20trunk/plearn/vmat&In-Reply-To=%3C200810022033.m92KX4QF008677%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002944.html">
+   <LINK REL="Next"  HREF="002946.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9505 - trunk/plearn/vmat</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9505%20-%20trunk/plearn/vmat&In-Reply-To=%3C200810022033.m92KX4QF008677%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9505 - trunk/plearn/vmat">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Thu Oct  2 22:33:04 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002944.html">[Plearn-commits] r9504 - trunk/plearn_learners/meta
+</A></li>
+        <LI>Next message: <A HREF="002946.html">[Plearn-commits] r9506 - trunk/commands/PLearnCommands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2945">[ date ]</a>
+              <a href="thread.html#2945">[ thread ]</a>
+              <a href="subject.html#2945">[ subject ]</a>
+              <a href="author.html#2945">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2008-10-02 22:33:01 +0200 (Thu, 02 Oct 2008)
+New Revision: 9505
+
+Modified:
+   trunk/plearn/vmat/DiskVMatrix.cc
+   trunk/plearn/vmat/DiskVMatrix.h
+Log:
+- Avoid as many seeks as possible (about 250x faster on sync-exported NFS)
+
+
+
+Modified: trunk/plearn/vmat/DiskVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/DiskVMatrix.cc	2008-10-02 20:08:57 UTC (rev 9504)
++++ trunk/plearn/vmat/DiskVMatrix.cc	2008-10-02 20:33:01 UTC (rev 9505)
+@@ -4,6 +4,7 @@
+ // Copyright (C) 1998 Pascal Vincent
+ // Copyright (C) 1999-2001 Pascal Vincent, Yoshua Bengio, Rejean Ducharme and University of Montreal
+ // Copyright (C) 2002 Pascal Vincent, Julien Keable, Xavier Saint-Mleux
++// Copyright (C) 2008 Xavier Saint-Mleux, ApSTAT Technologies inc.
+ //
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -71,8 +72,17 @@
+ is written in the specified endianness (and swapping will be performed if
+ reading it on a machine with a different endianness).
+ 
+-Following the 4-byte header are two 4-byte ints: length and width of the matrix
++Following the 4-byte header are two 4-byte ints: length and width of the matrix.  
+ 
++N.B. As of October 2008, the length is not always stored in the indexfile's
++header; instead, while the matrix is opened for writing,
++DiskVMatrix::NO_LENGTH_SENTINEL (=-42) is used to indicate that the actual
++matrix length should be calculated some other way.  The sentinel is replaced by
++the actual length when the VMat is closed.  It is an error to open a
++DiskVMatrix for writing while its header indicates a length of
++DiskVMatrix::NO_LENGTH_SENTINEL *but this is not a safe locking mechanism, so
++you still have to be careful!*
++
+ Following are 5 bytes for each row of the matrix.
+ The first of those 5 bytes is an unsigned byte indicating the number (0-255) of
+ the data file in which to find the row.
+@@ -92,11 +102,17 @@
+     &quot;&quot;
+ );
+ 
++// DiskVMatrix::NO_LENGTH_SENTINEL= -42; written in header 
++// instead of actual length while the file is opened for writing
++const int DiskVMatrix::NO_LENGTH_SENTINEL;
++const int DiskVMatrix::HEADER_OFFSET_LENGTH;
++
+ DiskVMatrix::DiskVMatrix():
+     indexf      (0),
+     freshnewfile(false),
+     old_format  (false),
+     swap_endians(false),
++    last_op_was_append(false),
+     tolerance   (1e-6)
+ {
+     writable = false;
+@@ -108,6 +124,7 @@
+     freshnewfile(false),
+     old_format  (false),
+     swap_endians(false),
++    last_op_was_append(false),
+     dirname     (the_dirname),
+     tolerance   (1e-6)
+ {
+@@ -123,6 +140,7 @@
+     freshnewfile(true),
+     old_format  (false),
+     swap_endians(false),
++    last_op_was_append(false),
+     dirname     (the_dirname),
+     tolerance   (1e-6)
+ {
+@@ -188,6 +206,41 @@
+             endianswap(&amp;length_);
+             endianswap(&amp;width_);
+         }
++
++        // Calc. length of VMat from indexfile length
++        fseek(indexf, 0, SEEK_END);
++        int pos= ftell(indexf);
++        // pos less 12 header bytes s/b a multiple of 5 since each index 
++        // entry is 5-byte long i.e. pos%5==2
++        PLASSERT_MSG(pos%5 == 2,
++                     &quot;Length of DiskVMatrix is absent from header and length&quot;
++                     &quot; of index file is &quot; + tostring(pos) + &quot;, not \\eqv 2 (mod 5)&quot; );
++        int calculated_length= (pos-12) / 5; //nb. lines in matrix
++
++        if(length_ == NO_LENGTH_SENTINEL) // check after endianswap
++        {
++            PLASSERT_MSG(!writable, // already open for writing? not good...
++                         &quot;Trying to open a DiskVMatrix for writing but length in header is &quot;
++                         &quot;NO_LENGTH_SENTINEL (=&quot;+tostring(NO_LENGTH_SENTINEL)+&quot;); &quot;
++                         &quot;Is it already being written to by another process? &quot;
++                         &quot;dirname='&quot; + dirname + &quot;'.&quot;);
++            length_= calculated_length;
++        }
++        else
++        {
++            PLASSERT_MSG(length_ == calculated_length, //length mismatch? not good...
++                         &quot;Length in DiskVMatrix's header does not match the indexfile's length &quot;
++                         &quot;and is not NO_LENGTH_SENTINEL (=&quot;+tostring(NO_LENGTH_SENTINEL)+&quot;); &quot;
++                         &quot;indexfile='&quot; + indexfname + &quot;', &quot;
++                         &quot;header len=&quot; + tostring(length_) + &quot;, &quot;
++                         &quot;calc. len=&quot; + tostring(calculated_length) + &quot;.&quot;);
++            if(writable)
++            {// put NO_LENGTH_SENTINEL in header to indicate that we are appending to this file.
++                fseek(indexf, HEADER_OFFSET_LENGTH, SEEK_SET);
++                fwrite(&amp;NO_LENGTH_SENTINEL, 4, 1, indexf);
++                // will seek to end before end of build_
++            }
++        }
+         int k=0;
+         string fname = dirname/tostring(k)+&quot;.data&quot;;
+         while(isfile(fname))
+@@ -233,7 +286,8 @@
+         header[2] = ' ';
+         header[3] = ' ';
+         fwrite(header,1,4,indexf);
+-        fwrite((char*)&amp;length_,sizeof(int),1,indexf);
++        //no more length in header while opened [was fwrite((char*)&amp;length_,sizeof(int),1,indexf);]
++        fwrite(&amp;NO_LENGTH_SENTINEL, sizeof(int), 1, indexf);
+         fwrite((char*)&amp;width_,sizeof(int),1,indexf);
+ 
+         string fname = dirname/&quot;0.data&quot;;
+@@ -242,6 +296,7 @@
+     }
+     freshnewfile=false;
+     loadAllStringMappings();//make sure string mappings are loaded after width is set
++    last_op_was_append= false;
+ }
+ 
+ void DiskVMatrix::declareOptions(OptionList &amp;ol)
+@@ -263,10 +318,19 @@
+         }
+ 
+     dataf.resize(0);
++    
+     if (indexf) {
++        // write final length to indexfile before closing
++        fseek(indexf, HEADER_OFFSET_LENGTH, SEEK_SET); // it is and will always be 4 bytes
++        int le= length_;
++        if(swap_endians)
++            endianswap(&amp;le);
++        fwrite(&amp;le,sizeof(int),1,indexf);
++
+         fclose(indexf);
+         indexf = 0;
+     }
++    last_op_was_append= false;
+ }
+ 
+ ///////////////
+@@ -295,6 +359,7 @@
+         binread_compressed(f,v.data(),v.length());
+     else
+         new_read_compressed(f, v.data(), v.length(), swap_endians);
++    last_op_was_append= false;
+ }
+ 
+ void DiskVMatrix::putRow(int i, Vec v)
+@@ -312,7 +377,8 @@
+ 
+     int filenum = dataf.size()-1;
+     FILE* f = dataf[filenum];
+-    fseek(f,0,SEEK_END);
++    if(!last_op_was_append) //otherwise, we are already at end
++        fseek(f,0,SEEK_END);
+     unsigned int position = (unsigned int)ftell(f);
+     if(position&gt;500000000L)
+     {
+@@ -328,15 +394,19 @@
+     else
+         new_write_compressed(f, v.data(),v.length(), tolerance, swap_endians);
+ 
+-    fseek(indexf,0,SEEK_END);
++    if(!last_op_was_append) //otherwise, we are already at end
++        fseek(indexf,0,SEEK_END);
+     fputc(filenum,indexf);
+     fwrite((char*)&amp;position,sizeof(unsigned int),1,indexf);
+     length_++;
++    /* DO NOT write length in header; wait 'till file is closed
+     fseek(indexf,sizeof(int),SEEK_SET);
+     int le = length_;
+     if(swap_endians)
+         endianswap(&amp;le);
+     fwrite(&amp;le,sizeof(int),1,indexf);
++    */
++    last_op_was_append= true;
+ }
+ 
+ ///////////
+@@ -348,6 +418,7 @@
+     FILE* f = dataf[filenum];
+     fflush(f);
+     fflush(indexf);
++    last_op_was_append= false;
+ }
+ 
+ /////////////////////////////////
+
+Modified: trunk/plearn/vmat/DiskVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/DiskVMatrix.h	2008-10-02 20:08:57 UTC (rev 9504)
++++ trunk/plearn/vmat/DiskVMatrix.h	2008-10-02 20:33:01 UTC (rev 9505)
+@@ -4,6 +4,7 @@
+ // Copyright (C) 1998 Pascal Vincent
+ // Copyright (C) 1999-2001 Pascal Vincent, Yoshua Bengio, Rejean Ducharme and University of Montreal
+ // Copyright (C) 2002 Pascal Vincent, Julien Keable, Xavier Saint-Mleux
++// Copyright (C) 2008 Xavier Saint-Mleux, ApSTAT Technologies inc.
+ //
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -63,7 +64,10 @@
+     bool freshnewfile;
+     bool old_format; // is thisfile in the old deprecated format?
+     bool swap_endians; // was this file written in the opposite endian order
++    mutable bool last_op_was_append; //&lt;! true if the last I/O operation performed was an append; if so, we don't need to seek to the end of file before writing again.
+ public:
++    static const int NO_LENGTH_SENTINEL= -42; // written in header instead of actual length
++    static const int HEADER_OFFSET_LENGTH= 4; // offset to length in header
+ 
+     // Build options
+     PPath dirname;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002944.html">[Plearn-commits] r9504 - trunk/plearn_learners/meta
+</A></li>
+	<LI>Next message: <A HREF="002946.html">[Plearn-commits] r9506 - trunk/commands/PLearnCommands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2945">[ date ]</a>
+              <a href="thread.html#2945">[ thread ]</a>
+              <a href="subject.html#2945">[ subject ]</a>
+              <a href="author.html#2945">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,265 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9750 - in trunk/plearn_learners: generic meta	regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9750%20-%20in%20trunk/plearn_learners%3A%20generic%20meta%0A%09regressors&In-Reply-To=%3C200812081913.mB8JDTKd030173%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003189.html">
+   <LINK REL="Next"  HREF="003190.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9750 - in trunk/plearn_learners: generic meta	regressors</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9750%20-%20in%20trunk/plearn_learners%3A%20generic%20meta%0A%09regressors&In-Reply-To=%3C200812081913.mB8JDTKd030173%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9750 - in trunk/plearn_learners: generic meta	regressors">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Dec  8 20:13:29 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003189.html">[Plearn-commits] r9749 - trunk/plearn_learners/meta
+</A></li>
+        <LI>Next message: <A HREF="003190.html">[Plearn-commits] r9751 - in trunk: commands/PLearnCommands	scripts/Skeletons
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3191">[ date ]</a>
+              <a href="thread.html#3191">[ thread ]</a>
+              <a href="subject.html#3191">[ subject ]</a>
+              <a href="author.html#3191">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-12-08 20:13:29 +0100 (Mon, 08 Dec 2008)
+New Revision: 9750
+
+Modified:
+   trunk/plearn_learners/generic/PLearner.h
+   trunk/plearn_learners/meta/AdaBoost.cc
+   trunk/plearn_learners/meta/AdaBoost.h
+   trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+   trunk/plearn_learners/meta/MultiClassAdaBoost.h
+   trunk/plearn_learners/regressors/RegressionTree.cc
+   trunk/plearn_learners/regressors/RegressionTree.h
+   trunk/plearn_learners/regressors/RegressionTreeNode.cc
+   trunk/plearn_learners/regressors/RegressionTreeNode.h
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+Log:
+added a PLearn::finalize method that can be called when a learner will never be trained again. Example in an AdaBoost learner, the weak_learner.finalize() will be called. This is usefull to same memory.
+
+
+Modified: trunk/plearn_learners/generic/PLearner.h
+===================================================================
+--- trunk/plearn_learners/generic/PLearner.h	2008-12-08 18:35:51 UTC (rev 9749)
++++ trunk/plearn_learners/generic/PLearner.h	2008-12-08 19:13:29 UTC (rev 9750)
+@@ -404,6 +404,15 @@
+     /**
+      *  *** SUBCLASS WRITING: ***
+      *
++     * When this method is called the learner know it we will never train it again.
++     * So it can free resources that are needed only during the training.
++     * The functions test()/computeOutputs()/... should continue to work.
++     */
++    virtual void finalize(){};
++
++    /**
++     *  *** SUBCLASS WRITING: ***
++     *
+      *  The role of the train method is to bring the learner up to
+      *  stage==nstages, updating the stats with training costs measured on-line
+      *  in the process.
+
+Modified: trunk/plearn_learners/meta/AdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.cc	2008-12-08 18:35:51 UTC (rev 9749)
++++ trunk/plearn_learners/meta/AdaBoost.cc	2008-12-08 19:13:29 UTC (rev 9750)
+@@ -281,6 +281,14 @@
+     return 1;
+ }
+ 
++void AdaBoost::finalize()
++{
++    for(int i=0;i&lt;weak_learners.size();i++){
++        weak_learners[i]-&gt;finalize();
++    }
++
++}
++
+ void AdaBoost::forget()
+ {
+     stage = 0;
+@@ -467,6 +475,7 @@
+             new_weak_learner-&gt;setExperimentDirectory( expdir / (&quot;WeakLearner&quot;+tostring(stage)+&quot;Expdir&quot;) );
+ 
+         new_weak_learner-&gt;train();
++        new_weak_learner-&gt;finalize();
+ 
+         // calculate its weighted training error 
+         {
+
+Modified: trunk/plearn_learners/meta/AdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.h	2008-12-08 18:35:51 UTC (rev 9749)
++++ trunk/plearn_learners/meta/AdaBoost.h	2008-12-08 19:13:29 UTC (rev 9750)
+@@ -177,6 +177,8 @@
+     //! classification, hence returns 1
+     virtual int outputsize() const;
+ 
++    virtual void finalize();
++
+     //! (Re-)initializes the PLearner in its fresh state (that state may depend on the 'seed' option)
+     //! And sets 'stage' back to 0   (this is the stage of a fresh learner!)
+     virtual void forget();
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-12-08 18:35:51 UTC (rev 9749)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-12-08 19:13:29 UTC (rev 9750)
+@@ -190,6 +190,12 @@
+     return 3;
+ }
+ 
++void MultiClassAdaBoost::finalize()
++{
++    learner1-&gt;finalize();
++    learner2-&gt;finalize();
++}
++
+ void MultiClassAdaBoost::forget()
+ {
+     //! (Re-)initialize the PLearner in its fresh state (that state may depend
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.h	2008-12-08 18:35:51 UTC (rev 9749)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.h	2008-12-08 19:13:29 UTC (rev 9750)
+@@ -103,6 +103,8 @@
+     // (PLEASE IMPLEMENT IN .cc)
+     virtual int outputsize() const;
+ 
++    virtual void finalize();
++
+     //! (Re-)initializes the PLearner in its fresh state (that state may depend
+     //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
+     //! a fresh learner!).
+
+Modified: trunk/plearn_learners/regressors/RegressionTree.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTree.cc	2008-12-08 18:35:51 UTC (rev 9749)
++++ trunk/plearn_learners/regressors/RegressionTree.cc	2008-12-08 19:13:29 UTC (rev 9750)
+@@ -272,6 +272,18 @@
+         pout &lt;&lt; the_msg &lt;&lt; endl;
+ }
+ 
++void RegressionTree::finalize()
++{
++    root-&gt;finalize();
++    priority_queue = 0;
++    split_cols = TVec&lt;int&gt;();
++    split_values = Vec();
++    leave_template = 0;
++    first_leave = 0;
++    if(sorted_train_set)
++        sorted_train_set-&gt;finalize();
++}
++
+ void RegressionTree::forget()
+ {
+     stage = 0;
+
+Modified: trunk/plearn_learners/regressors/RegressionTree.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTree.h	2008-12-08 18:35:51 UTC (rev 9749)
++++ trunk/plearn_learners/regressors/RegressionTree.h	2008-12-08 19:13:29 UTC (rev 9750)
+@@ -105,6 +105,7 @@
+     virtual void         makeDeepCopyFromShallowCopy(CopiesMap &amp;copies);
+     virtual void         build();
+     virtual void         train();
++    virtual void         finalize();
+     virtual void         forget();
+     virtual int          outputsize() const;
+     virtual TVec&lt;string&gt; getTrainCostNames() const;
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.cc	2008-12-08 18:35:51 UTC (rev 9749)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.cc	2008-12-08 19:13:29 UTC (rev 9750)
+@@ -79,6 +79,20 @@
+ {
+ }
+ 
++void RegressionTreeNode::finalize(){
++    //those variable are not needed after training.
++    right_leave = 0;
++    left_leave = 0;
++    leave = 0;
++    //missing_leave used in computeOutputsAndNodes
++    if(right_node)
++        right_node-&gt;finalize();
++    if(left_node)
++        left_node-&gt;finalize();
++    if(missing_node)
++        missing_node-&gt;finalize();
++}
++
+ void RegressionTreeNode::declareOptions(OptionList&amp; ol)
+ { 
+     declareOption(ol, &quot;missing_is_valid&quot;, &amp;RegressionTreeNode::missing_is_valid, OptionBase::buildoption,
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.h	2008-12-08 18:35:51 UTC (rev 9749)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.h	2008-12-08 19:13:29 UTC (rev 9750)
+@@ -100,6 +100,7 @@
+     static  void         declareOptions(OptionList&amp; ol);
+     virtual void         makeDeepCopyFromShallowCopy(CopiesMap &amp;copies);
+     virtual void         build();
++    void         finalize();
+     void         initNode(PP&lt;RegressionTree&gt; tree,
+                           PP&lt;RegressionTreeLeave&gt; leave);
+     void         lookForBestSplit();
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2008-12-08 18:35:51 UTC (rev 9749)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2008-12-08 19:13:29 UTC (rev 9750)
+@@ -130,6 +130,8 @@
+     //! usefull in MultiClassAdaBoost to save memory
+     void         setTSortedRow(TMat&lt;RTR_type&gt; t){tsorted_row = t;}
+     TMat&lt;RTR_type&gt; getTSortedRow(){return tsorted_row;}
++    //to lower total memory as this is not needed anymore
++    virtual void finalize(){tsorted_row = TMat&lt;RTR_type&gt;();}
+ 
+ private:
+     void         build_();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003189.html">[Plearn-commits] r9749 - trunk/plearn_learners/meta
+</A></li>
+	<LI>Next message: <A HREF="003190.html">[Plearn-commits] r9751 - in trunk: commands/PLearnCommands	scripts/Skeletons
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3191">[ date ]</a>
+              <a href="thread.html#3191">[ thread ]</a>
+              <a href="subject.html#3191">[ subject ]</a>
+              <a href="author.html#3191">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

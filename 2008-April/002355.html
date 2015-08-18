@@ -1,0 +1,230 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8907 - trunk/plearn_learners/hyper
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8907%20-%20trunk/plearn_learners/hyper&In-Reply-To=%3C200804281603.m3SG33JX002532%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002354.html">
+   <LINK REL="Next"  HREF="002356.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8907 - trunk/plearn_learners/hyper</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8907%20-%20trunk/plearn_learners/hyper&In-Reply-To=%3C200804281603.m3SG33JX002532%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8907 - trunk/plearn_learners/hyper">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Apr 28 18:03:03 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002354.html">[Plearn-commits] r8906 - in	trunk/plearn_learners/regressors/test/RegressionTree: .	.pytest/PL_RegressionTree/expected_results/expdir	.pytest/PL_RegressionTree_MultiClass/expected_results/expdir
+</A></li>
+        <LI>Next message: <A HREF="002356.html">[Plearn-commits] r8908 - in	trunk/plearn_learners/generic/test/NNet: .	.pytest/PL_NNet_1_hidden_bug/expected_results/expdir-nnet	.pytest/PL_NNet_1_hidden_bug/expected_results/expdir-nnet/Split0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2355">[ date ]</a>
+              <a href="thread.html#2355">[ thread ]</a>
+              <a href="subject.html#2355">[ subject ]</a>
+              <a href="author.html#2355">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-04-28 18:03:03 +0200 (Mon, 28 Apr 2008)
+New Revision: 8907
+
+Modified:
+   trunk/plearn_learners/hyper/HyperLearner.cc
+   trunk/plearn_learners/hyper/HyperOptimize.cc
+   trunk/plearn_learners/hyper/HyperOptimize.h
+Log:
+Implemented HyperOptimize::auto_save_diff_time, this set a mininum amount of time between save point. Default 3h.
+
+
+Modified: trunk/plearn_learners/hyper/HyperLearner.cc
+===================================================================
+--- trunk/plearn_learners/hyper/HyperLearner.cc	2008-04-28 15:57:34 UTC (rev 8906)
++++ trunk/plearn_learners/hyper/HyperLearner.cc	2008-04-28 16:03:03 UTC (rev 8907)
+@@ -342,21 +342,21 @@
+ {
+     if(expdir.isEmpty()){
+         if(verbosity&gt;1)
+-            pout&lt;&lt;&quot;In HyperLearner::auto_load() - no expdir. Can't reload.&quot;&lt;&lt;endl;
++            PLWARNING(&quot;In HyperLearner::auto_load() - no expdir. Can't reload.&quot;);
+         return;
+     }
+     PPath f = expdir/&quot;hyper_learner_auto_save.psave&quot;;
+     bool isf=isfile(f);
+     if(stage==0 &amp;&amp; !reloading &amp;&amp; !reloaded &amp;&amp; isf){
+         if(verbosity&gt;0)
+-            pout&lt;&lt;&quot;In HyperLearner::auto_load() - reloading from file: &quot;&lt;&lt;f&lt;&lt;endl;
++            PLWARNING(&quot;In HyperLearner::auto_load() - reloading from file %s&quot;,f.c_str());
+         reloading = true;
+         PLearn::load(f,*this);
+         reloading = false;
+         reloaded = true;
+     }
+     else if(isf &amp;&amp; verbosity&gt;1)
+-        pout&lt;&lt;&quot;In HyperLearner::auto_load() - no file to reload.&quot;&lt;&lt;endl;
++        PLWARNING(&quot;In HyperLearner::auto_load() - no file to reload.&quot;);
+ 
+ }
+ 
+
+Modified: trunk/plearn_learners/hyper/HyperOptimize.cc
+===================================================================
+--- trunk/plearn_learners/hyper/HyperOptimize.cc	2008-04-28 15:57:34 UTC (rev 8906)
++++ trunk/plearn_learners/hyper/HyperOptimize.cc	2008-04-28 16:03:03 UTC (rev 8907)
+@@ -48,6 +48,7 @@
+ #include &lt;plearn/base/stringutils.h&gt;
+ #include &lt;plearn/vmat/FileVMatrix.h&gt;
+ #include &lt;plearn/vmat/MemoryVMatrix.h&gt;
++#include &lt;plearn/sys/Profiler.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -117,7 +118,8 @@
+       provide_sub_expdir(true),
+       save_best_learner(false),
+       auto_save(0),
+-      auto_save_test(0)
++      auto_save_test(0),
++      auto_save_diff_time(3*60*60)
+ { }
+ 
+ 
+@@ -169,9 +171,16 @@
+         ol, &quot;auto_save&quot;, &amp;HyperOptimize::auto_save, OptionBase::buildoption,
+         &quot;Save the hlearner and reload it if necessary.\n&quot;
+         &quot;0 mean never, 1 mean always and &gt;0 save iff trialnum%auto_save == 0.\n&quot;
+-        &quot;In the last case, it save after the last trial.\n&quot;);
++        &quot;In the last case, it save after the last trial.\n&quot;
++        &quot;See auto_save_diff_time as both condition must be true to save.\n&quot;);
+ 
+     declareOption(
++        ol, &quot;auto_save_diff_time&quot;, &amp;HyperOptimize::auto_save_diff_time,
++        OptionBase::buildoption,
++        &quot;HyperOptimize::auto_save_diff_time is the mininum amount of time before the\n&quot;
++        &quot; first save point and between two save point in second. Default 3h.&quot;);
++
++    declareOption(
+         ol, &quot;auto_save_test&quot;, &amp;HyperOptimize::auto_save_test, OptionBase::buildoption,
+         &quot;exit after each auto_save. This is usefull to test auto_save.\n&quot;
+         &quot;0 mean never, 1 mean always and &gt;0 save iff trialnum%auto_save == 0&quot;);
+@@ -203,6 +212,10 @@
+     declareOption(ol, &quot;option_vals&quot;, &amp;HyperOptimize::option_vals,
+                   OptionBase::learntoption,&quot;The option value to try.&quot; );
+ 
++//     declareOption(ol, &quot;auto_save_timer&quot;, &amp;HyperOptimize::auto_save_timer,
++//                   OptionBase::learntoption|OptionBase::nosave,
++//                   &quot;The last time a save was done.&quot; );
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -216,6 +229,8 @@
+     // ###  - Building of a &quot;reloaded&quot; object: i.e. from the complete set of all serialised options.
+     // ###  - Updating or &quot;re-building&quot; of an object after a few &quot;tuning&quot; options have been modified.
+     // ### You should assume that the parent class' build_() has already been called.
++
++    auto_save_timer.activate();
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+@@ -356,6 +371,8 @@
+     Vec results;
+     while(option_vals)
+     {
++        auto_save_timer.start(&quot;auto_save&quot;);
++
+         if(verbosity&gt;0)
+             perr &lt;&lt; &quot;In HyperOptimize::optimize() - We optimize with &quot;
+                 &quot;parameters &quot; &lt;&lt; option_names &lt;&lt; &quot; with value &quot; &lt;&lt; option_vals
+@@ -411,12 +428,20 @@
+             }
+         }
+         ++trialnum;
+-        if(auto_save&gt;0 &amp;&amp;
+-           (trialnum%auto_save==0 || !option_vals) ){
+-            hlearner-&gt;auto_save();
+-            if(auto_save_test&gt;0 &amp;&amp; trialnum%auto_save_test==0)
+-                PLERROR(&quot;In HyperOptimize::optimize() - auto_save_test is true,&quot;
+-                        &quot; exiting&quot;);
++
++        auto_save_timer.end(&quot;auto_save&quot;);
++        if(auto_save&gt;0){
++            if(trialnum%auto_save!=0 &amp;&amp; option_vals)
++                continue;
++            int s=auto_save_timer.getStats(&quot;auto_save&quot;).wall_duration;
++            s/=auto_save_timer.ticksPerSecond();
++            if(s&gt;auto_save_diff_time|| ! option_vals){
++                hlearner-&gt;auto_save();
++                auto_save_timer.reset(&quot;auto_save&quot;);
++                if(auto_save_test&gt;0 &amp;&amp; trialnum%auto_save_test==0)
++                    PLERROR(&quot;In HyperOptimize::optimize() - auto_save_test is true,&quot;
++                            &quot; exiting&quot;);
++            }
+         }
+     }
+ 
+
+Modified: trunk/plearn_learners/hyper/HyperOptimize.h
+===================================================================
+--- trunk/plearn_learners/hyper/HyperOptimize.h	2008-04-28 15:57:34 UTC (rev 8906)
++++ trunk/plearn_learners/hyper/HyperOptimize.h	2008-04-28 16:03:03 UTC (rev 8907)
+@@ -50,7 +50,7 @@
+ 
+ namespace PLearn {
+ using namespace std;
+-
++class Profiler;
+ /**
+  *  Carry out an hyper-parameter optimization according to an Oracle
+  *
+@@ -113,6 +113,7 @@
+     PP&lt;PLearner&gt; best_learner;
+     int trialnum;
+     TVec&lt;string&gt; option_vals;
++    Profiler auto_save_timer;
+ 
+ public:
+ 
+@@ -135,6 +136,7 @@
+     bool save_best_learner;
+     int auto_save;
+     int auto_save_test;
++    int auto_save_diff_time;
+     PP&lt;Splitter&gt; splitter;  // (if not specified, use default splitter specified in PTester)
+ 
+     // ****************
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002354.html">[Plearn-commits] r8906 - in	trunk/plearn_learners/regressors/test/RegressionTree: .	.pytest/PL_RegressionTree/expected_results/expdir	.pytest/PL_RegressionTree_MultiClass/expected_results/expdir
+</A></li>
+	<LI>Next message: <A HREF="002356.html">[Plearn-commits] r8908 - in	trunk/plearn_learners/generic/test/NNet: .	.pytest/PL_NNet_1_hidden_bug/expected_results/expdir-nnet	.pytest/PL_NNet_1_hidden_bug/expected_results/expdir-nnet/Split0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2355">[ date ]</a>
+              <a href="thread.html#2355">[ thread ]</a>
+              <a href="subject.html#2355">[ subject ]</a>
+              <a href="author.html#2355">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

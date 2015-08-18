@@ -1,0 +1,204 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9589 - trunk/plearn_learners/meta
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9589%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200810211447.m9LElBDj008119%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003028.html">
+   <LINK REL="Next"  HREF="003030.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9589 - trunk/plearn_learners/meta</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9589%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200810211447.m9LElBDj008119%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9589 - trunk/plearn_learners/meta">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Oct 21 16:47:11 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003028.html">[Plearn-commits] r9588 - in	trunk/plearn_learners/meta/test/AdaBoost: .	.pytest/AdaBoost_base/expected_results/expdir	.pytest/AdaBoost_conf_rated_adaboost/expected_results/expdir	.pytest/AdaBoost_pseudo_loss_adaboost/expected_results/expdir
+</A></li>
+        <LI>Next message: <A HREF="003030.html">[Plearn-commits] r9590 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3029">[ date ]</a>
+              <a href="thread.html#3029">[ thread ]</a>
+              <a href="subject.html#3029">[ subject ]</a>
+              <a href="author.html#3029">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-10-21 16:47:11 +0200 (Tue, 21 Oct 2008)
+New Revision: 9589
+
+Modified:
+   trunk/plearn_learners/meta/AdaBoost.cc
+   trunk/plearn_learners/meta/AdaBoost.h
+Log:
+Added the fct AdaBoost::computeOutputAndCosts as an uptimization
+
+
+Modified: trunk/plearn_learners/meta/AdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.cc	2008-10-21 14:29:24 UTC (rev 9588)
++++ trunk/plearn_learners/meta/AdaBoost.cc	2008-10-21 14:47:11 UTC (rev 9589)
+@@ -690,7 +690,7 @@
+ {
+     PLASSERT(weak_learners.size()&gt;0);
+     PLASSERT(weak_learner_output.size()==weak_learner_template-&gt;outputsize());
+-    PLASSERT(output.size()==1);
++    PLASSERT(output.size()==outputsize());
+     real sum_out=0;
+     if(!pseudo_loss_adaboost &amp;&amp; !conf_rated_adaboost)
+         for (int i=0;i&lt;weak_learners.size();i++){
+@@ -742,6 +742,9 @@
+         costs[3]=costs[4]=MISSING_VALUE;
+ 
+     if(forward_sub_learner_test_costs){
++        //slow as we already have calculated the output
++        //we should haved called computeOutputAndCosts.
++        PLWARNING(&quot;AdaBoost::computeCostsFromOutputs called with forward_sub_learner_test_costs true. This should be optimized!&quot;);
+         weighted_costs.resize(weak_learner_template-&gt;nTestCosts());
+         sum_weighted_costs.resize(weak_learner_template-&gt;nTestCosts());
+         sum_weighted_costs.clear();
+@@ -756,6 +759,93 @@
+     PLASSERT(costs.size()==nTrainCosts()||costs.size()==nTestCosts());
+ }
+ 
++void AdaBoost::computeOutputAndCosts(const Vec&amp; input, const Vec&amp; target,
++                                     Vec&amp; output, Vec&amp; costs) const
++{
++    PLASSERT(weak_learners.size()&gt;0);
++    PLASSERT(weak_learner_output.size()==weak_learner_template-&gt;outputsize());
++    PLASSERT(output.size()==outputsize());
++    real sum_out=0;
++    
++    if(forward_sub_learner_test_costs){
++        weighted_costs.resize(weak_learner_template-&gt;nTestCosts());
++        sum_weighted_costs.resize(weak_learner_template-&gt;nTestCosts());
++        sum_weighted_costs.clear();
++        if(!pseudo_loss_adaboost &amp;&amp; !conf_rated_adaboost){
++            for (int i=0;i&lt;weak_learners.size();i++){
++                weak_learners[i]-&gt;computeOutputAndCosts(input,target,
++                                                        weak_learner_output,
++                                                        weighted_costs);
++                sum_out += (weak_learner_output[0] &lt; output_threshold ? 0 : 1) 
++                    *voting_weights[i];
++                weighted_costs*=voting_weights[i];
++                sum_weighted_costs+=weighted_costs;
++            }
++        }else{
++            for (int i=0;i&lt;weak_learners.size();i++){
++                weak_learners[i]-&gt;computeOutputAndCosts(input,target,
++                                                        weak_learner_output,
++                                                        weighted_costs);
++                sum_out += weak_learner_output[0]*voting_weights[i];
++                weighted_costs*=voting_weights[i];
++                sum_weighted_costs+=weighted_costs;
++            }
++        }
++    }else{
++        if(!pseudo_loss_adaboost &amp;&amp; !conf_rated_adaboost)
++            for (int i=0;i&lt;weak_learners.size();i++){
++                weak_learners[i]-&gt;computeOutput(input,weak_learner_output);
++                sum_out += (weak_learner_output[0] &lt; output_threshold ? 0 : 1) 
++                    *voting_weights[i];
++            }
++        else
++            for (int i=0;i&lt;weak_learners.size();i++){
++                weak_learners[i]-&gt;computeOutput(input,weak_learner_output);
++                sum_out += weak_learner_output[0]*voting_weights[i];
++            }
++    }
++
++    output[0] = sum_out/sum_voting_weights;
++
++    //when computing train stats, costs==nTrainCosts() 
++    //  and forward_sub_learner_test_costs==false
++    if(forward_sub_learner_test_costs)
++        PLASSERT(costs.size()==nTestCosts());
++    else
++        PLASSERT(costs.size()==nTrainCosts()||costs.size()==nTestCosts());
++    costs.resize(5);
++    costs.clear();
++
++    // First cost is negative log-likelihood...  output[0] is the likelihood
++    // of the first class
++    if (target.size() &gt; 1)
++        PLERROR(&quot;AdaBoost::computeCostsFromOutputs: target must contain &quot;
++                &quot;one element only: the 0/1 class&quot;);
++    if (fast_exact_is_equal(target[0], 0)) {
++        costs[0] = output[0] &gt;= output_threshold; 
++    }
++    else if (fast_exact_is_equal(target[0], 1)) {
++        costs[0] = output[0] &lt; output_threshold; 
++    }
++    else PLERROR(&quot;AdaBoost::computeCostsFromOutputs: target must be &quot;
++                 &quot;either 0 or 1; current target=%f&quot;, target[0]);
++    costs[1] = exp(-1.0*sum_voting_weights*(2*output[0]-1)*(2*target[0]-1));
++    costs[2] = costs[0];
++    if(train_stats){
++        costs[3] = train_stats-&gt;getStat(&quot;E[avg_weight_class_0]&quot;);
++        costs[4] = train_stats-&gt;getStat(&quot;E[avg_weight_class_1]&quot;);
++    }
++    else
++        costs[3]=costs[4]=MISSING_VALUE;
++
++    if(forward_sub_learner_test_costs){
++        costs.append(sum_weighted_costs);
++    }
++
++    PLASSERT(costs.size()==nTrainCosts()||costs.size()==nTestCosts());
++}
++
++
+ TVec&lt;string&gt; AdaBoost::getTestCostNames() const
+ {
+     TVec&lt;string&gt; costs=getTrainCostNames();
+
+Modified: trunk/plearn_learners/meta/AdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.h	2008-10-21 14:29:24 UTC (rev 9588)
++++ trunk/plearn_learners/meta/AdaBoost.h	2008-10-21 14:47:11 UTC (rev 9589)
+@@ -189,6 +189,8 @@
+ 
+     //! Computes the output from the input
+     virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
++    virtual void computeOutputAndCosts(const Vec&amp; input, const Vec&amp; target,
++                                       Vec&amp; output, Vec&amp; costs) const;
+ 
+     //! Computes the costs from already computed output. 
+     virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output, 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003028.html">[Plearn-commits] r9588 - in	trunk/plearn_learners/meta/test/AdaBoost: .	.pytest/AdaBoost_base/expected_results/expdir	.pytest/AdaBoost_conf_rated_adaboost/expected_results/expdir	.pytest/AdaBoost_pseudo_loss_adaboost/expected_results/expdir
+</A></li>
+	<LI>Next message: <A HREF="003030.html">[Plearn-commits] r9590 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3029">[ date ]</a>
+              <a href="thread.html#3029">[ thread ]</a>
+              <a href="subject.html#3029">[ subject ]</a>
+              <a href="author.html#3029">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

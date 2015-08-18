@@ -1,0 +1,187 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10193 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10193%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200905072119.n47LJlEF025324%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003632.html">
+   <LINK REL="Next"  HREF="003634.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10193 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10193%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200905072119.n47LJlEF025324%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10193 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Thu May  7 23:19:47 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003632.html">[Plearn-commits] r10192 - trunk/python_modules/plearn/pymake
+</A></li>
+        <LI>Next message: <A HREF="003634.html">[Plearn-commits] r10194 - in trunk: plearn/io plearn_learners/hyper	plearn_learners/testers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3633">[ date ]</a>
+              <a href="thread.html#3633">[ thread ]</a>
+              <a href="subject.html#3633">[ subject ]</a>
+              <a href="author.html#3633">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2009-05-07 23:19:46 +0200 (Thu, 07 May 2009)
+New Revision: 10193
+
+Modified:
+   trunk/plearn_learners/online/CrossEntropyCostModule.cc
+   trunk/plearn_learners/online/CrossEntropyCostModule.h
+   trunk/plearn_learners/online/SquaredErrorCostModule.cc
+Log:
+Add standard (non-port) version of backprop to CrossEntropyCostModule.
+
+
+Modified: trunk/plearn_learners/online/CrossEntropyCostModule.cc
+===================================================================
+--- trunk/plearn_learners/online/CrossEntropyCostModule.cc	2009-05-07 19:18:23 UTC (rev 10192)
++++ trunk/plearn_learners/online/CrossEntropyCostModule.cc	2009-05-07 21:19:46 UTC (rev 10193)
+@@ -110,7 +110,6 @@
+             //                         = -log(1+exp(x)) = -softplus(x)
+             cost += (1-target_i) * softplus(-activation_i);
+     }
+-
+ }
+ 
+ void CrossEntropyCostModule::fprop(const Vec&amp; input, const Vec&amp; target, Vec&amp; cost) const
+@@ -128,6 +127,59 @@
+ 
+ }
+ 
++
++
++/////////////////
++// bpropUpdate //
++/////////////////
++void CrossEntropyCostModule::bpropUpdate(const Vec&amp; input, const Vec&amp; target,
++                                         real cost, Vec&amp; input_gradient,
++                                         bool accumulate)
++{
++    PLASSERT( input.size() == input_size );
++    PLASSERT( target.size() == target_size );
++
++    if (accumulate)
++    {
++        PLASSERT_MSG( input_gradient.size() == input_size,
++                      &quot;Cannot resize input_gradient AND accumulate into it&quot; );
++    }
++    else
++    {
++        input_gradient.resize(input_size);
++        input_gradient.clear();
++    }
++
++    for (int i=0; i &lt; target_size; i++)
++        input_gradient[i] += target[i] - sigmoid(-input[i]);
++}
++
++void CrossEntropyCostModule::bpropUpdate(const Mat&amp; inputs, const Mat&amp; targets,
++                                         const Vec&amp; costs,
++                                         Mat&amp; input_gradients, bool accumulate)
++{
++    PLASSERT( inputs.width() == input_size );
++    PLASSERT( targets.width() == target_size );
++
++    int batch_size = inputs.length();
++
++    if (accumulate)
++    {
++        PLASSERT_MSG( input_gradients.width() == input_size &amp;&amp;
++                      input_gradients.length() == batch_size,
++                      &quot;Cannot resize input_gradients AND accumulate into it&quot; );
++    }
++    else
++    {
++        input_gradients.resize(batch_size, input_size);
++        input_gradients.clear();
++    }
++
++    for (int i=0; i &lt; batch_size; i++)
++        for (int j=0; j &lt; target_size; j++)
++            input_gradients(i, j) += targets(i, j) - sigmoid(-inputs(i, j));
++}
++
+ void CrossEntropyCostModule::bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
+                                    const TVec&lt;Mat*&gt;&amp; ports_gradient)
+ {
+
+Modified: trunk/plearn_learners/online/CrossEntropyCostModule.h
+===================================================================
+--- trunk/plearn_learners/online/CrossEntropyCostModule.h	2009-05-07 19:18:23 UTC (rev 10192)
++++ trunk/plearn_learners/online/CrossEntropyCostModule.h	2009-05-07 21:19:46 UTC (rev 10193)
+@@ -68,6 +68,15 @@
+     virtual void fprop(const Vec&amp; input, const Vec&amp; target, Vec&amp; cost) const;
+     virtual void fprop(const Mat&amp; input, const Mat&amp; target, Mat&amp; cost) const;
+ 
++    //! Standard backpropagation
++    virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost,
++                             Vec&amp; input_gradient, bool accumulate=false);
++
++    //! Minibatch backpropagation
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; targets,
++                             const Vec&amp; costs, Mat&amp; input_gradients,
++                             bool accumulate=false);
++
+     //! New version of backpropagation
+     virtual void bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
+                                 const TVec&lt;Mat*&gt;&amp; ports_gradient);
+
+Modified: trunk/plearn_learners/online/SquaredErrorCostModule.cc
+===================================================================
+--- trunk/plearn_learners/online/SquaredErrorCostModule.cc	2009-05-07 19:18:23 UTC (rev 10192)
++++ trunk/plearn_learners/online/SquaredErrorCostModule.cc	2009-05-07 21:19:46 UTC (rev 10193)
+@@ -160,12 +160,12 @@
+     {
+         PLASSERT_MSG( input_gradients.width() == input_size &amp;&amp;
+                       input_gradients.length() == inputs.length(),
+-                      &quot;Cannot resize input_gradient AND accumulate into it&quot; );
++                      &quot;Cannot resize input_gradients AND accumulate into it&quot; );
+     }
+     else
+     {
+         input_gradients.resize( inputs.length(), input_size );
+-        input_gradients.fill(0);
++        input_gradients.clear();
+     }
+ 
+     // input_gradient = 2*(input - target)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003632.html">[Plearn-commits] r10192 - trunk/python_modules/plearn/pymake
+</A></li>
+	<LI>Next message: <A HREF="003634.html">[Plearn-commits] r10194 - in trunk: plearn/io plearn_learners/hyper	plearn_learners/testers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3633">[ date ]</a>
+              <a href="thread.html#3633">[ thread ]</a>
+              <a href="subject.html#3633">[ subject ]</a>
+              <a href="author.html#3633">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

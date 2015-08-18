@@ -1,0 +1,188 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8038 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8038%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200708301948.l7UJmYBn019530%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001485.html">
+   <LINK REL="Next"  HREF="001487.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8038 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8038%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200708301948.l7UJmYBn019530%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8038 - trunk/plearn_learners/generic/EXPERIMENTAL">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Thu Aug 30 21:48:34 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001485.html">[Plearn-commits] r8037 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="001487.html">[Plearn-commits] r8039 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1486">[ date ]</a>
+              <a href="thread.html#1486">[ thread ]</a>
+              <a href="subject.html#1486">[ subject ]</a>
+              <a href="author.html#1486">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-08-30 21:48:34 +0200 (Thu, 30 Aug 2007)
+New Revision: 8038
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h
+Log:
+- Improved splitting of samples between each CPU: now the difference between the number of samples seen by two CPUs is at most 1
+- Fixed problem where the last few samples would not always be seen
+- Fixed the computation of the number of stages being actually performed
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc	2007-08-30 18:20:09 UTC (rev 8037)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc	2007-08-30 19:48:34 UTC (rev 8038)
+@@ -686,6 +686,9 @@
+     params_update.fill(0);
+ }
+ 
++///////////
++// train //
++///////////
+ void NatGradSMPNNet::train()
+ {
+ 
+@@ -770,12 +773,29 @@
+         }
+ 
+     // Each processor computes gradient over its own subset of samples (between
+-    // indices 'start' and 'end' in the training set).
+-    int start = (nsamples / ncpus) * iam;
+-    int end = iam == ncpus - 1 ? nsamples
+-                               : (nsamples / ncpus) * (iam + 1);
+-    int my_n_samples = end - start;
++    // indices 'start' and 'start + my_n_samples' in the training set).
++    int n_left = nsamples % ncpus;
++    int n_per_cpu = nsamples / ncpus;
++    int start, my_n_samples;
++    if (iam &lt; n_left) {
++        // This CPU is given one extra training sample to compensate for the
++        // fact that the number of samples is not an exact multiple of the
++        // number of CPUs.
++        start = (n_per_cpu + 1) * iam;
++        my_n_samples = n_per_cpu + 1;
++    } else {
++        start = (n_per_cpu + 1) * n_left + n_per_cpu * (iam - n_left);
++        my_n_samples = n_per_cpu;
++    }
++    if (iam == 0)
++        PLASSERT_MSG( start == 0, &quot;First CPU must start at first sample&quot; );
++    if (iam == ncpus - 1)
++        PLASSERT_MSG( start + my_n_samples == nsamples,
++                      &quot;Last CPU must start at last sample&quot; );
+ 
++    // The total number of examples that must be seen is given by 'stage_incr',
++    // computed as 'nstages - stage'. Each CPU is responsible for going through
++    // a fraction of 'stage_incr', denoted by 'my_stage_incr'.
+     int stage_incr = nstages - stage;
+     int stage_incr_per_cpu = stage_incr / ncpus;
+     int stage_incr_left = stage_incr % ncpus;
+@@ -791,14 +811,17 @@
+         //Profiler::pl_profile_start(&quot;getting_data&quot;);
+         train_set-&gt;getExample(sample, input, target, example_weights[b]);
+         //Profiler::pl_profile_end(&quot;getting_data&quot;);
+-        if (b+1==minibatch_size) // do also special end-case || stage+1==nstages)
++        if (b == minibatch_size - 1 || i == my_stage_incr - 1 )
+         {
+             // Read the current stage value (will be used to compute the
+             // current learning rate).
+             int cur_stage = params_int_ptr[stage_idx];
+             PLASSERT( cur_stage &gt;= 0 );
++            // Note that we should actually call onlineStep only on the subset
++            // of samples that are new (compared to the previous mini-batch).
++            // This is left as a TODO since it is not a priority.
+             onlineStep(cur_stage, targets, train_costs, example_weights );
+-            nsteps++;
++            nsteps += b + 1;
+             /*
+             for (int i=0;i&lt;minibatch_size;i++)
+             {
+@@ -817,7 +840,7 @@
+                 // Update the current stage.
+                 cur_stage = params_int_ptr[stage_idx];
+                 PLASSERT( cur_stage &gt;= 0 );
+-                int new_stage = cur_stage + nsteps * minibatch_size;
++                int new_stage = cur_stage + nsteps;
+                 params_int_ptr[stage_idx] = new_stage;
+                 // Give update token to next CPU.
+                 sem_value = (sem_value + 1) % ncpus;
+@@ -859,6 +882,9 @@
+                 all_params += params_update;
+                 params_update.clear();
+             }
++            // Note that the line below is not safe: if two CPUs are running it
++            // at the same time, the number of stages may not be correct.
++            params_int_ptr[stage_idx] += nsteps;
+             nsteps = 0;
+         }
+         // Indicate this CPU is done.
+@@ -885,6 +911,7 @@
+                         all_params += params_update;
+                         params_update.clear();
+                     }
++                    params_int_ptr[stage_idx] += nsteps;
+                     nsteps = 0;
+                 }
+                 // Indicate this CPU is done.
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h	2007-08-30 18:20:09 UTC (rev 8037)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h	2007-08-30 19:48:34 UTC (rev 8038)
+@@ -334,7 +334,10 @@
+     int* params_int_ptr;    // Raw pointer to the (shared) integer parameters.
+     int params_int_id;      // Shared memory id for integer parameters.
+ 
+-    //! Number of online steps performed since the last global parameter update.
++    //! Number of samples seen since the last global parameter update. Note
++    //! that usually this is a multiple of 'minibatch_size', but this may
++    //! not be the case at the end of training, when the total number of
++    //! samples that must be seen is not a multiple of 'minibatch_size'.
+     int nsteps;
+ 
+     //! Semaphore used to control which CPU must perform an update.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001485.html">[Plearn-commits] r8037 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="001487.html">[Plearn-commits] r8039 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1486">[ date ]</a>
+              <a href="thread.html#1486">[ thread ]</a>
+              <a href="subject.html#1486">[ subject ]</a>
+              <a href="author.html#1486">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

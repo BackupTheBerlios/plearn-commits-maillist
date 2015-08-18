@@ -1,0 +1,1737 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6875 - trunk/plearn/ker
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6875%20-%20trunk/plearn/ker&In-Reply-To=%3C200704111213.l3BCD7Gr020456%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000323.html">
+   <LINK REL="Next"  HREF="000325.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6875 - trunk/plearn/ker</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6875%20-%20trunk/plearn/ker&In-Reply-To=%3C200704111213.l3BCD7Gr020456%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6875 - trunk/plearn/ker">chapados at mail.berlios.de
+       </A><BR>
+    <I>Wed Apr 11 14:13:07 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000323.html">[Plearn-commits] r6874 - trunk/scripts
+</A></li>
+        <LI>Next message: <A HREF="000325.html">[Plearn-commits] r6876 - trunk/plearn/ker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#324">[ date ]</a>
+              <a href="thread.html#324">[ thread ]</a>
+              <a href="subject.html#324">[ subject ]</a>
+              <a href="author.html#324">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2007-04-11 14:13:05 +0200 (Wed, 11 Apr 2007)
+New Revision: 6875
+
+Added:
+   trunk/plearn/ker/KroneckerBaseKernel.cc
+   trunk/plearn/ker/KroneckerBaseKernel.h
+Modified:
+   trunk/plearn/ker/ARDBaseKernel.cc
+   trunk/plearn/ker/ARDBaseKernel.h
+   trunk/plearn/ker/IIDNoiseKernel.cc
+   trunk/plearn/ker/IIDNoiseKernel.h
+   trunk/plearn/ker/RationalQuadraticARDKernel.cc
+   trunk/plearn/ker/RationalQuadraticARDKernel.h
+   trunk/plearn/ker/SquaredExponentialARDKernel.cc
+   trunk/plearn/ker/SquaredExponentialARDKernel.h
+   trunk/plearn/ker/SummationKernel.cc
+   trunk/plearn/ker/SummationKernel.h
+Log:
+* Complete rewrite of kernels for gaussian processes
+
+* SummationKernel is now very efficient
+
+* RationalQuadratic and SquareExponential no longer add noise part: must use
+  an explicit SummationKernel along with an IIDNoiseKernel term
+
+* Kronecker deltas can be multiplied in front of any kernel term, allowing
+  gating the presence of a term on (a product of) equality constraint(s)
+  in the input variables
+
+* Analytic derivatives implemented for SquaredExponentialARDKernel
+
+* All code has been tested and works, but pytest test-cases remain to be added
+
+
+
+Modified: trunk/plearn/ker/ARDBaseKernel.cc
+===================================================================
+--- trunk/plearn/ker/ARDBaseKernel.cc	2007-04-11 11:34:01 UTC (rev 6874)
++++ trunk/plearn/ker/ARDBaseKernel.cc	2007-04-11 12:13:05 UTC (rev 6875)
+@@ -2,7 +2,7 @@
+ 
+ // ARDBaseKernel.cc
+ //
+-// Copyright (C) 2006 Nicolas Chapados
++// Copyright (C) 2006-2007 Nicolas Chapados
+ //
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+
+Modified: trunk/plearn/ker/ARDBaseKernel.h
+===================================================================
+--- trunk/plearn/ker/ARDBaseKernel.h	2007-04-11 11:34:01 UTC (rev 6874)
++++ trunk/plearn/ker/ARDBaseKernel.h	2007-04-11 12:13:05 UTC (rev 6875)
+@@ -2,7 +2,7 @@
+ 
+ // ARDBaseKernel.h
+ //
+-// Copyright (C) 2006 Nicolas Chapados
++// Copyright (C) 2006-2007 Nicolas Chapados
+ //
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -40,7 +40,7 @@
+ #ifndef ARDBaseKernel_INC
+ #define ARDBaseKernel_INC
+ 
+-#include &lt;plearn/ker/IIDNoiseKernel.h&gt;
++#include &lt;plearn/ker/KroneckerBaseKernel.h&gt;
+ 
+ namespace PLearn {
+ 
+@@ -55,12 +55,15 @@
+  *
+  *  Note that to make its operations more robust when used with unconstrained
+  *  optimization of hyperparameters, all hyperparameters of this kernel are
+- *  specified in the inverse softplus domain.  See IIDNoiseKernel for more
+- *  explanations.
++ *  specified in the inverse softplus domain, hence the 'isp' prefix.  This is
++ *  used in preference to the log-domain used by Rasmussen and Williams in
++ *  their implementation of gaussian processes, due to numerical stability.
++ *  (It may happen that the optimizer jumps 'too far' along one hyperparameter
++ *  and this causes the Gram matrix to become extremely ill-conditioned.)
+  */
+-class ARDBaseKernel : public IIDNoiseKernel
++class ARDBaseKernel : public KroneckerBaseKernel
+ {
+-    typedef IIDNoiseKernel inherited;
++    typedef KroneckerBaseKernel inherited;
+ 
+ public:
+     //#####  Public Build Options  ############################################
+
+Modified: trunk/plearn/ker/IIDNoiseKernel.cc
+===================================================================
+--- trunk/plearn/ker/IIDNoiseKernel.cc	2007-04-11 11:34:01 UTC (rev 6874)
++++ trunk/plearn/ker/IIDNoiseKernel.cc	2007-04-11 12:13:05 UTC (rev 6875)
+@@ -2,7 +2,7 @@
+ 
+ // IIDNoiseKernel.cc
+ //
+-// Copyright (C) 2006 Nicolas Chapados
++// Copyright (C) 2006-2007 Nicolas Chapados
+ //
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -48,36 +48,36 @@
+     &quot;Kernel representing independent and identically-distributed observation noise&quot;,
+     &quot;This Kernel is typically used as a base class for covariance functions used\n&quot;
+     &quot;in gaussian processes (see GaussianProcessRegressor).  It represents simple\n&quot;
+-    &quot;i.i.d. additive noise:\n&quot;
++    &quot;i.i.d. additive noise that applies to 'identical training cases' i and j:\n&quot;
+     &quot;\n&quot;
+-    &quot;  k(x,y) = delta_x,y * sn\n&quot;
++    &quot;  k(D_i,D_j) = delta_i,j * sn\n&quot;
+     &quot;\n&quot;
+-    &quot;where delta_x,y is the Kronecker delta function, and sn is\n&quot;
+-    &quot;softplus(isp_noise_sigma), with softplus(x) = log(1+exp(x)).\n&quot;
++    &quot;where D_i and D_j are elements from the current data set (established by\n&quot;
++    &quot;the setDataForKernelMatrix function), delta_i,j is the Kronecker delta\n&quot;
++    &quot;function, and sn is softplus(isp_noise_sigma), with softplus(x) =\n&quot;
++    &quot;log(1+exp(x)).  Note that 'identity' is not equivalent to 'vector\n&quot;
++    &quot;equality': in particular, at test-time, this noise is NEVER added.\n&quot;
++    &quot;Currently, two vectors are considered identical if and only if they are the\n&quot;
++    &quot;SAME ROW of the current data set, and hence the noise term is added only at\n&quot;
++    &quot;TRAIN-TIME across the diagonal of the Gram matrix (when the\n&quot;
++    &quot;computeGramMatrix() function is called).  This is why at test-time, no such\n&quot;
++    &quot;noise term is added.  The idea (see the book \&quot;Gaussian Processes for\n&quot;
++    &quot;Machine Learning\&quot; by Rasmussen and Williams for details) is that\n&quot;
++    &quot;observation noise only applies when A SPECIFIC OBSERVATION is drawn from\n&quot;
++    &quot;the GP distribution: if we sample a new point at the same x, we will get a\n&quot;
++    &quot;different realization for the noise, and hence the correlation between the\n&quot;
++    &quot;two noise realizations is zero.  This class can only be sure that two\n&quot;
++    &quot;observations are \&quot;identical\&quot; when they are presented all at once through\n&quot;
++    &quot;the data matrix.\n&quot;
+     &quot;\n&quot;
+-    &quot;In addition to comparing the complete x and y vectors, this kernel allows\n&quot;
+-    &quot;adding a Kronecker delta when there is a match in only ONE DIMENSION.  This\n&quot;
+-    &quot;may be generalized in the future to allow match according to a subset of\n&quot;
+-    &quot;the input variables (but is not currently done for performance reasons).\n&quot;
+-    &quot;With these terms, the kernel function takes the form:\n&quot;
+-    &quot;\n&quot;
+-    &quot;  k(x,y) = delta_x,y * sn + \\sum_i delta_x[kr(i)],y[kr(i)] * ks[i]\n&quot;
+-    &quot;\n&quot;
+-    &quot;where kr(i) is the i-th element of 'kronecker_indexes' (representing an\n&quot;
+-    &quot;index into the input vectors), and ks[i]=softplus(isp_kronecker_sigma[i]).\n&quot;
+-    &quot;\n&quot;
+-    &quot;Note that to make its operations more robust when used with unconstrained\n&quot;
+-    &quot;optimization of hyperparameters, all hyperparameters of this kernel are\n&quot;
+-    &quot;specified in the inverse softplus domain, hence the 'isp' prefix.  This is\n&quot;
+-    &quot;used in preference to the log-domain used by Rasmussen and Williams in\n&quot;
+-    &quot;their implementation of gaussian processes, due to numerical stability.\n&quot;
+-    &quot;(It may happen that the optimizer jumps 'too far' along one hyperparameter\n&quot;
+-    &quot;and this causes the Gram matrix to become extremely ill-conditioned.)\n&quot;
++    &quot;The Kronecker terms computed by the base class are ADDDED to the noise\n&quot;
++    &quot;computed by this kernel (at test-time also).\n&quot;
+     );
+ 
+ 
+ IIDNoiseKernel::IIDNoiseKernel()
+-    : m_isp_noise_sigma(0.0)
++    : m_isp_noise_sigma(-100.0), /* very close to zero... */
++      m_isp_kronecker_sigma(100.0)
+ { }
+ 
+ 
+@@ -88,19 +88,14 @@
+     declareOption(
+         ol, &quot;isp_noise_sigma&quot;, &amp;IIDNoiseKernel::m_isp_noise_sigma,
+         OptionBase::buildoption,
+-        &quot;Inverse softplus of the global noise variance.  Default value=0.0&quot;);
++        &quot;Inverse softplus of the global noise variance.  Default value=-100.0\n&quot;
++        &quot;(very close to zero after we take softplus).&quot;);
+ 
+     declareOption(
+-        ol, &quot;kronecker_indexes&quot;, &amp;IIDNoiseKernel::m_kronecker_indexes,
+-        OptionBase::buildoption,
+-        &quot;Element index in the input vectors that should be subject to additional\n&quot;
+-        &quot;Kronecker delta terms&quot;);
+-
+-    declareOption(
+         ol, &quot;isp_kronecker_sigma&quot;, &amp;IIDNoiseKernel::m_isp_kronecker_sigma,
+         OptionBase::buildoption,
+-        &quot;Inverse softplus of the noise variance terms for the Kronecker deltas\n&quot;
+-        &quot;associated with kronecker_indexes&quot;);
++        &quot;Inverse softplus of the noise variance term for the product of\n&quot;
++        &quot;Kronecker deltas associated with kronecker_indexes, if specified.&quot;);
+     
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+@@ -120,32 +115,14 @@
+ //#####  build_  ##############################################################
+ 
+ void IIDNoiseKernel::build_()
+-{
+-    if (m_kronecker_indexes.size() != m_isp_kronecker_sigma.size())
+-        PLERROR(&quot;IIDNoiseKernel::build_: size of 'kronecker_indexes' (%d) &quot;
+-                &quot;does not match that of 'isp_kronecker_sigma' (%d)&quot;,
+-                m_kronecker_indexes.size(), m_isp_kronecker_sigma.size());
+-}
++{ }
+ 
+ 
+ //#####  evaluate  ############################################################
+ 
+ real IIDNoiseKernel::evaluate(const Vec&amp; x1, const Vec&amp; x2) const
+ {
+-    real value = 0.0;
+-    // if (x1 == x2)
+-    //     value += softplus(m_isp_noise_sigma);
+-
+-    const int n = m_kronecker_indexes.size();
+-    if (n &gt; 0) {
+-        int*  cur_index = m_kronecker_indexes.data();
+-        real* cur_sigma = m_isp_kronecker_sigma.data();
+-
+-        for (int i=0 ; i&lt;n ; ++i, ++cur_index, ++cur_sigma)
+-            if (fast_is_equal(x1[*cur_index], x2[*cur_index]))
+-                value += softplus(*cur_sigma);
+-    }
+-    return value;
++    return softplus(m_isp_kronecker_sigma) * inherited::evaluate(x1,x2);
+ }
+ 
+ 
+@@ -162,55 +139,26 @@
+                 &quot;of size %d x %d (currently of size %d x %d)&quot;,
+                 data.length(), data.length(), K.length(), K.width());
+                 
+-    PLASSERT( K.size() == 0 || m_data_cache.size() &gt; 0 );  // Ensure data cached OK
+-
+-    // Precompute some terms
+-    real noise_sigma  = softplus(m_isp_noise_sigma);
+-    m_kronecker_sigma.resize(m_isp_kronecker_sigma.size());
+-    for (int i=0, n=m_isp_kronecker_sigma.size() ; i&lt;n ; ++i)
+-        m_kronecker_sigma[i] = softplus(m_isp_kronecker_sigma[i]);
+-
+-    // Prepare kronecker iteration
+-    int   kronecker_num     = m_kronecker_indexes.size();
+-    int*  kronecker_indexes = ( kronecker_num &gt; 0?
+-                                m_kronecker_indexes.data() : 0 );
+-    real* kronecker_sigma   = ( kronecker_num &gt; 0?
+-                                m_kronecker_sigma.data() : 0 );
+-
+-    // Compute Gram Matrix
+-    int  l = data-&gt;length();
+-    int  m = K.mod();
+-    int  cache_mod = m_data_cache.mod();
+-
+-    real *data_start = &amp;m_data_cache(0,0);
+-    real Kij;
+-    real *Ki, *Kji;
+-    real *xi = data_start;
++    // Compute Kronecker gram matrix. Multiply by kronecker sigma if there were
++    // any Kronecker terms.
++    inherited::computeGramMatrix(K);
++    if (m_kronecker_indexes.size() &gt; 0)
++        K *= softplus(m_isp_kronecker_sigma);
+     
+-    for (int i=0 ; i&lt;l ; ++i, xi += cache_mod) {
+-        Ki  = K[i];
+-        Kji = &amp;K[0][i];
+-        real *xj = data_start;
++    // Add iid noise contribution
++    real noise_sigma = softplus(m_isp_noise_sigma);
++    int  l   = data-&gt;length();
++    int  m   = K.mod() + 1;               // Mind the +1 to go along diagonal
++    real *Ki = K[0];
++    
++    for (int i=0 ; i&lt;l ; ++i, Ki += m) {
++        *Ki += noise_sigma;
++    }
+ 
+-        for (int j=0; j&lt;=i; ++j, Kji += m, xj += cache_mod) {
+-            // Kernel evaluation per se
+-            if (i == j)
+-                Kij = noise_sigma;
+-            else
+-                Kij = 0.0;
+-
+-            // Kronecker terms
+-            if (kronecker_num &gt; 0) {
+-                int*  cur_index = kronecker_indexes;
+-                real* cur_sigma = kronecker_sigma;
+-                
+-                for (int k=0 ; k&lt;kronecker_num ; ++k, ++cur_index, ++cur_sigma)
+-                    if (fast_is_equal(xi[*cur_index], xj[*cur_index]))
+-                        Kij += *cur_sigma;
+-            }
+-            
+-            *Ki++ = Kij;
+-        }
++    if (cache_gram_matrix) {
++        gram_matrix.resize(l,l);
++        gram_matrix &lt;&lt; K;
++        gram_matrix_is_cached = true;
+     }
+ }
+ 
+@@ -220,10 +168,6 @@
+ void IIDNoiseKernel::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+-
+-    deepCopyField(m_kronecker_indexes,   copies);
+-    deepCopyField(m_isp_kronecker_sigma, copies);
+-    deepCopyField(m_kronecker_sigma,     copies);
+ }
+ 
+ 
+@@ -233,17 +177,13 @@
+                                                  real epsilon) const
+ {
+     static const string INS(&quot;isp_noise_sigma&quot;);
+-    static const string IKS(&quot;isp_kronecker_sigma[&quot;);
++    static const string IKS(&quot;isp_kronecker_sigma&quot;);
+ 
+     if (kernel_param == INS) {
+         if (!data)
+             PLERROR(&quot;Kernel::computeGramMatrixDerivative should be called only after &quot;
+                     &quot;setDataForKernelMatrix&quot;);
+ 
+-        // For efficiency reasons, we only accumulate a derivative on the
+-        // diagonal of the kernel matrix, even if two training examples happen
+-        // to be EXACTLY identical.  (May change in the future if this turns
+-        // out to be a problem).
+         int W = nExamples();
+         KD.resize(W,W);
+         KD.fill(0.0);
+@@ -251,74 +191,38 @@
+         for (int i=0 ; i&lt;W ; ++i)
+             KD(i,i) = deriv;
+     }
+-    else if (string_begins_with(kernel_param, IKS) &amp;&amp;
+-             kernel_param[kernel_param.size()-1] == ']')
+-    {
+-        int arg = tolong(kernel_param.substr(
+-                             IKS.size(), kernel_param.size() - IKS.size() - 1));
+-        PLASSERT( arg &lt; m_kronecker_indexes.size() );
+-
+-        computeGramMatrixDerivKronecker(KD, arg);
++    else if (kernel_param == IKS) {
++        computeGramMatrixDerivKronecker(KD);
+     }
+     else
+         inherited::computeGramMatrixDerivative(KD, kernel_param, epsilon);
+ }
+ 
+ 
+-//#####  derivKronecker  ######################################################
+-
+-real IIDNoiseKernel::derivKronecker(int i, int j, int arg, real K) const
+-{
+-    int index  = m_kronecker_indexes[arg];
+-    Vec&amp; row_i = *dataRow(i);
+-    Vec&amp; row_j = *dataRow(j);
+-    if (fast_is_equal(row_i[index], row_j[index]))
+-        return sigmoid(m_isp_kronecker_sigma[arg]);
+-    else
+-        return 0.0;
+-}
+-
+-
+ //#####  computeGramMatrixDerivKronecker  #####################################
+ 
+-void IIDNoiseKernel::computeGramMatrixDerivKronecker(Mat&amp; KD, int arg) const
++void IIDNoiseKernel::computeGramMatrixDerivKronecker(Mat&amp; KD) const
+ {
+-    // Precompute some terms
+-    real kronecker_sigma_arg = sigmoid(m_isp_kronecker_sigma[arg]);
+-    int index = m_kronecker_indexes[arg];
+-    
+-    // Compute Gram Matrix derivative w.r.t. isp_kronecker_sigma[arg]
+-    int  l = data-&gt;length();
++    // From the cached version of the Gram matrix, this function is easily
++    // implemented: we first copy the Gram to the KD matrix, subtract the IID
++    // noise contribution from the main diagonal, and multiply the remaining
++    // matrix (made up of 0/1 elements) by the derivative of the kronecker
++    // sigma hyperparameter.
+ 
+-    // Variables that walk over the data matrix
+-    int  cache_mod = m_data_cache.mod();
+-    real *data_start = &amp;m_data_cache(0,0);
+-    real *xi = data_start+index;             // Iterator on data rows
+-
+-    // Variables that walk over the kernel derivative matrix (KD)
++    int l = data-&gt;length();
+     KD.resize(l,l);
+-    real* KDi = KD.data();                   // Start of row i
+-    real* KDij;                              // Current element on row i
+-    int   KD_mod = KD.mod();
++    PLASSERT_MSG(gram_matrix.width() == l &amp;&amp; gram_matrix.length() == l,
++                 &quot;To compute the derivative with respect to 'isp_kronecker_sigma',\n&quot;
++                 &quot;the Gram matrix must be precomputed and cached in IIDNoiseKernel.&quot;);
++    
++    KD &lt;&lt; gram_matrix;
++    real noise_sigma = softplus(m_isp_noise_sigma);
++    for (int i=0 ; i&lt;l ; ++i)
++        KD(i,i) -= noise_sigma;
+ 
+-    // Iterate on rows of derivative matrix
+-    for (int i=0 ; i&lt;l ; ++i, xi += cache_mod, KDi += KD_mod)
+-    {
+-        KDij = KDi;
+-        real xi_cur = *xi;
+-        real *xj  = data_start+index;        // Inner iterator on data rows
+-
+-        // Iterate on columns of derivative matrix
+-        for (int j=0 ; j &lt;= i ; ++j, xj += cache_mod)
+-        {
+-            // Set into derivative matrix
+-            *KDij++ = fast_is_equal(xi_cur, *xj)? kronecker_sigma_arg : 0.0;
+-        }
+-    }
++    KD *= sigmoid(m_isp_kronecker_sigma) / softplus(m_isp_kronecker_sigma);
+ }
+ 
+-
+-
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn/ker/IIDNoiseKernel.h
+===================================================================
+--- trunk/plearn/ker/IIDNoiseKernel.h	2007-04-11 11:34:01 UTC (rev 6874)
++++ trunk/plearn/ker/IIDNoiseKernel.h	2007-04-11 12:13:05 UTC (rev 6875)
+@@ -2,7 +2,7 @@
+ 
+ // IIDNoiseKernel.h
+ //
+-// Copyright (C) 2006 Nicolas Chapados
++// Copyright (C) 2006-2007 Nicolas Chapados
+ //
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -40,7 +40,7 @@
+ #ifndef IIDNoiseKernel_INC
+ #define IIDNoiseKernel_INC
+ 
+-#include &lt;plearn/ker/MemoryCachedKernel.h&gt;
++#include &lt;plearn/ker/KroneckerBaseKernel.h&gt;
+ 
+ namespace PLearn {
+ 
+@@ -49,50 +49,46 @@
+  *
+  *  This Kernel is typically used as a base class for covariance functions used
+  *  in gaussian processes (see GaussianProcessRegressor).  It represents simple
+- *  i.i.d. additive noise:
++ *  i.i.d. additive noise that applies to 'identical training cases' i and j:
+  *
+- *    k(x,y) = delta_x,y * sn
++ *    k(D_i,D_j) = delta_i,j * sn
+  *
+- *  where delta_x,y is the Kronecker delta function, and sn is
+- *  softplus(isp_noise_sigma), with softplus(x) = log(1+exp(x)).
++ *  where D_i and D_j are elements from the current data set (established by
++ *  the setDataForKernelMatrix function), delta_i,j is the Kronecker delta
++ *  function, and sn is softplus(isp_noise_sigma), with softplus(x) =
++ *  log(1+exp(x)).  Note that 'identity' is not equivalent to 'vector
++ *  equality': in particular, at test-time, this noise is NEVER added.
++ *  Currently, two vectors are considered identical if and only if they are the
++ *  SAME ROW of the current data set, and hence the noise term is added only at
++ *  TRAIN-TIME across the diagonal of the Gram matrix (when the
++ *  computeGramMatrix() function is called).  This is why at test-time, no such
++ *  noise term is added.  The idea (see the book &quot;Gaussian Processes for
++ *  Machine Learning&quot; by Rasmussen and Williams for details) is that
++ *  observation noise only applies when A SPECIFIC OBSERVATION is drawn from
++ *  the GP distribution: if we sample a new point at the same x, we will get a
++ *  different realization for the noise, and hence the correlation between the
++ *  two noise realizations is zero.  This class can only be sure that two
++ *  observations are &quot;identical&quot; when they are presented all at once through
++ *  the data matrix.
+  *
+- *  In addition to comparing the complete x and y vectors, this kernel allows
+- *  adding a Kronecker delta when there is a match in only ONE DIMENSION.  This
+- *  may be generalized in the future to allow match according to a subset of
+- *  the input variables (but is not currently done for performance reasons).
+- *  With these terms, the kernel function takes the form:
+- *
+- *    k(x,y) = delta_x,y * sn + \sum_i delta_x[kr(i)],y[kr(i)] * ks[i]
+- *
+- *  where kr(i) is the i-th element of 'kronecker_indexes' (representing an
+- *  index into the input vectors), and ks[i]=softplus(isp_kronecker_sigma[i]).
+- *
+- *  Note that to make its operations more robust when used with unconstrained
+- *  optimization of hyperparameters, all hyperparameters of this kernel are
+- *  specified in the inverse softplus domain, hence the 'isp' prefix.  This is
+- *  used in preference to the log-domain used by Rasmussen and Williams in
+- *  their implementation of gaussian processes, due to numerical stability.
+- *  (It may happen that the optimizer jumps 'too far' along one hyperparameter
+- *  and this causes the Gram matrix to become extremely ill-conditioned.)
++ *  The Kronecker terms computed by the base class are ADDDED to the noise 
++ *  computed by this kernel (at test-time also).
+  */
+-class IIDNoiseKernel : public MemoryCachedKernel
++class IIDNoiseKernel : public KroneckerBaseKernel
+ {
+-    typedef MemoryCachedKernel inherited;
++    typedef KroneckerBaseKernel inherited;
+ 
+ public:
+     //#####  Public Build Options  ############################################
+ 
+-    //! Inverse softplus of the global noise variance.  Default value=0.0
++    //! Inverse softplus of the global noise variance.  Default value=-100.0
++    //! (very close to zero after we take softplus).
+     real m_isp_noise_sigma;
+-
+-    //! Element index in the input vectors that should be subject to additional
+-    //! Kronecker delta terms
+-    TVec&lt;int&gt; m_kronecker_indexes;
+-
+-    //! Inverse softplus of the noise variance terms for the Kronecker deltas
+-    //! associated with kronecker_indexes
+-    Vec m_isp_kronecker_sigma;
+     
++    //! Inverse softplus of the noise variance term for the product of
++    //! Kronecker deltas associated with kronecker_indexes, if specified.
++    real m_isp_kronecker_sigma;
++    
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+@@ -129,16 +125,10 @@
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+ 
+-    //! Derivative function with respect to kronecker_indexes[arg] hyperparameter
+-    real derivKronecker(int i, int j, int arg, real K) const;
+-
+-    //! Derivative w.r.t kronecker_indexes[arg] for WHOLE MATRIX
+-    void computeGramMatrixDerivKronecker(Mat&amp; KD, int arg) const;
++    //! Compute the derivative of the Gram matrix with respect to the Kronecker
++    //! sigma
++    void computeGramMatrixDerivKronecker(Mat&amp; KD) const;
+     
+-protected:
+-    //! Buffer for softplus of m_isp_kronecker_sigma
+-    mutable Vec m_kronecker_sigma;
+-    
+ private:
+     //! This does the actual building.
+     void build_();
+
+Added: trunk/plearn/ker/KroneckerBaseKernel.cc
+===================================================================
+--- trunk/plearn/ker/KroneckerBaseKernel.cc	2007-04-11 11:34:01 UTC (rev 6874)
++++ trunk/plearn/ker/KroneckerBaseKernel.cc	2007-04-11 12:13:05 UTC (rev 6875)
+@@ -0,0 +1,201 @@
++// -*- C++ -*-
++
++// KroneckerBaseKernel.cc
++//
++// Copyright (C) 2007 Nicolas Chapados
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Nicolas Chapados
++
++/*! \file KroneckerBaseKernel.cc */
++
++#include &lt;plearn/base/lexical_cast.h&gt;
++#include &lt;plearn/math/TMat_maths.h&gt;
++#include &quot;KroneckerBaseKernel.h&quot;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    KroneckerBaseKernel,
++    &quot;Base class for kernels that make use of Kronecker terms&quot;,
++    &quot;This kernel allows the specification of product a of Kronecker delta terms\n&quot;
++    &quot;when there is a match of VALUE in ONE DIMENSION.  (This may be generalized\n&quot;
++    &quot;in the future to allow match according to a subset of the input variables,\n&quot;
++    &quot;but is not currently done for performance reasons).  With these terms, the\n&quot;
++    &quot;kernel function takes the form:\n&quot;
++    &quot;\n&quot;
++    &quot;  k(x,y) = \\product_i delta_x[kr(i)],y[kr(i)]\n&quot;
++    &quot;\n&quot;
++    &quot;where kr(i) is the i-th element of 'kronecker_indexes' (representing an\n&quot;
++    &quot;index into the input vectors)  Derived classes can either integrate these\n&quot;
++    &quot;terms additively (e.g. KroneckerBaseKernel) or multiplicatively\n&quot;
++    &quot;(e.g. ARDBaseKernel and derived classes).  Note that this class does not\n&quot;
++    &quot;provide any hyperparameter associated with this product; an hyperparameter\n&quot;
++    &quot;may be included by derived classes as required.  (Currently, only\n&quot;
++    &quot;IIDNoiseKernel needs one; in other kernels, this is absorbed by the global\n&quot;
++    &quot;function noise hyperparameter)\n&quot;
++    &quot;\n&quot;
++    &quot;The basic idea for Kronecker terms is to selectively build in parts of a\n&quot;
++    &quot;covariance function based on matches in the value of some input variables.\n&quot;
++    &quot;They are useful in conjunction with a \&quot;covariance function builder\&quot; such as\n&quot;
++    &quot;SummationKernel.\n&quot;
++    );
++
++
++KroneckerBaseKernel::KroneckerBaseKernel()
++    : m_default_value(0.)
++{ }
++
++
++//#####  declareOptions  ######################################################
++
++void KroneckerBaseKernel::declareOptions(OptionList&amp; ol)
++{
++    declareOption(
++        ol, &quot;kronecker_indexes&quot;, &amp;KroneckerBaseKernel::m_kronecker_indexes,
++        OptionBase::buildoption,
++        &quot;Element index in the input vectors that should be subject to additional\n&quot;
++        &quot;Kronecker delta terms&quot;);
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++
++//#####  build  ###############################################################
++
++void KroneckerBaseKernel::build()
++{
++    // ### Nothing to add here, simply calls build_
++    inherited::build();
++    build_();
++}
++
++
++//#####  build_  ##############################################################
++
++void KroneckerBaseKernel::build_()
++{ }
++
++
++//#####  evaluate  ############################################################
++
++real KroneckerBaseKernel::evaluate(const Vec&amp; x1, const Vec&amp; x2) const
++{
++    const int n = m_kronecker_indexes.size();
++    if (n &gt; 0) {
++        int*  cur_index = m_kronecker_indexes.data();
++        for (int i=0 ; i&lt;n ; ++i, ++cur_index)
++            if (! fast_is_equal(x1[*cur_index], x2[*cur_index]))
++                return 0.0;
++        return 1.0;
++    }
++    return m_default_value;
++}
++
++
++//#####  computeGramMatrix  ###################################################
++
++void KroneckerBaseKernel::computeGramMatrix(Mat K) const
++{
++    if (!data)
++        PLERROR(&quot;Kernel::computeGramMatrix: setDataForKernelMatrix not yet called&quot;);
++    if (!is_symmetric)
++        PLERROR(&quot;Kernel::computeGramMatrix: not supported for non-symmetric kernels&quot;);
++    if (K.length() != data.length() || K.width() != data.length())
++        PLERROR(&quot;Kernel::computeGramMatrix: the argument matrix K should be\n&quot;
++                &quot;of size %d x %d (currently of size %d x %d)&quot;,
++                data.length(), data.length(), K.length(), K.width());
++                
++    PLASSERT( K.size() == 0 || m_data_cache.size() &gt; 0 );  // Ensure data cached OK
++
++    // Prepare kronecker iteration
++    int   kronecker_num     = m_kronecker_indexes.size();
++    int*  kronecker_indexes = ( kronecker_num &gt; 0?
++                                m_kronecker_indexes.data() : 0 );
++
++    // Compute Gram Matrix
++    int  l = data-&gt;length();
++    int  m = K.mod();
++    int  cache_mod = m_data_cache.mod();
++
++    real *data_start = &amp;m_data_cache(0,0);
++    real Kij = m_default_value;
++    real *Ki, *Kji;
++    real *xi = data_start;
++    
++    for (int i=0 ; i&lt;l ; ++i, xi += cache_mod) {
++        Ki  = K[i];
++        Kji = &amp;K[0][i];
++        real *xj = data_start;
++
++        for (int j=0; j&lt;=i; ++j, Kji += m, xj += cache_mod) {
++            if (kronecker_num &gt; 0) {
++                real  product = 1.0;
++                int*  cur_index = kronecker_indexes;
++
++                // Go over Kronecker terms, skipping over an eventual omitted term
++                for (int k=0 ; k&lt;kronecker_num ; ++k, ++cur_index)
++                    if (! fast_is_equal(xi[*cur_index], xj[*cur_index])) {
++                        product = 0.0;
++                        break;
++                    }
++
++                Kij = product;
++            }
++            *Ki++ = Kij;
++        }
++    }
++}
++
++
++//#####  makeDeepCopyFromShallowCopy  #########################################
++
++void KroneckerBaseKernel::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++    deepCopyField(m_kronecker_indexes,   copies);
++}
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn/ker/KroneckerBaseKernel.h
+===================================================================
+--- trunk/plearn/ker/KroneckerBaseKernel.h	2007-04-11 11:34:01 UTC (rev 6874)
++++ trunk/plearn/ker/KroneckerBaseKernel.h	2007-04-11 12:13:05 UTC (rev 6875)
+@@ -0,0 +1,147 @@
++// -*- C++ -*-
++
++// KroneckerBaseKernel.h
++//
++// Copyright (C) 2007 Nicolas Chapados
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Nicolas Chapados
++
++/*! \file KroneckerBaseKernel.h */
++
++
++#ifndef KroneckerBaseKernel_INC
++#define KroneckerBaseKernel_INC
++
++#include &lt;plearn/ker/MemoryCachedKernel.h&gt;
++
++namespace PLearn {
++
++/**
++ *  Base class for kernels that make use of Kronecker terms
++ *
++ *  This kernel allows the specification of product a of Kronecker delta terms
++ *  when there is a match of VALUE in ONE DIMENSION.  (This may be generalized
++ *  in the future to allow match according to a subset of the input variables,
++ *  but is not currently done for performance reasons).  With these terms, the
++ *  kernel function takes the form:
++ *
++ *    k(x,y) = \product_i delta_x[kr(i)],y[kr(i)]
++ *
++ *  where kr(i) is the i-th element of 'kronecker_indexes' (representing an
++ *  index into the input vectors).  Derived classes can either integrate these
++ *  terms additively (e.g. KroneckerBaseKernel) or multiplicatively
++ *  (e.g. ARDBaseKernel and derived classes).  Note that this class does not
++ *  provide any hyperparameter associated with this product; an hyperparameter
++ *  may be included by derived classes as required.  (Currently, only
++ *  IIDNoiseKernel needs one; in other kernels, this is absorbed by the global
++ *  function noise hyperparameter).
++ *
++ *  The basic idea for Kronecker terms is to selectively build in parts of a
++ *  covariance function based on matches in the value of some input variables.
++ *  They are useful in conjunction with a &quot;covariance function builder&quot; such as
++ *  SummationKernel.
++ */
++class KroneckerBaseKernel : public MemoryCachedKernel
++{
++    typedef MemoryCachedKernel inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! Element index in the input vectors that should be subject to additional
++    //! Kronecker delta terms
++    TVec&lt;int&gt; m_kronecker_indexes;
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    KroneckerBaseKernel();
++
++
++    //#####  Kernel Member Functions  #########################################
++
++    //! Compute K(x1,x2).
++    virtual real evaluate(const Vec&amp; x1, const Vec&amp; x2) const;
++
++    //! Compute the Gram Matrix.  Note that this version DOES NOT CACHE
++    //! the results, since it is usually called by derived classes.
++    virtual void computeGramMatrix(Mat K) const;
++    
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    PLEARN_DECLARE_OBJECT(KroneckerBaseKernel);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++    /**
++     *  Value to be used for kernel evaluation if there are no kronecker terms.
++     *  This is initialized to zero.  A derived class may set it to (e.g.) 1.0
++     *  be be sure that the default value is filled to something that can be
++     *  used multiplicatively, even when there are no Kronecker terms.
++     */
++    mutable real m_default_value;
++    
++protected:
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //! This does the actual building.
++    void build_();
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(KroneckerBaseKernel);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.cc
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-04-11 11:34:01 UTC (rev 6874)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-04-11 12:13:05 UTC (rev 6875)
+@@ -51,13 +51,32 @@
+     &quot;Similar to C.E. Rasmussen's GPML code (see <A HREF="http://www.gaussianprocess.org">http://www.gaussianprocess.org</A>),\n&quot;
+     &quot;this kernel is specified as:\n&quot;
+     &quot;\n&quot;
+-    &quot;  k(x,y) = sf * [1 + (sum_i (x_i - y_i)^2 / w_i)/(2*alpha)]^(-alpha) + k_iid(x,y)\n&quot;
++    &quot;  k(x,y) = sf * [1 + (sum_i (x_i - y_i)^2 / w_i)/(2*alpha)]^(-alpha) * k_kron(x,y)\n&quot;
+     &quot;\n&quot;
+     &quot;where sf is softplus(isp_signal_sigma), w_i is softplus(isp_global_sigma +\n&quot;
+-    &quot;isp_input_sigma[i]), and k_iid(x,y) is the result of IIDNoiseKernel kernel\n&quot;
+-    &quot;evaluation.\n&quot;
++    &quot;isp_input_sigma[i]), and k_kron(x,y) is the result of the\n&quot;
++    &quot;KroneckerBaseKernel evaluation, or 1.0 if there are no Kronecker terms.\n&quot;
++    &quot;Note that since the Kronecker terms are incorporated multiplicatively, the\n&quot;
++    &quot;very presence of the term associated to this kernel can be gated by the\n&quot;
++    &quot;value of some input variable(s) (that are incorporated within one or more\n&quot;
++    &quot;Kronecker terms).\n&quot;
+     &quot;\n&quot;
+-    &quot;Note that to make its operations more robust when used with unconstrained\n&quot;
++    &quot;The current version of this class DOES NOT PROPERLY SUPPORT having both\n&quot;
++    &quot;isp_global_sigma and isp_input_sigma[i] be non-zero (and simultaneously\n&quot;
++    &quot;optimizing with respect to both classes of hyperparameters).  The contrary\n&quot;
++    &quot;situation will yield inconsistent behavior.\n&quot;
++    &quot;\n&quot;
++    &quot;Note that contrarily to previous versions that incorporated IID noise and\n&quot;
++    &quot;Kronecker terms ADDITIVELY, this version does not add any noise at all (and\n&quot;
++    &quot;as explained above incorporates the Kronecker terms multiplicatively).  For\n&quot;
++    &quot;best results, especially with moderately noisy data, IT IS IMPERATIVE to\n&quot;
++    &quot;use whis kernel within a SummationKernel in conjunction with an\n&quot;
++    &quot;IIDNoiseKernel, as follows (e.g. within a GaussianProcessRegressor):\n&quot;
++    &quot;\n&quot;
++    &quot;    kernel = SummationKernel(terms = [ RationalQuadraticARDKernel(),\n&quot;
++    &quot;                                       IIDNoiseKernel() ] )\n&quot;
++    &quot;\n&quot;
++    &quot;In order to make its operations more robust when used with unconstrained\n&quot;
+     &quot;optimization of hyperparameters, all hyperparameters of this kernel are\n&quot;
+     &quot;specified in the inverse softplus domain.  See IIDNoiseKernel for more\n&quot;
+     &quot;explanations.\n&quot;
+@@ -98,7 +117,10 @@
+ //#####  build_  ##############################################################
+ 
+ void RationalQuadraticARDKernel::build_()
+-{ }
++{
++    // Ensure that we multiply in Kronecker terms
++    inherited::m_default_value = 1.0;
++}
+ 
+ 
+ //#####  makeDeepCopyFromShallowCopy  #########################################
+@@ -106,8 +128,6 @@
+ void RationalQuadraticARDKernel::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+-
+-    deepCopyField(m_noise_gram_cache,        copies);
+     deepCopyField(m_pow_minus_alpha_minus_1, copies);
+ }
+ 
+@@ -119,8 +139,12 @@
+     PLASSERT( x1.size() == x2.size() );
+     PLASSERT( !m_isp_input_sigma.size() || x1.size() == m_isp_input_sigma.size() );
+ 
++    real gating_term = inherited::evaluate(x1,x2);
++    if (fast_is_equal(gating_term, 0.0))
++        return 0.0;
++    
+     if (x1.size() == 0)
+-        return softplus(m_isp_signal_sigma) + inherited::evaluate(x1,x2);
++        return softplus(m_isp_signal_sigma) * gating_term;
+     
+     const real* px1 = x1.data();
+     const real* px2 = x2.data();
+@@ -148,9 +172,8 @@
+         }
+     }
+ 
+-    // We add the noise covariance as well
+-    real noise_cov = inherited::evaluate(x1,x2);
+-    return sf * pow(1 + sum_wt / (real(2.)*alpha), -alpha) + noise_cov;
++    // Gate by Kronecker term
++    return sf * pow(1 + sum_wt / (real(2.)*alpha), -alpha) * gating_term;
+ }
+ 
+ 
+@@ -161,10 +184,8 @@
+     PLASSERT( !m_isp_input_sigma.size() || dataInputsize() == m_isp_input_sigma.size() );
+     PLASSERT( K.size() == 0 || m_data_cache.size() &gt; 0 );  // Ensure data cached OK
+ 
+-    // Compute IID noise gram matrix and save it
++    // Compute Kronecker gram matrix.  No need to cache it.
+     inherited::computeGramMatrix(K);
+-    m_noise_gram_cache.resize(K.length(), K.width());
+-    m_noise_gram_cache &lt;&lt; K;
+ 
+     // Precompute some terms
+     real sf    = softplus(m_isp_signal_sigma);
+@@ -200,6 +221,7 @@
+         real *xj = data_start;
+         real *pow_cache_cur = pow_cache_row;
+ 
++        // This whole loop can be optimized further when a Kronecker term is 0
+         for (int j=0; j&lt;=i; ++j, xj += cache_mod) {
+             // Kernel evaluation per se
+             real *x1 = xi;
+@@ -226,13 +248,13 @@
+                        } while((k -= 8) &gt; 0);
+             }
+ 
++            // Multiplicatively update kernel matrix (already pre-filled with
++            // Kronecker terms, or 1.0 if no Kronecker terms, as per build_).
+             real inner_pow   = 1 + sum_wt / (2.*alpha);
+             real pow_alpha   = pow(inner_pow, -alpha);
+-            real Kij_cur     = sf * pow_alpha;
++            real Kij_cur     = *Kij * sf * pow_alpha;       // Mind *Kij here
+             *pow_cache_cur++ = Kij_cur / inner_pow;
+-            
+-            // Update kernel matrix (already pre-filled with IID noise terms)
+-            *Kij++ += Kij_cur;
++            *Kij++           = Kij_cur;
+         }
+     }
+     if (cache_gram_matrix) {
+@@ -301,8 +323,7 @@
+ 
+ real RationalQuadraticARDKernel::derivIspSignalSigma(int i, int j, int arg, real K) const
+ {
+-    real noise = m_noise_gram_cache(i,j);
+-    return (K-noise)*sigmoid(m_isp_signal_sigma)/softplus(m_isp_signal_sigma);
++    return K*sigmoid(m_isp_signal_sigma)/softplus(m_isp_signal_sigma);
+ }
+ 
+ 
+@@ -311,14 +332,18 @@
+ real RationalQuadraticARDKernel::derivIspGlobalSigma(int i, int j, int arg, real K) const
+ {
+     // The rational quadratic gives us:
+-    //     K = s*k^(-alpha).
+-    // Rederive the value of k == (K/s)^(-1/alpha)
++    //     K = s * k^(-alpha) * kron
++    // where kron is 0 or 1.  Rederive the value of k == (K/s)^(-1/alpha)
++    if (fast_is_equal(K, 0.))
++        return 0.;
+     real alpha = softplus(m_isp_alpha);
+-    real noise = m_noise_gram_cache(i,j);
+-    K -= noise;
+     real k     = pow(K / softplus(m_isp_signal_sigma), real(-1.) / alpha);
+     real inner = (k - 1) * alpha * sigmoid(m_isp_global_sigma) / softplus(m_isp_global_sigma);
+     return (K / k) * inner;
++
++    // Note: in the above expression for 'inner' there is the implicit
++    // assumption that the input_sigma[i] are zero, which allows the
++    // sigmoid/softplus term to be factored out of the norm summation.
+ }
+ 
+ 
+@@ -330,13 +355,13 @@
+ real RationalQuadraticARDKernel::derivIspInputSigma(int i, int j, int arg, real K) const
+ {
+     // The rational quadratic gives us:
+-    //     K = s*k^(-alpha).
+-    // Rederive the value of k == (K/s)^(-1/alpha)
++    //     K = s * k^(-alpha) * kron
++    // where kron is 0 or 1.  Rederive the value of k == (K/s)^(-1/alpha)
++    if (fast_is_equal(K, 0.))
++        return 0.;
+     real alpha   = softplus(m_isp_alpha);
+     Vec&amp; row_i   = *dataRow(i);
+     Vec&amp; row_j   = *dataRow(j);
+-    real noise   = m_noise_gram_cache(i,j);
+-    K -= noise;
+     real k       = pow(K / softplus(m_isp_signal_sigma), real(-1.) / alpha);
+     real diff    = row_i[arg] - row_j[arg];
+     real sq_diff = diff * diff;
+@@ -351,9 +376,12 @@
+ 
+ real RationalQuadraticARDKernel::derivIspAlpha(int i, int j, int arg, real K) const
+ {
++    // The rational quadratic gives us:
++    //     K = s * k^(-alpha) * kron
++    // where kron is 0 or 1.  Rederive the value of k == (K/s)^(-1/alpha)
++    if (fast_is_equal(K, 0.))
++        return 0.;
+     real alpha = softplus(m_isp_alpha);
+-    real noise = m_noise_gram_cache(i,j);
+-    K         -= noise;
+     real k     = pow(K / softplus(m_isp_signal_sigma), real(-1.) / alpha);
+     return sigmoid(m_isp_alpha) * K * (1 - pl_log(k) - 1 / k);
+ }
+@@ -432,11 +460,6 @@
+     real *pow_cache_row = m_pow_minus_alpha_minus_1.data();
+     real *pow_cache_cur;
+ 
+-    // Variables that walk over the noise cache
+-    int   noise_cache_mod = m_noise_gram_cache.mod();
+-    real *noise_cache_row = m_noise_gram_cache[0];
+-    real *noise_cache_cur;
+-    
+     // Variables that walk over the kernel derivative matrix (KD)
+     KD.resize(l,l);
+     real* KDi = KD.data();                   // Start of row i
+@@ -445,24 +468,26 @@
+ 
+     // Iterate on rows of derivative matrix
+     for (int i=0 ; i&lt;l ; ++i, Ki += k_mod,
+-             KDi += KD_mod, pow_cache_row += pow_cache_mod,
+-             noise_cache_row += noise_cache_mod)
++             KDi += KD_mod, pow_cache_row += pow_cache_mod)
+     {
+         Kij  = Ki;
+         KDij = KDi;
+         pow_cache_cur   = pow_cache_row;
+-        noise_cache_cur = noise_cache_row;
+ 
+         // Iterate on columns of derivative matrix
+-        for (int j=0 ; j &lt;= i
+-                 ; ++j, ++Kij, ++noise_cache_cur, ++pow_cache_cur)
++        for (int j=0 ; j &lt;= i ; ++j, ++Kij, ++pow_cache_cur)
+         {
+-            real K      = *Kij - *noise_cache_cur;
+-            real k      = K / *pow_cache_cur;
+-            real KD_cur = alpha_sigmoid * K * (1 - pl_log(k) - 1/k);
++            real pow_cur = *pow_cache_cur;
++            if (fast_is_equal(pow_cur, 0)) 
++                *KDij++ = 0.;
++            else {
++                real K      = *Kij;
++                real k      = K / pow_cur;
++                real KD_cur = alpha_sigmoid * K * (1 - pl_log(k) - 1/k);
+             
+-            // Set into derivative matrix
+-            *KDij++ = KD_cur;
++                // Set into derivative matrix
++                *KDij++ = KD_cur;
++            }
+         }
+     }
+ }
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.h
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-04-11 11:34:01 UTC (rev 6874)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-04-11 12:13:05 UTC (rev 6875)
+@@ -54,13 +54,32 @@
+  *  Similar to C.E. Rasmussen's GPML code (see <A HREF="http://www.gaussianprocess.org">http://www.gaussianprocess.org</A>),
+  *  this kernel is specified as:
+  *
+- *    k(x,y) = sf * [1 + (sum_i (x_i - y_i)^2 / w_i)/(2*alpha)]^(-alpha) + k_iid(x,y)
++ *    k(x,y) = sf * [1 + (sum_i (x_i - y_i)^2 / w_i)/(2*alpha)]^(-alpha) * k_kron(x,y)
+  *
+  *  where sf is softplus(isp_signal_sigma), w_i is softplus(isp_global_sigma +
+- *  isp_input_sigma[i]), and k_iid(x,y) is the result of the IIDNoiseKernel
+- *  kernel evaluation.
++ *  isp_input_sigma[i]), and k_kron(x,y) is the result of the
++ *  KroneckerBaseKernel evaluation, or 1.0 if there are no Kronecker terms.
++ *  Note that since the Kronecker terms are incorporated multiplicatively, the
++ *  very presence of the term associated to this kernel can be gated by the
++ *  value of some input variable(s) (that are incorporated within one or more
++ *  Kronecker terms).
+  *
+- *  Note that to make its operations more robust when used with unconstrained
++ *  The current version of this class DOES NOT PROPERLY SUPPORT having both
++ *  isp_global_sigma and isp_input_sigma[i] be non-zero (and simultaneously
++ *  optimizing with respect to both classes of hyperparameters).  The contrary
++ *  situation will yield inconsistent behavior.
++ *
++ *  Note that contrarily to previous versions that incorporated IID noise and
++ *  Kronecker terms ADDITIVELY, this version does not add any noise at all (and
++ *  as explained above incorporates the Kronecker terms multiplicatively).  For
++ *  best results, especially with moderately noisy data, IT IS IMPERATIVE to
++ *  use whis kernel within a SummationKernel in conjunction with an
++ *  IIDNoiseKernel, as follows (e.g. within a GaussianProcessRegressor):
++ *
++ *      kernel = SummationKernel(terms = [ RationalQuadraticARDKernel(),
++ *                                         IIDNoiseKernel() ] )
++ *
++ *  In order to make its operations more robust when used with unconstrained
+  *  optimization of hyperparameters, all hyperparameters of this kernel are
+  *  specified in the inverse softplus domain.  See IIDNoiseKernel for more
+  *  explanations.
+@@ -132,12 +151,12 @@
+     void computeGramMatrixDerivIspAlpha(Mat&amp; KD) const;
+     
+ protected:
+-    //! Cached version of IID noise gram matrix
+-    mutable Mat m_noise_gram_cache;
+-
+     /**
+-     *  Cached version of the K / k terms, useful for computing derivatives
+-     *      pow(1 + sum_wt / (2*alpha), -alpha-1)
++     *  Cached version of the K / k terms, namely:
++     *
++     *      pow(1 + sum_wt / (2*alpha), -alpha-1) * sf * kron
++     *
++     *  This is useful for computing derivatives,
+      */
+     mutable Mat m_pow_minus_alpha_minus_1;
+ 
+
+Modified: trunk/plearn/ker/SquaredExponentialARDKernel.cc
+===================================================================
+--- trunk/plearn/ker/SquaredExponentialARDKernel.cc	2007-04-11 11:34:01 UTC (rev 6874)
++++ trunk/plearn/ker/SquaredExponentialARDKernel.cc	2007-04-11 12:13:05 UTC (rev 6875)
+@@ -55,12 +55,31 @@
+     &quot;Similar to C.E. Rasmussen's GPML code (see <A HREF="http://www.gaussianprocess.org">http://www.gaussianprocess.org</A>),\n&quot;
+     &quot;this kernel function is specified as:\n&quot;
+     &quot;\n&quot;
+-    &quot;  k(x,y) = sf * exp(- 0.5 * (sum_i (x_i - y_i)^2 / w_i)) + k_iid(x,y)\n&quot;
++    &quot;  k(x,y) = sf * exp(- 0.5 * (sum_i (x_i - y_i)^2 / w_i)) * k_kron(x,y)\n&quot;
+     &quot;\n&quot;
+     &quot;where sf is softplus(isp_signal_sigma), w_i is softplus(isp_global_sigma +\n&quot;
+-    &quot;isp_input_sigma[i]), and k_iid(x,y) is the result of the IIDNoiseKernel\n&quot;
+-    &quot;kernel evaluation.\n&quot;
++    &quot;isp_input_sigma[i]), and k_kron(x,y) is the result of the\n&quot;
++    &quot;KroneckerBaseKernel evaluation, or 1.0 if there are no Kronecker terms.\n&quot;
++    &quot;Note that since the Kronecker terms are incorporated multiplicatively, the\n&quot;
++    &quot;very presence of the term associated to this kernel can be gated by the\n&quot;
++    &quot;value of some input variable(s) (that are incorporated within one or more\n&quot;
++    &quot;Kronecker terms).\n&quot;
+     &quot;\n&quot;
++    &quot;The current version of this class DOES NOT ALLOW differentiating the Kernel\n&quot;
++    &quot;matrix with respect to the Kronecker hyperparameters.  These parameters are\n&quot;
++    &quot;redundant due to the presence of the global sf above; they should be set to\n&quot;
++    &quot;1.0 and left untouched by hyperoptimization.\n&quot;
++    &quot;\n&quot;
++    &quot;Note that contrarily to previous versions that incorporated IID noise and\n&quot;
++    &quot;Kronecker terms ADDITIVELY, this version does not add any noise at all (and\n&quot;
++    &quot;as explained above incorporates the Kronecker terms multiplicatively).  For\n&quot;
++    &quot;best results, especially with moderately noisy data, IT IS IMPERATIVE to\n&quot;
++    &quot;use whis kernel within a SummationKernel in conjunction with an\n&quot;
++    &quot;IIDNoiseKernel, as follows (e.g. within a GaussianProcessRegressor):\n&quot;
++    &quot;\n&quot;
++    &quot;    kernel = SummationKernel(terms = [ SquaredExponentialARDKernel(),\n&quot;
++    &quot;                                       IIDNoiseKernel() ] )\n&quot;
++    &quot;\n&quot;
+     &quot;Note that to make its operations more robust when used with unconstrained\n&quot;
+     &quot;optimization of hyperparameters, all hyperparameters of this kernel are\n&quot;
+     &quot;specified in the inverse softplus domain.  See IIDNoiseKernel for more\n&quot;
+@@ -95,6 +114,8 @@
+ 
+ void SquaredExponentialARDKernel::build_()
+ {
++    // Ensure that we multiply in Kronecker terms
++    inherited::m_default_value = 1.0;
+ }
+ 
+ 
+@@ -105,8 +126,12 @@
+     PLASSERT( x1.size() == x2.size() );
+     PLASSERT( !m_isp_input_sigma.size() || x1.size() == m_isp_input_sigma.size() );
+ 
++    real gating_term = inherited::evaluate(x1,x2);
++    if (fast_is_equal(gating_term, 0.0))
++        return 0.0;
++    
+     if (x1.size() == 0)
+-        return softplus(m_isp_signal_sigma) + inherited::evaluate(x1,x2);
++        return softplus(m_isp_signal_sigma) * gating_term;
+     
+     const real* px1 = x1.data();
+     const real* px2 = x2.data();
+@@ -130,14 +155,8 @@
+         }
+     }
+ 
+-    // EXPERIMENTAL: Multiply noise_cov by kernel value if we have kronecker
+-    // terms, otherwise disregard noise_cov
+-    // real noise_cov = ( m_kronecker_indexes.size() &gt; 0?
+-    //                    inherited::evaluate(x1,x2) : 1.0 );
+-    // return sf * exp(-0.5 * expval) * noise_cov;
+-
+-    real noise_cov = inherited::evaluate(x1,x2);
+-    return sf * exp(-0.5 * expval) + noise_cov;
++    // Gate by Kronecker term
++    return sf * exp(-0.5 * expval) * gating_term;
+ }
+ 
+ 
+@@ -148,8 +167,10 @@
+     PLASSERT( !m_isp_input_sigma.size() || dataInputsize() == m_isp_input_sigma.size() );
+     PLASSERT( K.size() == 0 || m_data_cache.size() &gt; 0 );  // Ensure data cached OK
+ 
+-    // Compute IID noise gram matrix
++    // Compute Kronecker gram matrix and save it
+     inherited::computeGramMatrix(K);
++    m_kron_gram_cache.resize(K.length(), K.width());
++    m_kron_gram_cache &lt;&lt; K;
+ 
+     // Precompute some terms
+     real sf    = softplus(m_isp_signal_sigma);
+@@ -203,8 +224,10 @@
+                        } while((k -= 8) &gt; 0);
+             }
+ 
+-            // Update kernel matrix (already pre-filled with IID noise terms)
+-            *Kij++ += sf * exp(-0.5 * sum_wt);
++            // Multiplicatively update kernel matrix (already pre-filled with
++            // Kronecker terms, or 1.0 if no Kronecker terms, as per build_).
++            real Kij_cur = *Kij * sf * exp(-0.5 * sum_wt);
++            *Kij++ = Kij_cur;
+         }
+     }
+     if (cache_gram_matrix) {
+@@ -215,11 +238,125 @@
+ }
+ 
+ 
++//#####  computeGramMatrixDerivative  #########################################
++
++void SquaredExponentialARDKernel::computeGramMatrixDerivative(
++    Mat&amp; KD, const string&amp; kernel_param, real epsilon) const
++{
++    static const string ISS(&quot;isp_signal_sigma&quot;);
++    static const string IGS(&quot;isp_global_sigma&quot;);
++    static const string IIS(&quot;isp_input_sigma[&quot;);
++
++    if (kernel_param == ISS) {
++        computeGramMatrixDerivNV&lt;
++            SquaredExponentialARDKernel,
++            &amp;SquaredExponentialARDKernel::derivIspSignalSigma&gt;(KD, this, -1);
++    }
++    else if (kernel_param == IGS) {
++        computeGramMatrixDerivNV&lt;
++            SquaredExponentialARDKernel,
++            &amp;SquaredExponentialARDKernel::derivIspGlobalSigma&gt;(KD, this, -1);
++    }
++    else if (string_begins_with(kernel_param, IIS) &amp;&amp;
++             kernel_param[kernel_param.size()-1] == ']')
++    {
++        int arg = tolong(kernel_param.substr(
++                             IIS.size(), kernel_param.size() - IIS.size() - 1));
++        PLASSERT( arg &lt; m_isp_input_sigma.size() );
++
++        computeGramMatrixDerivIspInputSigma(KD, arg);
++
++    }
++    else
++        inherited::computeGramMatrixDerivative(KD, kernel_param, epsilon);
++}
++
++
++//#####  derivIspSignalSigma  #################################################
++
++real SquaredExponentialARDKernel::derivIspSignalSigma(int i, int j, int arg, real K) const
++{
++    return K*sigmoid(m_isp_signal_sigma)/softplus(m_isp_signal_sigma);
++}
++
++
++//#####  derivIspGlobalSigma  #################################################
++
++real SquaredExponentialARDKernel::derivIspGlobalSigma(int i, int j, int arg, real K) const
++{
++    if (fast_is_equal(K,0.))
++        return 0.;
++
++    // The norm term inside the exponential may be accessed as Log(K/(sf*kron))
++    real kron  = m_kron_gram_cache(i,j);
++    real inner = pl_log(K / (kron * softplus(m_isp_signal_sigma)));
++    return K * inner * sigmoid(m_isp_global_sigma) / softplus(m_isp_global_sigma);
++
++    // Note: in the above expression for 'inner' there is the implicit
++    // assumption that the input_sigma[i] are zero, which allows the
++    // sigmoid/softplus term to be factored out of the norm summation.
++}
++
++
++//#####  computeGramMatrixDerivIspInputSigma  #################################
++
++void SquaredExponentialARDKernel::computeGramMatrixDerivIspInputSigma(Mat&amp; KD,
++                                                                      int arg) const
++{
++    // Precompute some terms
++    real input_sigma_arg = m_input_sigma[arg];
++    real input_sigma_sq  = input_sigma_arg * input_sigma_arg;
++    real input_sigmoid   = sigmoid(m_isp_global_sigma + m_isp_input_sigma[arg]);
++    
++    // Compute Gram Matrix derivative w.r.t. isp_input_sigma[arg]
++    int  l = data-&gt;length();
++
++    // Variables that walk over the data matrix
++    int  cache_mod = m_data_cache.mod();
++    real *data_start = &amp;m_data_cache(0,0);
++    real *xi = data_start+arg;               // Iterator on data rows
++
++    // Variables that walk over the gram cache
++    int   gram_cache_mod = gram_matrix.mod();
++    real *gram_cache_row = gram_matrix.data();
++    real *gram_cache_cur;
++    
++    // Variables that walk over the kernel derivative matrix (KD)
++    KD.resize(l,l);
++    real* KDi = KD.data();                   // Start of row i
++    real* KDij;                              // Current element on row i
++    int   KD_mod = KD.mod();
++
++    // Iterate on rows of derivative matrix
++    for (int i=0 ; i&lt;l ; ++i, xi += cache_mod, KDi += KD_mod,
++             gram_cache_row += gram_cache_mod)
++    {
++        KDij = KDi;
++        real *xj  = data_start+arg;           // Inner iterator on data rows
++        gram_cache_cur = gram_cache_row;
++
++        // Iterate on columns of derivative matrix
++        for (int j=0 ; j &lt;= i
++                 ; ++j, xj += cache_mod, ++gram_cache_cur)
++        {
++            real diff    = *xi - *xj;
++            real sq_diff = diff * diff;
++            real KD_cur  = 0.5 * *gram_cache_cur *
++                           input_sigmoid * sq_diff / input_sigma_sq;
++
++            // Set into derivative matrix
++            *KDij++ = KD_cur;
++        }
++    }
++}
++
++
+ //#####  makeDeepCopyFromShallowCopy  #########################################
+ 
+ void SquaredExponentialARDKernel::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
++    deepCopyField(m_kron_gram_cache, copies);
+ }
+ 
+ } // end of namespace PLearn
+
+Modified: trunk/plearn/ker/SquaredExponentialARDKernel.h
+===================================================================
+--- trunk/plearn/ker/SquaredExponentialARDKernel.h	2007-04-11 11:34:01 UTC (rev 6874)
++++ trunk/plearn/ker/SquaredExponentialARDKernel.h	2007-04-11 12:13:05 UTC (rev 6875)
+@@ -58,12 +58,31 @@
+  *  Similar to C.E. Rasmussen's GPML code (see <A HREF="http://www.gaussianprocess.org">http://www.gaussianprocess.org</A>),
+  *  this kernel function is specified as:
+  *
+- *    k(x,y) = sf * exp(- 0.5 * (sum_i (x_i - y_i)^2 / w_i)) + k_iid(x,y)
++ *    k(x,y) = sf * exp(- 0.5 * (sum_i (x_i - y_i)^2 / w_i)) * k_kron(x,y)
+  *
+  *  where sf is softplus(isp_signal_sigma), w_i is softplus(isp_global_sigma +
+- *  isp_input_sigma[i]), and k_iid(x,y) is the result of the IIDNoiseKernel
+- *  kernel evaluation.
++ *  isp_input_sigma[i]), and k_kron(x,y) is the result of the
++ *  KroneckerBaseKernel evaluation, or 1.0 if there are no Kronecker terms.
++ *  Note that since the Kronecker terms are incorporated multiplicatively, the
++ *  very presence of the term associated to this kernel can be gated by the
++ *  value of some input variable(s) (that are incorporated within one or more
++ *  Kronecker terms).
+  *
++ *  The current version of this class DOES NOT ALLOW differentiating the Kernel
++ *  matrix with respect to the Kronecker hyperparameters.  These parameters are
++ *  redundant due to the presence of the global sf above; they should be set to
++ *  1.0 and left untouched by hyperoptimization.
++ *
++ *  Note that contrarily to previous versions that incorporated IID noise and
++ *  Kronecker terms ADDITIVELY, this version does not add any noise at all (and
++ *  as explained above incorporates the Kronecker terms multiplicatively).  For
++ *  best results, especially with moderately noisy data, IT IS IMPERATIVE to
++ *  use whis kernel within a SummationKernel in conjunction with an
++ *  IIDNoiseKernel, as follows (e.g. within a GaussianProcessRegressor):
++ *
++ *      kernel = SummationKernel(terms = [ SquaredExponentialARDKernel(),
++ *                                         IIDNoiseKernel() ] )
++ *
+  *  Note that to make its operations more robust when used with unconstrained
+  *  optimization of hyperparameters, all hyperparameters of this kernel are
+  *  specified in the inverse softplus domain.  See IIDNoiseKernel for more
+@@ -95,8 +114,8 @@
+     
+     //! Directly compute the derivative with respect to hyperparameters
+     //! (Faster than finite differences...)
+-    // virtual void computeGramMatrixDerivative(Mat&amp; KD, const string&amp; kernel_param,
+-    //                                          real epsilon=1e-6) const;
++    virtual void computeGramMatrixDerivative(Mat&amp; KD, const string&amp; kernel_param,
++                                             real epsilon=1e-6) const;
+     
+ 
+     //#####  PLearn::Object Protocol  #########################################
+@@ -114,6 +133,19 @@
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+ 
++    //! Derivative function with respect to isp_signal_sigma
++    real derivIspSignalSigma(int i, int j, int arg, real K) const;
++
++    //! Derivative function with respect to isp_global_sigma
++    real derivIspGlobalSigma(int i, int j, int arg, real K) const;
++    
++    // Compute derivative w.r.t. isp_input_sigma[arg] for WHOLE MATRIX
++    void computeGramMatrixDerivIspInputSigma(Mat&amp; KD, int arg) const;
++    
++protected:
++    //! Cached version of Kronecker gram matrix
++    mutable Mat m_kron_gram_cache;
++
+ private:
+     //! This does the actual building.
+     void build_();
+
+Modified: trunk/plearn/ker/SummationKernel.cc
+===================================================================
+--- trunk/plearn/ker/SummationKernel.cc	2007-04-11 11:34:01 UTC (rev 6874)
++++ trunk/plearn/ker/SummationKernel.cc	2007-04-11 12:13:05 UTC (rev 6875)
+@@ -36,7 +36,9 @@
+ 
+ /*! \file SummationKernel.cc */
+ 
+-
++#include &lt;plearn/base/stringutils.h&gt;
++#include &lt;plearn/base/lexical_cast.h&gt;
++#include &lt;plearn/vmat/SelectColumnsVMatrix.h&gt;
+ #include &quot;SummationKernel.h&quot;
+ 
+ namespace PLearn {
+@@ -121,6 +123,40 @@
+ }
+ 
+ 
++//#####  setDataForKernelMatrix  ##############################################
++
++void SummationKernel::setDataForKernelMatrix(VMat the_data)
++{
++    inherited::setDataForKernelMatrix(the_data);
++    bool split_inputs = m_input_indexes.size() &gt; 0;
++    for (int i=0, n=m_terms.size() ; i&lt;n ; ++i) {
++        if (split_inputs &amp;&amp; m_input_indexes[i].size() &gt; 0) {
++            VMat sub_inputs = new SelectColumnsVMatrix(the_data, m_input_indexes[i]);
++            m_terms[i]-&gt;setDataForKernelMatrix(sub_inputs);
++        }
++        else
++            m_terms[i]-&gt;setDataForKernelMatrix(the_data);
++    }
++}
++
++
++//#####  addDataForKernelMatrix  ##############################################
++
++void SummationKernel::addDataForKernelMatrix(const Vec&amp; newRow)
++{
++    inherited::addDataForKernelMatrix(newRow);
++    bool split_inputs = m_input_indexes.size() &gt; 0;
++    for (int i=0, n=m_terms.size() ; i&lt;n ; ++i) {
++        if (split_inputs &amp;&amp; m_input_indexes[i].size() &gt; 0) {
++            selectElements(newRow, m_input_indexes[i], m_input_buf1[i]);
++            m_terms[i]-&gt;addDataForKernelMatrix(m_input_buf1[i]);
++        }
++        else
++            m_terms[i]-&gt;addDataForKernelMatrix(newRow);
++    }
++}
++
++
+ //#####  evaluate  ############################################################
+ 
+ real SummationKernel::evaluate(const Vec&amp; x1, const Vec&amp; x2) const
+@@ -141,6 +177,61 @@
+ }
+ 
+ 
++//#####  computeGramMatrix  ###################################################
++
++void SummationKernel::computeGramMatrix(Mat K) const
++{
++    // Assume that K has the right size; will have error in subkernels
++    // evaluation if not the right size in any case.
++    m_gram_buf.resize(K.width(), K.length());
++
++    for (int i=0, n=m_terms.size() ; i&lt;n ; ++i) {
++        if (i==0)
++            m_terms[i]-&gt;computeGramMatrix(K);
++        else {
++            m_terms[i]-&gt;computeGramMatrix(m_gram_buf);
++            K += m_gram_buf;
++        }
++    }
++}
++
++
++//#####  computeGramMatrixDerivative  #########################################
++void SummationKernel::computeGramMatrixDerivative(
++    Mat&amp; KD, const string&amp; kernel_param, real epsilon) const
++{
++    // Find which term we want to compute the derivative for
++    if (string_begins_with(kernel_param, &quot;terms[&quot;)) {
++        string::size_type rest = kernel_param.find(&quot;].&quot;);
++        if (rest == string::npos)
++            PLERROR(&quot;%s: malformed hyperparameter name for computing derivative '%s'&quot;,
++                    __FUNCTION__, kernel_param.c_str());
++
++        string sub_param  = kernel_param.substr(rest+2);
++        string term_index = kernel_param.substr(6,rest-6); // len(&quot;terms[&quot;) == 6
++        int i = lexical_cast&lt;int&gt;(term_index);
++        if (i &lt; 0 || i &gt;= m_terms.size())
++            PLERROR(&quot;%s: out of bounds access to term %d when computing derivative\n&quot;
++                    &quot;for kernel parameter '%d'; only %d terms (0..%d) are available\n&quot;
++                    &quot;in the SummationKernel&quot;, __FUNCTION__, i, kernel_param.c_str(),
++                    m_terms.size(), m_terms.size()-1);
++        
++        m_terms[i]-&gt;computeGramMatrixDerivative(KD, sub_param, epsilon);
++    }
++    else
++        inherited::computeGramMatrixDerivative(KD, kernel_param, epsilon);
++
++    // Compare against finite differences
++    // Mat KD1;
++    // Kernel::computeGramMatrixDerivative(KD1, kernel_param, epsilon);
++    // cerr &lt;&lt; &quot;Kernel hyperparameter: &quot; &lt;&lt; kernel_param &lt;&lt; endl;
++    // cerr &lt;&lt; &quot;Analytic derivative (200th row):&quot; &lt;&lt; endl
++    //      &lt;&lt; KD(200) &lt;&lt; endl
++    //      &lt;&lt; &quot;Finite differences:&quot; &lt;&lt; endl
++    //      &lt;&lt; KD1(200) &lt;&lt; endl;
++}
++
++
+ //#####  makeDeepCopyFromShallowCopy  #########################################
+ 
+ void SummationKernel::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+@@ -151,6 +242,7 @@
+     deepCopyField(m_input_indexes,  copies);
+     deepCopyField(m_input_buf1,     copies);
+     deepCopyField(m_input_buf2,     copies);
++    deepCopyField(m_gram_buf,       copies);
+ }
+ 
+ } // end of namespace PLearn
+
+Modified: trunk/plearn/ker/SummationKernel.h
+===================================================================
+--- trunk/plearn/ker/SummationKernel.h	2007-04-11 11:34:01 UTC (rev 6874)
++++ trunk/plearn/ker/SummationKernel.h	2007-04-11 12:13:05 UTC (rev 6875)
+@@ -84,9 +84,23 @@
+ 
+     //#####  Kernel Member Functions  #########################################
+ 
++    //! Distribute to terms (sub-kernels) in the summation, subsetting if required
++    virtual void setDataForKernelMatrix(VMat the_data);
++
++    //! Distribute to terms (sub-kernels) in the summation, subsetting if required
++    virtual void addDataForKernelMatrix(const Vec&amp; newRow);
++
+     //! Compute K(x1,x2).
+     virtual real evaluate(const Vec&amp; x1, const Vec&amp; x2) const;
+ 
++    //! Compute the Gram Matrix by calling subkernels computeGramMatrix
++    virtual void computeGramMatrix(Mat K) const;
++    
++    //! Directly compute the derivative with respect to hyperparameters
++    //! (Faster than finite differences...)
++    virtual void computeGramMatrixDerivative(Mat&amp; KD, const string&amp; kernel_param,
++                                             real epsilon=1e-6) const;
++    
+ 
+     //#####  PLearn::Object Protocol  #########################################
+ 
+@@ -104,6 +118,9 @@
+     TVec&lt;Vec&gt; m_input_buf1;
+     TVec&lt;Vec&gt; m_input_buf2;
+ 
++    //! Temporary buffer for Gram matrix accumulation
++    mutable Mat m_gram_buf;
++
+ protected:
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000323.html">[Plearn-commits] r6874 - trunk/scripts
+</A></li>
+	<LI>Next message: <A HREF="000325.html">[Plearn-commits] r6876 - trunk/plearn/ker
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#324">[ date ]</a>
+              <a href="thread.html#324">[ thread ]</a>
+              <a href="subject.html#324">[ subject ]</a>
+              <a href="author.html#324">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

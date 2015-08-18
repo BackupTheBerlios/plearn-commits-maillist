@@ -1,0 +1,218 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7310 - trunk/plearn_learners/hyper
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7310%20-%20trunk/plearn_learners/hyper&In-Reply-To=%3C200705241804.l4OI4wQE026306%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000758.html">
+   <LINK REL="Next"  HREF="000760.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7310 - trunk/plearn_learners/hyper</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7310%20-%20trunk/plearn_learners/hyper&In-Reply-To=%3C200705241804.l4OI4wQE026306%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7310 - trunk/plearn_learners/hyper">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Thu May 24 20:04:58 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000758.html">[Plearn-commits] r7309 - trunk
+</A></li>
+        <LI>Next message: <A HREF="000760.html">[Plearn-commits] r7311 - in	trunk/plearn_learners/online/test/ModuleLearner/.pytest/PL_ModuleLearner_TwoRBMs/expected_results:	. expdir-tester expdir-tester/Split0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#759">[ date ]</a>
+              <a href="thread.html#759">[ thread ]</a>
+              <a href="subject.html#759">[ subject ]</a>
+              <a href="author.html#759">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-05-24 20:04:57 +0200 (Thu, 24 May 2007)
+New Revision: 7310
+
+Modified:
+   trunk/plearn_learners/hyper/HyperRetrain.cc
+   trunk/plearn_learners/hyper/HyperRetrain.h
+Log:
+Can now avoid providing a splitter, and also added a new option 'call_forget' so we can choose whether or not to forget
+
+Modified: trunk/plearn_learners/hyper/HyperRetrain.cc
+===================================================================
+--- trunk/plearn_learners/hyper/HyperRetrain.cc	2007-05-24 17:21:48 UTC (rev 7309)
++++ trunk/plearn_learners/hyper/HyperRetrain.cc	2007-05-24 18:04:57 UTC (rev 7310)
+@@ -47,58 +47,77 @@
+ namespace PLearn {
+ using namespace std;
+ 
+-HyperRetrain::HyperRetrain()
+-    : provide_tester_expdir(false)
+-{
+-}
++HyperRetrain::HyperRetrain():
++    provide_tester_expdir(false),
++    call_forget(true)
++{}
+ 
+ PLEARN_IMPLEMENT_OBJECT(
+     HyperRetrain,
+-    &quot;HyperCommand to retrain a learner with a new splitter without changing hyperparameters&quot;,
+-    &quot;This is useful as a last command in an HyperOptimization chain in order\n&quot;
+-    &quot;to retrain the current \&quot;best\&quot; learner with the entire training+validation\n&quot;
+-    &quot;sets.&quot;);
++    &quot;Retrain a learner without changing its hyperparameters.&quot;,
++    &quot;It is possible to specify a new splitter in order for instance to\n&quot;
++    &quot;retrain the current best learner on the entire (train + valid) dataset\n&quot;
++    &quot;at the end of hyper-parameter optimization. This can be done by setting\n&quot;
++    &quot;the 'splitter' option to something like:\n&quot;
++    &quot;   splitter = FractionSplitter(splits = 1 1 [0:1])\n&quot;
++    &quot;\n&quot;
++    &quot;One may also provide no splitter, and just continue training the\n&quot;
++    &quot;learner by setting the 'call_forget' option to false (this can be\n&quot;
++    &quot;useful after using a HyperSetOption to modify the learner's options).\n&quot;
++);
+ 
++////////////////////
++// declareOptions //
++////////////////////
+ void HyperRetrain::declareOptions(OptionList&amp; ol)
+ {
+     declareOption(ol, &quot;splitter&quot;, &amp;HyperRetrain::splitter,
+                   OptionBase::buildoption,
+-                  &quot;Splitter to use for retraining.  For example, in order to\n&quot;
+-                  &quot;retrain on entire dataset, one can use the following:\n&quot;
+-                  &quot;  splitter = FractionSplitter(splits = 1 1 [0:1]); &quot;);
++        &quot;Splitter to use for (re)training. If not provided, the current\n&quot;
++        &quot;splitter will be used.&quot;);
+ 
+-    declareOption(ol, &quot;provide_tester_expdir&quot;, &amp;HyperRetrain::provide_tester_expdir,
++    declareOption(ol, &quot;provide_tester_expdir&quot;,
++                  &amp;HyperRetrain::provide_tester_expdir,
+                   OptionBase::buildoption,
+-                  &quot;should the tester be provided with an expdir for retraining&quot;);
++        &quot;Should the tester be provided with an expdir for retraining.&quot;);
+ 
++    declareOption(ol, &quot;call_forget&quot;, &amp;HyperRetrain::call_forget,
++                  OptionBase::buildoption,
++        &quot;Whether to call forget() before training. Note that even if set to\n&quot;
++        &quot;0, forget() might be called in setTrainingSet(..) if a new splitter\n&quot;
++        &quot;is provided.&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+ 
++////////////
++// build_ //
++////////////
+ void HyperRetrain::build_()
+-{
+-    // ### This method should do the real building of the object,
+-    // ### according to set 'options', in *any* situation.
+-    // ### Typical situations include:
+-    // ###  - Initial building of an object from a few user-specified options
+-    // ###  - Building of a &quot;reloaded&quot; object: i.e. from the complete set of all serialised options.
+-    // ###  - Updating or &quot;re-building&quot; of an object after a few &quot;tuning&quot; options have been modified.
+-    // ### You should assume that the parent class' build_() has already been called.
+-}
++{}
+ 
+-// ### Nothing to add here, simply calls build_
++///////////
++// build //
++///////////
+ void HyperRetrain::build()
+ {
+     inherited::build();
+     build_();
+ }
+ 
++/////////////////////////////////
++// makeDeepCopyFromShallowCopy //
++/////////////////////////////////
+ void HyperRetrain::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+     deepCopyField(splitter, copies);
+ }
+ 
++//////////////
++// optimize //
++//////////////
+ Vec HyperRetrain::optimize()
+ {
+     PP&lt;PTester&gt; tester = hlearner-&gt;tester;
+@@ -109,19 +128,20 @@
+     tester-&gt;setExperimentDirectory(testerexpdir);
+ 
+     PP&lt;Splitter&gt; default_splitter = tester-&gt;splitter;
+-    if (splitter.isNull())
+-        PLERROR(&quot;HyperRetrain::optimize: a new splitter must be set inside &quot;
+-                &quot;HyperRetrain.  \nFor example: &quot;
+-                &quot;splitter = FractionSplitter(splits = 1 1 [0:1]);&quot;);
+-    tester-&gt;splitter = splitter;
+ 
+-    Vec results = tester-&gt;perform(true);
++    if (!splitter.isNull())
++        tester-&gt;splitter = splitter;
+ 
++    Vec results = tester-&gt;perform(call_forget);
++
+     // restore default splitter
+     tester-&gt;splitter = default_splitter;
+     return results;
+ }
+ 
++////////////////////
++// getResultNames //
++////////////////////
+ TVec&lt;string&gt; HyperRetrain::getResultNames() const
+ {
+     return hlearner-&gt;tester-&gt;getStatNames();
+
+Modified: trunk/plearn_learners/hyper/HyperRetrain.h
+===================================================================
+--- trunk/plearn_learners/hyper/HyperRetrain.h	2007-05-24 17:21:48 UTC (rev 7309)
++++ trunk/plearn_learners/hyper/HyperRetrain.h	2007-05-24 18:04:57 UTC (rev 7310)
+@@ -70,6 +70,8 @@
+     //! Whether an expdir should be set into the child tester
+     bool provide_tester_expdir;
+ 
++    bool call_forget;
++
+     // ****************
+     // * Constructors *
+     // ****************
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000758.html">[Plearn-commits] r7309 - trunk
+</A></li>
+	<LI>Next message: <A HREF="000760.html">[Plearn-commits] r7311 - in	trunk/plearn_learners/online/test/ModuleLearner/.pytest/PL_ModuleLearner_TwoRBMs/expected_results:	. expdir-tester expdir-tester/Split0
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#759">[ date ]</a>
+              <a href="thread.html#759">[ thread ]</a>
+              <a href="subject.html#759">[ subject ]</a>
+              <a href="author.html#759">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

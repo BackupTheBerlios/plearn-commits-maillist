@@ -1,0 +1,203 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10291 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10291%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200908041912.n74JCXi9029084%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003730.html">
+   <LINK REL="Next"  HREF="003732.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10291 - trunk/plearn_learners_experimental</H1>
+    <B>laulysta at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10291%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200908041912.n74JCXi9029084%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10291 - trunk/plearn_learners_experimental">laulysta at mail.berlios.de
+       </A><BR>
+    <I>Tue Aug  4 21:12:33 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003730.html">[Plearn-commits] r10290 - trunk/plearn/io
+</A></li>
+        <LI>Next message: <A HREF="003732.html">[Plearn-commits] r10292 - trunk/python_modules/plearn/table
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3731">[ date ]</a>
+              <a href="thread.html#3731">[ thread ]</a>
+              <a href="subject.html#3731">[ subject ]</a>
+              <a href="author.html#3731">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: laulysta
+Date: 2009-08-04 21:12:32 +0200 (Tue, 04 Aug 2009)
+New Revision: 10291
+
+Modified:
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+Log:
+softmax update
+
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2009-08-04 15:54:35 UTC (rev 10290)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2009-08-04 19:12:32 UTC (rev 10291)
+@@ -1400,15 +1400,17 @@
+     transposeProduct(reconstruction_activation, reconstruction_weights, hidden); 
+     reconstruction_activation += reconstruction_bias;
+ 
+-    for( int j=0 ; j&lt;fullinputlength ; j++ ){
++    softmax(reconstruction_activation, reconstruction_prob);
++
++        /*for( int j=0 ; j&lt;fullinputlength ; j++ ){
+         if(clean_input[j]==1 || clean_input[j]==0)
+             reconstruction_prob[j] = fastsigmoid( reconstruction_activation[j] );
+         else
+             reconstruction_prob[j] = reconstruction_activation[j] ;
+-    }
++            }*/
+ 
+     double result_cost = 0;
+-    if(encoding==&quot;raw_masked_supervised&quot; || encoding==&quot;generic&quot;) // complicated input format... consider it's squared error
++    if(encoding==&quot;raw_masked_supervised&quot;) // || encoding==&quot;generic&quot;) // complicated input format... consider it's squared error
+     {
+         double r = 0;
+         double neg_log_cost = 0; // neg log softmax
+@@ -1490,6 +1492,7 @@
+     Vec hidden_act_no_bias;
+     Vec hidden_exp;
+     Vec dynamic_act_no_bias_contribution;
++    Vec hidden_gradient2;
+     if(reconstruction_bias.length()==0)
+     {
+         reconstruction_bias.resize(fullhiddenlength);
+@@ -1509,7 +1512,7 @@
+     hidden_act_no_bias.resize(fullhiddenlength);
+     hidden_exp.resize(fullhiddenlength);
+     dynamic_act_no_bias_contribution.resize(fullhiddenlength);
+-
++    hidden_gradient2.resize(fullhiddenlength);
+     
+ 
+     // predict (denoised) input_reconstruction 
+@@ -1534,20 +1537,41 @@
+ 
+     /********************************************************************************/
+     hidden_reconstruction_activation_grad.resize(reconstruction_prob.size());
+-    hidden_reconstruction_activation_grad &lt;&lt; reconstruction_prob;
++    hidden_reconstruction_activation_grad &lt;&lt; reconstruction_prob2;
+     hidden_reconstruction_activation_grad -= hidden_target;
+     hidden_reconstruction_activation_grad *= hidden_reconstruction_cost_weight;
+     
+ 
+-    productAcc(hidden_gradient, reconstruction_weights, hidden_reconstruction_activation_grad); //dynamic matrice tied
++    productAcc(hidden_gradient2, reconstruction_weights, hidden_reconstruction_activation_grad); //dynamic matrice tied
+     //transposeProductAcc(hidden_gradient, reconstruction_weights, hidden_reconstruction_activation_grad); //dynamic matrice not tied
+     
+     //update bias
+-    multiplyAcc(reconstruction_bias, hidden_reconstruction_activation_grad, -lr);
++    multiplyAcc(reconstruction_bias2, hidden_reconstruction_activation_grad, -lr);
+     // update weight
+     externalProductScaleAcc(acc_weights_gr, hidden, hidden_reconstruction_activation_grad, -lr); //dynamic matrice tied
+     //externalProductScaleAcc(acc_weights_gr, hidden_reconstruction_activation_grad, hidden, -lr); //dynamic matrice not tied
+-                
++    
++    hidden_reconstruction_activation_grad.clear();
++
++    //update bias
++    for( int i=0 ; i&lt;fullhiddenlength ; i++ )
++    {
++        real in_grad_i;
++        in_grad_i = reconstruction_prob[i] * (1-reconstruction_prob[i]) * hidden_gradient2[i];
++        hidden_reconstruction_activation_grad[i] += in_grad_i;
++        
++       
++        // update the bias: bias -= learning_rate * input_gradient
++        reconstruction_bias[i] -= lr * in_grad_i;
++        
++    }
++
++    productAcc(hidden_gradient, reconstruction_weights, hidden_reconstruction_activation_grad); //dynamic matrice tied
++
++    // update weight
++    externalProductScaleAcc(acc_weights_gr, hidden, hidden_reconstruction_activation_grad, -lr); //dynamic matrice tied
++    
++  
+     //update bias2
+     //multiplyAcc(reconstruction_bias2, hidden_gradient, -lr);
+     /********************************************************************************/
+@@ -1958,8 +1982,8 @@
+                 train_n_items[train_costs.length()-2]++;
+             }
+             
+-            
+-            if(i!=0 &amp;&amp; dynamic_connections )
++            //if(i!=0 &amp;&amp; dynamic_connections )
++            if(i&gt;1 &amp;&amp; dynamic_connections )
+             {   
+                 
+                 // Add contribution of hidden reconstruction cost in hidden_gradient
+@@ -1973,6 +1997,7 @@
+                     
+                     //truc stan
+                     //fpropHiddenSymmetricDynamicMatrix(hidden_list(i-1), reconstruction_weights, hidden_reconstruction_prob, hidden_list(i), hidden_gradient, hidden_reconstruction_weight, current_learning_rate);
++                    
+                     train_costs[train_costs.length()-1] += fpropHiddenReconstructionFromLastHidden(input_list[i], 
+                                                                                                    hidden_list(i), 
+                                                                                                    dynamicWeights, //reconsWeights, //dynamicWeights, 
+@@ -1985,6 +2010,23 @@
+                                                                                                    hidden_gradient, 
+                                                                                                    hidden_reconstruction_weight, 
+                                                                                                    current_learning_rate);
++                    
++                    
++                    /*
++                    train_costs[train_costs.length()-1] += fpropHiddenReconstructionFromLastHidden2(input_list[i], 
++                                                                                                   hidden_list(i), 
++                                                                                                   dynamicWeights, //reconsWeights, //dynamicWeights, 
++                                                                                                   acc_dynamic_connections_gr, //acc_reconstruction_dynamic_connections_gr, //acc_dynamic_connections_gr, 
++                                                                                                   hidden_reconstruction_bias, 
++                                                                                                   hidden_reconstruction_bias2, 
++                                                                                                   hidden_reconstruction_activation_grad, 
++                                                                                                   hidden_reconstruction_prob, 
++                                                                                                   hidden_list(i-2), 
++                                                                                                   hidden_gradient, 
++                                                                                                   hidden_reconstruction_weight, 
++                                                                                                   current_learning_rate);
++                    */
++
+                     //fpropHiddenReconstructionFromLastHidden(hidden_list(i), reconsWeights, acc_reconstruction_dynamic_connections_gr, hidden_reconstruction_bias, hidden_reconstruction_activation_grad, hidden_reconstruction_prob, hidden_list(i-1), hidden_gradient, hidden_reconstruction_weight, current_learning_rate);
+                     train_n_items[train_costs.length()-1]++;
+                 }
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003730.html">[Plearn-commits] r10290 - trunk/plearn/io
+</A></li>
+	<LI>Next message: <A HREF="003732.html">[Plearn-commits] r10292 - trunk/python_modules/plearn/table
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3731">[ date ]</a>
+              <a href="thread.html#3731">[ thread ]</a>
+              <a href="subject.html#3731">[ subject ]</a>
+              <a href="author.html#3731">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

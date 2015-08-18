@@ -1,0 +1,154 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9314 - trunk/plearn_learners/meta
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9314%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200807301839.m6UIdRJg007413%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002762.html">
+   <LINK REL="Next"  HREF="002764.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9314 - trunk/plearn_learners/meta</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9314%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200807301839.m6UIdRJg007413%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9314 - trunk/plearn_learners/meta">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed Jul 30 20:39:27 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002762.html">[Plearn-commits] r9313 - trunk/plearn_learners/meta
+</A></li>
+        <LI>Next message: <A HREF="002764.html">[Plearn-commits] r9315 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2763">[ date ]</a>
+              <a href="thread.html#2763">[ thread ]</a>
+              <a href="subject.html#2763">[ subject ]</a>
+              <a href="author.html#2763">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-07-30 20:39:26 +0200 (Wed, 30 Jul 2008)
+New Revision: 9314
+
+Modified:
+   trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+   trunk/plearn_learners/meta/MultiClassAdaBoost.h
+Log:
+optimization by reusing some tmp vector.
+
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-07-30 18:37:46 UTC (rev 9313)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-07-30 18:39:26 UTC (rev 9314)
+@@ -115,6 +115,10 @@
+     sub_target_tmp.resize(2);
+     for(int i=0;i&lt;sub_target_tmp.size();i++)
+         sub_target_tmp[i].resize(1);
++
++    output1.resize(learner1-&gt;outputsize());
++    output2.resize(learner2-&gt;outputsize());
++
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+@@ -222,10 +226,8 @@
+ {
+     PLASSERT(output.size()==outputsize());
+ 
+-    Vec output1(learner1-&gt;outputsize());
+-    Vec output2(learner2-&gt;outputsize());
+-    learner1-&gt;computeOutput(input,output1);
+-    learner2-&gt;computeOutput(input,output2);
++    learner1-&gt;computeOutput(input, output1);
++    learner2-&gt;computeOutput(input, output2);
+     int ind1=int(round(output1[0]));
+     int ind2=int(round(output2[0]));
+ 
+@@ -247,13 +249,14 @@
+                                                Vec&amp; output, Vec&amp; costs) const
+ {
+     PLASSERT(costs.size()==nTestCosts());
+-
++    PLASSERT_MSG(output.length()!=outputsize(),
++                 &quot;In MultiClassAdaBoost::computeOutputAndCosts -&quot;
++                 &quot; output don't have the good length!&quot;);
+     output.resize(outputsize());
+ 
+-    Vec output1(learner1-&gt;outputsize());
+-    Vec output2(learner2-&gt;outputsize());
+-    Vec subcosts1(learner1-&gt;nTestCosts());
+-    Vec subcosts2(learner1-&gt;nTestCosts());
++    subcosts1.resize(learner1-&gt;nTestCosts());
++    subcosts2.resize(learner1-&gt;nTestCosts());
++
+     getSubLearnerTarget(target, sub_target_tmp);
+ 
+     learner1-&gt;computeOutputAndCosts(input, sub_target_tmp[0],
+@@ -322,11 +325,11 @@
+ 
+     costs[4]=costs[5]=costs[6]=0;
+     costs[out+4]=1;
+-    PLASSERT(nTestCosts()==costs.size());
++
+     if(forward_sub_learner_test_costs){
+         costs.resize(7);
+-        Vec subcosts1(learner1-&gt;nTestCosts());
+-        Vec subcosts2(learner1-&gt;nTestCosts());
++        subcosts1.resize(learner1-&gt;nTestCosts());
++        subcosts2.resize(learner1-&gt;nTestCosts());
+         getSubLearnerTarget(target, sub_target_tmp);
+ 
+         learner1-&gt;computeCostsOnly(input,sub_target_tmp[0],subcosts1);
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.h	2008-07-30 18:37:46 UTC (rev 9313)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.h	2008-07-30 18:39:26 UTC (rev 9314)
+@@ -59,8 +59,10 @@
+ {
+     typedef PLearner inherited;
+ 
+-    Vec tmp_costs;
+-    Vec tmp_target;
++    mutable Vec output1;
++    mutable Vec output2;
++    mutable Vec subcosts1;
++    mutable Vec subcosts2;
+ 
+ public:
+     //#####  Public Build Options  ############################################
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002762.html">[Plearn-commits] r9313 - trunk/plearn_learners/meta
+</A></li>
+	<LI>Next message: <A HREF="002764.html">[Plearn-commits] r9315 - trunk
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2763">[ date ]</a>
+              <a href="thread.html#2763">[ thread ]</a>
+              <a href="subject.html#2763">[ subject ]</a>
+              <a href="author.html#2763">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

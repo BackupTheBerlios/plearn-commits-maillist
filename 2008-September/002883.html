@@ -1,0 +1,387 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9443 - in trunk: plearn_learners/meta	python_modules/plearn/learners
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-September/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9443%20-%20in%20trunk%3A%20plearn_learners/meta%0A%09python_modules/plearn/learners&In-Reply-To=%3C200809091928.m89JS9hE008436%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002882.html">
+   <LINK REL="Next"  HREF="002884.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9443 - in trunk: plearn_learners/meta	python_modules/plearn/learners</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9443%20-%20in%20trunk%3A%20plearn_learners/meta%0A%09python_modules/plearn/learners&In-Reply-To=%3C200809091928.m89JS9hE008436%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9443 - in trunk: plearn_learners/meta	python_modules/plearn/learners">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Sep  9 21:28:09 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002882.html">[Plearn-commits] r9442 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="002884.html">[Plearn-commits] r9444 - trunk/plearn_learners/generic/DEPRECATED
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2883">[ date ]</a>
+              <a href="thread.html#2883">[ thread ]</a>
+              <a href="subject.html#2883">[ subject ]</a>
+              <a href="author.html#2883">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-09-09 21:28:08 +0200 (Tue, 09 Sep 2008)
+New Revision: 9443
+
+Modified:
+   trunk/plearn_learners/meta/AdaBoost.cc
+   trunk/plearn_learners/meta/AdaBoost.h
+   trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+   trunk/plearn_learners/meta/MultiClassAdaBoost.h
+   trunk/python_modules/plearn/learners/AdaBoostMultiClasses.py
+Log:
+moved more stuff from AdaBoostMultiClasses.py to MultiClassAdaBoost.cc to allow the parallelisation of the train in the futur. Fixed some bug with the getTestCostNames.
+
+
+Modified: trunk/plearn_learners/meta/AdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.cc	2008-09-09 18:39:47 UTC (rev 9442)
++++ trunk/plearn_learners/meta/AdaBoost.cc	2008-09-09 19:28:08 UTC (rev 9443)
+@@ -232,11 +232,16 @@
+ 
+     
+     int n = 0;
++//why we don't always use weak_learner_template?
+     if(weak_learners.size()&gt;0)
+         n=weak_learners[0]-&gt;outputsize();
+     else if(weak_learner_template)
+         n=weak_learner_template-&gt;outputsize();
+     weak_learner_output.resize(n);
++    
++    //for RegressionTreeNode
++    if(getTrainingSet())
++        setTrainingSet(getTrainingSet(),false);
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+@@ -284,7 +289,9 @@
+ void AdaBoost::train()
+ {
+ 
+-    if (nstages &lt; stage){        //!&lt; Asking to revert to previous stage
++    if(nstages==stage)
++        return;
++    else if (nstages &lt; stage){        //!&lt; Asking to revert to previous stage
+         PLCHECK(nstages&gt;0); // should use forget
+         cout&lt;&lt;&quot;In AdaBoost::train() - reverting from stage &quot;&lt;&lt;stage
+             &lt;&lt;&quot; to stage &quot;&lt;&lt;nstages&lt;&lt;endl;
+@@ -681,7 +688,7 @@
+ void AdaBoost::computeOutput(const Vec&amp; input, Vec&amp; output) const
+ {
+     PLASSERT(weak_learners.size()&gt;0);
+-    PLASSERT(weak_learner_output.size()==weak_learners[0]-&gt;outputsize());
++    PLASSERT(weak_learner_output.size()==weak_learner_template-&gt;outputsize());
+     PLASSERT(output.size()==1);
+     real sum_out=0;
+     if(!pseudo_loss_adaboost &amp;&amp; !conf_rated_adaboost)
+@@ -734,8 +741,8 @@
+         costs[3]=costs[4]=MISSING_VALUE;
+ 
+     if(forward_sub_learner_test_costs){
+-        Vec weighted_costs(weak_learners[0]-&gt;nTestCosts());
+-        Vec sum_weighted_costs(weak_learners[0]-&gt;nTestCosts());
++        Vec weighted_costs(weak_learner_template-&gt;nTestCosts());
++        Vec sum_weighted_costs(weak_learner_template-&gt;nTestCosts());
+         sum_weighted_costs.clear();
+         for(int i=0;i&lt;weak_learners.size();i++){
+             weak_learners[i]-&gt;computeCostsOnly(input, target, weighted_costs);
+@@ -828,6 +835,19 @@
+     }
+ }
+ 
++void AdaBoost::setTrainingSet(VMat training_set, bool call_forget)
++{ 
++    PLCHECK(weak_learner_template);
++    inherited::setTrainingSet(training_set, call_forget);
++
++    //we do this as RegressionTreeNode need a train_set for getTestCostNames
++    if(!weak_learner_template-&gt;getTrainingSet())
++        weak_learner_template-&gt;setTrainingSet(training_set,call_forget);
++    for(int i=0;i&lt;weak_learners.length();i++)
++        if(!weak_learners[i]-&gt;getTrainingSet())
++            weak_learners[i]-&gt;setTrainingSet(training_set,call_forget);
++}
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/meta/AdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.h	2008-09-09 18:39:47 UTC (rev 9442)
++++ trunk/plearn_learners/meta/AdaBoost.h	2008-09-09 19:28:08 UTC (rev 9443)
+@@ -200,7 +200,9 @@
+     //! Returns the names of the objective costs that the train method computes and 
+     //! for which it updates the VecStatsCollector train_stats
+     virtual TVec&lt;string&gt; getTrainCostNames() const;
++    virtual void         setTrainingSet(VMat training_set, bool call_forget=true);
+ 
++
+ };
+ 
+ // Declares a few other classes and functions related to this class
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-09-09 18:39:47 UTC (rev 9442)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-09-09 19:28:08 UTC (rev 9443)
+@@ -38,6 +38,7 @@
+ 
+ 
+ #include &quot;MultiClassAdaBoost.h&quot;
++#include &lt;plearn/vmat/ProcessingVMatrix.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -48,7 +49,6 @@
+     &quot;MULTI-LINE \nHELP&quot;);
+ 
+ MultiClassAdaBoost::MultiClassAdaBoost():
+-    nb_stage_to_use(-1),
+     forward_sub_learner_test_costs(false)
+ /* ### Initialize all fields to their default value here */
+ {
+@@ -81,12 +81,6 @@
+ 
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+-    declareOption(ol, &quot;nb_stage_to_use&quot;,
+-                  &amp;MultiClassAdaBoost::nb_stage_to_use,
+-                  OptionBase::buildoption,
+-                  &quot;The number of stage to use when testing.&quot;
+-                  &quot; Can be lower then the number of trained stage,&quot;
+-                  &quot; but can't be higher!&quot;);
+     declareOption(ol, &quot;learner1&quot;, &amp;MultiClassAdaBoost::learner1,
+                   OptionBase::buildoption,
+                   &quot;The sub learner to use.&quot;);
+@@ -115,10 +109,12 @@
+     sub_target_tmp.resize(2);
+     for(int i=0;i&lt;sub_target_tmp.size();i++)
+         sub_target_tmp[i].resize(1);
+-
+-    output1.resize(learner1-&gt;outputsize());
+-    output2.resize(learner2-&gt;outputsize());
+-
++    if(learner1)
++        output1.resize(learner1-&gt;outputsize());
++    if(learner2)
++        output2.resize(learner2-&gt;outputsize());
++    if(!train_stats)
++        train_stats=new VecStatsCollector();
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+@@ -167,59 +163,27 @@
+     inherited::forget();
+ 
+     stage = 0;
+-    
+-    PLWARNING(&quot;In MultiClassAdaBoost::forget() - not implemented, training not implemented&quot;);
++    train_stats-&gt;forget();
++    learner1-&gt;forget();
++    learner2-&gt;forget();
+ }
+ 
+ void MultiClassAdaBoost::train()
+ {
+-    // The role of the train method is to bring the learner up to
+-    // stage==nstages, updating train_stats with training costs measured
+-    // on-line in the process.
++    learner1-&gt;nstages = nstages;
++    learner1-&gt;train();
++    learner2-&gt;nstages = nstages;
++    learner2-&gt;train();
++    stage=max(learner1-&gt;stage,learner2-&gt;stage);
+ 
+-    /* TYPICAL CODE:
++    train_stats-&gt;stats.resize(0);
++    PP&lt;VecStatsCollector&gt; v;
+ 
+-    static Vec input;  // static so we don't reallocate memory each time...
+-    static Vec target; // (but be careful that static means shared!)
+-    input.resize(inputsize());    // the train_set's inputsize()
+-    target.resize(targetsize());  // the train_set's targetsize()
+-    real weight;
+-
+-    // This generic PLearner method does a number of standard stuff useful for
+-    // (almost) any learner, and return 'false' if no training should take
+-    // place. See PLearner.h for more details.
+-    if (!initTrain())
+-        return;
+-
+-    while(stage&lt;nstages)
+-    {
+-        // clear statistics of previous epoch
+-        train_stats-&gt;forget();
+-
+-        //... train for 1 stage, and update train_stats,
+-        // using train_set-&gt;getExample(input, target, weight)
+-        // and train_stats-&gt;update(train_costs)
+-
+-        ++stage;
+-        train_stats-&gt;finalize(); // finalize statistics for this epoch
+-    }
+-    */
+-    PLWARNING(&quot;In MultiClassAdaBoost::train() - not implemented, should be already trained&quot;);
+-    int stage1=learner1-&gt;stage;
+-    int stage2=learner2-&gt;stage;
+-
+-    if(stage1&gt;0 &amp;&amp; stage1&lt;nb_stage_to_use)
+-        PLERROR(&quot;In  MultiClassAdaBoost::train() - asked to use more stage then already trained for learner1&quot;);
+-    if(stage2&gt;0 &amp;&amp; stage2&lt;nb_stage_to_use)
+-        PLERROR(&quot;In  MultiClassAdaBoost::train() - asked to use more stage then already trained for learner1&quot;);
+-    if(nb_stage_to_use&gt;0){
+-        learner1-&gt;nstages=nb_stage_to_use;
+-        learner1-&gt;train();
+-    }
+-    if(nb_stage_to_use&gt;0){
+-        learner2-&gt;nstages=nb_stage_to_use;
+-        learner2-&gt;train();
+-    }
++    //we do it this way in case the learner don't have train_stats
++    if(v=learner1-&gt;getTrainStatsCollector())
++        train_stats-&gt;append(*(v),&quot;sublearner1.&quot;);
++    if(v=learner2-&gt;getTrainStatsCollector())
++        train_stats-&gt;append(*(v),&quot;sublearner2.&quot;);
+ }
+ 
+ void MultiClassAdaBoost::computeOutput(const Vec&amp; input, Vec&amp; output) const
+@@ -409,6 +373,29 @@
+                   &quot;We only support target 0/1/2. We got %f.&quot;, target[0]); 
+ }
+ 
++void MultiClassAdaBoost::setTrainingSet(VMat training_set, bool call_forget)
++{ 
++    PLCHECK(learner1 &amp;&amp; learner2);
++    inherited::setTrainingSet(training_set, call_forget);
++    string targetname = training_set-&gt;fieldName(training_set-&gt;inputsize());
++    string input_prg  = &quot;[%0:%&quot;+tostring(training_set-&gt;inputsize()-1)+&quot;]&quot;;
++    string target_prg1= &quot;@&quot;+targetname+&quot; 1 0 ifelse :&quot;+targetname;
++    string target_prg2= &quot;@&quot;+targetname+&quot; 2 - 0 1 ifelse :&quot;+targetname;
++    string weight_prg = &quot;1 :weight&quot;;
++
++    VMat vmat1 = new ProcessingVMatrix(training_set, input_prg,
++                                       target_prg1,  weight_prg);
++    VMat vmat2 = new ProcessingVMatrix(training_set, input_prg,
++                                       target_prg2,  weight_prg);
++
++    //We don't give it if the script give them one explicitly.
++    //This can be usefull for optimization
++    if(!learner1-&gt;getTrainingSet())
++        learner1-&gt;setTrainingSet(vmat1, call_forget);
++    if(!learner2-&gt;getTrainingSet())
++        learner2-&gt;setTrainingSet(vmat2, call_forget);
++}
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.h	2008-09-09 18:39:47 UTC (rev 9442)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.h	2008-09-09 19:28:08 UTC (rev 9443)
+@@ -70,9 +70,6 @@
+     //! ### declare public option fields (such as build options) here
+     //! Start your comments with Doxygen-compatible comments such as //!
+ 
+-    //! The number of stage that will be used
+-    int nb_stage_to_use;
+-
+     //! Did we add the learner1 and learner2 costs to our costs
+     bool forward_sub_learner_test_costs;
+ 
+@@ -161,7 +158,7 @@
+     virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
+ 
+ 
+-//    virtual void setTrainingSet(VMat training_set, bool call_forget=true);
++    virtual void setTrainingSet(VMat training_set, bool call_forget=true);
+ 
+ protected:
+     //#####  Protected Options  ###############################################
+
+Modified: trunk/python_modules/plearn/learners/AdaBoostMultiClasses.py
+===================================================================
+--- trunk/python_modules/plearn/learners/AdaBoostMultiClasses.py	2008-09-09 18:39:47 UTC (rev 9442)
++++ trunk/python_modules/plearn/learners/AdaBoostMultiClasses.py	2008-09-09 19:28:08 UTC (rev 9443)
+@@ -15,6 +15,9 @@
+ #        weakLearner should be a function that take the class number for the one vs other
+ #                and should return a new weak learner
+ #        &quot;&quot;&quot;
++
++#        print &quot;AdaBoostMultiClasses is deprecated! It is only a wrapper on the MultiClassAdaBoost of plearn. It will be removed in the futur. So use MultiClassAdaBoost directly.&quot;
++        
+         self.trainSet1=trainSet1
+         self.trainSet2=trainSet2
+ 
+@@ -33,6 +36,7 @@
+             self.learner2.setTrainingSet(trainSet2,True)
+             self.multi_class_adaboost.learner1=self.learner1
+             self.multi_class_adaboost.learner2=self.learner2
++            self.multi_class_adaboost.build()
+ 
+         self.nstages = 0
+         self.stage = 0
+@@ -56,10 +60,20 @@
+         tmp=VecStatsCollector()
+         tmp.setFieldNames(l.getTrainCostNames())
+         l.setTrainStatsCollector(tmp)
++        l.build()
+         return l
+ 
+     def train(self):
+         t1=time.time()
++        self.multi_class_adaboost.nstages = self.nstages
++        self.multi_class_adaboost.train()
++        self.train_stats = self.multi_class_adaboost.getTrainStatsCollector()
++        t2=time.time()
++        self.train_time+=t2-t1
++        self.stage=self.multi_class_adaboost.stage
++        return
++
++        t1=time.time()
+         self.learner1.nstages = self.nstages
+         self.learner1.train()
+         self.learner2.nstages = self.nstages
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002882.html">[Plearn-commits] r9442 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="002884.html">[Plearn-commits] r9444 - trunk/plearn_learners/generic/DEPRECATED
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2883">[ date ]</a>
+              <a href="thread.html#2883">[ thread ]</a>
+              <a href="subject.html#2883">[ subject ]</a>
+              <a href="author.html#2883">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

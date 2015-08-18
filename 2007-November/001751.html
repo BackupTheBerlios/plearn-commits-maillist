@@ -1,0 +1,160 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8303 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-November/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8303%20-%20trunk/plearn/vmat&In-Reply-To=%3C200711262031.lAQKVeCP024278%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001750.html">
+   <LINK REL="Next"  HREF="001752.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8303 - trunk/plearn/vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8303%20-%20trunk/plearn/vmat&In-Reply-To=%3C200711262031.lAQKVeCP024278%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8303 - trunk/plearn/vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Nov 26 21:31:40 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001750.html">[Plearn-commits] r8302 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="001752.html">[Plearn-commits] r8304 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1751">[ date ]</a>
+              <a href="thread.html#1751">[ thread ]</a>
+              <a href="subject.html#1751">[ subject ]</a>
+              <a href="author.html#1751">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-11-26 21:31:38 +0100 (Mon, 26 Nov 2007)
+New Revision: 8303
+
+Modified:
+   trunk/plearn/vmat/GaussianizeVMatrix.cc
+   trunk/plearn/vmat/VMatrix.cc
+   trunk/plearn/vmat/VMatrix.h
+Log:
+Added function VMatrix::getPrecomputedStatsFromFile(const string filename, const int maxnvalues, bool progress_bar) that will compute the stats for a vmat and store the result in a file. Will reuse the result from the file if it already exist.
+
+
+Modified: trunk/plearn/vmat/GaussianizeVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/GaussianizeVMatrix.cc	2007-11-26 19:12:21 UTC (rev 8302)
++++ trunk/plearn/vmat/GaussianizeVMatrix.cc	2007-11-26 20:31:38 UTC (rev 8303)
+@@ -172,8 +172,10 @@
+                 TVec&lt;int&gt;(col, col + the_source-&gt;extrasize() - 1, 1));
+     col += the_source-&gt;extrasize();
+ 
+-    // Compute source statistics.
+-    TVec&lt;StatsCollector&gt; stats = PLearn::computeStats(the_source, -1, false);
++    the_source-&gt;lockMetaDataDir();
++    TVec&lt;StatsCollector&gt; stats = the_source-&gt;
++        getPrecomputedStatsFromFile(&quot;stats_gaussianizeVMatrix.psave&quot;, -1, true);
++    the_source-&gt;unlockMetaDataDir();
+ 
+     // See which dimensions violate the Gaussian assumption and will be
+     // actually Gaussianized, and store the corresponding list of values.
+
+Modified: trunk/plearn/vmat/VMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/VMatrix.cc	2007-11-26 19:12:21 UTC (rev 8302)
++++ trunk/plearn/vmat/VMatrix.cc	2007-11-26 20:31:38 UTC (rev 8303)
+@@ -1372,24 +1372,33 @@
+ TVec&lt;StatsCollector&gt; VMatrix::getStats() const
+ {
+     if(!field_stats)
++        field_stats = getPrecomputedStatsFromFile(&quot;stats.psave&quot;, 2000, false);
++    return field_stats;
++}
++
++/////////////////////////
++// getPrecomputedStats //
++/////////////////////////
++TVec&lt;StatsCollector&gt; VMatrix::getPrecomputedStatsFromFile(const string filename, const int maxnvalues, bool progress_bar) const
++{
++    TVec&lt;StatsCollector&gt; stats;
++    PPath metadatadir = getMetaDataDir();
++    PPath statsfile =  metadatadir + filename;
++    if (isfile(statsfile) &amp;&amp; getMtime()&lt;mtime(statsfile))
+     {
+-        PPath metadatadir = getMetaDataDir();
+-        PPath statsfile =  metadatadir / &quot;stats.psave&quot;;
+-        if (isfile(statsfile) &amp;&amp; getMtime()&lt;mtime(statsfile))
+-        {
+-            if(getMtime()==0)
+-                PLWARNING(&quot;Warning: using a saved stat file (%s) but mtime is 0.\n(cannot be sure file is up to date)&quot;,statsfile.absolute().c_str());
+-            PLearn::load(statsfile, field_stats);
+-        }
+-        else
+-        {
+-            VMat vm = const_cast&lt;VMatrix*&gt;(this);
+-            field_stats = PLearn::computeStats(vm, 2000);
+-            if(!metadatadir.isEmpty())
+-                PLearn::save(statsfile, field_stats);
+-        }
++        if(getMtime()==0)
++            PLWARNING(&quot;Warning: using a saved stat file (%s) but mtime is 0.\n(cannot be sure file is up to date)&quot;,
++                      statsfile.absolute().c_str());
++        PLearn::load(statsfile, stats);
+     }
+-    return field_stats;
++    else
++    {
++        VMat vm = const_cast&lt;VMatrix*&gt;(this);
++        stats = PLearn::computeStats(vm, maxnvalues, progress_bar);
++        if(!metadatadir.isEmpty())
++            PLearn::save(statsfile, stats);
++    }
++    return stats;
+ }
+ 
+ TVec&lt;PP&lt;StatsCollector&gt; &gt; VMatrix::remote_getStats() const
+
+Modified: trunk/plearn/vmat/VMatrix.h
+===================================================================
+--- trunk/plearn/vmat/VMatrix.h	2007-11-26 19:12:21 UTC (rev 8302)
++++ trunk/plearn/vmat/VMatrix.h	2007-11-26 20:31:38 UTC (rev 8303)
+@@ -589,6 +589,8 @@
+      *  created).
+      */
+     TVec&lt;StatsCollector&gt; getStats() const;
++    TVec&lt;StatsCollector&gt; getPrecomputedStatsFromFile(const string filename, const int maxnvalues, bool progress_bar) const;
++
+     TVec&lt;PP&lt;StatsCollector&gt; &gt; remote_getStats() const;
+ 
+     StatsCollector&amp; getStats(int fieldnum) const
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001750.html">[Plearn-commits] r8302 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="001752.html">[Plearn-commits] r8304 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1751">[ date ]</a>
+              <a href="thread.html#1751">[ thread ]</a>
+              <a href="subject.html#1751">[ subject ]</a>
+              <a href="author.html#1751">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

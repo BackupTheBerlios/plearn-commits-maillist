@@ -1,0 +1,326 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6945 - trunk/plearn/ker
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6945%20-%20trunk/plearn/ker&In-Reply-To=%3C200704270220.l3R2K8hk031234%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000393.html">
+   <LINK REL="Next"  HREF="000395.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6945 - trunk/plearn/ker</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6945%20-%20trunk/plearn/ker&In-Reply-To=%3C200704270220.l3R2K8hk031234%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6945 - trunk/plearn/ker">chapados at mail.berlios.de
+       </A><BR>
+    <I>Fri Apr 27 04:20:08 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000393.html">[Plearn-commits] r6944 - in trunk/plearn/opt/test/.pytest:	PL_ConjGradientRosenbrock100/expected_results	PL_ConjGradientRosenbrock2/expected_results
+</A></li>
+        <LI>Next message: <A HREF="000395.html">[Plearn-commits] r6946 - trunk/python_modules/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#394">[ date ]</a>
+              <a href="thread.html#394">[ thread ]</a>
+              <a href="subject.html#394">[ subject ]</a>
+              <a href="author.html#394">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2007-04-27 04:20:07 +0200 (Fri, 27 Apr 2007)
+New Revision: 6945
+
+Modified:
+   trunk/plearn/ker/IIDNoiseKernel.cc
+   trunk/plearn/ker/IIDNoiseKernel.h
+   trunk/plearn/ker/Kernel.h
+   trunk/plearn/ker/RationalQuadraticARDKernel.cc
+   trunk/plearn/ker/RationalQuadraticARDKernel.h
+   trunk/plearn/ker/SummationKernel.cc
+   trunk/plearn/ker/SummationKernel.h
+Log:
+* Made the functions evaluate_all_i_x and evaluate_all_x_i virtual in Kernel
+
+* Overrides in some GaussianProcess-related kernels for performance
+
+
+
+Modified: trunk/plearn/ker/IIDNoiseKernel.cc
+===================================================================
+--- trunk/plearn/ker/IIDNoiseKernel.cc	2007-04-26 00:44:50 UTC (rev 6944)
++++ trunk/plearn/ker/IIDNoiseKernel.cc	2007-04-27 02:20:07 UTC (rev 6945)
+@@ -134,13 +134,31 @@
+ 
+ real IIDNoiseKernel::evaluate_i_x(int i, const Vec&amp; x, real) const
+ {
+-    // Noise component is ZERO between a test and any train example
++    // Noise component is ZERO between a test and any train example.
++    // Just compute the Kronecker part is not necessarily zero
+     Vec* train_row = dataRow(i);
+     PLASSERT( train_row );
+     return softplus(m_isp_kronecker_sigma) * inherited::evaluate(*train_row, x);
+ }
+ 
+ 
++//#####  evaluate_all_i_x  ####################################################
++
++void IIDNoiseKernel::evaluate_all_i_x(const Vec&amp; x, const Vec&amp; k_xi_x,
++                                      real, int istart) const
++{
++    // Noise component is ZERO between a test and any train example
++    k_xi_x.fill(0.0);
++    real kronecker_sigma = softplus(m_isp_kronecker_sigma);
++    int i_max = min(istart + k_xi_x.size(), data-&gt;length());
++    int j = 0;
++    for (int i=istart ; i&lt;i_max ; ++i, ++j) {
++        Vec* train_row = dataRow(i);
++        k_xi_x[j] = kronecker_sigma * inherited::evaluate(*train_row, x);
++    }
++}
++
++
+ //#####  computeGramMatrix  ###################################################
+ 
+ void IIDNoiseKernel::computeGramMatrix(Mat K) const
+
+Modified: trunk/plearn/ker/IIDNoiseKernel.h
+===================================================================
+--- trunk/plearn/ker/IIDNoiseKernel.h	2007-04-26 00:44:50 UTC (rev 6944)
++++ trunk/plearn/ker/IIDNoiseKernel.h	2007-04-27 02:20:07 UTC (rev 6945)
+@@ -104,6 +104,11 @@
+     //! Always zero by independence
+     virtual real evaluate_i_x(int i, const Vec&amp; x, real) const;
+     
++    //! Fill k_xi_x with K(x_i, x), for all i from
++    //! istart to istart + k_xi_x.length() - 1.
++    virtual void evaluate_all_i_x(const Vec&amp; x, const Vec&amp; k_xi_x,
++                                  real squared_norm_of_x=-1, int istart = 0) const;
++
+     //! Compute the Gram Matrix.  Note that this version DOES NOT CACHE
+     //! the results, since it is usually called by derived classes.
+     virtual void computeGramMatrix(Mat K) const;
+
+Modified: trunk/plearn/ker/Kernel.h
+===================================================================
+--- trunk/plearn/ker/Kernel.h	2007-04-26 00:44:50 UTC (rev 6944)
++++ trunk/plearn/ker/Kernel.h	2007-04-27 02:20:07 UTC (rev 6945)
+@@ -174,6 +174,14 @@
+     virtual void setParameters(Vec paramvec); //!&lt;  default version produces an error
+     virtual Vec getParameters() const; //!&lt;  default version returns an empty Vec
+ 
++    //! Fill k_xi_x with K(x_i, x), for all i from istart to istart + k_xi_x.length() - 1.
++    virtual void evaluate_all_i_x(const Vec&amp; x, const Vec&amp; k_xi_x,
++                                  real squared_norm_of_x=-1, int istart = 0) const;
++
++    //! Fill k_x_xi with K(x, x_i), for all i from istart to istart + k_x_xi.length() - 1.
++    virtual void evaluate_all_x_i(const Vec&amp; x, const Vec&amp; k_x_xi,
++                                  real squared_norm_of_x=-1, int istart = 0) const;
++
+     //!  ** Subclasses should NOT override the following methods. The default versions are fine. **
+ 
+     void apply(VMat m1, VMat m2, Mat&amp; result) const; //!&lt;  result(i,j) = K(m1(i),m2(j))
+@@ -181,12 +189,6 @@
+     void apply(VMat m, const Vec&amp; x, Vec&amp; result) const; //!&lt;  result[i]=K(m[i],x)
+     void apply(Vec x, VMat m, Vec&amp; result) const; //!&lt;  result[i]=K(x,m[i])
+ 
+-    //! Fill k_xi_x with K(x_i, x), for all i from istart to istart + k_xi_x.length() - 1.
+-    void evaluate_all_i_x(const Vec&amp; x, const Vec&amp; k_xi_x, real squared_norm_of_x=-1, int istart = 0) const;
+-
+-    //! Fill k_x_xi with K(x, x_i), for all i from istart to istart + k_x_xi.length() - 1.
+-    void evaluate_all_x_i(const Vec&amp; x, const Vec&amp; k_x_xi, real squared_norm_of_x=-1, int istart = 0) const;
+-
+     inline real operator()(const Vec&amp; x1, const Vec&amp; x2) const
+     {
+         return evaluate(x1,x2);
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.cc
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-04-26 00:44:50 UTC (rev 6944)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-04-27 02:20:07 UTC (rev 6945)
+@@ -146,14 +146,12 @@
+     real sf         = softplus(m_isp_signal_sigma);
+     real alpha      = softplus(m_isp_alpha);
+     real sum_wt     = 0.0;
+-    real sum_sqdiff = 0.0;
+     
+     if (m_isp_input_sigma.size() &gt; 0) {
+         const real* pinpsig = m_isp_input_sigma.data();
+         for (int i=0, n=x1.size() ; i&lt;n ; ++i) {
+             real diff   = *px1++ - *px2++;
+             real sqdiff = diff * diff;
+-            sum_sqdiff += sqdiff;
+             sum_wt     += sqdiff / softplus(m_isp_global_sigma + *pinpsig++);
+         }
+     }
+@@ -162,7 +160,6 @@
+         for (int i=0, n=x1.size() ; i&lt;n ; ++i) {
+             real diff   = *px1++ - *px2++;
+             real sqdiff = diff * diff;
+-            sum_sqdiff += sqdiff;
+             sum_wt     += sqdiff / global_sigma;
+         }
+     }
+@@ -172,6 +169,52 @@
+ }
+ 
+ 
++//#####  evaluate_all_i_x  ####################################################
++
++void RationalQuadraticARDKernel::evaluate_all_i_x(const Vec&amp; x1, const Vec&amp; k_xi_x,
++                                                  real , int istart) const
++{
++    if (x1.size() == 0) {
++        k_xi_x.fill(0.0);
++        return;
++    }
++ 
++    // Precompute some terms
++    real sf    = softplus(m_isp_signal_sigma);
++    real alpha = softplus(m_isp_alpha);
++    m_input_sigma.resize(dataInputsize());
++    for (int i=0, n=m_input_sigma.size() ; i&lt;n ; ++i)
++        m_input_sigma[i] = softplus(m_isp_global_sigma + m_isp_input_sigma[i]);
++    
++    const real* px1_start = x1.data();
++    const real* pinpsig_start = m_input_sigma.data();
++    int i_max = min(istart + k_xi_x.size(), data-&gt;length());
++    int j = 0;
++    for (int i=istart ; i&lt;i_max ; ++i, ++j) {
++        Vec* train_row = dataRow(i);
++        const real* px2 = train_row-&gt;data();
++        const real* px1 = px1_start;
++    
++        real gating_term = inherited::evaluate(x1,*train_row);
++        if (fast_is_equal(gating_term, 0.0)) {
++            k_xi_x[j] = 0.0;
++            continue;
++        }
++    
++        real sum_wt     = 0.0;
++        const real* pinpsig = pinpsig_start;
++        for (int i=0, n=x1.size() ; i&lt;n ; ++i) {
++            real diff   = *px1++ - *px2++;
++            real sqdiff = diff * diff;
++            sum_wt     += sqdiff / *pinpsig++;
++        }
++
++        // Gate by Kronecker term
++        k_xi_x[j] = sf * pow(1 + sum_wt / (real(2.)*alpha), -alpha) * gating_term;
++    }
++}
++
++
+ //#####  computeGramMatrix  ###################################################
+ 
+ void RationalQuadraticARDKernel::computeGramMatrix(Mat K) const
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.h
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-04-26 00:44:50 UTC (rev 6944)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-04-27 02:20:07 UTC (rev 6945)
+@@ -102,6 +102,11 @@
+     //! Compute K(x1,x2).
+     virtual real evaluate(const Vec&amp; x1, const Vec&amp; x2) const;
+ 
++    //! Fill k_xi_x with K(x_i, x), for all i from
++    //! istart to istart + k_xi_x.length() - 1.
++    virtual void evaluate_all_i_x(const Vec&amp; x, const Vec&amp; k_xi_x,
++                                  real squared_norm_of_x=-1, int istart = 0) const;
++
+     //! Compute entire Gram matrix
+     virtual void computeGramMatrix(Mat K) const;
+ 
+
+Modified: trunk/plearn/ker/SummationKernel.cc
+===================================================================
+--- trunk/plearn/ker/SummationKernel.cc	2007-04-26 00:44:50 UTC (rev 6944)
++++ trunk/plearn/ker/SummationKernel.cc	2007-04-27 02:20:07 UTC (rev 6945)
+@@ -195,6 +195,27 @@
+ }
+ 
+ 
++//#####  evaluate_all_i_x  ####################################################
++
++void SummationKernel::evaluate_all_i_x(const Vec&amp; x, const Vec&amp; k_xi_x,
++                                       real sq_norm_of_x, int istart) const
++{
++    k_xi_x.fill(0.0);
++    m_eval_buf.resize(k_xi_x.size());
++    bool split_inputs = m_input_indexes.size() &gt; 0;
++    for (int i=0, n=m_terms.size() ; i&lt;n ; ++i) {
++        // Note: if we slice x, we cannot rely on sq_norm_of_x any more...
++        if (split_inputs &amp;&amp; m_input_indexes[i].size() &gt; 0) {
++            selectElements(x, m_input_indexes[i], m_input_buf1[i]);
++            m_terms[i]-&gt;evaluate_all_i_x(m_input_buf1[i], m_eval_buf, -1, istart);
++        }
++        else
++            m_terms[i]-&gt;evaluate_all_i_x(x, m_eval_buf, sq_norm_of_x, istart);
++
++        k_xi_x += m_eval_buf;
++    }
++}
++
+ //#####  computeGramMatrix  ###################################################
+ 
+ void SummationKernel::computeGramMatrix(Mat K) const
+
+Modified: trunk/plearn/ker/SummationKernel.h
+===================================================================
+--- trunk/plearn/ker/SummationKernel.h	2007-04-26 00:44:50 UTC (rev 6944)
++++ trunk/plearn/ker/SummationKernel.h	2007-04-27 02:20:07 UTC (rev 6945)
+@@ -96,6 +96,11 @@
+     //! Evaluate a test example x against a train example given by its index
+     virtual real evaluate_i_x(int i, const Vec&amp; x, real) const;
+     
++    //! Fill k_xi_x with K(x_i, x), for all i from
++    //! istart to istart + k_xi_x.length() - 1.
++    virtual void evaluate_all_i_x(const Vec&amp; x, const Vec&amp; k_xi_x,
++                                  real squared_norm_of_x=-1, int istart = 0) const;
++
+     //! Compute the Gram Matrix by calling subkernels computeGramMatrix
+     virtual void computeGramMatrix(Mat K) const;
+     
+@@ -121,6 +126,9 @@
+     TVec&lt;Vec&gt; m_input_buf1;
+     TVec&lt;Vec&gt; m_input_buf2;
+ 
++    //! Temporary buffer for kernel evaluation on all training dataset
++    mutable Vec m_eval_buf;
++    
+     //! Temporary buffer for Gram matrix accumulation
+     mutable Mat m_gram_buf;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000393.html">[Plearn-commits] r6944 - in trunk/plearn/opt/test/.pytest:	PL_ConjGradientRosenbrock100/expected_results	PL_ConjGradientRosenbrock2/expected_results
+</A></li>
+	<LI>Next message: <A HREF="000395.html">[Plearn-commits] r6946 - trunk/python_modules/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#394">[ date ]</a>
+              <a href="thread.html#394">[ thread ]</a>
+              <a href="subject.html#394">[ subject ]</a>
+              <a href="author.html#394">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

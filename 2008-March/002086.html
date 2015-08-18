@@ -1,0 +1,220 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8638 - trunk/plearn_learners/classifiers
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8638%20-%20trunk/plearn_learners/classifiers&In-Reply-To=%3C200803071551.m27FpsfW026722%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002085.html">
+   <LINK REL="Next"  HREF="002087.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8638 - trunk/plearn_learners/classifiers</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8638%20-%20trunk/plearn_learners/classifiers&In-Reply-To=%3C200803071551.m27FpsfW026722%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8638 - trunk/plearn_learners/classifiers">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Fri Mar  7 16:51:54 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002085.html">[Plearn-commits] r8637 - trunk/plearn_learners/generic
+</A></li>
+        <LI>Next message: <A HREF="002087.html">[Plearn-commits] r8639 - trunk/plearn_learners/classifiers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2086">[ date ]</a>
+              <a href="thread.html#2086">[ thread ]</a>
+              <a href="subject.html#2086">[ subject ]</a>
+              <a href="author.html#2086">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-03-07 16:51:54 +0100 (Fri, 07 Mar 2008)
+New Revision: 8638
+
+Modified:
+   trunk/plearn_learners/classifiers/ToBagClassifier.cc
+   trunk/plearn_learners/classifiers/ToBagClassifier.h
+Log:
+Implemented computeOutputAndCosts
+
+Modified: trunk/plearn_learners/classifiers/ToBagClassifier.cc
+===================================================================
+--- trunk/plearn_learners/classifiers/ToBagClassifier.cc	2008-03-07 15:50:51 UTC (rev 8637)
++++ trunk/plearn_learners/classifiers/ToBagClassifier.cc	2008-03-07 15:51:54 UTC (rev 8638)
+@@ -38,6 +38,7 @@
+ 
+ 
+ #include &quot;ToBagClassifier.h&quot;
++#include &lt;plearn/var/SumOverBagsVariable.h&gt;
+ #include &lt;plearn/vmat/SubVMatrix.h&gt;
+ 
+ namespace PLearn {
+@@ -101,34 +102,33 @@
+                                               const Vec&amp; target,
+                                               Vec&amp; costs) const
+ {
++    fillSubTarget(target);
++    inherited::computeCostsFromOutputs(input, output, sub_target, costs);
++    updateCostAndBagOutput(target, output, costs);
++}
++
++///////////////////////////
++// computeOutputAndCosts //
++///////////////////////////
++void ToBagClassifier::computeOutputAndCosts(const Vec&amp; input,
++                                            const Vec&amp; target,
++                                            Vec&amp; output, Vec&amp; costs) const
++{
++    fillSubTarget(target);
++    inherited::computeOutputAndCosts(input, sub_target, output, costs);
++    updateCostAndBagOutput(target, output, costs);
++}
++
++///////////////////
++// fillSubTarget //
++///////////////////
++void ToBagClassifier::fillSubTarget(const Vec&amp; target) const
++{
+     sub_target.resize(target.length() - 1);
+     sub_target &lt;&lt; target.subVec(0, sub_target.length());
+-    inherited::computeCostsFromOutputs(input, output, sub_target, costs);
+-    PLASSERT( is_equal(sum(output), 1) );   // Ensure probabilities sum to 1.
+-    int bag_info = int(round(target.lastElement()));
+-    if (bag_info % 2 == 1)
+-        bag_output.resize(0, 0);
+-    bag_output.appendRow(output);
+-    costs.resize(nTestCosts());
+-    costs.fill(MISSING_VALUE);
+-    if (bag_info &gt;= 2) {
+-        // Perform majority vote.
+-        votes.resize(bag_output.width());
+-        columnSum(bag_output, votes);
+-        int target_class = int(round(target[0]));
+-        int prediction = argmax(votes);
+-        if (prediction == target_class)
+-            costs[0] = 0;
+-        else
+-            costs[0] = 1;
+-        if (n_classes &gt; 0) {
+-            int i_start = 1 + target_class * n_classes;
+-            costs.subVec(i_start, n_classes).fill(0);
+-            costs[i_start + prediction] = 1;
+-        }
+-    }
+ }
+ 
++
+ //////////////////////
+ // getTestCostNames //
+ //////////////////////
+@@ -187,8 +187,39 @@
+     return learner_-&gt;targetsize() + 1;
+ }
+ 
++////////////////////////////
++// updateCostAndBagOutput //
++////////////////////////////
++void ToBagClassifier::updateCostAndBagOutput(const Vec&amp; target,
++                                             const Vec&amp; output,
++                                             Vec&amp; costs) const
++{
++    PLASSERT( is_equal(sum(output), 1) );   // Ensure probabilities sum to 1.
++    int bag_info = int(round(target.lastElement()));
++    if (bag_info &amp; SumOverBagsVariable::TARGET_COLUMN_FIRST)
++        bag_output.resize(0, 0);
++    bag_output.appendRow(output);
++    costs.resize(nTestCosts());
++    costs.fill(MISSING_VALUE);
++    if (bag_info &amp; SumOverBagsVariable::TARGET_COLUMN_LAST) {
++        // Perform majority vote.
++        votes.resize(bag_output.width());
++        columnSum(bag_output, votes);
++        int target_class = int(round(target[0]));
++        int prediction = argmax(votes);
++        if (prediction == target_class)
++            costs[0] = 0;
++        else
++            costs[0] = 1;
++        if (n_classes &gt; 0) {
++            int i_start = 1 + target_class * n_classes;
++            costs.subVec(i_start, n_classes).fill(0);
++            costs[i_start + prediction] = 1;
++        }
++    }
++}
++
+ } // end of namespace PLearn
+-
+ 
+ /*
+   Local Variables:
+
+Modified: trunk/plearn_learners/classifiers/ToBagClassifier.h
+===================================================================
+--- trunk/plearn_learners/classifiers/ToBagClassifier.h	2008-03-07 15:50:51 UTC (rev 8637)
++++ trunk/plearn_learners/classifiers/ToBagClassifier.h	2008-03-07 15:51:54 UTC (rev 8638)
+@@ -83,12 +83,9 @@
+     virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
+                                          const Vec&amp; target, Vec&amp; costs) const;
+ 
+-    //! Currently using PLearner's simple version for code simplicity.
++    //! Overridden to be able to use the sub-learner's corresponding method.
+     virtual void computeOutputAndCosts(const Vec&amp; input, const Vec&amp; target,
+-                                       Vec&amp; output, Vec&amp; costs) const
+-    {
+-        PLearner::computeOutputAndCosts(input, target, output, costs);
+-    }
++                                       Vec&amp; output, Vec&amp; costs) const;
+ 
+     //! Currently using PLearner's simple version for code simplicity.
+     virtual void computeOutputsAndCosts(const Mat&amp; input, const Mat&amp; target,
+@@ -134,9 +131,15 @@
+     //#####  Protected Member Functions  ######################################
+ 
+     //! Declares the class options.
+-    // (PLEASE IMPLEMENT IN .cc)
+     static void declareOptions(OptionList&amp; ol);
+ 
++    //! TODO Document.
++    void updateCostAndBagOutput(const Vec&amp; target, const Vec&amp; output,
++                                Vec&amp; costs) const;
++
++    //! Fill 'sub_target' with all elements of 'target' but the last one.
++    void fillSubTarget(const Vec&amp; target) const;
++
+ private:
+     //#####  Private Member Functions  ########################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002085.html">[Plearn-commits] r8637 - trunk/plearn_learners/generic
+</A></li>
+	<LI>Next message: <A HREF="002087.html">[Plearn-commits] r8639 - trunk/plearn_learners/classifiers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2086">[ date ]</a>
+              <a href="thread.html#2086">[ thread ]</a>
+              <a href="subject.html#2086">[ subject ]</a>
+              <a href="author.html#2086">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

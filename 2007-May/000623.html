@@ -1,0 +1,491 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7174 - in trunk/plearn_learners/online: .	test/ModuleLearner	test/ModuleLearner/.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester/Split0
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7174%20-%20in%20trunk/plearn_learners/online%3A%20.%0A%09test/ModuleLearner%0A%09test/ModuleLearner/.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester/Split0&In-Reply-To=%3C200705181620.l4IGKWmY031504%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000622.html">
+   <LINK REL="Next"  HREF="000624.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7174 - in trunk/plearn_learners/online: .	test/ModuleLearner	test/ModuleLearner/.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester/Split0</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7174%20-%20in%20trunk/plearn_learners/online%3A%20.%0A%09test/ModuleLearner%0A%09test/ModuleLearner/.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester/Split0&In-Reply-To=%3C200705181620.l4IGKWmY031504%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7174 - in trunk/plearn_learners/online: .	test/ModuleLearner	test/ModuleLearner/.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester/Split0">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Fri May 18 18:20:32 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000622.html">[Plearn-commits] r7173 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000624.html">[Plearn-commits] r7175 -	trunk/plearn_learners/online/test/ModuleLearner
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#623">[ date ]</a>
+              <a href="thread.html#623">[ thread ]</a>
+              <a href="subject.html#623">[ subject ]</a>
+              <a href="author.html#623">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-05-18 18:20:32 +0200 (Fri, 18 May 2007)
+New Revision: 7174
+
+Modified:
+   trunk/plearn_learners/online/NetworkModule.cc
+   trunk/plearn_learners/online/NetworkModule.h
+   trunk/plearn_learners/online/RBMModule.cc
+   trunk/plearn_learners/online/RBMModule.h
+   trunk/plearn_learners/online/test/ModuleLearner/.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester/Split0/final_learner.psave
+   trunk/plearn_learners/online/test/ModuleLearner/PL_ModuleLearner_TwoRBMs.plearn
+Log:
+- A NetworkModule can now automatically save the states of its underlying modules
+- The port 'hidden_activations' in a RBMModule has been renamed to 'hidden_activations.state' to indicate it is a state
+
+
+Modified: trunk/plearn_learners/online/NetworkModule.cc
+===================================================================
+--- trunk/plearn_learners/online/NetworkModule.cc	2007-05-18 16:18:09 UTC (rev 7173)
++++ trunk/plearn_learners/online/NetworkModule.cc	2007-05-18 16:20:32 UTC (rev 7174)
+@@ -66,7 +66,8 @@
+ ///////////////////
+ // NetworkModule //
+ ///////////////////
+-NetworkModule::NetworkModule()
++NetworkModule::NetworkModule():
++    save_states(true)
+ {}
+ 
+ ////////////////////
+@@ -89,8 +90,25 @@
+        &quot;its ports, and 'P' the name under which the NetworkModule sees this\n&quot;
+        &quot;port. See the class help for an example.&quot;);
+ 
++    declareOption(ol, &quot;save_states&quot;, &amp;NetworkModule::save_states,
++                  OptionBase::buildoption,
++       &quot;If set to 1, then any port of an underlying module whose name ends\n&quot;
++       &quot;with 'state' will be automatically saved, even if it has no incoming\n&quot;
++       &quot;or outgoing connection.&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
++
++    // Hide unused parent options.
++
++    redeclareOption(ol, &quot;input_size&quot;, &amp;NetworkModule::input_size,
++                    OptionBase::nosave,
++                    &quot;Not used.&quot;);
++
++    redeclareOption(ol, &quot;output_size&quot;, &amp;NetworkModule::output_size,
++                    OptionBase::nosave,
++                    &quot;Not used.&quot;);
++
+ }
+ 
+ ////////////////////
+@@ -111,11 +129,11 @@
+         for (int j = 0; j &lt; toresize.length(); j++) {
+             if (j == 0) {
+                 DBG_MODULE_LOG &lt;&lt; &quot;CLEAR: &quot; &lt;&lt;
+-                    modules[bprop_path[i]]-&gt;classname() &lt;&lt; endl;
++                    all_modules[bprop_path[i]]-&gt;classname() &lt;&lt; endl;
+             }
+             int mat_idx = toresize[j];
+             DBG_MODULE_LOG &lt;&lt; &quot;  grad = &quot; &lt;&lt;
+-                modules[bprop_path[i]]-&gt;getPortName(mat_idx) &lt;&lt; endl;
++                all_modules[bprop_path[i]]-&gt;getPortName(mat_idx) &lt;&lt; endl;
+             Mat* mat_toresize = bprop_data[i][mat_idx];
+             Mat* mat_tpl = f_data[mat_idx];
+             mat_toresize-&gt;resize(mat_tpl-&gt;length(), mat_tpl-&gt;width());
+@@ -157,7 +175,7 @@
+ 
+     // Backpropagate gradient and update parameters.
+     for (int i = 0; i &lt; bprop_path.length(); i++) {
+-        PP&lt;OnlineLearningModule&gt; module = modules[bprop_path[i]];
++        PP&lt;OnlineLearningModule&gt; module = all_modules[bprop_path[i]];
+         DBG_MODULE_LOG &lt;&lt; &quot;BPROP: &quot; &lt;&lt; module-&gt;name &lt;&lt; endl;
+         // First resize some gradient matrices, so that the gradient is
+         // properly computed.
+@@ -269,41 +287,86 @@
+ ////////////
+ void NetworkModule::build_()
+ {
++    // Initialize the 'all_modules' and 'all_connections' lists.
++    all_modules.resize(modules.length());
++    all_modules &lt;&lt; modules;
++    all_connections.resize(connections.length());
++    all_connections &lt;&lt; connections;
++    if (save_states) {
++        // Ensure all ports which are states are correctly saved.
++        // This is done by adding connections to a NullModule in order to force
++        // them being saved.
++        for (int i = 0; i &lt; modules.length(); i++) {
++            const TVec&lt;string&gt;&amp; mod_ports = modules[i]-&gt;getPorts();
++            for (int j = 0; j &lt; mod_ports.length(); j++) {
++                const string&amp; port = mod_ports[j];
++                if (port.size() &gt;= 5 &amp;&amp;
++                    port.substr(port.size() - 5) == &quot;state&quot;)
++                {
++                    // Look for either an incoming or outgoing connection.
++                    string port_name = modules[i]-&gt;name + &quot;.&quot; + port;
++                    bool has_a_connection = false;
++                    for (int k = 0; k &lt; connections.length(); k++)
++                        if (connections[k]-&gt;destination == port_name ||
++                            connections[k]-&gt;source == port_name)
++                        {
++                            has_a_connection = true;
++                            break;
++                        }
++                    if (!has_a_connection) {
++                        PP&lt;OnlineLearningModule&gt; null;
++                        if (all_modules.length() == modules.length()) {
++                            // No null module added yet.
++                            null = new NullModule(&quot;_null_&quot;);
++                            all_modules.append(null);
++                        } else {
++                            PLASSERT( all_modules.length() == 
++                                        modules.length() + 1 );
++                            null = all_modules.lastElement();
++                        }
++                        all_connections.append( new NetworkConnection(
++                                    modules[i], port, null, &quot;_null_&quot;, false));
++                    }
++                }
++            }
++        }
++    }
++    
+     // Construct fprop and bprop paths from the list of modules and
+     // connections.
+ 
+     // First create a dictionary of modules.
+     map&lt;string, PP&lt;OnlineLearningModule&gt; &gt; name_to_module;
+-    for (int i = 0; i &lt; modules.length(); i++) {
+-        string module = modules[i]-&gt;name;
++    for (int i = 0; i &lt; all_modules.length(); i++) {
++        string module = all_modules[i]-&gt;name;
+         if (name_to_module.find(module) != name_to_module.end()) {
+             // There is already a module with the same name. For safety
+             // reasons, we make it point to a NULL pointer to ensure we do not
+             // accidentally use the wrong module.
+             name_to_module[module] = NULL;
+         } else
+-            name_to_module[module] = modules[i];
++            name_to_module[module] = all_modules[i];
+     }
+ 
+     // Initialize connections.
+-    for (int i = 0; i &lt; connections.length(); i++)
+-        connections[i]-&gt;initialize(name_to_module);
++    for (int i = 0; i &lt; all_connections.length(); i++)
++        all_connections[i]-&gt;initialize(name_to_module);
+ 
+     // Preprocess some convenience data structures from the list of
+     // connections.
+ 
+     // 'module_to_index' maps module pointers to their corresponding index in
+-    // the 'modules' list.
++    // the 'all_modules' list.
+     map&lt;const OnlineLearningModule*, int&gt; module_to_index;
+-    for (int i = 0; i &lt; modules.length(); i++)
+-        module_to_index[modules[i]] = i;
++    for (int i = 0; i &lt; all_modules.length(); i++)
++        module_to_index[all_modules[i]] = i;
+     
+     // Analyze the list of ports.
+     PLASSERT( ports.length() % 2 == 0 );
+     // The 'port_correspondances' lists, for each module, the correspondances
+     // between the modules' ports and the ports of the NetworkModule.
+-    TVec&lt; TMat&lt;int&gt; &gt; port_correspondances(modules.length());
+-    for (int i = 0; i &lt; modules.length(); i++)
++    TVec&lt; TMat&lt;int&gt; &gt; port_correspondances(all_modules.length());
++    for (int i = 0; i &lt; all_modules.length(); i++)
+         port_correspondances[i].resize(0, 2);
+     TVec&lt;int&gt; new_row(2);
+     all_ports.resize(0);
+@@ -333,19 +396,19 @@
+     // The i-th element of 'in_connections' maps each port in the i-th module
+     // to the connection that has it as destination (there may be only one).
+     TVec&lt; map&lt;string, PP&lt;NetworkConnection&gt; &gt; &gt; in_connections;
+-    in_connections.resize(modules.length());
++    in_connections.resize(all_modules.length());
+     // The i-th element of 'out_connections' maps each port in the i-th module
+     // to the connections that have it as source (there may be many).
+     TVec&lt; map&lt;string, TVec&lt; PP&lt;NetworkConnection&gt; &gt; &gt; &gt; out_connections;
+-    out_connections.resize(modules.length());
++    out_connections.resize(all_modules.length());
+     // The 'inputs_needed' vector contains the number of inputs that must be
+     // fed to a module before it can compute a fprop.
+-    TVec&lt;int&gt; inputs_needed(modules.length(), 0);
++    TVec&lt;int&gt; inputs_needed(all_modules.length(), 0);
+     // The 'compute_input_of' list gives, for each module M, the indices of
+     // other modules that take an output of M as input.
+-    TVec&lt; TVec&lt;int&gt; &gt; compute_input_of(modules.length());
+-    for (int i = 0; i &lt; connections.length(); i++) {
+-        PP&lt;NetworkConnection&gt; connection = connections[i];
++    TVec&lt; TVec&lt;int&gt; &gt; compute_input_of(all_modules.length());
++    for (int i = 0; i &lt; all_connections.length(); i++) {
++        PP&lt;NetworkConnection&gt; connection = all_connections[i];
+         int src = module_to_index[connection-&gt;getSourceModule()];
+         int dest = module_to_index[connection-&gt;getDestinationModule()];
+         inputs_needed[dest]++;
+@@ -368,13 +431,13 @@
+ 
+     // The fprop and bprop paths can now be computed.
+     fprop_path.resize(0);
+-    bprop_path.resize(modules.length());
++    bprop_path.resize(all_modules.length());
+     bprop_path.fill(-1);
+-    TVec&lt;bool&gt; is_done(modules.length(), false);
++    TVec&lt;bool&gt; is_done(all_modules.length(), false);
+     fprop_data.resize(0);
+-    bprop_data.resize(modules.length());
++    bprop_data.resize(all_modules.length());
+     fprop_toresize.resize(0);
+-    bprop_toresize.resize(modules.length());
++    bprop_toresize.resize(all_modules.length());
+     fprop_toplug.resize(0);
+     // This is getting a little hackish here... If not enough memory is
+     // allocated to store the work matrices, then when appending a new Mat to
+@@ -386,9 +449,9 @@
+     all_mats.resize(max_n_mats);
+     all_mats.resize(0);
+     // A vector that stores the index of a module in the fprop path.
+-    TVec&lt;int&gt; module_index_to_path_index(modules.length(), -1);
++    TVec&lt;int&gt; module_index_to_path_index(all_modules.length(), -1);
+     while (is_done.find(false) &gt;= 0) {
+-        for (int i = 0; i &lt; modules.length(); i++) {
++        for (int i = 0; i &lt; all_modules.length(); i++) {
+             if (!is_done[i] &amp;&amp; inputs_needed[i] == 0) {
+                 for (int j = 0; j &lt; compute_input_of[i].length(); j++)
+                     inputs_needed[compute_input_of[i][j]]--;
+@@ -397,7 +460,7 @@
+                 fprop_toplug.append(port_correspondances[i]);
+                 // Compute the list of matrices that must be provided to this
+                 // module when doing a fprop and bprop.
+-                TVec&lt;string&gt; mod_ports = modules[i]-&gt;getPorts();
++                TVec&lt;string&gt; mod_ports = all_modules[i]-&gt;getPorts();
+                 map&lt;string, PP&lt;NetworkConnection&gt; &gt;&amp; in_conn =
+                     in_connections[i];
+                 map&lt;string, TVec&lt; PP&lt;NetworkConnection&gt; &gt; &gt;&amp; out_conn =
+@@ -423,7 +486,7 @@
+                             // and thus we do not want to accumulate it.
+                             bprop_mats.append(NULL);
+                         else {
+-                            int b_idx = modules.length() - 1 - path_index;
++                            int b_idx = all_modules.length() - 1 - path_index;
+                             bprop_mats.append(bprop_data[b_idx][port_index]);
+                             bprop_tores.append(j);
+                         }
+@@ -492,12 +555,12 @@
+ {
+     // Forward forget to the underlying modules, and provide them with a random
+     // number generator if needed.
+-    for (int i = 0; i &lt; modules.length(); i++) {
+-        if (!modules[i]-&gt;random_gen) {
+-            modules[i]-&gt;random_gen = random_gen;
+-            modules[i]-&gt;build();
++    for (int i = 0; i &lt; all_modules.length(); i++) {
++        if (!all_modules[i]-&gt;random_gen) {
++            all_modules[i]-&gt;random_gen = random_gen;
++            all_modules[i]-&gt;build();
+         }
+-        modules[i]-&gt;forget();
++        all_modules[i]-&gt;forget();
+     }
+ }
+ 
+@@ -512,7 +575,7 @@
+ 
+ void NetworkModule::fprop(const TVec&lt;Mat*&gt;&amp; ports_value) {
+     for (int i = 0; i &lt; fprop_path.length(); i++) {
+-        PP&lt;OnlineLearningModule&gt; module = modules[fprop_path[i]];
++        PP&lt;OnlineLearningModule&gt; module = all_modules[fprop_path[i]];
+         DBG_MODULE_LOG &lt;&lt; &quot;FPROP: &quot; &lt;&lt; module-&gt;name &lt;&lt; endl;
+ 
+         // First resize some data matrices, so that the outputs are properly
+
+Modified: trunk/plearn_learners/online/NetworkModule.h
+===================================================================
+--- trunk/plearn_learners/online/NetworkModule.h	2007-05-18 16:18:09 UTC (rev 7173)
++++ trunk/plearn_learners/online/NetworkModule.h	2007-05-18 16:20:32 UTC (rev 7174)
+@@ -57,6 +57,8 @@
+ 
+     TVec&lt;string&gt; ports;
+ 
++    bool save_states;
++
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+@@ -104,8 +106,15 @@
+ 
+ 
+ protected:
+-    
+ 
++    //! List of all modules, i.e. the modules in the 'modules' option, possibly
++    //! completed with an additional NullModule to save states when the
++    //! 'save_states' option is true.
++    TVec&lt; PP&lt;OnlineLearningModule&gt; &gt; all_modules;
++
++    //! Similar to 'all_modules', but for connections in the network.
++    TVec&lt; PP&lt;NetworkConnection&gt; &gt; all_connections;
++
+     //! Ordered list of modules used when doing a fprop (the integer values
+     //! correspond to indices in 'modules').
+     TVec&lt;int&gt; fprop_path;
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-05-18 16:18:09 UTC (rev 7173)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-05-18 16:20:32 UTC (rev 7174)
+@@ -324,7 +324,7 @@
+     if (ports.isEmpty()) {
+         ports.append(&quot;visible&quot;);
+         ports.append(&quot;hidden&quot;);
+-        ports.append(&quot;hidden_activations&quot;);
++        ports.append(&quot;hidden_activations.state&quot;);
+     }
+     return ports;
+ }
+
+Modified: trunk/plearn_learners/online/RBMModule.h
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.h	2007-05-18 16:18:09 UTC (rev 7173)
++++ trunk/plearn_learners/online/RBMModule.h	2007-05-18 16:20:32 UTC (rev 7174)
+@@ -169,7 +169,7 @@
+     virtual void bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
+                                 const TVec&lt;Mat*&gt;&amp; ports_gradient);
+ 
+-    //! The ports are &quot;visible&quot;, &quot;hidden&quot; and &quot;hidden_activations&quot;.
++    //! The ports are &quot;visible&quot;, &quot;hidden&quot; and &quot;hidden_activations.state&quot;.
+     virtual const TVec&lt;string&gt;&amp; getPorts();
+ 
+     //! The ports' sizes are given by the corresponding RBM layers.
+
+Modified: trunk/plearn_learners/online/test/ModuleLearner/.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester/Split0/final_learner.psave
+===================================================================
+--- trunk/plearn_learners/online/test/ModuleLearner/.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester/Split0/final_learner.psave	2007-05-18 16:18:09 UTC (rev 7173)
++++ trunk/plearn_learners/online/test/ModuleLearner/.pytest/PL_ModuleLearner_TwoRBMs/expected_results/expdir-tester/Split0/final_learner.psave	2007-05-18 16:20:32 UTC (rev 7174)
+@@ -1,6 +1,6 @@
+ *1 -&gt;ModuleLearner(
+ module = *2 -&gt;NetworkModule(
+-modules = 6 [ *3 -&gt;RBMModule(
++modules = 5 [ *3 -&gt;RBMModule(
+ visible_layer = *4 -&gt;RBMBinomialLayer(
+ size = 5 ;
+ learning_rate = 0.00100000000000000002 ;
+@@ -273,42 +273,26 @@
+ estimate_simpler_diag_hessian = 0 ;
+ expdir = &quot;&quot; ;
+ random_gen = *5   )
+-*15 -&gt;NullModule(
+-input_size = -1 ;
+-output_size = -1 ;
+-name = &quot;dev&quot; ;
+-estimate_simpler_diag_hessian = 0 ;
+-expdir = &quot;&quot; ;
+-random_gen = *5   )
+ ] ;
+-connections = 6 [ *16 -&gt;NetworkConnection(
++connections = 4 [ *15 -&gt;NetworkConnection(
+ source = &quot;rbm_1.hidden&quot; ;
+ destination = &quot;rbm_2.visible&quot; ;
+ propagate_gradient = 1  )
+-*17 -&gt;NetworkConnection(
++*16 -&gt;NetworkConnection(
+ source = &quot;rbm_2.hidden&quot; ;
+ destination = &quot;affine_net.input&quot; ;
+ propagate_gradient = 1  )
+-*18 -&gt;NetworkConnection(
++*17 -&gt;NetworkConnection(
+ source = &quot;affine_net.output&quot; ;
+ destination = &quot;softmax.input&quot; ;
+ propagate_gradient = 1  )
+-*19 -&gt;NetworkConnection(
++*18 -&gt;NetworkConnection(
+ source = &quot;softmax.output&quot; ;
+ destination = &quot;nll.prediction&quot; ;
+ propagate_gradient = 1  )
+-*20 -&gt;NetworkConnection(
+-source = &quot;rbm_2.hidden_activations&quot; ;
+-destination = &quot;dev.null&quot; ;
+-propagate_gradient = 0  )
+-*21 -&gt;NetworkConnection(
+-source = &quot;rbm_1.hidden_activations&quot; ;
+-destination = &quot;dev.null&quot; ;
+-propagate_gradient = 0  )
+ ] ;
+ ports = 8 [ &quot;input&quot; &quot;rbm_1.visible&quot; &quot;target&quot; &quot;nll.target&quot; &quot;output&quot; &quot;affine_net.output&quot; &quot;cost&quot; &quot;nll.cost&quot; ] ;
+-input_size = -1 ;
+-output_size = -1 ;
++save_states = 1 ;
+ name = &quot;NetworkModule&quot; ;
+ estimate_simpler_diag_hessian = 0 ;
+ expdir = &quot;&quot; ;
+
+Modified: trunk/plearn_learners/online/test/ModuleLearner/PL_ModuleLearner_TwoRBMs.plearn
+===================================================================
+--- trunk/plearn_learners/online/test/ModuleLearner/PL_ModuleLearner_TwoRBMs.plearn	2007-05-18 16:18:09 UTC (rev 7173)
++++ trunk/plearn_learners/online/test/ModuleLearner/PL_ModuleLearner_TwoRBMs.plearn	2007-05-18 16:20:32 UTC (rev 7174)
+@@ -74,8 +74,6 @@
+                             output_size = ${n_classes}
+                         )
+ 
+-                        NullModule( name = &quot;dev&quot; )
+-
+                     ]
+ 
+                     connections = [
+@@ -99,17 +97,6 @@
+                             destination = &quot;nll.prediction&quot;
+                         )
+ 
+-                        NetworkConnection( 
+-                            source = &quot;rbm_2.hidden_activations&quot;
+-                            destination = &quot;dev.null&quot;
+-                            propagate_gradient = 0
+-                        )
+-
+-                        NetworkConnection( 
+-                            source = &quot;rbm_1.hidden_activations&quot;
+-                            destination = &quot;dev.null&quot;
+-                            propagate_gradient = 0
+-                        )
+                     ]
+ 
+                     ports = [
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000622.html">[Plearn-commits] r7173 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000624.html">[Plearn-commits] r7175 -	trunk/plearn_learners/online/test/ModuleLearner
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#623">[ date ]</a>
+              <a href="thread.html#623">[ thread ]</a>
+              <a href="subject.html#623">[ subject ]</a>
+              <a href="author.html#623">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

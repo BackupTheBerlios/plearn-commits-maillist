@@ -1,0 +1,315 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9811 - trunk/plearn/python
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9811%20-%20trunk/plearn/python&In-Reply-To=%3C200901061937.n06Jbr5h029193%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003250.html">
+   <LINK REL="Next"  HREF="003252.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9811 - trunk/plearn/python</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9811%20-%20trunk/plearn/python&In-Reply-To=%3C200901061937.n06Jbr5h029193%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9811 - trunk/plearn/python">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Tue Jan  6 20:37:53 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003250.html">[Plearn-commits] r9810 - trunk/plearn_learners/regressors
+</A></li>
+        <LI>Next message: <A HREF="003252.html">[Plearn-commits] r9812 - trunk/python_modules/plearn/pybridge
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3251">[ date ]</a>
+              <a href="thread.html#3251">[ thread ]</a>
+              <a href="subject.html#3251">[ subject ]</a>
+              <a href="author.html#3251">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2009-01-06 20:37:53 +0100 (Tue, 06 Jan 2009)
+New Revision: 9811
+
+Modified:
+   trunk/plearn/python/PythonExtension.cc
+   trunk/plearn/python/PythonObjectWrapper.cc
+Log:
+- more debug output
+- allow printing of python-wrapped objects from PLearn
+- make python aware of PLearn option flags
+
+
+
+Modified: trunk/plearn/python/PythonExtension.cc
+===================================================================
+--- trunk/plearn/python/PythonExtension.cc	2009-01-06 17:11:45 UTC (rev 9810)
++++ trunk/plearn/python/PythonExtension.cc	2009-01-06 19:37:53 UTC (rev 9811)
+@@ -275,7 +275,8 @@
+             &quot;  \&quot;\&quot;\&quot; \n&quot; + class_help_text + &quot;\n \&quot;\&quot;\&quot;\n&quot;
+             &quot;  def __new__(cls,*args,**kwargs):\n&quot;
+             &quot;    #get_plearn_module().loggingControl(500, ['__ALL__'])&quot;
+-            &quot;    #print '** &quot;+pyclassname+&quot;.__new__',kwargs\n&quot;
++            &quot;    #print '** &quot;+pyclassname+&quot;.__new__',args,kwargs\n&quot;
++            &quot;    #import sys; sys.stdout.flush()\n&quot;
+             &quot;    obj= object.__new__(cls,*args,**kwargs)\n&quot;
+             &quot;    if '_cptr' not in kwargs:\n&quot;
+             &quot;      obj._cptr= cls._newCPPObj('&quot;+classname+&quot;')\n&quot;
+@@ -300,9 +301,11 @@
+         //set option names
+         OptionList&amp; options= tit-&gt;second.getoptionlist_method();
+         unsigned int nopts= options.size();
+-        set&lt;string&gt; optionnames;
++        //set&lt;string&gt; optionnames;
++        map&lt;string, vector&lt;string&gt; &gt; optionnames;
+         for(unsigned int i= 0; i &lt; nopts; ++i)
+-            optionnames.insert(options[i]-&gt;optionname());
++            //optionnames.insert(options[i]-&gt;optionname());
++            optionnames[options[i]-&gt;optionname()]= options[i]-&gt;flagStrings();
+         the_pyclass= clit-&gt;second;
+         if(-1==PyObject_SetAttrString(the_pyclass, const_cast&lt;char*&gt;(&quot;_optionnames&quot;), 
+                                       PythonObjectWrapper(optionnames).getPyObject()))
+
+Modified: trunk/plearn/python/PythonObjectWrapper.cc
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.cc	2009-01-06 17:11:45 UTC (rev 9810)
++++ trunk/plearn/python/PythonObjectWrapper.cc	2009-01-06 19:37:53 UTC (rev 9811)
+@@ -41,6 +41,8 @@
+ 
+ /*! \file PythonObjectWrapper.cc */
+ 
++#define PL_LOG_MODULE_NAME &quot;PythonObjectWrapper&quot;
++
+ // Must include Python first...
+ #include &quot;PythonObjectWrapper.h&quot;
+ #include &quot;PythonEmbedder.h&quot;
+@@ -58,6 +60,7 @@
+ #include &lt;plearn/var/VarArray.h&gt;
+ #include &lt;plearn/base/RealMapping.h&gt; // for RealRange
+ #include &lt;plearn/vmat/VMField.h&gt;
++#include &lt;plearn/io/pl_log.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -193,6 +196,9 @@
+ Object* ConvertFromPyObject&lt;Object*&gt;::convert(PyObject* pyobj,
+                                               bool print_traceback)
+ {
++    DBG_MODULE_LOG &lt;&lt; &quot;ConvertFromPyObject&lt;Object*&gt;::convert(&quot;
++                   &lt;&lt; (void*)pyobj &lt;&lt; ' ' &lt;&lt; PythonObjectWrapper(pyobj)
++                   &lt;&lt; ')' &lt;&lt; endl;
+     PLASSERT(pyobj);
+     if(pyobj == Py_None)
+         return 0;
+@@ -211,6 +217,9 @@
+     Object* obj= static_cast&lt;Object*&gt;(PyCObject_AsVoidPtr(cptr));
+ 
+     Py_DECREF(cptr);
++    DBG_MODULE_LOG &lt;&lt; &quot;EXITING ConvertFromPyObject&lt;Object*&gt;::convert(&quot;
++                   &lt;&lt; (void*)pyobj &lt;&lt; ' ' &lt;&lt; PythonObjectWrapper(pyobj)
++                   &lt;&lt; ')' &lt;&lt; &quot; =&gt; &quot; &lt;&lt; (void*)obj &lt;&lt; ' ' &lt;&lt; obj-&gt;asString() &lt;&lt; endl;
+     return obj;
+ }
+ 
+@@ -502,6 +511,8 @@
+ //##### Trampoline ############################################################
+ PyObject* PythonObjectWrapper::trampoline(PyObject* self, PyObject* args)
+ {
++    DBG_MODULE_LOG &lt;&lt; &quot;PythonObjectWrapper::trampoline(&quot; &lt;&lt; PythonObjectWrapper(self)
++                   &lt;&lt; &quot;, &quot; &lt;&lt; PythonObjectWrapper(args) &lt;&lt; ')' &lt;&lt; endl;
+     PythonGlobalInterpreterLock gil;         // For thread-safety
+ 
+     //get object and trampoline from self
+@@ -557,6 +568,26 @@
+     }
+ }
+ 
++
++void checkWrappedObjects(const string&amp; msg)
++{
++    DBG_MODULE_LOG &lt;&lt; msg &lt;&lt; endl;
++    map&lt;PyObject*, const Object*&gt; rev_map;
++    for(PythonObjectWrapper::wrapped_objects_t::iterator it= PythonObjectWrapper::m_wrapped_objects.begin();
++        it != PythonObjectWrapper::m_wrapped_objects.end(); ++it)
++    {
++        DBG_MODULE_LOG &lt;&lt; &quot;checking:&quot; &lt;&lt; (void*)it-&gt;first &lt;&lt; &quot; -&gt; &quot; &lt;&lt; (void*)it-&gt;second &lt;&lt; endl;
++        map&lt;PyObject*, const Object*&gt;::iterator jt= rev_map.find(it-&gt;second);
++        DBG_MODULE_LOG.clearInOutMaps();
++        if(jt != rev_map.end())
++            DBG_MODULE_LOG &lt;&lt; &quot;*** ALREADY IN MAP:&quot; &lt;&lt; it-&gt;second &lt;&lt; &quot;w/&quot; &lt;&lt; it-&gt;first &lt;&lt; &quot; ; now &quot; &lt;&lt; jt-&gt;second &lt;&lt; endl;
++        //else
++        rev_map[it-&gt;second]= it-&gt;first;
++    }
++    DBG_MODULE_LOG &lt;&lt; &quot;FINISHED checking wrapped objects:\t&quot; &lt;&lt; rev_map.size() &lt;&lt; '\t' &lt;&lt; msg &lt;&lt; endl;
++}
++
++
+ PyObject* PythonObjectWrapper::python_del(PyObject* self, PyObject* args)
+ {
+     TVec&lt;PyObject*&gt; args_tvec=
+@@ -593,6 +624,7 @@
+         PythonObjectWrapper(args).as&lt;TVec&lt;PyObject*&gt; &gt;();
+     Object* o= newObjectFromClassname(PyString_AsString(args_tvec[1]));
+ 
++    DBG_MODULE_LOG &lt;&lt; &quot;In PythonObjectWrapper::newCPPObj() &quot; &lt;&lt; PyString_AsString(args_tvec[1]) &lt;&lt; &quot; &lt;-&gt; &quot; &lt;&lt; (void*)o &lt;&lt; '\t' &lt;&lt; o &lt;&lt; endl;
+     //perr &lt;&lt; &quot;new o-&gt;usage()= &quot; &lt;&lt; o-&gt;usage() &lt;&lt; endl;
+ 
+     return PyCObject_FromVoidPtr(o, 0);
+@@ -609,16 +641,21 @@
+ 
+     //perr &lt;&lt; &quot;ref o-&gt;usage()= &quot; &lt;&lt; o-&gt;usage() &lt;&lt; endl;
+     PythonObjectWrapper::m_wrapped_objects[o]= pyo;
++    //checkWrappedObjects(&quot;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt; in refcppobj -&gt; checkWrappedObjects&quot;);// debug only
+     //perr &lt;&lt; &quot;refCPPObj: &quot; &lt;&lt; (void*)o &lt;&lt; &quot; : &quot; &lt;&lt; (void*)pyo &lt;&lt; endl;
+ 
++    DBG_MODULE_LOG &lt;&lt; &quot;In PythonObjectWrapper::refCPPObj() &quot; &lt;&lt; PythonObjectWrapper(pyo) &lt;&lt; &quot; &lt;-&gt; &quot; &lt;&lt; (void*)o &lt;&lt; '\t' &lt;&lt; o &lt;&lt; endl;
+     addToWrappedObjectsSet(pyo);//Py_INCREF(pyo);
+-    //printWrappedObjects();
++    
++    //printWrappedObjects();///***///***
+ 
+     return newPyObject();//None
+ }
+ 
+ void PythonObjectWrapper::gc_collect1()
+ {
++    DBG_MODULE_LOG &lt;&lt; &quot;entering PythonObjectWrapper::gc_collect1()&quot; &lt;&lt; endl;
++
+     if(m_gc_next_object == m_wrapped_objects.end())
+         m_gc_next_object= m_wrapped_objects.begin();
+     if(m_gc_next_object != m_wrapped_objects.end())
+@@ -628,10 +665,24 @@
+         if(it-&gt;first-&gt;usage() == 1 &amp;&amp; it-&gt;second-&gt;ob_refcnt == 1)
+         {
+             //Py_DECREF(it-&gt;second);
++            DBG_MODULE_LOG.clearInOutMaps();
++            PyObject* cptr= PyObject_GetAttrString(it-&gt;second, const_cast&lt;char*&gt;(&quot;_cptr&quot;));
++            DBG_MODULE_LOG &lt;&lt; &quot;In PythonObjectWrapper::gc_collect1(), removing object &quot; 
++                           &lt;&lt; PythonObjectWrapper(it-&gt;second)
++                           &lt;&lt; &quot; ; python version of: &quot; &lt;&lt; it-&gt;first &lt;&lt; &quot; (&quot; &lt;&lt; (void*)it-&gt;first 
++                           &lt;&lt; &quot;, &quot; &lt;&lt; PyCObject_AsVoidPtr(cptr) &lt;&lt; ')'
++                           &lt;&lt; endl;
++            if(!cptr)
++            {
++                if(PyErr_Occurred()) PyErr_Print();
++                PLERROR(&quot;In PythonObjectWrapper::gc_collect1 : cannot get attribute '_cptr' from Python object &quot;);
++            }
++            Py_DECREF(cptr);
+             removeFromWrappedObjectsSet(it-&gt;second);
+             gc_collect1();
+         }
+     }
++    DBG_MODULE_LOG &lt;&lt; &quot;exiting PythonObjectWrapper::gc_collect1()&quot; &lt;&lt; endl;
+ }
+ 
+ 
+@@ -660,6 +711,8 @@
+ 
+ PyObject* ConvertToPyObject&lt;Object*&gt;::newPyObject(const Object* x)
+ {
++    DBG_MODULE_LOG &lt;&lt; &quot;ENTER ConvertToPyObject&lt;Object*&gt;::newPyObject &quot; 
++                   &lt;&lt; (void*)x &lt;&lt; ' ' &lt;&lt; (x?x-&gt;asString():&quot;&quot;) &lt;&lt; endl;
+     // void ptr becomes None
+     if(!x) return PythonObjectWrapper::newPyObject();
+ 
+@@ -707,11 +760,15 @@
+     x-&gt;ref();
+ 
+     PythonObjectWrapper::m_wrapped_objects[x]= the_obj;
++    //checkWrappedObjects(&quot;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt; in newpyobj -&gt; checkWrappedObjects&quot;); // debug only
+ 
+ //    perr &lt;&lt; &quot;newPyObject: &quot; &lt;&lt; (void*)x &lt;&lt; &quot; : &quot; &lt;&lt; (void*)the_obj &lt;&lt; endl;
+ 
+     addToWrappedObjectsSet(the_obj);//Py_INCREF(the_obj);
+     //printWrappedObjects();
++    DBG_MODULE_LOG &lt;&lt; &quot;EXIT ConvertToPyObject&lt;Object*&gt;::newPyObject &quot; 
++                   &lt;&lt; (void*)x &lt;&lt; ' ' &lt;&lt; x-&gt;asString() &lt;&lt; &quot; =&gt; &quot;
++                   &lt;&lt; (void*) the_obj &lt;&lt; ' ' &lt;&lt; PythonObjectWrapper(the_obj) &lt;&lt; endl;
+ 
+     return the_obj;
+ }
+@@ -948,6 +1005,9 @@
+ 
+ PStream&amp; operator&lt;&lt;(PStream&amp; out, const PythonObjectWrapper&amp; v)
+ {
++    out &lt;&lt; v.getPyObject();
++    return out;
++
+     PLERROR(&quot;operator&lt;&lt;(PStream&amp;, const PythonObjectWrapper&amp;) : &quot;
+             &quot;not supported (yet).&quot;);
+ /*
+@@ -970,7 +1030,7 @@
+     Py_DECREF(res);
+     string pickle= 
+         PythonObjectWrapper(env).as&lt;std::map&lt;string, PythonObjectWrapper&gt; &gt;()[&quot;result&quot;];
+-    Py_DECREF(env);
++        Py_DECREF(env);
+     string toout= string(&quot;PythonObjectWrapper(ownership=&quot;) + tostring(v.m_ownership) + &quot;, object=\&quot;&quot; + pickle + &quot;\&quot;)&quot;;
+     out &lt;&lt; toout;
+ */
+@@ -1002,6 +1062,10 @@
+ //! debug
+ void printWrappedObjects()
+ {
++    //checkWrappedObjects(&quot;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt;&gt; in printwrappedobjs -&gt; checkWrappedObjects&quot;); // debug only
++
++    DBG_MODULE_LOG &lt;&lt; &quot;the_PLearn_python_module= &quot; &lt;&lt; (void*)the_PLearn_python_module &lt;&lt; endl;
++
+     perr &lt;&lt; &quot;wrapped_objects= &quot; &lt;&lt; endl;
+     for(PythonObjectWrapper::wrapped_objects_t::iterator it= 
+             PythonObjectWrapper::m_wrapped_objects.begin();
+@@ -1013,6 +1077,7 @@
+ 
+ void ramassePoubelles()
+ {
++    DBG_MODULE_LOG &lt;&lt; &quot;entering ramassePoubelles&quot; &lt;&lt; endl;
+     size_t sz= 0;
+     while(sz != PythonObjectWrapper::m_wrapped_objects.size())
+     {
+@@ -1024,9 +1089,13 @@
+             PythonObjectWrapper::wrapped_objects_t::iterator jt= it;
+             ++it;
+             if(jt-&gt;second-&gt;ob_refcnt == 1 &amp;&amp; jt-&gt;first-&gt;usage() == 1)
++            {
++                DBG_MODULE_LOG &lt;&lt; &quot;In ramassePoubelles, removing object&quot; &lt;&lt; PythonObjectWrapper(jt-&gt;second) &lt;&lt; endl;
+                 removeFromWrappedObjectsSet(jt-&gt;second);
++            }
+         }
+     }
++    DBG_MODULE_LOG &lt;&lt; &quot;exiting ramassePoubelles&quot; &lt;&lt; endl;
+ }
+ 
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003250.html">[Plearn-commits] r9810 - trunk/plearn_learners/regressors
+</A></li>
+	<LI>Next message: <A HREF="003252.html">[Plearn-commits] r9812 - trunk/python_modules/plearn/pybridge
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3251">[ date ]</a>
+              <a href="thread.html#3251">[ thread ]</a>
+              <a href="subject.html#3251">[ subject ]</a>
+              <a href="author.html#3251">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

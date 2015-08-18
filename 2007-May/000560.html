@@ -1,0 +1,385 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7111 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7111%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705151956.l4FJuq0A024433%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000559.html">
+   <LINK REL="Next"  HREF="000561.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7111 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7111%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705151956.l4FJuq0A024433%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7111 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Tue May 15 21:56:52 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000559.html">[Plearn-commits] r7110 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="000561.html">[Plearn-commits] r7112 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#560">[ date ]</a>
+              <a href="thread.html#560">[ thread ]</a>
+              <a href="subject.html#560">[ subject ]</a>
+              <a href="author.html#560">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-05-15 21:56:52 +0200 (Tue, 15 May 2007)
+New Revision: 7111
+
+Modified:
+   trunk/plearn_learners/online/RBMMixedConnection.cc
+   trunk/plearn_learners/online/RBMMixedConnection.h
+Log:
+Partial implementation of mini-batch
+
+
+Modified: trunk/plearn_learners/online/RBMMixedConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedConnection.cc	2007-05-15 18:51:28 UTC (rev 7110)
++++ trunk/plearn_learners/online/RBMMixedConnection.cc	2007-05-15 19:56:52 UTC (rev 7111)
+@@ -257,6 +257,27 @@
+     }
+ }
+ 
++///////////////////
++// setAsUpInputs //
++///////////////////
++void RBMMixedConnection::setAsUpInputs( const Mat&amp; inputs ) const
++{
++    inherited::setAsUpInputs( inputs );
++
++    for( int i=0 ; i&lt;n_up_blocks ; i++ )
++    {
++        Mat sub_inputs = input.subMatColumns( up_init_positions[i],
++                                              up_block_sizes[i] );
++
++        for( int j=0 ; j&lt;n_down_blocks ; j++ )
++            if( sub_connections(i,j) )
++                sub_connections(i,j)-&gt;setAsUpInputs( sub_inputs );
++    }
++}
++
++////////////////////
++// setAsDownInput //
++////////////////////
+ void RBMMixedConnection::setAsDownInput( const Vec&amp; input ) const
+ {
+     inherited::setAsDownInput( input );
+@@ -272,6 +293,25 @@
+     }
+ }
+ 
++/////////////////////
++// setAsDownInputs //
++/////////////////////
++void RBMMixedConnection::setAsDownInputs( const Mat&amp; inputs ) const
++{
++    inherited::setAsDownInputs( inputs );
++
++    for( int j=0 ; j&lt;n_down_blocks ; j++ )
++    {
++        Mat sub_inputs = inputs.subMatColumns( down_init_positions[j],
++                                               down_block_sizes[j] );
++
++        for( int i=0 ; i&lt;n_up_blocks ; i++ )
++            if( sub_connections(i,j) )
++                sub_connections(i,j)-&gt;setAsDownInputs( sub_inputs );
++    }
++}
++
++// Vec version
+ void RBMMixedConnection::accumulatePosStats( const Vec&amp; down_values,
+                                              const Vec&amp; up_values )
+ {
+@@ -365,6 +405,40 @@
+     }
+ }
+ 
++// Mat (mini-batch) version
++void RBMMixedConnection::update( const Mat&amp; pos_down_values, // v_0
++                                 const Mat&amp; pos_up_values,   // h_0
++                                 const Mat&amp; neg_down_values, // v_1
++                                 const Mat&amp; neg_up_values )  // h_1
++{
++    for( int i=0 ; i&lt;n_up_blocks ; i++ )
++    {
++        int up_begin = up_init_positions[i];
++        int up_length = up_block_sizes[i];
++        Mat sub_pos_up_values = pos_up_values.subMatColumns( up_begin,
++                                                             up_length );
++        Mat sub_neg_up_values = neg_up_values.subMatColumns( up_begin,
++                                                             up_length );
++        for( int j=0 ; j&lt;n_down_blocks ; j++ )
++        {
++            if( sub_connections(i,j) )
++            {
++                int down_begin = down_init_positions[j];
++                int down_length = sub_connections(i,j)-&gt;down_size;
++                Mat sub_pos_down_values =
++                    pos_down_values.subMatColumns( down_begin, down_length );
++                Mat sub_neg_down_values =
++                    neg_down_values.subMatColumns( down_begin, down_length );
++
++                sub_connections(i,j)-&gt;update( sub_pos_down_values,
++                                              sub_pos_up_values,
++                                              sub_neg_down_values,
++                                              sub_neg_up_values );
++            }
++        }
++    }
++}
++
+ void RBMMixedConnection::clearStats()
+ {
+     for( int i=0 ; i&lt;n_up_blocks ; i++ )
+@@ -531,6 +605,167 @@
+     }
+ }
+ 
++// Mat (mini-batch) version
++void RBMMixedConnection::computeProducts( int start, int length,
++                                          Mat&amp; activations,
++                                          bool accumulate ) const
++{
++    PLASSERT( activations.width() == length );
++    activations.resize(inputs_mat.length(), length);
++
++    if( !accumulate )
++        activations.subMatColumns( start, length ).clear();
++
++    if( going_up )
++    {
++        PLASSERT( start+length &lt;= up_size );
++
++        int init_row = row_of[start];
++        int end_row = row_of[start+length-1];
++
++        if( init_row == end_row )
++        {
++            int start_in_row = start - up_init_positions[init_row];
++
++            for( int j=0 ; j&lt;n_down_blocks ; j++ )
++            {
++                if( sub_connections(init_row,j) )
++                {
++                    sub_connections(init_row,j)-&gt;computeProducts(
++                        start_in_row, length, activations, true );
++                }
++            }
++        }
++        else
++        {
++            // partial computation on init_row
++            int start_in_init_row = start - up_init_positions[init_row];
++            int len_in_init_row = up_init_positions[init_row+1]
++                                    - start_in_init_row;
++            int cur_pos = 0;
++
++            Mat sub_activations = activations.subMatColumns( cur_pos,
++                                                             len_in_init_row );
++            cur_pos += len_in_init_row;
++            for( int j=0 ; j&lt;n_down_blocks ; j++ )
++            {
++                if( sub_connections(init_row,j) )
++                {
++                    sub_connections(init_row,j)-&gt;computeProducts(
++                        start_in_init_row, len_in_init_row,
++                        sub_activations, true );
++                }
++            }
++
++            // full computation for init_row &lt; i &lt; end_row
++            for( int i=init_row+1 ; i&lt;end_row ; i++ )
++            {
++                int up_size_i = up_block_sizes[i];
++                sub_activations = activations.subMatColumns( cur_pos,
++                                                             up_size_i );
++                cur_pos += up_size_i;
++                for( int j=0 ; j&lt;n_down_blocks ; j++ )
++                {
++                    if( sub_connections(i,j) )
++                    {
++                        sub_connections(i,j)-&gt;computeProducts(
++                            0, up_size_i, sub_activations, true );
++                    }
++                }
++
++            }
++
++            // partial computation on end_row
++            int len_in_end_row = start+length - up_init_positions[end_row];
++            sub_activations = activations.subMatColumns( cur_pos,
++                                                         len_in_end_row );
++            cur_pos += len_in_end_row;
++            for( int j=0 ; j&lt;n_down_blocks ; j++ )
++            {
++                if( sub_connections(end_row,j) )
++                {
++                    sub_connections(end_row,j)-&gt;computeProducts(
++                        0, len_in_end_row, sub_activations, true );
++                }
++            }
++        }
++    }
++    else
++    {
++        PLASSERT( start+length &lt;= down_size );
++
++        int init_col = col_of[start];
++        int end_col = col_of[start+length-1];
++
++        if( init_col == end_col )
++        {
++            int start_in_col = start - down_init_positions[init_col];
++
++            for( int i=0 ; i&lt;n_up_blocks ; i++ )
++            {
++                if( sub_connections(i,init_col) )
++                {
++                    sub_connections(i,init_col)-&gt;computeProducts(
++                        start_in_col, length, activations, true );
++                }
++            }
++        }
++        else
++        {
++            // partial computation on init_col
++            int start_in_init_col = start - down_init_positions[init_col];
++            int len_in_init_col = down_init_positions[init_col+1]
++                                    - start_in_init_col;
++            int cur_pos = 0;
++
++            Mat sub_activations = activations.subMatColumns( cur_pos,
++                                                             len_in_init_col );
++            cur_pos += len_in_init_col;
++            for( int i=0 ; i&lt;n_up_blocks ; i++ )
++            {
++                if( sub_connections(i,init_col) )
++                {
++                    sub_connections(i,init_col)-&gt;computeProducts(
++                        start_in_init_col, len_in_init_col,
++                        sub_activations, true );
++                }
++            }
++
++            // full computation for init_col &lt; j &lt; end_col
++            for( int j=init_col+1 ; j&lt;end_col ; j++ )
++            {
++                int down_size_j = down_block_sizes[j];
++                sub_activations = activations.subMatColumns( cur_pos,
++                                                             down_size_j );
++                cur_pos += down_size_j;
++                for( int i=0 ; i&lt;n_up_blocks ; i++ )
++                {
++                    if( sub_connections(i,j) )
++                    {
++                        sub_connections(i,j)-&gt;computeProducts(
++                            0, down_size_j, sub_activations, true );
++                    }
++                }
++
++            }
++
++            // partial computation on end_row
++            int len_in_end_col = start+length - down_init_positions[end_col];
++            sub_activations = activations.subMatColumns( cur_pos,
++                                                         len_in_end_col );
++            cur_pos += len_in_end_col;
++            for( int i=0 ; i&lt;n_up_blocks ; i++ )
++            {
++                if( sub_connections(i,end_col) )
++                {
++                    sub_connections(i,end_col)-&gt;computeProducts(
++                        0, len_in_end_col, sub_activations, true );
++                }
++            }
++        }
++    }
++}
++
+ //! this version allows to obtain the input gradient as well
+ void RBMMixedConnection::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+                                      Vec&amp; input_gradient,
+
+Modified: trunk/plearn_learners/online/RBMMixedConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedConnection.h	2007-05-15 18:51:28 UTC (rev 7110)
++++ trunk/plearn_learners/online/RBMMixedConnection.h	2007-05-15 19:56:52 UTC (rev 7111)
+@@ -83,13 +83,9 @@
+     virtual void setAsUpInput( const Vec&amp; input ) const;
+     virtual void setAsDownInput( const Vec&amp; input ) const;
+ 
+-    virtual void setAsUpInputs( const Mat&amp; inputs ) const {
+-        PLASSERT( false ); // Not implemented.
+-    }
++    virtual void setAsUpInputs( const Mat&amp; inputs ) const;
+ 
+-    virtual void setAsDownInputs( const Mat&amp; input ) const {
+-        PLASSERT( false ); // Not implemented.
+-    }
++    virtual void setAsDownInputs( const Mat&amp; input ) const:
+ 
+     //! Accumulates positive phase statistics to *_pos_stats
+     virtual void accumulatePosStats( const Vec&amp; down_values,
+@@ -125,10 +121,7 @@
+     virtual void update( const Mat&amp; pos_down_values,
+                          const Mat&amp; pos_up_values,
+                          const Mat&amp; neg_down_values,
+-                         const Mat&amp; neg_up_values)
+-    {
+-        PLASSERT_MSG( false, &quot;Not implemented&quot; );
+-    }
++                         const Mat&amp; neg_up_values);
+ 
+     //! Clear all information accumulated during stats
+     virtual void clearStats();
+@@ -143,10 +136,7 @@
+     //! Same as 'computeProduct' but for mini-batches.
+     virtual void computeProducts(int start, int length,
+                                  Mat&amp; activations,
+-                                 bool accumulate=false ) const
+-    {
+-        PLASSERT( false ); // Not implemented.
+-    }
++                                 bool accumulate=false ) const;
+ 
+     //! Adapt based on the output gradient: this method should only
+     //! be called just after a corresponding fprop; it should be
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000559.html">[Plearn-commits] r7110 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="000561.html">[Plearn-commits] r7112 - trunk/plearn_learners/online/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#560">[ date ]</a>
+              <a href="thread.html#560">[ thread ]</a>
+              <a href="subject.html#560">[ subject ]</a>
+              <a href="author.html#560">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

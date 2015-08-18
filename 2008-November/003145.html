@@ -1,0 +1,163 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9705 - trunk/plearn/base
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9705%20-%20trunk/plearn/base&In-Reply-To=%3C200811202012.mAKKC6Qb010990%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003144.html">
+   <LINK REL="Next"  HREF="003146.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9705 - trunk/plearn/base</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9705%20-%20trunk/plearn/base&In-Reply-To=%3C200811202012.mAKKC6Qb010990%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9705 - trunk/plearn/base">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Thu Nov 20 21:12:06 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003144.html">[Plearn-commits] r9704 - trunk/plearn/ker/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="003146.html">[Plearn-commits] r9706 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3145">[ date ]</a>
+              <a href="thread.html#3145">[ thread ]</a>
+              <a href="subject.html#3145">[ subject ]</a>
+              <a href="author.html#3145">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-11-20 21:12:05 +0100 (Thu, 20 Nov 2008)
+New Revision: 9705
+
+Modified:
+   trunk/plearn/base/plerror.cc
+   trunk/plearn/base/plerror.h
+Log:
+added the macro PLWARN_ERR(bool warn, msg, ...), if warn is true, will generate a warning, else an error.
+in gdb to breakpoint all error and warning, breakpoint fct verrormsg and vwarningmsg. Otherwise you won't break at PLWARN_ERR
+
+
+Modified: trunk/plearn/base/plerror.cc
+===================================================================
+--- trunk/plearn/base/plerror.cc	2008-11-20 19:37:59 UTC (rev 9704)
++++ trunk/plearn/base/plerror.cc	2008-11-20 20:12:05 UTC (rev 9705)
+@@ -107,10 +107,16 @@
+ #endif
+ 
+ 
+-void  warningmsg(const char* msg, ...)
++void warningmsg(const char* msg, ...)
+ {
+     va_list args;
+     va_start(args,msg);
++    vwarningmsg(msg, args);
++    va_end(args);
++}
++
++void vwarningmsg(const char* msg, va_list args)
++{
+     char message[ERROR_MSG_SIZE];
+ 
+ #if !defined(ULTRIX) &amp;&amp; !defined(_MINGW_) &amp;&amp; !defined(WIN32)
+@@ -119,12 +125,37 @@
+     vsprintf(message,msg,args);
+ #endif
+ 
+-    va_end(args);
+-
+     // *error_stream &lt;&lt;&quot; WARNING: &quot;&lt;&lt;message&lt;&lt;endl;
+     NORMAL_LOG &lt;&lt; &quot; WARNING: &quot; &lt;&lt; message &lt;&lt; endl;
+ }
+ 
++void warn_err(bool warn, const char* msg, ...)
++{
++    va_list args;
++    va_start(args,msg);
++    if(warn) vwarningmsg(msg,args);
++    else verrormsg(msg, args);
++    va_end(args);
++}
++
++void warn_err2(const char* filename, const int linenumber, bool warn, const char* msg,...)
++{
++    va_list args;
++    va_start(args,msg);
++
++    if(warn) vwarningmsg(msg,args);
++    else{
++        char message[ERROR_MSG_SIZE];
++    
++        snprintf(message, ERROR_MSG_SIZE, &quot;In file: \&quot;%s\&quot; at line %d\n&quot;,
++                 PPath(filename).basename().c_str(), linenumber);
++        PLASSERT(ERROR_MSG_SIZE&gt;=strlen(message)+strlen(msg));
++        strncat(message,msg,ERROR_MSG_SIZE);
++        verrormsg(message, args);
++    }
++    va_end(args);
++}
++
+ void  deprecationmsg(const char* msg, ...)
+ {
+     va_list args;
+
+Modified: trunk/plearn/base/plerror.h
+===================================================================
+--- trunk/plearn/base/plerror.h	2008-11-20 19:37:59 UTC (rev 9704)
++++ trunk/plearn/base/plerror.h	2008-11-20 20:12:05 UTC (rev 9705)
+@@ -68,6 +68,8 @@
+ #define PLERROR(...)   errormsg2(__FILE__,__LINE__,__VA_ARGS__)
+ #define PLWARNING warningmsg
+ #define PLDEPRECATED deprecationmsg
++//#define PLWARN_ERR warn_err //Use if the compiler don't like variadic macros
++#define PLWARN_ERR(...) warn_err2(__FILE__,__LINE__,__VA_ARGS__)
+ 
+ void errormsg2(const char* filename, const int linenumber, const char* msg, ...)
+     __attribute__((noreturn))
+@@ -81,6 +83,12 @@
+     __attribute__((noreturn));
+ void warningmsg(const char* msg, ...)
+     __attribute__((format(printf, 1, 2)));
++//vwarningmsg: internal warningmsg that takes a single va_list
++void vwarningmsg(const char* msg, va_list args);
++void warn_err(bool warn, const char* msg, ...)
++    __attribute__((format(printf, 2, 3)));    
++void warn_err2(const char* filename, const int linenumber, bool warn, const char* msg,...)
++    __attribute__((format(printf, 4, 5)));    
+ void deprecationmsg(const char* msg, ...)
+     __attribute__((format(printf, 1, 2)));
+ void exitmsg(const char* msg, ...)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003144.html">[Plearn-commits] r9704 - trunk/plearn/ker/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="003146.html">[Plearn-commits] r9706 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3145">[ date ]</a>
+              <a href="thread.html#3145">[ thread ]</a>
+              <a href="subject.html#3145">[ subject ]</a>
+              <a href="author.html#3145">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

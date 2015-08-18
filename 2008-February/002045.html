@@ -1,0 +1,202 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8597 - trunk/plearn_learners/generic
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8597%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200802281717.m1SHH4TG013079%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002044.html">
+   <LINK REL="Next"  HREF="002046.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8597 - trunk/plearn_learners/generic</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8597%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200802281717.m1SHH4TG013079%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8597 - trunk/plearn_learners/generic">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Thu Feb 28 18:17:04 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002044.html">[Plearn-commits] r8596 - trunk/plearn/var
+</A></li>
+        <LI>Next message: <A HREF="002046.html">[Plearn-commits] r8598 - trunk/examples/data/test_suite
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2045">[ date ]</a>
+              <a href="thread.html#2045">[ thread ]</a>
+              <a href="subject.html#2045">[ subject ]</a>
+              <a href="author.html#2045">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-02-28 18:17:04 +0100 (Thu, 28 Feb 2008)
+New Revision: 8597
+
+Modified:
+   trunk/plearn_learners/generic/NNet.cc
+   trunk/plearn_learners/generic/NNet.h
+Log:
+Bunch of fixes to the 'operate_on_bags' mode
+
+
+Modified: trunk/plearn_learners/generic/NNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/NNet.cc	2008-02-28 17:15:18 UTC (rev 8596)
++++ trunk/plearn_learners/generic/NNet.cc	2008-02-28 17:17:04 UTC (rev 8597)
+@@ -425,9 +425,16 @@
+         if (noutputs == 0)
+             PLERROR(&quot;NNet: the option 'noutputs' must be specified&quot;);
+ 
+-        // Initialize the input.
++        // Initialize input.
+         input = Var(1, inputsize(), &quot;input&quot;);
+ 
++        // Initialize bag stuff.
++        if (operate_on_bags) {
++            bag_size = Var(1, 1, &quot;bag_size&quot;);
++            store_bag_size.resize(1);
++            store_bag_inputs.resize(max_bag_size, inputsize());
++        }
++
+         params.resize(0);
+         Var before_transfer_func;
+ 
+@@ -687,7 +694,7 @@
+     output_and_target_to_cost = Func(outvars, test_costs); 
+     // Since there will be a fprop() in the network, we need to make sure the
+     // input is valid.
+-    if (train_set &amp;&amp; train_set-&gt;length() &gt;= the_input-&gt;width()) {
++    if (train_set &amp;&amp; train_set-&gt;length() &gt;= the_input-&gt;length()) {
+         Vec input, target;
+         real weight;
+         for (int i = 0; i &lt; the_input-&gt;length(); i++) {
+@@ -881,7 +888,9 @@
+ // buildTargetAndWeight //
+ //////////////////////////
+ void NNet::buildTargetAndWeight() {
+-    target = Var(1, targetsize(), &quot;target&quot;);
++    int ts = operate_on_bags ? targetsize() - 1 // Remove bag information.
++                             : targetsize();
++    target = Var(1, ts, &quot;target&quot;);
+     if(weightsize_&gt;0)
+     {
+         if (weightsize_!=1)
+@@ -896,6 +905,7 @@
+ void NNet::computeCostsFromOutputs(const Vec&amp; inputv, const Vec&amp; outputv, 
+                                    const Vec&amp; targetv, Vec&amp; costsv) const
+ {
++    PLASSERT_MSG( !operate_on_bags, &quot;Not implemented&quot; );
+ #ifdef BOUNDCHECK
+     // Stable cross entropy needs the value *before* the transfer function.
+     if (cost_funcs.contains(&quot;stable_cross_entropy&quot;) or
+@@ -912,6 +922,9 @@
+ ///////////////////
+ void NNet::computeOutput(const Vec&amp; inputv, Vec&amp; outputv) const
+ {
++    if (operate_on_bags)
++        PLERROR(&quot;In NNet::computeOutput - Cannot compute output without bag &quot;
++                &quot;information&quot;);
+     outputv.resize(outputsize());
+     input_to_output-&gt;fprop(inputv,outputv);
+ }
+@@ -923,7 +936,27 @@
+                                  Vec&amp; outputv, Vec&amp; costsv) const
+ {
+     outputv.resize(outputsize());
+-    test_costf-&gt;fprop(inputv&amp;targetv, outputv&amp;costsv);
++    costsv.resize(nTestCosts());
++    if (!operate_on_bags)
++        test_costf-&gt;fprop(inputv&amp;targetv, outputv&amp;costsv);
++    else {
++        // We can only compute the output once the whole bag has been seen.
++        int last_target_idx = targetv.length() - 1;
++        int bag_info = int(round(targetv[last_target_idx]));
++        if (bag_info &amp; SumOverBagsVariable::TARGET_COLUMN_FIRST)
++            store_bag_size[0] = 0;
++        store_bag_inputs(int(round(store_bag_size[0]))) &lt;&lt; inputv;
++        store_bag_size[0]++;
++        if (bag_info &amp; SumOverBagsVariable::TARGET_COLUMN_LAST)
++            test_costf-&gt;fprop(store_bag_inputs.toVec()
++                                    &amp; store_bag_size
++                                    &amp; targetv.subVec(0, last_target_idx),
++                              outputv &amp; costsv);
++        else {
++            outputv.fill(MISSING_VALUE);
++            costsv.fill(MISSING_VALUE);
++        }
++    }
+ }
+ 
+ /////////////////
+@@ -1069,6 +1102,7 @@
+ {
+ 
+     inherited::makeDeepCopyFromShallowCopy(copies);
++
+     // protected:
+     varDeepCopyField(rbf_centers, copies);
+     varDeepCopyField(rbf_sigmas, copies);
+@@ -1083,7 +1117,10 @@
+     deepCopyField(invars, copies);
+     deepCopyField(params, copies);
+     varDeepCopyField(bag_inputs, copies);
++    deepCopyField(store_bag_inputs, copies);
+     varDeepCopyField(bag_size, copies);
++    deepCopyField(store_bag_size, copies);
++
+     // public:
+     deepCopyField(paramsvalues, copies);
+     varDeepCopyField(input, copies);
+
+Modified: trunk/plearn_learners/generic/NNet.h
+===================================================================
+--- trunk/plearn_learners/generic/NNet.h	2008-02-28 17:15:18 UTC (rev 8596)
++++ trunk/plearn_learners/generic/NNet.h	2008-02-28 17:17:04 UTC (rev 8597)
+@@ -73,9 +73,15 @@
+     //! Used to store the inputs in a bag when 'operate_on_bags' is true.
+     Var bag_inputs;
+ 
++    //! Used to store test inputs in a bag when 'operate_on_bags' is true.
++    Mat store_bag_inputs;
++
+     //! Used to store the size of a bag when 'operate_on_bags' is true.
+     Var bag_size;
+ 
++    //! Used to remember the size of a test bag.
++    Vec store_bag_size;
++
+     //! Number of bags in the training set.
+     int n_training_bags;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002044.html">[Plearn-commits] r8596 - trunk/plearn/var
+</A></li>
+	<LI>Next message: <A HREF="002046.html">[Plearn-commits] r8598 - trunk/examples/data/test_suite
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2045">[ date ]</a>
+              <a href="thread.html#2045">[ thread ]</a>
+              <a href="subject.html#2045">[ subject ]</a>
+              <a href="author.html#2045">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

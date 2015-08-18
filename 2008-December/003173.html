@@ -1,0 +1,195 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9733 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9733%20-%20trunk/plearn/vmat&In-Reply-To=%3C200812021953.mB2JrtA4010167%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003172.html">
+   <LINK REL="Next"  HREF="003174.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9733 - trunk/plearn/vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9733%20-%20trunk/plearn/vmat&In-Reply-To=%3C200812021953.mB2JrtA4010167%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9733 - trunk/plearn/vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Dec  2 20:53:55 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003172.html">[Plearn-commits] r9732 - trunk/plearn/io
+</A></li>
+        <LI>Next message: <A HREF="003174.html">[Plearn-commits] r9734 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3173">[ date ]</a>
+              <a href="thread.html#3173">[ thread ]</a>
+              <a href="subject.html#3173">[ subject ]</a>
+              <a href="author.html#3173">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-12-02 20:53:54 +0100 (Tue, 02 Dec 2008)
+New Revision: 9733
+
+Modified:
+   trunk/plearn/vmat/SelectColumnsVMatrix.cc
+   trunk/plearn/vmat/SelectColumnsVMatrix.h
+Log:
+added the option SelectColumnsVMatrix::fields_regex that allow a fields to contain a * only at the end. I would have used boost, but it don't seem to support the glob syntax, which I would like to use.
+
+
+Modified: trunk/plearn/vmat/SelectColumnsVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/SelectColumnsVMatrix.cc	2008-12-02 18:21:16 UTC (rev 9732)
++++ trunk/plearn/vmat/SelectColumnsVMatrix.cc	2008-12-02 19:53:54 UTC (rev 9733)
+@@ -41,7 +41,10 @@
+ 
+ #include &quot;SelectColumnsVMatrix.h&quot;
+ #include &lt;plearn/io/load_and_save.h&gt;
++#define PL_LOG_MODULE_NAME &quot;SelectColumnsVMatrix&quot;
++#include &lt;plearn/io/pl_log.h&gt;
+ 
++
+ namespace PLearn {
+ using namespace std;
+ 
+@@ -60,6 +63,7 @@
+ SelectColumnsVMatrix::SelectColumnsVMatrix()
+     : extend_with_missing(false),
+       fields_partial_match(false),
++      fields_regex(false),
+       inverse_fields_selection(false),
+       warn_non_selected_field(false)
+ {}
+@@ -72,6 +76,7 @@
+     extend_with_missing(the_extend_with_missing),
+     fields(the_fields),
+     fields_partial_match(false),
++    fields_regex(false),
+     inverse_fields_selection(false),
+     warn_non_selected_field(false)
+ {
+@@ -86,6 +91,7 @@
+     extend_with_missing(false),
+     indices(the_indices),
+     fields_partial_match(false),
++    fields_regex(false),
+     inverse_fields_selection(false),
+     warn_non_selected_field(false)
+ {
+@@ -96,6 +102,7 @@
+ SelectColumnsVMatrix::SelectColumnsVMatrix(VMat the_source, Vec the_indices)
+     : extend_with_missing(false),
+       fields_partial_match(false),
++      fields_regex(false),
+       inverse_fields_selection(false),
+       warn_non_selected_field(false)
+ {
+@@ -160,6 +167,9 @@
+     declareOption(ol, &quot;fields_partial_match&quot;, &amp;SelectColumnsVMatrix::fields_partial_match, OptionBase::buildoption,
+                   &quot;If set to 1, then a field will be kept iff it contains one of the strings from 'fields'.&quot;);
+ 
++    declareOption(ol, &quot;fields_regex&quot;, &amp;SelectColumnsVMatrix::fields_regex, OptionBase::buildoption,
++                  &quot;If set to 1, then a field will be kept iff it match one of the strings from 'fields'. A match is when the two string is equal or when fields end with a *, we allow any end.&quot;);
++
+     declareOption(ol, &quot;indices&quot;, &amp;SelectColumnsVMatrix::indices, OptionBase::buildoption,
+                   &quot;The array of column indices to extract.&quot;);
+ 
+@@ -319,7 +329,7 @@
+ void SelectColumnsVMatrix::getIndicesFromFields(){
+             // Find out the indices from the fields.
+     indices.resize(0);
+-    if (!fields_partial_match) {
++    if (!fields_partial_match &amp;&amp; ! fields_regex) {
+         TVec&lt;string&gt; missing_field;
+         for (int i = 0; i &lt; fields.length(); i++) {
+             string the_field = fields[i];
+@@ -366,6 +376,31 @@
+                       &quot; The columns names are: %s&quot;,missing_field.size(),
+                       tostring(missing_field).c_str());
+         }
++
++    } else if(fields_regex) {
++        // We need to check whether or not we should add each field.
++        TVec&lt;string&gt; source_fields = source-&gt;fieldNames();
++        for (int j = 0; j &lt; fields.length(); j++){
++            string f = fields[j];
++            if(f[f.size()-1]=='*'){
++                f.resize(f.size()-1);//remove the last caracter (*)
++                for (int i = 0; i &lt; source_fields.length(); i++){
++                    if (string_begins_with(source_fields[i],f)) {
++                        // We want to add this field.
++                        indices.append(i);
++                        DBG_MODULE_LOG&lt;&lt;fields[j]&lt;&lt;&quot; matched &quot;&lt;&lt;source_fields[i]&lt;&lt;endl;
++                    }
++                }
++            }else{
++                for (int i = 0; i &lt; source_fields.length(); i++){
++                    if(source_fields[i]==f){
++                        indices.append(i);
++                    }
++                }
++
++
++            }
++        }
+     } else {
+         // We need to check whether or not we should add each field.
+         TVec&lt;string&gt; source_fields = source-&gt;fieldNames();
+@@ -374,6 +409,7 @@
+                 if (source_fields[i].find(fields[j]) != string::npos) {
+                     // We want to add this field.
+                     indices.append(i);
++                    DBG_MODULE_LOG&lt;&lt;fields[j]&lt;&lt;&quot; matched &quot;&lt;&lt;source_fields[i]&lt;&lt;endl;
+                     break;
+                 }
+     }
+
+Modified: trunk/plearn/vmat/SelectColumnsVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/SelectColumnsVMatrix.h	2008-12-02 18:21:16 UTC (rev 9732)
++++ trunk/plearn/vmat/SelectColumnsVMatrix.h	2008-12-02 19:53:54 UTC (rev 9733)
+@@ -72,8 +72,10 @@
+     TVec&lt;string&gt; fields;
+     PPath save_fields;
+     bool fields_partial_match;
++    bool fields_regex;
+     bool inverse_fields_selection;
+     bool warn_non_selected_field;
++
+ public:
+ 
+     //! Default constructor.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003172.html">[Plearn-commits] r9732 - trunk/plearn/io
+</A></li>
+	<LI>Next message: <A HREF="003174.html">[Plearn-commits] r9734 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3173">[ date ]</a>
+              <a href="thread.html#3173">[ thread ]</a>
+              <a href="subject.html#3173">[ subject ]</a>
+              <a href="author.html#3173">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,437 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8829 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8829%20-%20trunk/plearn/vmat&In-Reply-To=%3C200804171534.m3HFYcM5014855%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002276.html">
+   <LINK REL="Next"  HREF="002278.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8829 - trunk/plearn/vmat</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8829%20-%20trunk/plearn/vmat&In-Reply-To=%3C200804171534.m3HFYcM5014855%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8829 - trunk/plearn/vmat">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Thu Apr 17 17:34:38 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002276.html">[Plearn-commits] r8828 - trunk/plearn_learners/regressors
+</A></li>
+        <LI>Next message: <A HREF="002278.html">[Plearn-commits] r8830 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2277">[ date ]</a>
+              <a href="thread.html#2277">[ thread ]</a>
+              <a href="subject.html#2277">[ subject ]</a>
+              <a href="author.html#2277">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-04-17 17:34:37 +0200 (Thu, 17 Apr 2008)
+New Revision: 8829
+
+Modified:
+   trunk/plearn/vmat/FilteredVMatrix.cc
+   trunk/plearn/vmat/FilteredVMatrix.h
+Log:
+- Can now work even when no metadatadir is available
+- Minor fixes to the code to be more coherent with the rest of the PLearn code
+
+
+Modified: trunk/plearn/vmat/FilteredVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/FilteredVMatrix.cc	2008-04-17 14:29:47 UTC (rev 8828)
++++ trunk/plearn/vmat/FilteredVMatrix.cc	2008-04-17 15:34:37 UTC (rev 8829)
+@@ -46,91 +46,117 @@
+ namespace PLearn {
+ using namespace std;
+ 
++PLEARN_IMPLEMENT_OBJECT(
++    FilteredVMatrix,
++    &quot;A filtered view of its source VMatrix.&quot;,
++    &quot;The filter is an expression in VPL language.\n&quot;
++    &quot;If a metadata directory is provided, the filtered indexes are saved in\n&quot;
++    &quot;this directory. Otherwise the filtered indexes are re-computed at each\n&quot;
++    &quot;call to build().&quot;
++);
+ 
+-FilteredVMatrix::FilteredVMatrix()
+-    : inherited(),
+-      build_complete(false),
+-      allow_repeat_rows(false),
+-      repeat_id_field_name(&quot;&quot;),
+-      repeat_count_field_name(&quot;&quot;),
+-      report_progress(true)
+-{
+-}
++/////////////////////
++// FilteredVMatrix //
++/////////////////////
++FilteredVMatrix::FilteredVMatrix():
++    build_complete(false),
++    allow_repeat_rows(false),
++    repeat_id_field_name(&quot;&quot;),
++    repeat_count_field_name(&quot;&quot;),
++    report_progress(true)
++{}
+ 
+ FilteredVMatrix::FilteredVMatrix( VMat the_source, const string&amp; program_string,
+                                   const PPath&amp; the_metadatadir, bool the_report_progress,
+                                   bool allow_repeat_rows_, 
+                                   const string&amp; repeat_id_field_name_,
+-                                  const string&amp; repeat_count_field_name_)
++                                  const string&amp; repeat_count_field_name_,
++                                  bool call_build_):
++    inherited(the_source, call_build_),
++    allow_repeat_rows(allow_repeat_rows_),
++    repeat_id_field_name(repeat_id_field_name_),
++    repeat_count_field_name(repeat_count_field_name_),
++    report_progress(the_report_progress),
++    prg(program_string)
++{
++    // Note that although VMatrix::build_ would be tempted to call
++    // setMetaDataDir when inherited(the_source, true) is called above (if
++    // call_build_ is true), the metadatadir is only set below, so it will not
++    // happen.
++    metadatadir = the_metadatadir;
+ 
+-    : SourceVMatrix(the_source),
+-      allow_repeat_rows(allow_repeat_rows_),
+-      repeat_id_field_name(repeat_id_field_name_),
+-      repeat_count_field_name(repeat_count_field_name_),
+-      report_progress(the_report_progress),
+-      prg(program_string)
++    if (call_build_)
++        build_();
++}
+ 
++////////////////////////////
++// computeFilteredIndices //
++////////////////////////////
++void FilteredVMatrix::computeFilteredIndices()
+ {
+-    metadatadir = the_metadatadir;
+-    build_();
++    int l = source.length();
++    Vec result(1);
++    PP&lt;ProgressBar&gt; pb;
++    if (report_progress)
++        pb = new ProgressBar(&quot;Filtering source vmat&quot;, l);
++    mem_indices.resize(0);
++    for(int i=0; i&lt;l; i++)
++    {
++        if (report_progress)
++            pb-&gt;update(i);
++        program.run(i,result);
++        if(!allow_repeat_rows)
++        {
++            if(!fast_exact_is_equal(result[0], 0))
++                mem_indices.append(i);
++        }
++        else
++            for(int x = int(round(result[0])); x &gt; 0; --x)
++                mem_indices.append(i);
++    }
++    length_ = mem_indices.length();
+ }
+ 
+-PLEARN_IMPLEMENT_OBJECT(FilteredVMatrix, &quot;A filtered view of its source vmatrix&quot;,
+-                        &quot;The filter is an exression in VPL language.\n&quot;
+-                        &quot;The filtered indexes are saved in the metadata directory, that NEEDS to\n&quot;
+-                        &quot;be provided.\n&quot; );
+-
+-
+-
++///////////////
++// openIndex //
++///////////////
+ void FilteredVMatrix::openIndex()
+ {
+     PLASSERT(hasMetaDataDir());
+-    string idxfname = getMetaDataDir() / &quot;filtered.idx&quot;;
++
++    PPath idxfname = getMetaDataDir() / &quot;filtered.idx&quot;;
+     if(!force_mkdir(getMetaDataDir()))
+-        PLERROR(&quot;In FilteredVMatrix::openIndex could not create directory %s&quot;,getMetaDataDir().absolute().c_str());
++        PLERROR(&quot;In FilteredVMatrix::openIndex - Could not create &quot;
++                &quot;directory %s&quot;, getMetaDataDir().absolute().c_str());
+ 
+-
+     lockMetaDataDir();
+     if(isUpToDate(idxfname))
+-        indexes.open(idxfname);
++        indexes.open(idxfname.absolute());
+     else  // let's (re)create the index
+     {
++        computeFilteredIndices();
+         rm(idxfname);       // force remove it
+-        int l = source.length();
+-        Vec result(1);
+-        indexes.open(idxfname,true);
+-        PP&lt;ProgressBar&gt; pb;
+-        if (report_progress)
+-            pb = new ProgressBar(&quot;Filtering source vmat&quot;, l);
+-        for(int i=0; i&lt;l; i++)
+-        {
+-            if (report_progress)
+-                pb-&gt;update(i);
+-            program.run(i,result);
+-            if(!allow_repeat_rows)
+-            {
+-                if(!fast_exact_is_equal(result[0], 0))
+-                    indexes.append(i);
+-            }
+-            else
+-                for(int x = int(round(result[0])); x &gt; 0; --x)
+-                    indexes.append(i);
+-
+-        }
++        indexes.open(idxfname.absolute(), true);
++        for (int i = 0; i &lt; mem_indices.length(); i++)
++            indexes.append(i);
+         indexes.close();
+-        indexes.open(idxfname);
++        indexes.open(idxfname.absolute());
++        mem_indices = TVec&lt;int&gt;();  // Free memory.
+     }
+     unlockMetaDataDir();
+ 
+     length_ = indexes.length();
+ }
+ 
++////////////////////
++// setMetaDataDir //
++////////////////////
+ void FilteredVMatrix::setMetaDataDir(const PPath&amp; the_metadatadir)
+ {
+     inherited::setMetaDataDir(the_metadatadir);
+     if (build_complete) {
+         // Only call openIndex() if the build has been completed,
+-        // otherwise the filtering program won't be ready yet.
++        // otherwise the filtering program will not be ready yet.
+         openIndex();
+         // We call 'setMetaInfoFromSource' only after the index file has been
+         // correctly read.
+@@ -138,37 +164,51 @@
+     }
+ }
+ 
++///////////////
++// getNewRow //
++///////////////
+ void FilteredVMatrix::getNewRow(int i, const Vec&amp; v) const
+ {
+-    if (indexes.length() == -1)
+-        PLERROR(&quot;In FilteredVMatrix::getNewRow - The filtered indexes are not set, make sure you provided a metadatadir&quot;);
++    if (mem_indices.isEmpty() &amp;&amp; indexes.length() == -1)
++        PLERROR(&quot;In FilteredVMatrix::getNewRow - Filtered indices are not\n&quot;
++                &quot;set yet.&quot;);
+ 
+     int j= source-&gt;width();
++    int idx = mem_indices.isEmpty() ? indexes[i] : mem_indices[i];
+ 
+-    source-&gt;getRow(indexes[i],v.subVec(0, j));
++    source-&gt;getRow(idx, v.subVec(0, j));
+ 
+-    if(&quot;&quot; != repeat_id_field_name)
++    if(!repeat_id_field_name.empty())
+     {
+         int k= 1;
+-        while(k &lt;= i &amp;&amp; indexes[i]==indexes[i-k])
++        while(k &lt;= i &amp;&amp; (mem_indices.isEmpty()
++                                ? indexes[i]==indexes[i-k]
++                                : mem_indices[i] == mem_indices[i-k]))
+             ++k;
+         v[j++]= static_cast&lt;real&gt;(k-1);
+     }
+ 
+-    if(&quot;&quot; != repeat_count_field_name)
++    if(!repeat_count_field_name.empty())
+     {
+         int k0= 1;
+-        while(k0 &lt;= i &amp;&amp; indexes[i]==indexes[i-k0])
++        while(k0 &lt;= i &amp;&amp; (mem_indices.isEmpty()
++                                ? indexes[i]==indexes[i-k0]
++                                : mem_indices[i] == mem_indices[i-k0]))
+             ++k0;
+         --k0;
+         int k1= 1;
+-        while(k1+i &lt; length() &amp;&amp; indexes[i]==indexes[i+k1])
++        while(k1+i &lt; length() &amp;&amp; (mem_indices.isEmpty()
++                                        ? indexes[i]==indexes[i+k1]
++                                        : mem_indices[i] == mem_indices[i+k1]))
+             ++k1;
+         v[j++]= static_cast&lt;real&gt;(k0+k1);
+     }
+ 
+ }
+ 
++////////////////////
++// declareOptions //
++////////////////////
+ void FilteredVMatrix::declareOptions(OptionList&amp; ol)
+ {
+     declareOption(ol, &quot;prg&quot;, &amp;FilteredVMatrix::prg, OptionBase::buildoption,
+@@ -192,6 +232,9 @@
+     inherited::declareOptions(ol);
+ }
+ 
++////////////
++// build_ //
++////////////
+ void FilteredVMatrix::build_()
+ {
+     if (source) {
+@@ -201,21 +244,24 @@
+         program.compileString(prg,fieldnames);
+         build_complete = true;
+         if (hasMetaDataDir())
++            // Calling setMetaDataDir() will compute indices and save them
++            // in the give metadata directory.
+             setMetaDataDir(getMetaDataDir());
+-        else
+-            // Ensure we do not retain a previous value for length and width.
+-            length_ = width_ = -1;
++        else {
++            // Compute selected indices in memory only.
++            computeFilteredIndices();
++        }
+ 
+         Array&lt;VMField&gt; finfos= source-&gt;getFieldInfos().copy();
+             
+-        if(&quot;&quot; != repeat_id_field_name)
++        if(!repeat_id_field_name.empty())
+         {
+             finfos.append(VMField(repeat_id_field_name));
+             if(0 &lt; width_)
+                 ++width_;
+         }
+ 
+-        if(&quot;&quot; != repeat_count_field_name)
++        if(!repeat_count_field_name.empty())
+         {
+             finfos.append(VMField(repeat_count_field_name));
+             if(0 &lt; width_)
+@@ -223,14 +269,14 @@
+         }
+ 
+         setFieldInfos(finfos);
+-
++        setMetaInfoFromSource();
+     } else
+         length_ = width_ = 0;
+-
+-
+ }
+ 
+-// ### Nothing to add here, simply calls build_
++///////////
++// build //
++///////////
+ void FilteredVMatrix::build()
+ {
+     build_complete = false;
+@@ -238,9 +284,13 @@
+     build_();
+ }
+ 
++/////////////////////////////////
++// makeDeepCopyFromShallowCopy //
++/////////////////////////////////
+ void FilteredVMatrix::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
++    deepCopyField(mem_indices, copies);
+ }
+ 
+ } // end of namespace PLearn
+
+Modified: trunk/plearn/vmat/FilteredVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/FilteredVMatrix.h	2008-04-17 14:29:47 UTC (rev 8828)
++++ trunk/plearn/vmat/FilteredVMatrix.h	2008-04-17 15:34:37 UTC (rev 8829)
+@@ -61,12 +61,17 @@
+     //! the build is complete.
+     bool build_complete;
+ 
+-
+ protected:
+ 
+     VMatLanguage program;
+-    IntVecFile indexes;  // indexes[i] is the
+ 
++    //! The i-th element is the index of the i-th selected item in the source
++    //! VMatrix.
++    IntVecFile indexes;
++
++    //! Indices stored in memory when no metadata directory is available.
++    TVec&lt;int&gt; mem_indices;
++
+     bool allow_repeat_rows;
+     string repeat_id_field_name; // 0, 1, ..., n-1; &quot;&quot; means no field is added
+     string repeat_count_field_name; // n; &quot;&quot; means no field is added
+@@ -75,6 +80,9 @@
+     //! If it exists and is up to date, simply opens it.
+     void openIndex();
+ 
++    //! Compute the filtered indices.
++    void computeFilteredIndices();
++
+ public:
+ 
+     // ************************
+@@ -96,18 +104,17 @@
+                     const PPath&amp; the_metadatadir = &quot;&quot;, bool the_report_progress = true,
+                     bool allow_repeat_rows_= false, 
+                     const string&amp; repeat_id_field_name_= &quot;&quot;,
+-                    const string&amp; repeat_count_field_name_= &quot;&quot;);
++                    const string&amp; repeat_count_field_name_= &quot;&quot;,
++                    bool call_build_ = true);
+ 
+     virtual void setMetaDataDir(const PPath&amp; the_metadatadir);
+ 
+ private:
+     //! This does the actual building.
+-    // (Please implement in .cc)
+     void build_();
+ 
+ protected:
+     //! Declares this class' options
+-    // (Please implement in .cc)
+     static void declareOptions(OptionList&amp; ol);
+ 
+     //!  This is the only method requiring implementation
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002276.html">[Plearn-commits] r8828 - trunk/plearn_learners/regressors
+</A></li>
+	<LI>Next message: <A HREF="002278.html">[Plearn-commits] r8830 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2277">[ date ]</a>
+              <a href="thread.html#2277">[ thread ]</a>
+              <a href="subject.html#2277">[ subject ]</a>
+              <a href="author.html#2277">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

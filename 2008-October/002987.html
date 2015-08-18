@@ -1,0 +1,408 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9547 - trunk/python_modules/plearn/parallel
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9547%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200810091856.m99IuaYI025879%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002986.html">
+   <LINK REL="Next"  HREF="002988.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9547 - trunk/python_modules/plearn/parallel</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9547%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200810091856.m99IuaYI025879%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9547 - trunk/python_modules/plearn/parallel">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Thu Oct  9 20:56:36 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002986.html">[Plearn-commits] r9546 - tags
+</A></li>
+        <LI>Next message: <A HREF="002988.html">[Plearn-commits] r9548 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2987">[ date ]</a>
+              <a href="thread.html#2987">[ thread ]</a>
+              <a href="subject.html#2987">[ subject ]</a>
+              <a href="author.html#2987">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-10-09 20:56:34 +0200 (Thu, 09 Oct 2008)
+New Revision: 9547
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+should implement correctly the renewing of the kerberos ticket for pkdilly.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2008-10-09 18:06:18 UTC (rev 9546)
++++ trunk/python_modules/plearn/parallel/dbi.py	2008-10-09 18:56:34 UTC (rev 9547)
+@@ -712,6 +712,7 @@
+         self.condor_submit_exec = &quot;condor_submit&quot;
+         self.condor_submit_dag_exec = &quot;condor_submit_dag&quot;
+         self.pkdilly = False
++        self.launch_file = None
+ 
+         DBIBase.__init__(self, commands, **args)
+         self.mem=int(self.mem)*1024
+@@ -826,8 +827,8 @@
+             id+=1
+             #keeps a list of the temporary files created, so that they can be deleted at will
+ 
+-    def get_pkdilly_var(self, condor_submit_file):
+-        cmd=&quot;pkdilly -S &quot;+condor_submit_file
++    def get_pkdilly_var(self):
++        cmd=&quot;pkdilly -S &quot;+self.condor_submit_file
+         self.p = Popen( cmd, shell=True, stdout=PIPE, stderr=PIPE)
+         self.p.wait()
+         assert self.p.stdout.readline()==&quot;&quot;
+@@ -857,57 +858,57 @@
+         get=[x for x in get if not x.startswith(&quot;KRVEXECUTE=&quot;)]
+         return get
+ 
+-    def renew_launch_file(self,launch_file, renew_out_file,
+-                          condor_submit_file, bash_exec, seconds=3600):
++    def renew_launch_file(self, renew_out_file,
++                          bash_exec, seconds=3600):
++        def line_header():
++            return &quot;[DBICondor] &quot;+str(datetime.datetime.now())+&quot; &quot;+str(os.getpid())+&quot; &quot;
++        cmd=&quot;condor_wait -wait &quot;+str(seconds)+&quot; &quot;+self.log_file
+         pid=os.fork()
+         if pid==0:#in the childreen
+             #renew each hour
+-            out=open(renew_out_file+&quot;.out&quot;,&quot;w&quot;)
+-            err=open(renew_out_file+&quot;.err&quot;,&quot;w&quot;)
+-            sys.stdout = out
+-            sys.stderr = err
+-            cmd=&quot;condor_wait -wait &quot;+str(seconds)+&quot; &quot;+self.log_file
+-            launch_tmp_file=launch_file+&quot;.tmp&quot;
++            out=open(renew_out_file,&quot;w&quot;)
+             while True:
+-                p = Popen( cmd, shell=True, stdout=out, stderr=err)
++                p = Popen( cmd, shell=True, stdout=out, stderr=STDOUT)
+                 ret = p.wait()
+-                out.write(&quot;[DBICondor] &quot;+str(datetime.datetime.now())+
+-                          &quot; condor_wait return code &quot;+
++                assert ret==p.returncode
++                out.write(line_header()+&quot;condor_wait return code &quot;+
+                           str(ret)+&quot;\n&quot;)
+                 if ret==0:
+-                    out.write(&quot;[DBICondor] &quot;+str(datetime.datetime.now())+
+-                              &quot; all condor jobs finished. Exiting\n&quot;)
++                    out.write(line_header()+
++                              &quot;all condor jobs finished. Exiting\n&quot;)
+                     break
+                 elif ret!=1:
+                     #condor_wait should return only 0 or 1
+-                    out.write(&quot;[DBICondor] &quot;+str(datetime.datetime.now())+
+-                              &quot; expected a return code of 0 or 1.&quot; +
+-                              &quot; Exiting\n&quot;)
++                    out.write(line_header()+
++                              &quot;expected a return code of 0 or 1. Exiting\n&quot;)
+                     break
+-                #we write in a temp file then move it to be sure no jobs will 
+-                # read a partially writed file
+-                out.write(&quot;[DBICondor] &quot;+str(datetime.datetime.now())+
+-                          &quot;renew the launch file &quot;+launch_file+&quot;\n&quot;)
+-                self.make_launch_script(launch_tmp_file, bash_exec,
+-                                        condor_submit_file)
+-                os.rename(launch_tmp_file, launch_file)
++                else:
++                    out.write(line_header()+
++                              &quot;renew the launch file &quot;+self.launch_file+&quot;\n&quot;)
++                    self.make_launch_script(bash_exec)
+             out.close()
+-            err.close()
++            sys.exit()
+         else:
+-            #pkboost of the childreen...
++            #parent, we pkboost the childreen in case we connect with ssh 
++            # then log out. Not sure if this is really need or not.
++            
+             os.system(&quot;pkboost +d &quot;+str(pid))
+ 
+-    def make_launch_script(self, launch_file, bash_exec, condor_submit_file):
++    def make_launch_script(self, bash_exec):
++            
++        #we write in a temp file then move it to be sure no jobs will 
++        # read a partially writed file when we renew the file.
++
+         dbi_file=get_plearndir()+'/python_modules/plearn/parallel/dbi.py'
+         overwrite_launch_file=False
+         if not os.path.exists(dbi_file):
+-            print '[DBI] WARNING: Can\'t locate file &quot;dbi.py&quot;. Maybe the file &quot;'+launch_file+'&quot; is not up to date!'
++            print '[DBI] WARNING: Can\'t locate file &quot;dbi.py&quot;. Maybe the file &quot;'+self.launch_file+'&quot; is not up to date!'
+         else:
+-            if os.path.exists(launch_file):
++            if os.path.exists(self.launch_file):
+                 mtimed=os.stat(dbi_file)[8]
+-                mtimel=os.stat(launch_file)[8]
++                mtimel=os.stat(self.launch_file)[8]
+                 if mtimed&gt;mtimel:
+-                    print '[DBI] WARNING: We overwrite the file &quot;'+launch_file+'&quot; with a new version. Update it to your needs!'
++                    print '[DBI] WARNING: We overwrite the file &quot;'+self.launch_file+'&quot; with a new version. Update it to your needs!'
+                     overwrite_launch_file=True
+ 
+         if self.copy_local_source_file:
+@@ -918,9 +919,10 @@
+             os.chmod(source_file_dest, 0755)
+             self.source_file=source_file_dest
+ 
+-        if not os.path.exists(launch_file) or overwrite_launch_file:
+-            self.temp_files.append(launch_file)
+-            launch_fd = open(launch_file,'w')
++        launch_tmp_file=self.launch_file+&quot;.tmp&quot;
++        if not os.path.exists(self.launch_file) or overwrite_launch_file:
++            self.temp_files.append(self.launch_file)
++            launch_fd = open(launch_tmp_file,'w')
+             if not self.source_file or not self.source_file.endswith(&quot;.cshrc&quot;):
+                 launch_fd.write(dedent('''\
+                     #!/bin/sh
+@@ -943,7 +945,7 @@
+                     #/usr/bin/python -V 1&gt;&amp;2
+                     '''))
+                 if self.pkdilly:
+-                    get=self.get_pkdilly_var(condor_submit_file)
++                    get=self.get_pkdilly_var()
+ 
+                     for g in get:
+                         launch_fd.write(&quot;export &quot;+g+&quot;\n&quot;)
+@@ -983,7 +985,7 @@
+                     #${PROGRAM} &quot;$@&quot;
+                     '''))
+                 if self.pkdilly:
+-                    get=self.get_pkdilly_var(condor_submit_file)
++                    get=self.get_pkdilly_var()
+                     for g in get:
+                         sg = g.split(&quot;=&quot;,1)
+                         launch_fd.write(&quot;setenv &quot;+sg[0]+&quot; &quot;+sg[1]+&quot;\n&quot;)
+@@ -1002,27 +1004,17 @@
+ 
+ 
+             launch_fd.close()
+-            os.chmod(launch_file, 0755)
+-            if self.pkdilly:
+-                self.renew_launch_file(launch_file,
+-                                       os.path.join(self.log_dir,&quot;renew.outerr&quot;)
+-                                       , condor_submit_file, bash_exec)
++            os.chmod(launch_tmp_file, 0755)
++            os.rename(launch_tmp_file, self.launch_file)
+ 
+     def run_dag(self):
+-        condor_submit_file = os.path.join(self.log_dir, &quot;dag.condor&quot;)
+-        self.temp_files.append(condor_submit_file)
+-        condor_dag_fd = open( condor_submit_file, 'w' )
++        condor_submit_fd = open( self.condor_submit_file, 'w' )
+ 
+-        if self.source_file and self.source_file.endswith(&quot;.cshrc&quot;):
+-            launch_file = os.path.join(self.log_dir, 'launch.csh')
+-        else:
+-            launch_file = os.path.join(self.log_dir, 'launch.sh')
+-
+         self.log_file = os.path.join(&quot;/tmp/bastienf/dbidispatch&quot;,self.log_dir)
+         os.system('mkdir -p ' + self.log_file)
+         self.log_file = os.path.join(self.log_file,&quot;condor.log&quot;)
+ 
+-        condor_dag_fd.write( dedent('''\
++        condor_submit_fd.write( dedent('''\
+                 executable     = %s
+                 universe       = vanilla
+                 requirements   = %s
+@@ -1032,31 +1024,31 @@
+                 getenv         = %s
+                 nice_user      = %s
+                 arguments      = $(args)
+-                ''' % (launch_file,self.req,
++                ''' % (self.launch_file,self.req,
+                        self.log_file,str(self.getenv),str(self.nice))))
+         if self.mem&gt;0:
+             #condor need value in Kb
+-            condor_dag_fd.write('ImageSize      = %d\n'%(self.mem))
++            condor_submit_fd.write('ImageSize      = %d\n'%(self.mem))
+ 
+         if self.files: #ON_EXIT_OR_EVICT
+-            condor_dag_fd.write( dedent('''\
++            condor_submit_fd.write( dedent('''\
+                 when_to_transfer_output = ON_EXIT
+                 should_transfer_files   = Yes
+                 transfer_input_files    = %s
+-                '''%(self.files+','+launch_file+','+self.tasks[0].commands[0].split()[0]))) # no directory
++                '''%(self.files+','+self.launch_file+','+self.tasks[0].commands[0].split()[0]))) # no directory
+         if self.env:
+-            condor_dag_fd.write('environment    = '+self.env+'\n')
++            condor_submit_fd.write('environment    = '+self.env+'\n')
+         if self.raw:
+-            condor_dag_fd.write( self.raw+'\n')
++            condor_submit_fd.write( self.raw+'\n')
+         if self.rank:
+-            condor_dag_fd.write( dedent('''\
++            condor_submit_fd.write( dedent('''\
+                 rank = %s
+                 ''' %(self.rank)))
+ 
+-        condor_dag_fd.write(&quot;\nqueue\n&quot;)
+-        condor_dag_fd.close()
++        condor_submit_fd.write(&quot;\nqueue\n&quot;)
++        condor_submit_fd.close()
+ 
+-        condor_dag_file = condor_submit_file+&quot;.dag&quot;
++        condor_dag_file = self.condor_submit_file+&quot;.dag&quot;
+         condor_dag_fd = open( condor_dag_file, 'w' )
+         for task in self.tasks:
+             for c in task.commands:
+@@ -1068,7 +1060,7 @@
+             for i in range(len(self.tasks)):
+                 task=self.tasks[i]
+                 argstring =condor_dag_escape_argument(' ; '.join(task.commands))
+-                condor_dag_fd.write(&quot;JOB %d %s\n&quot;%(i,condor_submit_file))
++                condor_dag_fd.write(&quot;JOB %d %s\n&quot;%(i,self.condor_submit_file))
+                 condor_dag_fd.write('VARS %d args=&quot;%s&quot;\n'%(i,argstring))
+                 s=os.path.join(self.log_dir,
+                                &quot;condor&quot;+self.base_tasks_log_file[i])
+@@ -1081,7 +1073,7 @@
+                     print &quot;Condor can't redirect the stdout and stderr to the same file!&quot;
+                     sys.exit(1)
+                 argstring =condor_dag_escape_argument(' ; '.join(task.commands))
+-                condor_dag_fd.write(&quot;JOB %d %s\n&quot;%(i,condor_submit_file))
++                condor_dag_fd.write(&quot;JOB %d %s\n&quot;%(i,self.condor_submit_file))
+                 condor_dag_fd.write('VARS %d args=&quot;%s&quot;\n'%(i,argstring))
+                 condor_dag_fd.write('VARS %d stdout=&quot;%s&quot;\n'%(i,stdout_file))
+                 condor_dag_fd.write('VARS %d stderr=&quot;%s&quot;\n\n'%(i,stderr_file))
+@@ -1096,7 +1088,7 @@
+                 
+         condor_dag_fd.close()
+ 
+-        self.make_launch_script(launch_file, '$@')
++        self.make_launch_script('$@')
+ 
+         condor_cmd = self.condor_submit_dag_exec+' -maxjobs %s %s'%(str(self.nb_proc), condor_dag_file)
+         return condor_cmd
+@@ -1120,15 +1112,8 @@
+                 param_dat.close()
+ 
+ 
+-        condor_submit_file = os.path.join(self.log_dir, &quot;submit_file.condor&quot;)
+-        self.temp_files.append(condor_submit_file)
+-        condor_submit_fd = open( condor_submit_file, 'w' )
++        condor_submit_fd = open( self.condor_submit_file, 'w' )
+ 
+-        if self.source_file and self.source_file.endswith(&quot;.cshrc&quot;):
+-            launch_file = os.path.join(self.log_dir, 'launch.csh')
+-        else:
+-            launch_file = os.path.join(self.log_dir, 'launch.sh')
+-
+         self.log_file= os.path.join(self.log_dir,&quot;condor.log&quot;)
+ 
+         condor_submit_fd.write( dedent('''\
+@@ -1140,7 +1125,7 @@
+                 log            = %s
+                 getenv         = %s
+                 nice_user      = %s
+-                ''' % (launch_file,self.req,
++                ''' % (self.launch_file,self.req,
+                        self.log_dir,
+                        self.log_dir,
+                        self.log_file,str(self.getenv),str(self.nice))))
+@@ -1160,7 +1145,7 @@
+                 when_to_transfer_output = ON_EXIT
+                 should_transfer_files   = Yes
+                 transfer_input_files    = %s
+-                '''%(self.files+','+launch_file+','+self.tasks[0].commands[0].split()[0]))) # no directory
++                '''%(self.files+','+self.launch_file+','+self.tasks[0].commands[0].split()[0]))) # no directory
+         if self.env:
+             condor_submit_fd.write('environment    = '+self.env+'\n')
+         if self.raw:
+@@ -1200,11 +1185,10 @@
+                     condor_submit_fd.write(&quot;arguments      = %s \nqueue\n&quot; %argstring)
+         condor_submit_fd.close()
+ 
++        self.make_launch_script('sh -c &quot;$@&quot;')
+ 
+-        self.make_launch_script(launch_file,'sh -c &quot;$@&quot;',condor_submit_file)
++        return self.condor_submit_exec + &quot; &quot; + self.condor_submit_file
+ 
+-        return self.condor_submit_exec + &quot; &quot; + condor_submit_file
+-
+     def clean(self):
+         if len(self.temp_files)&gt;0:
+             sleep(20)
+@@ -1221,6 +1205,10 @@
+             print &quot;curently pkdilly with nb_proc &gt;0 is not supported!&quot;
+ 
+         print &quot;[DBI] The Log file are under %s&quot;%self.log_dir
++        if self.source_file and self.source_file.endswith(&quot;.cshrc&quot;):
++            self.launch_file = os.path.join(self.log_dir, 'launch.csh')
++        else:
++            self.launch_file = os.path.join(self.log_dir, 'launch.sh')
+ 
+         self.exec_pre_batch()
+ 
+@@ -1253,6 +1241,10 @@
+             except:
+                 pass
+ 
++        self.condor_submit_file = os.path.join(self.log_dir,
++                                               &quot;submit_file.condor&quot;)
++        self.temp_files.append(self.condor_submit_file)
++
+         #exec dependent code
+         if self.nb_proc &gt; 0:
+             cmd=self.run_dag()
+@@ -1286,11 +1278,18 @@
+             self.p.wait()
+             if self.p.returncode != 0:
+                 print &quot;[DBI] submission failed! We can't stard the jobs&quot;
++            if self.pkdilly:
++                self.renew_launch_file(os.path.join(self.log_dir,&quot;renew.outerr&quot;)
++                                       , 'sh -c &quot;$@&quot;')
++
+         else:
+-            print &quot;[DBI] In test mode we don't launch the jobs. To to it, you need to execute '&quot;+cmd+&quot;'&quot;
++            print &quot;[DBI] In test mode we don't launch the jobs. To do it,&quot;,
++            print &quot; you need to execute '&quot;+cmd+&quot;'&quot;
+             if self.dolog:
+                 print &quot;[DBI] The scheduling time will not be logged when you will submit the condor file&quot;
+-
++            if self.pkdilly:
++                print &quot;[DBI] we won't renew the kerberos ticket.&quot;,
++                print &quot; So the jobs must their execution in the next 8 hours.&quot;
+         self.exec_post_batch()
+ 
+     def wait(self):
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002986.html">[Plearn-commits] r9546 - tags
+</A></li>
+	<LI>Next message: <A HREF="002988.html">[Plearn-commits] r9548 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2987">[ date ]</a>
+              <a href="thread.html#2987">[ thread ]</a>
+              <a href="subject.html#2987">[ subject ]</a>
+              <a href="author.html#2987">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

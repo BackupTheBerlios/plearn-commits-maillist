@@ -1,0 +1,132 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8223 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-November/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8223%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200711021454.lA2EsJmL021366%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="001672.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8223 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8223%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200711021454.lA2EsJmL021366%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8223 - trunk/plearn_learners/generic/EXPERIMENTAL">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Fri Nov  2 15:54:19 CET 2007</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="001672.html">[Plearn-commits] r8224 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1671">[ date ]</a>
+              <a href="thread.html#1671">[ thread ]</a>
+              <a href="subject.html#1671">[ subject ]</a>
+              <a href="author.html#1671">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-11-02 15:54:18 +0100 (Fri, 02 Nov 2007)
+New Revision: 8223
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc
+Log:
+Fixed bug with 'synchronize_update' set to true, where the program may stall due to unlucky race effects
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc	2007-10-30 20:30:02 UTC (rev 8222)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc	2007-11-02 14:54:18 UTC (rev 8223)
+@@ -917,7 +917,7 @@
+             while (true) {
+             int sem_value = semctl(semaphore_id, 0, GETVAL);
+             if (sem_value == iam) {
+-                int n_ready = 2 * ncpus;
++                int n_ready = 0;
+                 if (synchronize_update &amp;&amp; !performed_update) {
+                     // We first indicate that this CPU is ready to perform his
+                     // update.
+@@ -929,6 +929,8 @@
+                     PLCHECK( success == 0 );
+                 }
+                 if (delayed_update &amp;&amp; n_ready &gt; ncpus &amp;&amp; !performed_update) {
++                    // Once all CPUs are ready we can actually perform the
++                    // updates.
+                     //printf(&quot;CPU %d updating (nsteps = %d)\n&quot;, iam, nsteps);
+                     all_params += params_update;
+                     params_update.clear();
+@@ -942,6 +944,14 @@
+                     params_int_ptr[stage_idx] = new_stage;
+                     nsteps = 0;
+                 }
++                if (n_ready == 2 * ncpus) {
++                    // The last CPU has updated the parameters. All CPUs can
++                    // now break out of this loop.
++                    n_ready = semun_v.val = 0;
++                    int success = semctl(semaphore_id, ncpus + 1, SETVAL,
++                                         semun_v);
++                    PLCHECK( success == 0 );
++                }
+                 // Give update token to next CPU.
+                 sem_value = (sem_value + 1) % ncpus;
+                 semun_v.val = sem_value;
+@@ -951,20 +961,18 @@
+                             &quot;semaphore with next CPU (errno = %d, returned &quot;
+                             &quot;value = %d, set value = %d)&quot;, errno, success,
+                             semun_v.val);
+-                if (!delayed_update || n_ready &gt;= 2 * ncpus)
++                if (!delayed_update || n_ready == 0)
+                     // If 'synchronize_update' is false this is always true.
+                     // If 'synchronize_update' is true this means all CPUs have
+                     // updated the parameters.
+                     break;
++            } else if (performed_update) {
++                // TODO We could break here by checking the 'n_ready'
++                // semaphore: once it is reset to zero everyone can exit at
++                // once without necessarily doing it in turn.
+             }
+             }
+         }
+-        if (synchronize_update &amp;&amp; iam == 0) {
+-            // Reset the 'ready' semaphore.
+-            semun_v.val = 0;
+-            int success = semctl(semaphore_id, ncpus + 1, SETVAL, semun_v);
+-            PLCHECK( success == 0 );
+-        }
+         /*
+         if (params_averaging_coeff!=1.0 &amp;&amp; 
+             b==minibatch_size-1 &amp;&amp; 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="001672.html">[Plearn-commits] r8224 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1671">[ date ]</a>
+              <a href="thread.html#1671">[ thread ]</a>
+              <a href="subject.html#1671">[ subject ]</a>
+              <a href="author.html#1671">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

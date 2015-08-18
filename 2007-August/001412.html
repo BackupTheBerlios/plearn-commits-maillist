@@ -1,0 +1,175 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7964 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7964%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708090140.l791eaWo019603%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001411.html">
+   <LINK REL="Next"  HREF="001413.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7964 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7964%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708090140.l791eaWo019603%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7964 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Thu Aug  9 03:40:36 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001411.html">[Plearn-commits] r7963 - trunk/plearn/io
+</A></li>
+        <LI>Next message: <A HREF="001413.html">[Plearn-commits] r7965 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1412">[ date ]</a>
+              <a href="thread.html#1412">[ thread ]</a>
+              <a href="subject.html#1412">[ subject ]</a>
+              <a href="author.html#1412">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-08-09 03:40:27 +0200 (Thu, 09 Aug 2007)
+New Revision: 7964
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.h
+   trunk/plearn_learners/online/VBoundDBN2.cc
+Log:
+Finished v0 of VBoundDBN2, needed some little changes in RBMModule.h
+
+
+Modified: trunk/plearn_learners/online/RBMModule.h
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.h	2007-08-08 21:42:59 UTC (rev 7963)
++++ trunk/plearn_learners/online/RBMModule.h	2007-08-09 01:40:27 UTC (rev 7964)
+@@ -267,9 +267,6 @@
+     //! Add a new port to the 'portname_to_index' map and 'ports' vector.
+     void addPortName(const string&amp; name);
+ 
+-    //! Forward the given learning rate to all elements of this module.
+-    void setAllLearningRates(real lr);
+-        
+     //! Forward the given learning rate to all elements of the layers
+     //! and to the reconstruction connections (NOT of the connection weights).
+     void setLearningRatesOnlyForLayers(real lr);
+@@ -278,6 +275,9 @@
+     static void declareOptions(OptionList&amp; ol);
+ 
+ public:
++    //! Forward the given learning rate to all elements of this module.
++    void setAllLearningRates(real lr);
++        
+     //! Compute activations on the hidden layer based on the provided
+     //! visible input.
+     //! If 'hidden_bias' is not null nor empty, then it is used as an
+
+Modified: trunk/plearn_learners/online/VBoundDBN2.cc
+===================================================================
+--- trunk/plearn_learners/online/VBoundDBN2.cc	2007-08-08 21:42:59 UTC (rev 7963)
++++ trunk/plearn_learners/online/VBoundDBN2.cc	2007-08-09 01:40:27 UTC (rev 7964)
+@@ -37,7 +37,7 @@
+ /*! \file VBoundDBN2.cc */
+ 
+ 
+-
++#include &lt;plearn_learners/online/RBMMatrixConnection.h&gt;
+ #include &quot;VBoundDBN2.h&quot;
+ 
+ namespace PLearn {
+@@ -126,7 +126,7 @@
+     Mat* global_improvement_ = ports_value[4]; // a state if input is given
+     Mat* ph_given_v_ = ports_value[5]; // a state if input is given
+     Mat* p2ph_ = ports_value[6]; // same story
+-    
++    int mbs = input-&gt;length();
+     PLASSERT( input &amp;&amp; sampled_h_ &amp;&amp; global_improvement_
+               &amp;&amp; ph_given_v_ &amp;&amp; p2ph_);
+ 
+@@ -147,15 +147,15 @@
+     PLASSERT(rbm1-&gt;connection-&gt;classname() == &quot;RBMMatrixConnection&quot;);
+     Mat&amp; weights = ((RBMMatrixConnection*)
+                     get_pointer(rbm1-&gt;connection))-&gt;weights;
+-    Vec&amp; hidden_bias = rbm1-&gt;hidden_layer-&gt;bias;    
+-    Vec&amp; visible_bias = rbm1-&gt;hidden_layer-&gt;bias;    
+     static Mat delta_W;
+     static Vec delta_hb;
+-    static Vec delta_vb;
++    static Vec delta_vb1;
++    static Vec delta_vb2;
+     static Mat delta_h;
+-    deltaW.resize(rbm1-&gt;hidden_layer-&gt;size,rbm1-&gt;visible_layer-&gt;size);
++    delta_W.resize(rbm1-&gt;hidden_layer-&gt;size,rbm1-&gt;visible_layer-&gt;size);
+     delta_hb.resize(rbm1-&gt;hidden_layer-&gt;size);
+-    delta_vb.resize(rbm1-&gt;visible_layer-&gt;size);
++    delta_vb1.resize(rbm1-&gt;visible_layer-&gt;size);
++    delta_vb2.resize(rbm1-&gt;visible_layer-&gt;size);
+     delta_h.resize(mbs,rbm1-&gt;hidden_layer-&gt;size);
+ 
+     // reconstruct the input
+@@ -164,17 +164,27 @@
+     Mat reconstructed_v = rbm1-&gt;visible_layer-&gt;getExpectations();
+ 
+     // compute RBM1 weight negative gradient
+-    substract(*sampled_h_,*p2h_,delta_h);
+-    multiply(delta_h, delta_h,global_improvement-&gt;toVec());
++    //  dlogbound/dWij sampling approx = (ph_given_v[i] + (h[i]-ph_given_v[i])*global_improvement)*v[j] - h[i]*reconstructed_v[j]
++    substract(*sampled_h_,*ph_given_v_,delta_h);
++    multiply(delta_h, delta_h,global_improvement_-&gt;toVec());
+     delta_h += *ph_given_v_;
+-    productScaleAcc(deltaW, delta_h, true, *input, false, 1, 0);
+-    productScaleAcc(deltaW, *sampled_h_, true, reconstructed_v, false, -1, 1);
++    productScaleAcc(delta_W, delta_h, true, *input, false, 1., 0.);
++    productScaleAcc(delta_W, *sampled_h_, true, reconstructed_v, false, -1., 1.);
+     // update the weights
+-    multiplyAcc(weights, deltaW, rbm1-&gt;cd_learning_rate);
++    multiplyAcc(weights, delta_W, rbm1-&gt;cd_learning_rate);
+ 
+     // do the biases now
++    //  dlogbound/dbi sampling approx = (ph_given_v[i] + (h[i]-ph_given_v[i])*global_improvement) - h[i]
++    substract(delta_h, *sampled_h_, delta_h);
++    columnSum(delta_h,delta_hb);
++    multiplyAcc(rbm1-&gt;hidden_layer-&gt;bias,delta_hb,rbm1-&gt;cd_learning_rate);
++    
++    //  dlogbound/dji sampling approx = v[j] - reconstructed_v[j]
++    columnSum(reconstructed_v,delta_vb1);
++    columnSum(*input,delta_vb2);
++    substract(delta_vb2,delta_vb1,delta_vb1);
++    multiplyAcc(rbm1-&gt;visible_layer-&gt;bias,delta_vb1,rbm1-&gt;cd_learning_rate);
+ 
+-
+     // Ensure all required gradients have been computed.
+     checkProp(ports_gradient);
+ }
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001411.html">[Plearn-commits] r7963 - trunk/plearn/io
+</A></li>
+	<LI>Next message: <A HREF="001413.html">[Plearn-commits] r7965 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1412">[ date ]</a>
+              <a href="thread.html#1412">[ thread ]</a>
+              <a href="subject.html#1412">[ subject ]</a>
+              <a href="author.html#1412">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,320 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9846 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9846%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200901171619.n0HGJ0sd011633%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003285.html">
+   <LINK REL="Next"  HREF="003287.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9846 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9846%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200901171619.n0HGJ0sd011633%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9846 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Sat Jan 17 17:19:00 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003285.html">[Plearn-commits] r9845 - in trunk: commands plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="003287.html">[Plearn-commits] r9847 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3286">[ date ]</a>
+              <a href="thread.html#3286">[ thread ]</a>
+              <a href="subject.html#3286">[ subject ]</a>
+              <a href="author.html#3286">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2009-01-17 17:19:00 +0100 (Sat, 17 Jan 2009)
+New Revision: 9846
+
+Modified:
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+Log:
+Implemented online learning with denoising autoencoders, in the non-minibatch case.
+
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2009-01-16 21:47:31 UTC (rev 9845)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2009-01-17 16:19:00 UTC (rev 9846)
+@@ -435,10 +435,11 @@
+                     &quot; - \n&quot;
+                     &quot;probability_of_masked_target should be &gt; or equal to 0.\n&quot;);
+ 
+-        if( online &amp;&amp; fraction_of_masked_inputs &gt; 0)
++        if( online &amp;&amp; noise_type != &quot;masking_noise&quot; &amp;&amp; batch_size != 1)
+             PLERROR(&quot;StackedAutoassociatorsNet::build_()&quot;
+                     &quot; - \n&quot;
+-                    &quot;masked inputs has not been implemented for online option.\n&quot;);
++                    &quot;corrupted inputs only works with masking noise in online setting,&quot;
++                    &quot;in the non-minibatch case.\n&quot;);
+ 
+         if( !online )
+         {
+@@ -681,12 +682,14 @@
+ 
+     // For denoising autoencoders
+     corrupted_autoassociator_expectations.resize( n_layers-1 );
++    binary_masks.resize( n_layers-1 );
+     if( noise_type == &quot;masking_noise&quot; )
+         autoassociator_expectation_indices.resize( n_layers-1 );
+     
+     for( int i=0 ; i&lt;n_layers-1 ; i++ )
+     {
+         corrupted_autoassociator_expectations[i].resize( layers[i]-&gt;size );
++        binary_masks[i].resize( layers[i]-&gt;size ); // For online learning
+         if( noise_type == &quot;masking_noise&quot; )
+         {
+             autoassociator_expectation_indices[i].resize( layers[i]-&gt;size );
+@@ -860,6 +863,8 @@
+     deepCopyField(final_cost_gradient, copies);
+     deepCopyField(final_cost_gradients, copies);
+     deepCopyField(corrupted_autoassociator_expectations, copies);
++    deepCopyField(binary_masks, copies);
++    deepCopyField(tmp_mask, copies);
+     deepCopyField(autoassociator_expectation_indices, copies);
+     deepCopyField(expectation_means, copies);
+     deepCopyField(target_vec, copies);
+@@ -1284,6 +1289,13 @@
+ 
+ void StackedAutoassociatorsNet::corrupt_input(const Vec&amp; input, Vec&amp; corrupted_input, int layer)
+ {
++    tmp_mask.resize(input.length());
++    corrupt_input(input,corrupted_input,layer,tmp_mask);
++}
++
++void StackedAutoassociatorsNet::corrupt_input(const Vec&amp; input, Vec&amp; corrupted_input, int layer, Vec&amp; binary_mask)
++{
++    binary_mask.fill(1);
+     corrupted_input.resize(input.length());
+     if( mask_input_layer_only &amp;&amp; layer != 0 )
+     {
+@@ -1300,13 +1312,19 @@
+             if( mask_with_mean )
+                 for( int j=0 ; j &lt;input.length() ; j++)
+                     if( random_gen-&gt;uniform_sample() &lt; probability_of_masked_inputs )
++                    {
+                         corrupted_input[ j ] = expectation_means[layer][ j ];
++                        binary_mask[ j ] = 0;
++                    }
+                     else
+                         corrupted_input[ j ] = input[ j ];
+             else
+                 for( int j=0 ; j &lt;input.length() ; j++)
+                     if( random_gen-&gt;uniform_sample() &lt; probability_of_masked_inputs )
++                    {
+                         corrupted_input[ j ] = 0;
++                        binary_mask[ j ] = 0;
++                    }
+                     else
+                         corrupted_input[ j ] = input[ j ];
+                 
+@@ -1317,10 +1335,16 @@
+             corrupted_input &lt;&lt; input;
+             if( mask_with_mean )
+                 for( int j=0 ; j &lt; round(fraction_of_masked_inputs*input.length()) ; j++)
++                {
+                     corrupted_input[ autoassociator_expectation_indices[layer][j] ] = expectation_means[layer][autoassociator_expectation_indices[layer][j]];
++                    binary_mask[ autoassociator_expectation_indices[layer][j] ] = 0;
++                }
+             else
+                 for( int j=0 ; j &lt; round(fraction_of_masked_inputs*input.length()) ; j++)
++                {
+                     corrupted_input[ autoassociator_expectation_indices[layer][j] ] = 0;
++                    binary_mask[ autoassociator_expectation_indices[layer][j] ] = 0;
++                }
+         }
+ 
+     }
+@@ -1354,7 +1378,8 @@
+             if( i == index )
+             {
+                 corrupt_input( expectations[i], corrupted_autoassociator_expectations[i], i );
+-                connections[i]-&gt;fprop( corrupted_autoassociator_expectations[i], correlation_activations[i] );
++                connections[i]-&gt;fprop( corrupted_autoassociator_expectations[i], 
++                                       correlation_activations[i] );
+             }
+             else
+                 connections[i]-&gt;fprop( expectations[i], correlation_activations[i] );
+@@ -1878,7 +1903,10 @@
+     {
+         for( int i=0 ; i&lt;n_layers-1; i++ )
+         {
+-            connections[i]-&gt;fprop( expectations[i], correlation_activations[i] );
++            corrupt_input( expectations[i], corrupted_autoassociator_expectations[i], 
++                           i, binary_masks[i] );
++            connections[i]-&gt;fprop( corrupted_autoassociator_expectations[i], 
++                                   correlation_activations[i] );
+ 
+             if( greedy_target_connections.length() &amp;&amp; greedy_target_connections[i] )
+             {
+@@ -1905,8 +1933,11 @@
+     {
+         for( int i=0 ; i&lt;n_layers-1; i++ )
+         {
+-            connections[i]-&gt;fprop( expectations[i], activations[i+1] );
+-
++            corrupt_input( expectations[i], corrupted_autoassociator_expectations[i], 
++                           i, binary_masks[i] );
++            connections[i]-&gt;fprop( corrupted_autoassociator_expectations[i], 
++                                   activations[i+1] );
++            
+             if( greedy_target_connections.length() &amp;&amp; greedy_target_connections[i] )
+             {
+                 targets_vec[i].clear();
+@@ -1923,22 +1954,6 @@
+         }
+     }
+ 
+-    final_module-&gt;fprop( expectations[ n_layers-1 ],
+-                         final_cost_input );
+-    final_cost-&gt;fprop( final_cost_input, target, final_cost_value );
+-
+-    train_costs.subVec(train_costs.length()-final_cost_value.length(),
+-                       final_cost_value.length()) &lt;&lt;
+-        final_cost_value;
+-
+-    final_cost-&gt;bpropUpdate( final_cost_input, target,
+-                             final_cost_value[0],
+-                             final_cost_gradient );
+-    final_module-&gt;bpropUpdate( expectations[ n_layers-1 ],
+-                               final_cost_input,
+-                               expectation_gradients[ n_layers-1 ],
+-                               final_cost_gradient );
+-
+     // Unsupervised greedy layer-wise cost
+ 
+     // Set learning rates
+@@ -2049,7 +2064,7 @@
+                                     correlation_activation_gradients[i-1],
+                                     correlation_expectation_gradients[i-1] );
+ 
+-            connections[i-1]-&gt;bpropUpdate( expectations[i-1],
++            connections[i-1]-&gt;bpropUpdate( corrupted_autoassociator_expectations[i-1],
+                                            correlation_activations[i-1],
+                                            reconstruction_expectation_gradients,
+                                            correlation_activation_gradients[i-1] );
+@@ -2072,7 +2087,7 @@
+                 reconstruction_expectation_gradients );
+ 
+             connections[i-1]-&gt;bpropUpdate(
+-                expectations[i-1],
++                corrupted_autoassociator_expectations[i-1],
+                 activations[i],
+                 reconstruction_expectation_gradients,
+                 reconstruction_activation_gradients);
+@@ -2110,6 +2125,23 @@
+     }
+     layers[n_layers-1]-&gt;setLearningRate( lr );
+ 
++
++    final_module-&gt;fprop( expectations[ n_layers-1 ],
++                         final_cost_input );
++    final_cost-&gt;fprop( final_cost_input, target, final_cost_value );
++
++    train_costs.subVec(train_costs.length()-final_cost_value.length(),
++                       final_cost_value.length()) &lt;&lt;
++        final_cost_value;
++
++    final_cost-&gt;bpropUpdate( final_cost_input, target,
++                             final_cost_value[0],
++                             final_cost_gradient );
++    final_module-&gt;bpropUpdate( expectations[ n_layers-1 ],
++                               final_cost_input,
++                               expectation_gradients[ n_layers-1 ],
++                               final_cost_gradient );
++
+     // Fine-tuning backpropagation
+     if( correlation_connections.length() != 0 )
+     {
+@@ -2133,10 +2165,11 @@
+                                     correlation_expectation_gradients[i-1] );
+ 
+             connections[i-1]-&gt;bpropUpdate(
+-                expectations[i-1],
++                corrupted_autoassociator_expectations[i-1],
+                 correlation_activations[i-1],
+                 expectation_gradients[i-1],
+                 correlation_activation_gradients[i-1] );
++            expectation_gradients[i-1] *= binary_masks[ i-1 ];
+         }
+     }
+     else
+@@ -2148,10 +2181,11 @@
+                                     activation_gradients[i],
+                                     expectation_gradients[i] );
+ 
+-            connections[i-1]-&gt;bpropUpdate( expectations[i-1],
++            connections[i-1]-&gt;bpropUpdate( corrupted_autoassociator_expectations[i-1],
+                                            activations[i],
+                                            expectation_gradients[i-1],
+                                            activation_gradients[i] );
++            expectation_gradients[i-1] *= binary_masks[ i-1 ];
+         }
+     }
+ }
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2009-01-16 21:47:31 UTC (rev 9845)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2009-01-17 16:19:00 UTC (rev 9846)
+@@ -408,6 +408,12 @@
+     //! Layers randomly masked, for unsupervised fine-tuning.
+     TVec&lt; Vec &gt; corrupted_autoassociator_expectations;
+ 
++    //! Layers random binary maske, for online learning.
++    TVec&lt; Vec &gt; binary_masks;
++
++    //! For when corrupt_input() with binary_mask parameter is called
++    Vec tmp_mask;
++
+     //! Indices of the expectation components
+     TVec&lt; TVec&lt;int&gt; &gt; autoassociator_expectation_indices;
+ 
+@@ -458,6 +464,8 @@
+ 
+     void corrupt_input(const Vec&amp; input, Vec&amp; corrupted_input, int layer);
+ 
++    void corrupt_input(const Vec&amp; input, Vec&amp; corrupted_input, int layer, Vec&amp; binary_mask);
++
+     //! Global storage to save memory allocations.
+     mutable Vec tmp_output;
+     mutable Mat tmp_output_mat;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003285.html">[Plearn-commits] r9845 - in trunk: commands plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="003287.html">[Plearn-commits] r9847 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3286">[ date ]</a>
+              <a href="thread.html#3286">[ thread ]</a>
+              <a href="subject.html#3286">[ subject ]</a>
+              <a href="author.html#3286">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

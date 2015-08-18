@@ -1,0 +1,147 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6906 - trunk/commands/PLearnCommands
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6906%20-%20trunk/commands/PLearnCommands&In-Reply-To=%3C200704171918.l3HJIYuE012459%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000354.html">
+   <LINK REL="Next"  HREF="000356.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6906 - trunk/commands/PLearnCommands</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6906%20-%20trunk/commands/PLearnCommands&In-Reply-To=%3C200704171918.l3HJIYuE012459%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6906 - trunk/commands/PLearnCommands">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue Apr 17 21:18:34 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000354.html">[Plearn-commits] r6905 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000356.html">[Plearn-commits] r6907 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#355">[ date ]</a>
+              <a href="thread.html#355">[ thread ]</a>
+              <a href="subject.html#355">[ subject ]</a>
+              <a href="author.html#355">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-04-17 21:18:34 +0200 (Tue, 17 Apr 2007)
+New Revision: 6906
+
+Modified:
+   trunk/commands/PLearnCommands/RunCommand.cc
+Log:
+Can now use the 'run' command on a script whose names has explicit variable values, for instance plearn run myscript.plearn::learning_rate=1
+
+Modified: trunk/commands/PLearnCommands/RunCommand.cc
+===================================================================
+--- trunk/commands/PLearnCommands/RunCommand.cc	2007-04-17 19:16:56 UTC (rev 6905)
++++ trunk/commands/PLearnCommands/RunCommand.cc	2007-04-17 19:18:34 UTC (rev 6906)
+@@ -62,22 +62,38 @@
+ //! The actual implementation of the 'RunCommand' command 
+ void RunCommand::run(const vector&lt;string&gt;&amp; args)
+ {
+-    string scriptfile = args[0];
+-    if (!isfile(scriptfile))
+-        PLERROR(&quot;Non-existent script file: %s\n&quot;,scriptfile.c_str());
++    const vector&lt;string&gt;* the_args = &args;
++    vector&lt;string&gt; args_augmented;
++    PPath scriptfile = args[0];
++    if (!isfile(scriptfile)) {
++        // There is no file with this exact name. Maybe there are parameters
++        // appended to the name?
++        string base;
++        map&lt;string, string&gt; params;
++        parseBaseAndParameters(scriptfile, base, params);
++        if (!isfile(base))
++            PLERROR(&quot;Non-existent script file: %s\n&quot;,scriptfile.c_str());
++        // Add new arguments.
++        args_augmented = args;
++        map&lt;string, string&gt;::const_iterator it = params.begin();
++        for (; it != params.end(); it++)
++            args_augmented.push_back(it-&gt;first + &quot;=&quot; + it-&gt;second);
++        the_args = &amp;args_augmented;
++        scriptfile = base;
++    }
+ 
+-    const string extension = extract_extension(scriptfile);
++    string extension = scriptfile.extension();
+     string script;
+ 
+     PP&lt;PyPLearnScript&gt; pyplearn_script;
+     PStream in;
+ 
+-    if (extension == &quot;.pyplearn&quot;)
++    if (extension == &quot;pyplearn&quot;)
+     {
+         // Make a copy of args with the first argument (the name of the script)
+         // removed, leaving the first argument to the script at index 0.
+-        vector&lt;string&gt; pyplearn_args(args.size()-1);
+-        copy(args.begin() + 1, args.end(), pyplearn_args.begin());
++        vector&lt;string&gt; pyplearn_args(the_args-&gt;size()-1);
++        copy(the_args-&gt;begin() + 1, the_args-&gt;end(), pyplearn_args.begin());
+     
+         pyplearn_script = PyPLearnScript::process(scriptfile, pyplearn_args);
+         script          = pyplearn_script-&gt;getScript();
+@@ -90,13 +106,13 @@
+ 
+         in = openString( script, PStream::plearn_ascii );
+     }
+-    else if(extension==&quot;.plearn&quot;)  // perform plearn macro expansion
++    else if(extension==&quot;plearn&quot;)  // perform plearn macro expansion
+     {
+         map&lt;string, string&gt; vars;
+         // populate vars with the arguments passed on the command line
+-        for (unsigned int i=1; i&lt;args.size(); i++)
++        for (unsigned int i=1; i&lt;the_args-&gt;size(); i++)
+         {
+-            string option = args[i];
++            string option = (*the_args)[i];
+             // Skip --foo command-lines options.
+             if (option.size() &lt; 2 || option.substr(0, 2) != &quot;--&quot;)
+             {
+@@ -108,7 +124,7 @@
+         script = readFileAndMacroProcess(scriptfile, vars);
+         in = openString( script, PStream::plearn_ascii );
+     }
+-    else if(extension==&quot;.psave&quot;) // do not perform plearn macro expansion
++    else if(extension==&quot;psave&quot;) // do not perform plearn macro expansion
+     {
+         in = openFile(scriptfile, PStream::plearn_ascii);
+     }
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000354.html">[Plearn-commits] r6905 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000356.html">[Plearn-commits] r6907 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#355">[ date ]</a>
+              <a href="thread.html#355">[ thread ]</a>
+              <a href="subject.html#355">[ subject ]</a>
+              <a href="author.html#355">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

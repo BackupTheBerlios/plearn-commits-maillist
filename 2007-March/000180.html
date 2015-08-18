@@ -1,0 +1,347 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6731 - trunk/plearn/math
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6731%20-%20trunk/plearn/math&In-Reply-To=%3C200703141804.l2EI4rLM024426%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000179.html">
+   <LINK REL="Next"  HREF="000181.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6731 - trunk/plearn/math</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6731%20-%20trunk/plearn/math&In-Reply-To=%3C200703141804.l2EI4rLM024426%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6731 - trunk/plearn/math">chapados at mail.berlios.de
+       </A><BR>
+    <I>Wed Mar 14 19:04:53 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000179.html">[Plearn-commits] r6730 - trunk/plearn/math
+</A></li>
+        <LI>Next message: <A HREF="000181.html">[Plearn-commits] r6732 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#180">[ date ]</a>
+              <a href="thread.html#180">[ thread ]</a>
+              <a href="subject.html#180">[ subject ]</a>
+              <a href="author.html#180">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2007-03-14 19:04:50 +0100 (Wed, 14 Mar 2007)
+New Revision: 6731
+
+Modified:
+   trunk/plearn/math/StatsCollector.cc
+   trunk/plearn/math/StatsCollector.h
+   trunk/plearn/math/VecStatsCollector.cc
+   trunk/plearn/math/VecStatsCollector.h
+Log:
+Added an &quot;epsilon&quot; to StatsCollector to properly regularize variance and stddev estimators
+
+Modified: trunk/plearn/math/StatsCollector.cc
+===================================================================
+--- trunk/plearn/math/StatsCollector.cc	2007-03-14 16:39:49 UTC (rev 6730)
++++ trunk/plearn/math/StatsCollector.cc	2007-03-14 18:04:50 UTC (rev 6731)
+@@ -147,13 +147,20 @@
+   
+ 
+ StatsCollector::StatsCollector(int the_maxnvalues)
+-    : maxnvalues(the_maxnvalues), no_removal_warnings(false),
+-      nmissing_(0.), nnonmissing_(0.), 
++    : epsilon(0.0),
++      maxnvalues(the_maxnvalues),
++      no_removal_warnings(false),
++      nmissing_(0.),
++      nnonmissing_(0.), 
+       sumsquarew_(0.),
+-      sum_(0.), sumsquare_(0.),
+-      sumcube_(0.), sumfourth_(0.),
+-      min_(MISSING_VALUE), max_(MISSING_VALUE),
+-      first_(MISSING_VALUE), last_(MISSING_VALUE),
++      sum_(0.),
++      sumsquare_(0.),
++      sumcube_(0.),
++      sumfourth_(0.),
++      min_(MISSING_VALUE),
++      max_(MISSING_VALUE),
++      first_(MISSING_VALUE),
++      last_(MISSING_VALUE),
+       more_than_maxnvalues(false),
+       sorted(false)
+ {
+@@ -187,61 +194,108 @@
+ {
+     // buid options
+ 
+-    declareOption(ol, &quot;maxnvalues&quot;, &amp;StatsCollector::maxnvalues, 
+-                                    OptionBase::buildoption,
++    declareOption(
++        ol, &quot;epsilon&quot;, &amp;StatsCollector::epsilon,
++        OptionBase::buildoption,
++        &quot;Small regularizing value to be added to the variance (V) estimator (and\n&quot;
++        &quot;indirectly, to standard deviation (STDDEV)).  This permits dividing by\n&quot;
++        &quot;the standard deviation to perform a normalization, without fearing a\n&quot;
++        &quot;division by zero.  Forwarded from the option of the same name in\n&quot;
++        &quot;VecStatsCollector if this StatsCollector belong in one.\n&quot;);
++    
++    declareOption(
++        ol, &quot;maxnvalues&quot;, &amp;StatsCollector::maxnvalues, 
++        OptionBase::buildoption,
+         &quot;Maximum number of different values to keep track of in counts.\n&quot;
+         &quot;If -1, we will keep track of all different values.\n&quot;
+         &quot;If 0, we will only keep track of global statistics.\n&quot;);
+ 
+-    declareOption( ol, &quot;no_removal_warnings&quot;, &amp;StatsCollector::no_removal_warnings,
+-                   OptionBase::buildoption,
+-                   &quot;If the remove_observation mecanism is used and the removed\n&quot;
+-                   &quot;value is equal to one of last_, min_ or max_, the default\n&quot;
+-                   &quot;behavior is to warn the user.\n&quot;
+-                   &quot;\n&quot;
+-                   &quot;If one want to disable this feature, he may set\n&quot;
+-                   &quot;no_removal_warnings to true.\n&quot;
+-                   &quot;\n&quot;
+-                   &quot;Default: false (0).&quot; );
++    declareOption(
++        ol, &quot;no_removal_warnings&quot;, &amp;StatsCollector::no_removal_warnings,
++        OptionBase::buildoption,
++        &quot;If the remove_observation mecanism is used and the removed\n&quot;
++        &quot;value is equal to one of last_, min_ or max_, the default\n&quot;
++        &quot;behavior is to warn the user.\n&quot;
++        &quot;\n&quot;
++        &quot;If one want to disable this feature, he may set\n&quot;
++        &quot;no_removal_warnings to true.\n&quot;
++        &quot;\n&quot;
++        &quot;Default: false (0).&quot; );
+ 
+ 
+     // learnt options
+-    declareOption(ol, &quot;nmissing_&quot;, &amp;StatsCollector::nmissing_, OptionBase::learntoption,
+-                  &quot;number of missing values&quot;);
+-    declareOption(ol, &quot;nnonmissing_&quot;, &amp;StatsCollector::nnonmissing_, OptionBase::learntoption,
+-                  &quot;number of non missing value &quot;);
+-    declareOption(ol, &quot;sumsquarew_&quot;, &amp;StatsCollector::sumsquarew_, OptionBase::learntoption,
+-                  &quot;sum of square of all weights&quot;);
+-    declareOption(ol, &quot;sum_&quot;, &amp;StatsCollector::sum_, OptionBase::learntoption,
+-                  &quot;sum of all (values-first_observation)&quot;);
+-    declareOption(ol, &quot;sumsquare_&quot;, &amp;StatsCollector::sumsquare_, OptionBase::learntoption,
+-                  &quot;sum of square of all (values-first_observation)&quot;);
+-    declareOption(ol, &quot;sumcube_&quot;, &amp;StatsCollector::sumcube_, OptionBase::learntoption,
+-                  &quot;sum of cube of all (values-first_observation)&quot;);
+-    declareOption(ol, &quot;sumfourth_&quot;, &amp;StatsCollector::sumfourth_, OptionBase::learntoption,
+-                  &quot;sum of fourth power of all (values-first_observation)&quot;);
+-    declareOption(ol, &quot;min_&quot;, &amp;StatsCollector::min_, OptionBase::learntoption,
+-                  &quot;the min&quot;);
+-    declareOption(ol, &quot;max_&quot;, &amp;StatsCollector::max_, OptionBase::learntoption,
+-                  &quot;the max&quot;);
+-    declareOption(ol, &quot;first_&quot;, &amp;StatsCollector::first_, OptionBase::learntoption,
+-                  &quot;first encountered observation&quot;);
+-    declareOption(ol, &quot;last_&quot;, &amp;StatsCollector::last_, OptionBase::learntoption,
+-                  &quot;last encountered observation&quot;);
++    declareOption(
++        ol, &quot;nmissing_&quot;, &amp;StatsCollector::nmissing_,
++        OptionBase::learntoption,
++        &quot;number of missing values&quot;);
++    
++    declareOption(
++        ol, &quot;nnonmissing_&quot;, &amp;StatsCollector::nnonmissing_,
++        OptionBase::learntoption,
++        &quot;number of non missing value &quot;);
++    
++    declareOption(
++        ol, &quot;sumsquarew_&quot;, &amp;StatsCollector::sumsquarew_,
++        OptionBase::learntoption,
++        &quot;sum of square of all weights&quot;);
++    
++    declareOption(
++        ol, &quot;sum_&quot;, &amp;StatsCollector::sum_,
++        OptionBase::learntoption,
++        &quot;sum of all (values-first_observation)&quot;);
++    
++    declareOption(
++        ol, &quot;sumsquare_&quot;, &amp;StatsCollector::sumsquare_,
++        OptionBase::learntoption,
++        &quot;sum of square of all (values-first_observation)&quot;);
++    
++    declareOption(
++        ol, &quot;sumcube_&quot;, &amp;StatsCollector::sumcube_,
++        OptionBase::learntoption,
++        &quot;sum of cube of all (values-first_observation)&quot;);
++    
++    declareOption(
++        ol, &quot;sumfourth_&quot;, &amp;StatsCollector::sumfourth_,
++        OptionBase::learntoption,
++        &quot;sum of fourth power of all (values-first_observation)&quot;);
++    
++    declareOption(
++        ol, &quot;min_&quot;, &amp;StatsCollector::min_,
++        OptionBase::learntoption,
++        &quot;the min&quot;);
++    
++    declareOption(
++        ol, &quot;max_&quot;, &amp;StatsCollector::max_,
++        OptionBase::learntoption,
++        &quot;the max&quot;);
++    
++    declareOption(
++        ol, &quot;first_&quot;, &amp;StatsCollector::first_,
++        OptionBase::learntoption,
++        &quot;first encountered observation&quot;);
++    
++    declareOption(
++        ol, &quot;last_&quot;, &amp;StatsCollector::last_,
++        OptionBase::learntoption,
++        &quot;last encountered observation&quot;);
+ 
+-    declareOption(ol, &quot;counts&quot;, &amp;StatsCollector::counts,
+-                                OptionBase::learntoption,
++    declareOption(
++        ol, &quot;counts&quot;, &amp;StatsCollector::counts,
++        OptionBase::learntoption,
+         &quot;Will contain up to 'maxnvalues' values and associated counts, as\n&quot;
+         &quot;well as a last element which maps FLT_MAX, so that we do not miss\n&quot;
+         &quot;anything (remains empty if maxnvalues == 0).&quot;);
+ 
+-    declareOption(ol, &quot;count_ids&quot;, &amp;StatsCollector::count_ids,
+-                                OptionBase::learntoption | OptionBase::nosave,
++    declareOption(
++        ol, &quot;count_ids&quot;, &amp;StatsCollector::count_ids,
++        OptionBase::learntoption | OptionBase::nosave,
+         &quot;Maps an id to a count value.&quot;);
+ 
+-    declareOption(ol, &quot;more_than_maxnvalues&quot;, &amp;StatsCollector::more_than_maxnvalues, OptionBase::learntoption,
+-                  &quot;Set to 1 when more than 'maxnvalues' are seen. This is to warn the user when computing\n&quot;
+-                  &quot;statistics that may be inaccurate when not all values are kept (e.g., LIFT).&quot;);
++    declareOption(
++        ol, &quot;more_than_maxnvalues&quot;, &amp;StatsCollector::more_than_maxnvalues,
++        OptionBase::learntoption,
++        &quot;Set to 1 when more than 'maxnvalues' are seen. This is to warn the user when computing\n&quot;
++        &quot;statistics that may be inaccurate when not all values are kept (e.g., LIFT).&quot;);
+ 
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+
+Modified: trunk/plearn/math/StatsCollector.h
+===================================================================
+--- trunk/plearn/math/StatsCollector.h	2007-03-14 16:39:49 UTC (rev 6730)
++++ trunk/plearn/math/StatsCollector.h	2007-03-14 18:04:50 UTC (rev 6731)
+@@ -143,6 +143,20 @@
+ 
+     // ** Build options **
+ 
++    /**
++     *  Small regularizing value to be added to the variance (V) estimator (and
++     *  indirectly, to standard deviation (STDDEV)).  This permits dividing by
++     *  the standard deviation to perform a normalization, without fearing a
++     *  division by zero.  Forwarded from the option of the same name in
++     *  VecStatsCollector if this StatsCollector belong in one.
++     */
++    double epsilon;
++
++    /**
++     *  Maximum number of different values to keep track of in counts.
++     *  If -1, we will keep track of all different values.
++     *  If 0, we will only keep track of global statistics.
++     */
+     int maxnvalues; 
+ 
+     /**
+@@ -214,7 +228,8 @@
+     real sumsquarew() const             { return sumsquarew_; }
+     real sum() const                    { return real(sum_+nnonmissing_*first_); }
+     //real sumsquare() const { return real(sumsquare_); }
+-    real sumsquare() const              { return real(sumsquare_+2*first_*sum()-first_*first_*nnonmissing_); }
++    real sumsquare() const              { return real(sumsquare_+2*first_*sum() -
++                                                      first_*first_*nnonmissing_); }
+     real min() const                    { return min_; }
+     real max() const                    { return max_; }
+     real range() const                  { return max_ - min_; }
+@@ -224,7 +239,9 @@
+     //! to 1, it reduces to the traditional (n-1) coefficient.
+     //! The estimator is unbiased under the assumption that the weights are fixed
+     //! and the samples are i.i.d. according to a Gaussian distribution.
+-    real variance() const               { return real((sumsquare_ - square(sum_)/nnonmissing_)/(nnonmissing_ - sumsquarew_/nnonmissing_)); }
++    real variance() const               { return real((sumsquare_ - square(sum_)/nnonmissing_)/
++                                                      (nnonmissing_ - sumsquarew_/nnonmissing_))
++                                              + epsilon; }
+     real stddev() const                 { return sqrt(variance()); }
+     real skewness() const;
+     real kurtosis() const;
+
+Modified: trunk/plearn/math/VecStatsCollector.cc
+===================================================================
+--- trunk/plearn/math/VecStatsCollector.cc	2007-03-14 16:39:49 UTC (rev 6730)
++++ trunk/plearn/math/VecStatsCollector.cc	2007-03-14 18:04:50 UTC (rev 6731)
+@@ -85,8 +85,10 @@
+ 
+     declareOption(
+         ol, &quot;epsilon&quot;, &amp;VecStatsCollector::epsilon, OptionBase::buildoption,
+-        &quot;Optional regularization to *add* to the variance vector &quot;
+-        &quot;(used *only* in getVariance, getCovariance and getStdDev).&quot;);
++        &quot;Small regularizing value to be added to the covariance matrix\n&quot;
++        &quot;estimator, and forwarded to the enclosed vector of StatsCollector.\n&quot;
++        &quot;This permits dividing by the standard deviation to perform a\n&quot;
++        &quot;normalization, without fearing a division by zero.\n&quot;);
+ 
+     declareOption(
+         ol, &quot;window&quot;, &amp;VecStatsCollector::m_window,
+@@ -225,6 +227,7 @@
+             // to be able to specify a different value of 'maxnvalues' for each
+             // StatsCollector (e.g. when only one StatsCollector is meant to
+             // compute a lift statistics).
++            stats[k].epsilon             = epsilon;
+             stats[k].maxnvalues          = maxnvalues;
+             stats[k].no_removal_warnings = no_removal_warnings;
+             stats[k].forget();
+
+Modified: trunk/plearn/math/VecStatsCollector.h
+===================================================================
+--- trunk/plearn/math/VecStatsCollector.h	2007-03-14 16:39:49 UTC (rev 6730)
++++ trunk/plearn/math/VecStatsCollector.h	2007-03-14 18:04:50 UTC (rev 6731)
+@@ -66,7 +66,12 @@
+     //! Should we compute and keep X'.X ?  (default false)
+     bool compute_covariance;
+ 
+-    //! See .cc for help.
++    /**
++     *  Small regularizing value to be added to the covariance matrix
++     *  estimator, and forwarded to the enclosed vector of StatsCollector.
++     *  This permits dividing by the standard deviation to perform a
++     *  normalization, without fearing a division by zero.
++     */
+     double epsilon;
+ 
+     /**
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000179.html">[Plearn-commits] r6730 - trunk/plearn/math
+</A></li>
+	<LI>Next message: <A HREF="000181.html">[Plearn-commits] r6732 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#180">[ date ]</a>
+              <a href="thread.html#180">[ thread ]</a>
+              <a href="subject.html#180">[ subject ]</a>
+              <a href="author.html#180">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

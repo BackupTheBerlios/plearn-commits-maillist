@@ -1,0 +1,157 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9133 - trunk/plearn_learners/hyper
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9133%20-%20trunk/plearn_learners/hyper&In-Reply-To=%3C200806162041.m5GKfsmv023499%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002580.html">
+   <LINK REL="Next"  HREF="002582.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9133 - trunk/plearn_learners/hyper</H1>
+    <B>plearner at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9133%20-%20trunk/plearn_learners/hyper&In-Reply-To=%3C200806162041.m5GKfsmv023499%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9133 - trunk/plearn_learners/hyper">plearner at mail.berlios.de
+       </A><BR>
+    <I>Mon Jun 16 22:41:54 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002580.html">[Plearn-commits] r9132 - trunk/scripts
+</A></li>
+        <LI>Next message: <A HREF="002582.html">[Plearn-commits] r9134 - trunk/python_modules/plearn/utilities
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2581">[ date ]</a>
+              <a href="thread.html#2581">[ thread ]</a>
+              <a href="subject.html#2581">[ subject ]</a>
+              <a href="author.html#2581">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: plearner
+Date: 2008-06-16 22:41:53 +0200 (Mon, 16 Jun 2008)
+New Revision: 9133
+
+Modified:
+   trunk/plearn_learners/hyper/HyperCommand.cc
+   trunk/plearn_learners/hyper/HyperCommand.h
+   trunk/plearn_learners/hyper/HyperOptimize.cc
+   trunk/plearn_learners/hyper/HyperOptimize.h
+Log:
+Added forget() method to reinitialize hypercommands with a state such as HyperOptimize, called before doing a substrategy.
+This corrects a bug introduced with the recent changes to hyperoptimization framework to allow resuming prematurely stopped hyperoptimizations (see Fred).
+The bug manifested when using a substrategy. (encountered by Hugo)
+
+
+
+Modified: trunk/plearn_learners/hyper/HyperCommand.cc
+===================================================================
+--- trunk/plearn_learners/hyper/HyperCommand.cc	2008-06-16 19:40:26 UTC (rev 9132)
++++ trunk/plearn_learners/hyper/HyperCommand.cc	2008-06-16 20:41:53 UTC (rev 9133)
+@@ -97,6 +97,10 @@
+     build_();
+ }
+ 
++void HyperCommand::forget()
++{}
++
++
+ void HyperCommand::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+
+Modified: trunk/plearn_learners/hyper/HyperCommand.h
+===================================================================
+--- trunk/plearn_learners/hyper/HyperCommand.h	2008-06-16 19:40:26 UTC (rev 9132)
++++ trunk/plearn_learners/hyper/HyperCommand.h	2008-06-16 20:41:53 UTC (rev 9133)
+@@ -112,6 +112,10 @@
+     PPath getExperimentDirectory() const
+     { return expdir; }
+ 
++    //! Resets the command's internal state as if freshly constructed
++    //! (default does nothing)
++    virtual void forget();
++
+     //! Executes the command, returning the resulting costvec of its optimization
+     //! (or an empty vec if it didn't do any testng).
+     virtual Vec optimize() =0;
+
+Modified: trunk/plearn_learners/hyper/HyperOptimize.cc
+===================================================================
+--- trunk/plearn_learners/hyper/HyperOptimize.cc	2008-06-16 19:40:26 UTC (rev 9132)
++++ trunk/plearn_learners/hyper/HyperOptimize.cc	2008-06-16 20:41:53 UTC (rev 9133)
+@@ -336,6 +336,15 @@
+     return hlearner-&gt;tester-&gt;getStatNames();
+ }
+ 
++void HyperOptimize::forget()
++{
++    trialnum = 0;    
++    option_vals.resize(0);
++    best_objective = REAL_MAX;
++    best_results = Vec();
++    best_learner = 0;
++}
++
+ Vec HyperOptimize::optimize()
+ {
+ //in the case when auto_save is true. This function can be called even
+@@ -383,10 +392,12 @@
+             for(int commandnum=0; commandnum&lt;sub_strategy.length(); commandnum++)
+             {
+                 sub_strategy[commandnum]-&gt;setHyperLearner(hlearner);
++                sub_strategy[commandnum]-&gt;forget();
+                 if(!expdir.isEmpty() &amp;&amp; provide_sub_expdir)
+                     sub_strategy[commandnum]-&gt;setExperimentDirectory(
+                         expdir / (&quot;Trials&quot;+tostring(trialnum)) / (&quot;Step&quot;+tostring(commandnum))
+                         );
++                
+                 best_sub_results = sub_strategy[commandnum]-&gt;optimize();
+             }
+             if(rerun_after_sub)
+
+Modified: trunk/plearn_learners/hyper/HyperOptimize.h
+===================================================================
+--- trunk/plearn_learners/hyper/HyperOptimize.h	2008-06-16 19:40:26 UTC (rev 9132)
++++ trunk/plearn_learners/hyper/HyperOptimize.h	2008-06-16 20:41:53 UTC (rev 9133)
+@@ -178,6 +178,8 @@
+     //! Returns the names of the results returned by the optimize() method.
+     virtual TVec&lt;string&gt; getResultNames() const;
+ 
++    virtual void forget();
++
+     virtual Vec optimize();
+ 
+     // simply calls inherited::build() then build_()
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002580.html">[Plearn-commits] r9132 - trunk/scripts
+</A></li>
+	<LI>Next message: <A HREF="002582.html">[Plearn-commits] r9134 - trunk/python_modules/plearn/utilities
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2581">[ date ]</a>
+              <a href="thread.html#2581">[ thread ]</a>
+              <a href="subject.html#2581">[ subject ]</a>
+              <a href="author.html#2581">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

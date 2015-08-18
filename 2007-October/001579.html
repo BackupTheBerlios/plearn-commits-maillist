@@ -1,0 +1,269 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8131 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8131%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200710031603.l93G3gHc006390%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001578.html">
+   <LINK REL="Next"  HREF="001580.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8131 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>manzagop at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8131%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200710031603.l93G3gHc006390%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8131 - trunk/plearn_learners/generic/EXPERIMENTAL">manzagop at mail.berlios.de
+       </A><BR>
+    <I>Wed Oct  3 18:03:42 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001578.html">[Plearn-commits] r8130 - in trunk: plearn/ker	plearn_learners/unsupervised
+</A></li>
+        <LI>Next message: <A HREF="001580.html">[Plearn-commits] r8132 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1579">[ date ]</a>
+              <a href="thread.html#1579">[ thread ]</a>
+              <a href="subject.html#1579">[ subject ]</a>
+              <a href="author.html#1579">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: manzagop
+Date: 2007-10-03 18:03:41 +0200 (Wed, 03 Oct 2007)
+New Revision: 8131
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/mNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/mNNet.h
+Log:
+Reorganized code in onlineStep() by creating bpropNet(), bpropUpdateNet()
+and l1regularizeOutput().
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/mNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/mNNet.cc	2007-10-02 20:59:36 UTC (rev 8130)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/mNNet.cc	2007-10-03 16:03:41 UTC (rev 8131)
+@@ -210,6 +210,8 @@
+         }
+     }
+ 
++    Profiler::activate();
++
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+@@ -335,58 +337,9 @@
+ 
+     fpropNet(minibatch_size);
+     fbpropLoss(neuron_outputs_per_layer[n_layers-1],targets,example_weights,train_costs);
++    bpropUpdateNet(t);
+ 
+-    // mean gradient over minibatch_size examples has less variance
+-    // can afford larger learning rate (divide by sqrt(minibatch) 
+-    // instead of minibatch)
+-    real lrate = init_lrate/(1 + t*lrate_decay);
+-    lrate /= sqrt(real(minibatch_size));
+-
+-    for (int i=n_layers-1;i&gt;0;i--)
+-    {
+-        // here neuron_gradients_per_layer[i] contains the gradient on activations (weighted sums)
+-        //      (minibatch_size x layer_size[i])
+-        Mat previous_neurons_gradient = neuron_gradients_per_layer[i-1];
+-        Mat next_neurons_gradient = neuron_gradients_per_layer[i];
+-        Mat previous_neurons_output = neuron_outputs_per_layer[i-1];
+-
+-        if (i&gt;1) // if not first hidden layer then compute gradient on previous layer
+-        {
+-            // propagate gradients
+-            productScaleAcc(previous_neurons_gradient,next_neurons_gradient,false,
+-                            weights[i-1],false,1,0);
+-            // propagate through tanh non-linearity
+-            // TODO IN NEED OF OPTIMIZATION
+-            for (int j=0;j&lt;previous_neurons_gradient.length();j++)
+-            {
+-                real* grad = previous_neurons_gradient[j];
+-                real* out = previous_neurons_output[j];
+-                for (int k=0;k&lt;previous_neurons_gradient.width();k++,out++)
+-                    grad[k] *= (1 - *out * *out); // gradient through tanh derivative
+-            }
+-        }
+-        // compute gradient on parameters and update them in one go (more efficient)
+-        productScaleAcc(layer_params[i-1],next_neurons_gradient,true,
+-                            neuron_extended_outputs_per_layer[i-1],false,
+-                            -lrate,1);
+-    }
+-
+-    // Output layer L1 regularization
+-    if( output_layer_L1_penalty_factor != 0. )    {
+-        real L1_delta = lrate * output_layer_L1_penalty_factor;
+-        real* m_i = layer_params[n_layers-2].data();
+-        for(int i=0; i&lt;layer_params[n_layers-2].length(); i++,m_i+=layer_params[n_layers-2].mod())  {
+-            for(int j=0; j&lt;layer_params[n_layers-2].width(); j++)   {
+-                if( m_i[j] &gt; L1_delta )
+-                    m_i[j] -= L1_delta;
+-                else if( m_i[j] &lt; -L1_delta )
+-                    m_i[j] += L1_delta;
+-                else
+-                    m_i[j] = 0.;
+-            }
+-        }
+-    }
+-
++    l1regularizeOutputs();
+ }
+ 
+ void mNNet::computeOutput(const Vec&amp; input, Vec&amp; output) const
+@@ -490,6 +443,103 @@
+     }
+ }
+ 
++//! Performs the backprop update. Must be called after the fbpropNet.
++void mNNet::bpropUpdateNet(int t)
++{
++    // mean gradient over minibatch_size examples has less variance
++    // can afford larger learning rate (divide by sqrt(minibatch)
++    // instead of minibatch)
++    real lrate = init_lrate/(1 + t*lrate_decay);
++    lrate /= sqrt(real(minibatch_size));
++
++    for (int i=n_layers-1;i&gt;0;i--)  {
++        // here neuron_gradients_per_layer[i] contains the gradient on
++        // activations (weighted sums)
++        //      (minibatch_size x layer_size[i])
++        Mat previous_neurons_gradient = neuron_gradients_per_layer[i-1];
++        Mat next_neurons_gradient = neuron_gradients_per_layer[i];
++        Mat previous_neurons_output = neuron_outputs_per_layer[i-1];
++
++        if (i&gt;1) // if not first hidden layer then compute gradient on previous layer
++        {
++            // propagate gradients
++            productScaleAcc(previous_neurons_gradient,next_neurons_gradient,false,
++                            weights[i-1],false,1,0);
++            // propagate through tanh non-linearity
++            // TODO IN NEED OF OPTIMIZATION
++            for (int j=0;j&lt;previous_neurons_gradient.length();j++)  {
++                real* grad = previous_neurons_gradient[j];
++                real* out = previous_neurons_output[j];
++                for (int k=0;k&lt;previous_neurons_gradient.width();k++,out++)
++                    grad[k] *= (1 - *out * *out); // gradient through tanh derivative
++            }
++        }
++        // compute gradient on parameters and update them in one go (more
++        // efficient)
++        productScaleAcc(layer_params[i-1],next_neurons_gradient,true,
++                            neuron_extended_outputs_per_layer[i-1],false,
++                            -lrate,1);
++    }
++}
++
++//! Computes the gradients without doing the update.
++//! Must be called after fbpropLoss
++void mNNet::bpropNet(int t)
++{
++    for (int i=n_layers-1;i&gt;0;i--)  {
++        // here neuron_gradients_per_layer[i] contains the gradient on
++        // activations (weighted sums)
++        //      (minibatch_size x layer_size[i])
++        Mat previous_neurons_gradient = neuron_gradients_per_layer[i-1];
++        Mat next_neurons_gradient = neuron_gradients_per_layer[i];
++        Mat previous_neurons_output = neuron_outputs_per_layer[i-1];
++
++        if (i&gt;1) // if not first hidden layer then compute gradient on previous layer
++        {
++            // propagate gradients
++            productScaleAcc(previous_neurons_gradient,next_neurons_gradient,false,
++                            weights[i-1],false,1,0);
++            // propagate through tanh non-linearity
++            // TODO IN NEED OF OPTIMIZATION
++            for (int j=0;j&lt;previous_neurons_gradient.length();j++)  {
++                real* grad = previous_neurons_gradient[j];
++                real* out = previous_neurons_output[j];
++                for (int k=0;k&lt;previous_neurons_gradient.width();k++,out++)
++                    grad[k] *= (1 - *out * *out); // gradient through tanh derivative
++            }
++        }
++        // compute gradient on parameters 
++        productScaleAcc(layer_params_gradient[i-1],next_neurons_gradient,true,
++                            neuron_extended_outputs_per_layer[i-1],false,
++                            1,0);
++    }
++}
++
++void mNNet::l1regularizeOutputs()
++{
++    // mean gradient over minibatch_size examples has less variance
++    // can afford larger learning rate (divide by sqrt(minibatch)
++    // instead of minibatch)
++    real lrate = init_lrate/(1 + stage*lrate_decay);
++    lrate /= sqrt(real(minibatch_size));
++
++    // Output layer L1 regularization
++    if( output_layer_L1_penalty_factor != 0. )    {
++        real L1_delta = lrate * output_layer_L1_penalty_factor;
++        real* m_i = layer_params[n_layers-2].data();
++        for(int i=0; i&lt;layer_params[n_layers-2].length();i++,m_i+=layer_params[n_layers-2].mod())  {
++            for(int j=0; j&lt;layer_params[n_layers-2].width(); j++)   {
++                if( m_i[j] &gt; L1_delta )
++                    m_i[j] -= L1_delta;
++                else if( m_i[j] &lt; -L1_delta )
++                    m_i[j] += L1_delta;
++                else
++                    m_i[j] = 0.;
++            }
++        }
++    }
++}
++
+ void mNNet::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
+                                            const Vec&amp; target, Vec&amp; costs) const
+ {
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/mNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/mNNet.h	2007-10-02 20:59:36 UTC (rev 8130)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/mNNet.h	2007-10-03 16:03:41 UTC (rev 8131)
+@@ -199,6 +199,11 @@
+     //! and write into neuron_gradients_per_layer[n_layers-2], gradient on pre-non-linearity activation
+     virtual void fbpropLoss(const Mat&amp; output, const Mat&amp; target, const Vec&amp; example_weights, Mat&amp; train_costs) const;
+ 
++    virtual void bpropUpdateNet(const int t);
++    virtual void bpropNet(const int t);
++    
++    void l1regularizeOutputs();
++
+ private:
+     //#####  Private Member Functions  ########################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001578.html">[Plearn-commits] r8130 - in trunk: plearn/ker	plearn_learners/unsupervised
+</A></li>
+	<LI>Next message: <A HREF="001580.html">[Plearn-commits] r8132 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1579">[ date ]</a>
+              <a href="thread.html#1579">[ thread ]</a>
+              <a href="subject.html#1579">[ subject ]</a>
+              <a href="author.html#1579">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

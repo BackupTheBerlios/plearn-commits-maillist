@@ -1,0 +1,723 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6660 - trunk/plearn/ker
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6660%20-%20trunk/plearn/ker&In-Reply-To=%3C200702150053.l1F0rD8V003300%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000108.html">
+   <LINK REL="Next"  HREF="000110.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6660 - trunk/plearn/ker</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6660%20-%20trunk/plearn/ker&In-Reply-To=%3C200702150053.l1F0rD8V003300%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6660 - trunk/plearn/ker">chapados at mail.berlios.de
+       </A><BR>
+    <I>Thu Feb 15 01:53:13 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000108.html">[Plearn-commits] r6659 - trunk/plearn/var
+</A></li>
+        <LI>Next message: <A HREF="000110.html">[Plearn-commits] r6661 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#109">[ date ]</a>
+              <a href="thread.html#109">[ thread ]</a>
+              <a href="subject.html#109">[ subject ]</a>
+              <a href="author.html#109">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2007-02-15 01:53:12 +0100 (Thu, 15 Feb 2007)
+New Revision: 6660
+
+Modified:
+   trunk/plearn/ker/ARDBaseKernel.cc
+   trunk/plearn/ker/ARDBaseKernel.h
+   trunk/plearn/ker/IIDNoiseKernel.cc
+   trunk/plearn/ker/IIDNoiseKernel.h
+   trunk/plearn/ker/Kernel.cc
+   trunk/plearn/ker/MemoryCachedKernel.cc
+   trunk/plearn/ker/MemoryCachedKernel.h
+   trunk/plearn/ker/RationalQuadraticARDKernel.cc
+   trunk/plearn/ker/RationalQuadraticARDKernel.h
+Log:
+Some massive performance improvements in GaussianProcessRegressor, esp. RationalQuadraticARDKernel; some experiments run 20 times faster than last week.
+
+Modified: trunk/plearn/ker/ARDBaseKernel.cc
+===================================================================
+--- trunk/plearn/ker/ARDBaseKernel.cc	2007-02-13 22:21:25 UTC (rev 6659)
++++ trunk/plearn/ker/ARDBaseKernel.cc	2007-02-15 00:53:12 UTC (rev 6660)
+@@ -109,6 +109,7 @@
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+     deepCopyField(m_log_input_sigma, copies);
++    deepCopyField(m_input_sigma,     copies);
+ }
+ 
+ } // end of namespace PLearn
+
+Modified: trunk/plearn/ker/ARDBaseKernel.h
+===================================================================
+--- trunk/plearn/ker/ARDBaseKernel.h	2007-02-13 22:21:25 UTC (rev 6659)
++++ trunk/plearn/ker/ARDBaseKernel.h	2007-02-15 00:53:12 UTC (rev 6660)
+@@ -102,6 +102,10 @@
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+ 
++    //! Buffer for final input sigma (add both global and per-input terms);
++    //! Can be used by derived class.
++    mutable Vec m_input_sigma;
++    
+ private:
+     //! This does the actual building.
+     void build_();
+
+Modified: trunk/plearn/ker/IIDNoiseKernel.cc
+===================================================================
+--- trunk/plearn/ker/IIDNoiseKernel.cc	2007-02-13 22:21:25 UTC (rev 6659)
++++ trunk/plearn/ker/IIDNoiseKernel.cc	2007-02-15 00:53:12 UTC (rev 6660)
+@@ -151,6 +151,74 @@
+ }
+ 
+ 
++//#####  computeGramMatrix  ###################################################
++
++void IIDNoiseKernel::computeGramMatrix(Mat K) const
++{
++    if (!data)
++        PLERROR(&quot;Kernel::computeGramMatrix: setDataForKernelMatrix not yet called&quot;);
++    if (!is_symmetric)
++        PLERROR(&quot;Kernel::computeGramMatrix: not supported for non-symmetric kernels&quot;);
++    if (K.length() != data.length() || K.width() != data.length())
++        PLERROR(&quot;Kernel::computeGramMatrix: the argument matrix K should be\n&quot;
++                &quot;of size %d x %d (currently of size %d x %d)&quot;,
++                data.length(), data.length(), K.length(), K.width());
++                
++    PLASSERT( K.size() == 0 || m_data_cache.size() &gt; 0 );  // Ensure data cached OK
++
++    // Precompute some terms
++    real noise_sigma  = exp(2 * m_log_noise_sigma);
++    m_kronecker_sigma.resize(m_log_kronecker_sigma.size());
++    m_kronecker_sigma &lt;&lt; m_log_kronecker_sigma;
++    m_kronecker_sigma *= 2.0;
++    exp(m_kronecker_sigma, m_kronecker_sigma);
++
++    // Prepare kronecker iteration
++    int   kronecker_num     = m_kronecker_indexes.size();
++    int*  kronecker_indexes = m_kronecker_indexes.data();
++    real* kronecker_sigma   = m_kronecker_sigma.data();
++
++    // Compute Gram Matrix
++    int  l = data-&gt;length();
++    int  m = K.mod();
++    int  cache_mod = m_data_cache.mod();
++
++    real *data_start = &amp;m_data_cache(0,0);
++    real Kij;
++    real *Ki, *Kji;
++    real *xi = data_start;
++    
++    for (int i=0 ; i&lt;l ; ++i, xi += cache_mod) {
++        Ki  = K[i];
++        Kji = &amp;K[0][i];
++        real *xj = data_start;
++
++        for (int j=0; j&lt;=i; ++j, Kji += m, xj += cache_mod) {
++            // Kernel evaluation per se
++            if (i == j)
++                Kij = noise_sigma;
++            else
++                Kij = 0.0;
++
++            // Kronecker terms
++            if (kronecker_num &gt; 0) {
++                int*  cur_index = kronecker_indexes;
++                real* cur_sigma = kronecker_sigma;
++                
++                for (int k=0 ; k&lt;kronecker_num ; ++k, ++cur_index, ++cur_sigma)
++                    if (fast_is_equal(xi[*cur_index], xj[*cur_index]))
++                        Kij += *cur_sigma;
++            }
++            
++            // Fill upper triangle if not on diagonal
++            *Ki++ = Kij;
++            if (j &lt; i)
++                *Kji = Kij;
++        }
++    }
++}
++
++
+ //#####  makeDeepCopyFromShallowCopy  #########################################
+ 
+ void IIDNoiseKernel::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+@@ -159,6 +227,7 @@
+ 
+     deepCopyField(m_kronecker_indexes,   copies);
+     deepCopyField(m_log_kronecker_sigma, copies);
++    deepCopyField(m_kronecker_sigma,     copies);
+ }
+ 
+ 
+@@ -231,10 +300,11 @@
+ 
+ //#####  derivKronecker  ######################################################
+ 
+-real IIDNoiseKernel::derivKronecker(const Vec&amp; row_i, const Vec&amp; row_j, real K,
+-                                    int arg) const
++real IIDNoiseKernel::derivKronecker(int i, int j, int arg, real K) const
+ {
+-    int index = m_kronecker_indexes[arg];
++    int index  = m_kronecker_indexes[arg];
++    Vec&amp; row_i = *dataRow(i);
++    Vec&amp; row_j = *dataRow(j);
+     if (fast_is_equal(row_i[index], row_j[index]))
+         return 2*exp(2*m_log_kronecker_sigma[arg]);
+     else
+
+Modified: trunk/plearn/ker/IIDNoiseKernel.h
+===================================================================
+--- trunk/plearn/ker/IIDNoiseKernel.h	2007-02-13 22:21:25 UTC (rev 6659)
++++ trunk/plearn/ker/IIDNoiseKernel.h	2007-02-15 00:53:12 UTC (rev 6660)
+@@ -102,6 +102,10 @@
+     //! Compute K(x1,x2).
+     virtual real evaluate(const Vec&amp; x1, const Vec&amp; x2) const;
+ 
++    //! Compute the Gram Matrix.  Note that this version DOES NOT CACHE
++    //! the results, since it is usually called by derived classes.
++    virtual void computeGramMatrix(Mat K) const;
++    
+     //! Directly compute the derivative with respect to hyperparameters
+     //! (Faster than finite differences...)
+     virtual void computeGramMatrixDerivative(Mat&amp; KD, const string&amp; kernel_param,
+@@ -123,7 +127,11 @@
+     static void declareOptions(OptionList&amp; ol);
+ 
+     //! Derivative function with respect to kronecker_indexes[arg] hyperparameter
+-    real derivKronecker(const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const;
++    real derivKronecker(int i, int j, int arg, real K) const;
++
++protected:
++    //! Buffer for exponential of m_log_kronecker_sigma
++    mutable Vec m_kronecker_sigma;
+     
+ private:
+     //! This does the actual building.
+
+Modified: trunk/plearn/ker/Kernel.cc
+===================================================================
+--- trunk/plearn/ker/Kernel.cc	2007-02-13 22:21:25 UTC (rev 6659)
++++ trunk/plearn/ker/Kernel.cc	2007-02-15 00:53:12 UTC (rev 6660)
+@@ -40,7 +40,10 @@
+  * This file is part of the PLearn library.
+  ******************************************************* */
+ 
++#define PL_LOG_MODULE_NAME &quot;Kernel&quot;
++
+ #include &quot;Kernel.h&quot;
++#include &lt;plearn/io/pl_log.h&gt;
+ #include &lt;plearn/base/lexical_cast.h&gt;
+ #include &lt;plearn/base/tostring.h&gt;
+ #include &lt;plearn/base/ProgressBar.h&gt;
+@@ -447,6 +450,10 @@
+ void Kernel::computeGramMatrixDerivative(Mat&amp; KD, const string&amp; kernel_param,
+                                          real epsilon) const
+ {
++    MODULE_LOG &lt;&lt; &quot;Computing Gram matrix derivative by finite differences &quot;
++               &lt;&lt; &quot;for hyper-parameter '&quot; &lt;&lt; kernel_param &lt;&lt; &quot;'&quot;
++               &lt;&lt; endl;
++    
+     // This function is conceptually const, but the evaluation by finite
+     // differences in a generic way requires some change-options, which
+     // formally require a const-away cast.
+
+Modified: trunk/plearn/ker/MemoryCachedKernel.cc
+===================================================================
+--- trunk/plearn/ker/MemoryCachedKernel.cc	2007-02-13 22:21:25 UTC (rev 6659)
++++ trunk/plearn/ker/MemoryCachedKernel.cc	2007-02-15 00:53:12 UTC (rev 6660)
+@@ -128,9 +128,17 @@
+         the_data.isNotNull())
+     {
+         m_data_cache = the_data.toMat();
++
++        // Update row cache
++        const int N = m_data_cache.length();
++        m_row_cache.resize(N);
++        for (int i=0 ; i&lt;N ; ++i)
++            dataRow(i, m_row_cache[i]);
+     }
+-    else
++    else {
+         m_data_cache = Mat();
++        m_row_cache.resize(0);
++    }
+ }
+ 
+ 
+@@ -140,8 +148,15 @@
+ {
+     inherited::addDataForKernelMatrix(newrow);
+ 
+-    if (m_data_cache.isNotNull())
++    if (m_data_cache.isNotNull()) {
++        const int OLD_N = m_data_cache.length();
++        PLASSERT( m_data_cache.length() == m_row_cache.size() );
+         m_data_cache.appendRow(newrow);
++
++        // Update row cache
++        m_row_cache.push_back(Vec());
++        dataRow(OLD_N, m_row_cache[OLD_N]);
++    }
+ }
+ 
+ } // end of namespace PLearn
+
+Modified: trunk/plearn/ker/MemoryCachedKernel.h
+===================================================================
+--- trunk/plearn/ker/MemoryCachedKernel.h	2007-02-13 22:21:25 UTC (rev 6659)
++++ trunk/plearn/ker/MemoryCachedKernel.h	2007-02-15 00:53:12 UTC (rev 6660)
+@@ -97,7 +97,10 @@
+     //! Update the cache if a new row is added to the data
+     virtual void addDataForKernelMatrix(const Vec&amp; newRow);
+ 
++    //! Return true if the cache is active after setting some data
++    bool dataCached() const { return m_data_cache.size() &gt; 0; }
+ 
++
+     //#####  PLearn::Object Protocol  #########################################
+ 
+     // Declares other standard object methods.
+@@ -124,6 +127,13 @@
+     inline void dataRow(int i, Vec&amp; row) const;
+ 
+     /**
++     *  Interface for derived classes: access row i of the data matrix and
++     *  return it as a POINTER to a Vec.  NOTE: this version ASSUMES that the
++     *  cache exists.  You can verify this with the dataCached() function.
++     */
++    inline Vec* dataRow(int i) const;
++
++    /**
+      *  Interface to ease derived-class implementation of computeGramMatrix
+      *  that avoids virtual function calls in kernel evaluation.  The
+      *  computeGramMatrixNV function should be called directly by the
+@@ -146,11 +156,11 @@
+      *
+      *  The member function is called with the following arguments:
+      *
+-     *  - x1  : element at row i of the data matrix
+-     *  - x2  : element at row j of the data matrix
+-     *  - K   : kernel value for (x1,x2); obtained from cache if available
++     *  - i   : current row i of the data matrix
++     *  - j   : current row j of the data matrix
+      *  - arg : integer argument passed to the function; may be used to index
+      *          into a vector of hyperparameters
++     *  - K   : kernel value for (x1,x2); obtained from cache if available
+      *
+      *  The last argument to computeGramMatrixDerivNV,
+      *  'derivative_func_requires_K', specifies whether the derivativeFunc
+@@ -160,7 +170,7 @@
+      *  is called with a MISSING_VALUE for its argument K.
+      */
+     template &lt;class DerivedClass,
+-              real (DerivedClass::*derivativeFunc)(const Vec&amp;, const Vec&amp;, real, int) const&gt;
++              real (DerivedClass::*derivativeFunc)(int, int, int, real) const&gt;
+     void computeGramMatrixDerivNV(Mat&amp; KD, const DerivedClass* This, int arg,
+                                   bool derivative_func_requires_K = true) const;
+     
+@@ -169,9 +179,13 @@
+     //! This does the actual building.
+     void build_();
+ 
+-private:
++protected:
+     //! In-memory cache of the data matrix
+     Mat m_data_cache;
++
++    //! Cache of vectors for each row of the data matrix; this avoids
++    //! reconstructing a Vec each time we want to access a row.
++    TVec&lt;Vec&gt; m_row_cache;
+ };
+ 
+ // Declares a few other classes and functions related to this class
+@@ -192,7 +206,14 @@
+     }
+ }
+ 
++inline Vec* MemoryCachedKernel::dataRow(int i) const
++{
++    // Note: ASSUME that the cache exists; will boundcheck in dbg/safeopt if
++    // not.
++    return &amp;m_row_cache[i];
++}
+ 
++
+ //#####  computeGramMatrixNV  #################################################
+ 
+ template &lt;class DerivedClass&gt;
+@@ -251,7 +272,7 @@
+ //#####  computeGramMatrixDerivNV  ############################################
+ 
+ template &lt;class DerivedClass,
+-          real (DerivedClass::*derivativeFunc)(const Vec&amp;, const Vec&amp;, real, int) const&gt;
++          real (DerivedClass::*derivativeFunc)(int, int, int, real) const&gt;
+ void MemoryCachedKernel::computeGramMatrixDerivNV(Mat&amp; KD, const DerivedClass* This,
+                                                   int arg, bool require_K) const
+ {
+@@ -266,7 +287,6 @@
+     KD.resize(W,W);
+     int m=KD.mod();
+     
+-    Vec row_i, row_j;
+     real KDij;
+     real* KDi;
+     real* KDji;
+@@ -276,21 +296,21 @@
+     for (int i=0 ; i&lt;W ; ++i) {
+         KDi  = KD[i];
+         KDji = &amp;KD[0][i];
+-        dataRow(i, row_i);
+         if (gram_matrix_is_cached)
+             Ki = gram_matrix[i];
+         
+         for (int j=0 ; j &lt;= i ; ++j, KDji += m) {
+-            dataRow(j, row_j);
+-
+             // Access the current kernel value depending on whether it's cached
+             if (Ki)
+                 K = *Ki++;
+-            else if (require_K)
++            else if (require_K) {
++                Vec&amp; row_i = *dataRow(i);
++                Vec&amp; row_j = *dataRow(j);
+                 K = This-&gt;DerivedClass::evaluate(row_i, row_j);
++            }
+ 
+             // Compute and store the derivative
+-            KDij   = (This-&gt;*derivativeFunc)(row_i, row_j, K, arg);
++            KDij   = (This-&gt;*derivativeFunc)(i, j, arg, K);
+             *KDi++ = KDij;
+             if (j &lt; i)
+                 *KDji = KDij;
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.cc
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-02-13 22:21:25 UTC (rev 6659)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-02-15 00:53:12 UTC (rev 6660)
+@@ -105,6 +105,8 @@
+ void RationalQuadraticARDKernel::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
++
++    deepCopyField(m_noise_gram_cache, copies);
+ }
+ 
+ 
+@@ -154,7 +156,80 @@
+ 
+ void RationalQuadraticARDKernel::computeGramMatrix(Mat K) const
+ {
+-    computeGramMatrixNV(K, this);
++    PLASSERT( !m_log_input_sigma.size() || dataInputsize() == m_log_input_sigma.size() );
++    PLASSERT( K.size() == 0 || m_data_cache.size() &gt; 0 );  // Ensure data cached OK
++
++    // Compute IID noise gram matrix and save it
++    inherited::computeGramMatrix(K);
++    m_noise_gram_cache.resize(K.length(), K.width());
++    m_noise_gram_cache &lt;&lt; K;
++
++    // Precompute some terms
++    real sf2   = exp(2*m_log_signal_sigma);
++    real alpha = exp(m_log_alpha);
++    m_input_sigma.resize(dataInputsize());
++    m_input_sigma.fill(m_log_global_sigma);
++    if (m_log_input_sigma.size() &gt; 0)
++        m_input_sigma += m_log_input_sigma;
++    m_input_sigma *= 2.0;
++    exp(m_input_sigma, m_input_sigma);
++    
++    // Compute Gram Matrix
++    int  l = data-&gt;length();
++    int  m = K.mod();
++    int  n = dataInputsize();
++    int  cache_mod = m_data_cache.mod();
++
++    real *data_start = &amp;m_data_cache(0,0);
++    real Kij;
++    real *Ki, *Kji, *x1, *x2;
++    real *input_sigma_data = m_input_sigma.data();
++    real *xi = data_start;
++    
++    for (int i=0 ; i&lt;l ; ++i, xi += cache_mod) {
++        Ki  = K[i];
++        Kji = &amp;K[0][i];
++        real *xj = data_start;
++
++        for (int j=0; j&lt;=i; ++j, Kji += m, xj += cache_mod) {
++            // Kernel evaluation per se
++            x1 = xi;
++            x2 = xj;
++            real* p_inpsigma = input_sigma_data;
++            real sum_wt = 0.0;
++            int k = n;
++
++            // Use Duff's device to unroll the following loop:
++            //     while (k--) {
++            //         real diff = *x1++ - *x2++;
++            //         sum_wt += (diff * diff) / *p_inpsigma++;
++            //     }
++            real diff;
++            switch (k % 8) {
++            case 0: do { diff = *x1++ - *x2++; sum_wt += (diff*diff) / *p_inpsigma++;
++            case 7:      diff = *x1++ - *x2++; sum_wt += (diff*diff) / *p_inpsigma++;
++            case 6:      diff = *x1++ - *x2++; sum_wt += (diff*diff) / *p_inpsigma++;
++            case 5:      diff = *x1++ - *x2++; sum_wt += (diff*diff) / *p_inpsigma++;
++            case 4:      diff = *x1++ - *x2++; sum_wt += (diff*diff) / *p_inpsigma++;
++            case 3:      diff = *x1++ - *x2++; sum_wt += (diff*diff) / *p_inpsigma++;
++            case 2:      diff = *x1++ - *x2++; sum_wt += (diff*diff) / *p_inpsigma++;
++            case 1:      diff = *x1++ - *x2++; sum_wt += (diff*diff) / *p_inpsigma++;
++                       } while((k -= 8) &gt; 0);
++            }
++            
++            Kij = sf2 * pow(1 + sum_wt / (2.*alpha), -alpha);
++            
++            // Update kernel matrix (already pre-filled with IID noise terms)
++            *Ki++ += Kij;
++            if (j &lt; i)
++                *Kji += Kij;
++        }
++    }
++    if (cache_gram_matrix) {
++        gram_matrix.resize(l,l);
++        gram_matrix &lt;&lt; K;
++        gram_matrix_is_cached = true;
++    }
+ }
+ 
+ 
+@@ -163,7 +238,7 @@
+ void RationalQuadraticARDKernel::computeGramMatrixDerivative(
+     Mat&amp; KD, const string&amp; kernel_param, real epsilon) const
+ {
+-    static const string LSS(&quot;log_sigmal_sigma&quot;);
++    static const string LSS(&quot;log_signal_sigma&quot;);
+     static const string LGS(&quot;log_global_sigma&quot;);
+     static const string LIS(&quot;log_input_sigma[&quot;);
+     static const string LAL(&quot;log_alpha&quot;);
+@@ -185,9 +260,11 @@
+                              LIS.size(), kernel_param.size() - LIS.size() - 1));
+         PLASSERT( arg &lt; m_log_input_sigma.size() );
+ 
+-        computeGramMatrixDerivNV&lt;
+-            RationalQuadraticARDKernel,
+-            &amp;RationalQuadraticARDKernel::derivLogInputSigma&gt;(KD, this, arg);
++        computeGramMatrixDerivLogInputSigma(KD, arg);
++
++        // computeGramMatrixDerivNV&lt;
++        //     RationalQuadraticARDKernel,
++        //     &amp;RationalQuadraticARDKernel::derivLogInputSigma&gt;(KD, this, arg);
+     }
+     else if (kernel_param == LAL) {
+         computeGramMatrixDerivNV&lt;
+@@ -210,24 +287,22 @@
+ 
+ //#####  derivLogSignalSigma  #################################################
+ 
+-real RationalQuadraticARDKernel::derivLogSignalSigma(
+-    const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const
++real RationalQuadraticARDKernel::derivLogSignalSigma(int i, int j, int arg, real K) const
+ {
+-    real noise = inherited::evaluate(row_i, row_j);
++    real noise = m_noise_gram_cache(i,j);
+     return 2*(K-noise);
+ }
+ 
+ 
+ //#####  derivLogGlobalSigma  #################################################
+ 
+-real RationalQuadraticARDKernel::derivLogGlobalSigma(
+-    const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const
++real RationalQuadraticARDKernel::derivLogGlobalSigma(int i, int j, int arg, real K) const
+ {
+     // The rational quadratic gives us:
+     //     K = exp(2*s)*k^(-alpha).
+     // Rederive the value of k
+     real alpha = exp(m_log_alpha);
+-    real noise = inherited::evaluate(row_i, row_j);
++    real noise = m_noise_gram_cache(i,j);
+     K -= noise;
+     real k     = exp(- (pl_log(K) - 2*m_log_signal_sigma) / alpha);
+     real inner = - (k - 1) * alpha;
+@@ -237,14 +312,18 @@
+ 
+ //#####  derivLogInputSigma  ##################################################
+ 
+-real RationalQuadraticARDKernel::derivLogInputSigma(
+-    const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const
++// This function computes the derivative element-wise.  The function actually
++// used now is computeGramMatrixDerivLogInputSigma, which computes the whole
++// matrix much faster.
++real RationalQuadraticARDKernel::derivLogInputSigma(int i, int j, int arg, real K) const
+ {
+     // The rational quadratic gives us:
+     //     K = exp(2*s)*k^(-alpha).
+     // Rederive the value of k
++    Vec&amp; row_i   = *dataRow(i);
++    Vec&amp; row_j   = *dataRow(j);
+     real alpha   = exp(m_log_alpha);
+-    real noise   = inherited::evaluate(row_i, row_j);
++    real noise   = m_noise_gram_cache(i,j);
+     K -= noise;
+     real k       = exp(- (pl_log(K) - 2*m_log_signal_sigma) / alpha);
+     real diff    = row_i[arg] - row_j[arg];
+@@ -255,11 +334,10 @@
+ 
+ //#####  derivLogAlpha  #######################################################
+ 
+-real RationalQuadraticARDKernel::derivLogAlpha(
+-    const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const
++real RationalQuadraticARDKernel::derivLogAlpha(int i, int j, int arg, real K) const
+ {
+     real alpha = exp(m_log_alpha);
+-    real noise = inherited::evaluate(row_i, row_j);
++    real noise = m_noise_gram_cache(i,j);
+     K -= noise;
+     real k     = exp(- (pl_log(K) - 2*m_log_signal_sigma) / alpha);
+     real left  = - alpha * pl_log(k);
+@@ -269,6 +347,68 @@
+ }
+ 
+ 
++//#####  computeGramMatrixDerivLogInputSigma  #################################
++
++void RationalQuadraticARDKernel::computeGramMatrixDerivLogInputSigma(Mat&amp; KD,
++                                                                     int arg) const
++{
++    // Precompute some terms
++    real alpha = exp(m_log_alpha);
++    real twice_log_signal_sigma = 2.*m_log_signal_sigma;
++    
++    // Compute Gram Matrix derivative w.r.t. log_input_sigma[arg]
++    int  l = data-&gt;length();
++    int  k_mod     = gram_matrix.mod();
++    int  cache_mod = m_data_cache.mod();
++
++    // Variables that walk over the pre-computed kernel (K) and data matrices
++    real *input_sigma_data = m_input_sigma.data();
++    real *data_start = &amp;m_data_cache(0,0);
++    real *xi = data_start;                   // Iterator on data rows
++    real *Ki = &amp;gram_matrix(0,0);            // Current row of kernel matrix
++    real *Kij;                               // Current element of kernel matrix
++
++    // Variables that walk over the noise cache
++    real *noise_start_row = m_noise_gram_cache.data();
++    real *cur_noise;                         // Current element of noise matrix
++    int  noise_mod = m_noise_gram_cache.mod();
++    
++    // Variables that walk over the kernel derivative matrix (KD)
++    KD.resize(l,l);
++    real* KDi = KD.data();                   // Start of row i
++    real* KDj = KD.data();                   // Start of column j
++    real* KDij;                              // Current element on row i
++    real* KDji;                              // Current element on column j
++    int   KD_mod = KD.mod();
++
++    // Iterate on rows of derivative matrix
++    for (int i=0 ; i&lt;l ; ++i, xi += cache_mod, Ki += k_mod,
++             KDi += KD_mod, ++KDj, noise_start_row += noise_mod)
++    {
++        Kij  = Ki;
++        KDij = KDi;
++        KDji = KDj;
++        real *xj  = data_start;              // Inner iterator on data rows
++        cur_noise = noise_start_row;
++
++        // Iterate on columns of derivative matrix
++        for (int j=0 ; j &lt;= i
++                 ; ++j, ++Kij, KDji+=KD_mod, xj += cache_mod, ++cur_noise)
++        {
++            real K       = *Kij - *cur_noise;
++            real k       = exp(- (pl_log(K) - twice_log_signal_sigma) / alpha);
++            real diff    = xi[arg] - xj[arg];
++            real sq_diff = diff * diff;
++            real KD_cur  = (K / k) * sq_diff / input_sigma_data[arg];
++            
++            // Set into derivative matrix
++            *KDij++ = KD_cur;
++            if (j &lt; i)
++                *KDji = KD_cur;
++        }
++    }
++}
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.h
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-02-13 22:21:25 UTC (rev 6659)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-02-15 00:53:12 UTC (rev 6660)
+@@ -113,17 +113,24 @@
+     static void declareOptions(OptionList&amp; ol);
+ 
+     //! Derivative function with respect to log_signal_sigma
+-    real derivLogSignalSigma(const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const;
++    real derivLogSignalSigma(int i, int j, int arg, real K) const;
+ 
+     //! Derivative function with respect to log_global_sigma
+-    real derivLogGlobalSigma(const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const;
++    real derivLogGlobalSigma(int i, int j, int arg, real K) const;
+     
+     //! Derivative function with respect to log_input_sigma[arg]
+-    real derivLogInputSigma(const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const;
++    real derivLogInputSigma(int i, int j, int arg, real K) const;
+     
+     //! Derivative function with respect to log_alpha
+-    real derivLogAlpha(const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const;
++    real derivLogAlpha(int i, int j, int arg, real K) const;
++
++    // Compute derivative w.r.t. log_input_sigma[arg] for WHOLE MATRIX
++    void computeGramMatrixDerivLogInputSigma(Mat&amp; KD, int arg) const;
+     
++protected:
++    //! Cached version of IID noise gram matrix
++    mutable Mat m_noise_gram_cache;
++
+ private:
+     //! This does the actual building.
+     void build_();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000108.html">[Plearn-commits] r6659 - trunk/plearn/var
+</A></li>
+	<LI>Next message: <A HREF="000110.html">[Plearn-commits] r6661 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#109">[ date ]</a>
+              <a href="thread.html#109">[ thread ]</a>
+              <a href="subject.html#109">[ subject ]</a>
+              <a href="author.html#109">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

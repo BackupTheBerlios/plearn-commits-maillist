@@ -1,0 +1,319 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6689 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6689%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200702271512.l1RFCbOc014762%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000137.html">
+   <LINK REL="Next"  HREF="000139.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6689 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6689%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200702271512.l1RFCbOc014762%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6689 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Tue Feb 27 16:12:37 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000137.html">[Plearn-commits] r6688 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000139.html">[Plearn-commits] r6690 - in trunk: plearn/base plearn/misc	plearn_learners/testers scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#138">[ date ]</a>
+              <a href="thread.html#138">[ thread ]</a>
+              <a href="subject.html#138">[ subject ]</a>
+              <a href="author.html#138">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-02-27 16:12:37 +0100 (Tue, 27 Feb 2007)
+New Revision: 6689
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+Log:
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-02-27 06:47:27 UTC (rev 6688)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-02-27 15:12:37 UTC (rev 6689)
+@@ -709,11 +709,12 @@
+         cost.resize(n_layers);
+ 
+     layers[0]-&gt;expectation &lt;&lt; input;
++    // FORWARD PHASE
+     for( int i=0 ; i&lt;n_layers-1 ; i++ )
+     {
+         // mean-field fprop from layer i to layer i+1
+         Vec input;
+-        if (i==n_layers-1 &amp;&amp; use_classification_cost) // if top layer is a joint layer
++        if (i==n_layers-2 &amp;&amp; use_classification_cost) // if top layer is a joint layer
+         {
+             // set the input of the joint layer 
+             Vec joint_exp = joint_layer-&gt;expectation;
+@@ -724,8 +725,10 @@
+             classification_module-&gt;joint_connection-&gt;setAsDownInput(
+                 joint_layer-&gt;expectation );
+             // this does the actual matrix-vector computation
++            // from (layer[n-2],target) to layer[n-1]
+             layers[ n_layers-1 ]-&gt;getAllActivations(
+                 get_pointer( classification_module-&gt;joint_connection ) );
++            // and prepares for a supervised (joint likelihood) contrastive divergence step
+         }
+         else
+         {
+@@ -735,7 +738,7 @@
+         }
+         layers[i+1]-&gt;computeExpectation();
+ 
+-        // propagate into local cost associated to this layer
++        // propagate into local cost associated to output of layer i+1
+         if( partial_costs &amp;&amp; partial_costs[ i ] )
+         {
+             partial_costs[ i ]-&gt;fprop( layers[ i+1 ]-&gt;expectation,
+@@ -751,59 +754,123 @@
+             expectation_gradients[i+1].clear();
+ 
+         // top layer may be connected to a final_module followed by a final_cost
+-        if( i==n_layers-2 &amp;&amp; final_cost )
++        // and / or may be used to predict class probabilities through a joint classification_module
++        if( i==n_layers-2)
+         {
+-            if( final_module )
++            if ( final_cost )
+             {
+-                final_module-&gt;fprop( layers[ n_layers-1 ]-&gt;expectation,
+-                                     final_cost_input );
+-                final_cost-&gt;fprop( final_cost_input, target, final_cost_value );
+-                final_cost-&gt;bpropUpdate( final_cost_input, target,
+-                                         final_cost_value[0],
+-                                         final_cost_gradient ); //gradient on final_cost_input
+-                final_module-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;expectation,
+-                                           final_cost_input,
+-                                           expectation_gradients[ n_layers-1 ],
+-                                           final_cost_gradient, true );
++                if( final_module )
++                {
++                    final_module-&gt;fprop( layers[ n_layers-1 ]-&gt;expectation,
++                                         final_cost_input );
++                    final_cost-&gt;fprop( final_cost_input, target, final_cost_value );
++                    final_cost-&gt;bpropUpdate( final_cost_input, target,
++                                             final_cost_value[0],
++                                             final_cost_gradient ); //gradient on final_cost_input
++                    final_module-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;expectation,
++                                               final_cost_input,
++                                               expectation_gradients[ n_layers-1 ],
++                                               final_cost_gradient, true );
++                }
++                else
++                {
++                    final_cost-&gt;fprop( layers[ n_layers-1 ]-&gt;expectation, target,
++                                       final_cost_value );
++                    final_cost-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;expectation,
++                                             target, final_cost_value[0],
++                                             expectation_gradients[ n_layers-1 ],
++                                             true);
++                }
++
++                train_costs[final_cost_index] = final_cost_value[0];
++
++                layers[n_layers-1]-&gt;setLearningRate( grad_learning_rate );
++                connections[n_layers-2]-&gt;setLearningRate( grad_learning_rate );
++
++                layers[ n_layers-1 ]-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;activation,
++                                                   layers[ n_layers-1 ]-&gt;expectation,
++                                                   activation_gradients[ n_layers-1 ],
++                                                   expectation_gradients[ n_layers-1 ],
++                                                   false);
++
++                connections[ n_layers-2 ]-&gt;bpropUpdate(
++                    layers[ n_layers-2 ]-&gt;expectation,
++                    layers[ n_layers-1 ]-&gt;activation,
++                    expectation_gradients[ n_layers-2 ],
++                    activation_gradients[ n_layers-1 ],
++                    true); // accumulate into expectation_gradients[n_layers-2]
++                // because a partial cost may have already put a gradient there
+             }
+-            else
++        
++
++            if( use_classification_cost )
+             {
+-                final_cost-&gt;fprop( layers[ n_layers-1 ]-&gt;expectation, target,
+-                                   final_cost_value );
+-                final_cost-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;expectation,
+-                                         target, final_cost_value[0],
+-                                         expectation_gradients[ n_layers-1 ],
+-                                         true);
+-            }
++                classification_module-&gt;fprop( layers[ n_layers-2 ]-&gt;expectation,
++                                              class_output );
++                real nll_cost;
+ 
+-            // HACK: since the update will combine the gradients from all sources,
+-            // weigh the gradients according to the desired learning rates
+-            expectation_gradients[i+1] *= grad_learning_rate/cd_learning_rate;
++                // This doesn't work. gcc bug?
++                // classification_cost-&gt;fprop( class_output, target, cost );
++                classification_cost-&gt;CostModule::fprop( class_output, target,
++                                                        nll_cost );
+ 
+-// HERE
++                real class_error =
++                    ( argmax(class_output) == (int) round(target[0]) ) ? 0: 1;
+ 
+-            train_costs[final_cost_index] = final_cost_value[0];
++                train_costs[nll_cost_index] = nll_cost;
++                train_costs[class_cost_index] = class_error;
+ 
+-            layers[ n_layers-1 ]-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;activation,
+-                                               layers[ n_layers-1 ]-&gt;expectation,
+-                                               activation_gradients[ n_layers-1 ],
+-                                               expectation_gradients[ n_layers-1 ]);
++                classification_cost-&gt;bpropUpdate( class_output, target, nll_cost,
++                                                  class_gradient );
+ 
+-            connections[ n_layers-2 ]-&gt;bpropUpdate(
+-                layers[ n_layers-2 ]-&gt;expectation,
+-                layers[ n_layers-1 ]-&gt;activation,
+-                expectation_gradients[ n_layers-2 ],
+-                activation_gradients[ n_layers-1 ],
+-                true); // accumulate into expectation_gradients[n_layers-2]
++                classification_module-&gt;bpropUpdate( layers[ n_layers-2 ]-&gt;expectation,
++                                                    class_output,
++                                                    expectation_gradients[n_layers-2],
++                                                    class_gradient,
++                                                    true );
++            }
++
++            layers[i]-&gt;setLearningRate( cd_learning_rate );
++            layers[i+1]-&gt;setLearningRate( cd_learning_rate );
++            connections[i]-&gt;setLearningRate( cd_learning_rate );
++            contrastiveDivergenceStep( layers[ i ],
++                                       connections[ i ],
++                                       layers[ i+1 ] );
+         }
+ 
++    }
+ 
++    // DOWNWARD PHASE (the downward phase for top layer is already done above)
++    for( int i=n_layers-3 ; i&gt;=0 ; i-- )
++    {
++        
++        connections[ i ]-&gt;setLearningRate( grad_learning_rate );
++        layers[ i+1 ]-&gt;setLearningRate( grad_learning_rate );
+ 
++        layers[i+1]-&gt;bpropUpdate( layers[i+1]-&gt;activation,
++                                  layers[i+1]-&gt;expectation,
++                                  activation_gradients[i+1],
++                                  expectation_gradients[i+1] );
++
++        connections[i]-&gt;bpropUpdate( layers[i]-&gt;expectation,
++                                     layers[i+1]-&gt;activation,
++                                     expectation_gradients[i],
++                                     activation_gradients[i+1],
++                                     true);
++
++        // N.B. the contrastiveDivergenceStep changes the activation
++        // and expectation fields of top layer of the RBM, so it must be done last
++        layers[i]-&gt;setLearningRate( cd_learning_rate );
++        layers[i+1]-&gt;setLearningRate( cd_learning_rate );
++        connections[i]-&gt;setLearningRate( cd_learning_rate );
++        save_layer_activation.resize(layers[i]-&gt;size);
++        save_layer_activation &lt;&lt; layers[i]-&gt;activation;
++        contrastiveDivergenceStep( layers[ i ],
++                                   connections[ i ],
++                                   layers[ i+1 ] ,
++                                   true);
++        layers[i]-&gt;activation &lt;&lt; save_layer_activation;
+     }
+-        
+-    //contrastiveDivergenceStep( layers[ i ],
+-    //                           connections[ i ],
+-    //                           layers[ i+1 ] );
+ 
+ }
+ 
+@@ -1036,12 +1103,16 @@
+ void DeepBeliefNet::contrastiveDivergenceStep(
+     const PP&lt;RBMLayer&gt;&amp; down_layer,
+     const PP&lt;RBMConnection&gt;&amp; connection,
+-    const PP&lt;RBMLayer&gt;&amp; up_layer )
++    const PP&lt;RBMLayer&gt;&amp; up_layer,
++    bool nofprop)
+ {
+     // positive phase
+-    connection-&gt;setAsDownInput( down_layer-&gt;expectation );
+-    up_layer-&gt;getAllActivations( connection );
+-    up_layer-&gt;computeExpectation();
++    if (!nofprop)
++    {
++        connection-&gt;setAsDownInput( down_layer-&gt;expectation );
++        up_layer-&gt;getAllActivations( connection );
++        up_layer-&gt;computeExpectation();
++    }
+     up_layer-&gt;generateSample();
+ 
+     // accumulate positive stats using the expectation
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2007-02-27 06:47:27 UTC (rev 6688)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2007-02-27 15:12:37 UTC (rev 6689)
+@@ -199,7 +199,8 @@
+ 
+     void contrastiveDivergenceStep( const PP&lt;RBMLayer&gt;&amp; down_layer,
+                                     const PP&lt;RBMConnection&gt;&amp; connection,
+-                                    const PP&lt;RBMLayer&gt;&amp; up_layer );
++                                    const PP&lt;RBMLayer&gt;&amp; up_layer,
++                                    bool nofprop=false);
+ 
+ 
+     // *** SUBCLASS WRITING: ***
+@@ -259,6 +260,9 @@
+     //! Stores the gradient of the cost at the input of final_cost
+     mutable Vec final_cost_gradient;
+ 
++    //! buffers bottom layer activation during onlineStep 
++    mutable Vec save_layer_activation;
++
+     //! Does final_module exist and have a &quot;learning_rate&quot; option
+     bool final_module_has_learning_rate;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000137.html">[Plearn-commits] r6688 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000139.html">[Plearn-commits] r6690 - in trunk: plearn/base plearn/misc	plearn_learners/testers scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#138">[ date ]</a>
+              <a href="thread.html#138">[ thread ]</a>
+              <a href="subject.html#138">[ subject ]</a>
+              <a href="author.html#138">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,206 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8400 - in trunk/plearn: misc vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8400%20-%20in%20trunk/plearn%3A%20misc%20vmat&In-Reply-To=%3C200801222008.m0MK807f006246%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001847.html">
+   <LINK REL="Next"  HREF="001849.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8400 - in trunk/plearn: misc vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8400%20-%20in%20trunk/plearn%3A%20misc%20vmat&In-Reply-To=%3C200801222008.m0MK807f006246%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8400 - in trunk/plearn: misc vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Jan 22 21:08:00 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001847.html">[Plearn-commits] r8399 - trunk
+</A></li>
+        <LI>Next message: <A HREF="001849.html">[Plearn-commits] r8401 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1848">[ date ]</a>
+              <a href="thread.html#1848">[ thread ]</a>
+              <a href="subject.html#1848">[ subject ]</a>
+              <a href="author.html#1848">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-01-22 21:07:59 +0100 (Tue, 22 Jan 2008)
+New Revision: 8400
+
+Modified:
+   trunk/plearn/misc/vmatmain.cc
+   trunk/plearn/vmat/VMatrix.cc
+   trunk/plearn/vmat/VMatrix.h
+Log:
+in compareStats check for more corner case and calculate the sum of difference
+
+
+Modified: trunk/plearn/misc/vmatmain.cc
+===================================================================
+--- trunk/plearn/misc/vmatmain.cc	2008-01-22 20:05:48 UTC (rev 8399)
++++ trunk/plearn/misc/vmatmain.cc	2008-01-22 20:07:59 UTC (rev 8400)
+@@ -957,8 +957,14 @@
+             stderror_threshold=toreal(argv[4]);
+         if(argc&gt;5)
+             missing_threshold=toreal(argv[5]);
+-        int diff = m1-&gt;compareStats(m2, stderror_threshold, missing_threshold);
+-        cout&lt;&lt;&quot;Their is &quot;&lt;&lt;diff&lt;&lt;&quot; fields that have different stats&quot;&lt;&lt;endl;
++        real sumdiff_stderr = 0;
++        real sumdiff_missing = 0;
++        int diff = m1-&gt;compareStats(m2, stderror_threshold, missing_threshold,
++                                    &amp;sumdiff_stderr, &amp;sumdiff_missing);
++        cout&lt;&lt;&quot;Their is &quot;&lt;&lt;diff&lt;&lt;&quot;/&quot;&lt;&lt;m1.width()
++            &lt;&lt;&quot; fields that have different stats&quot;&lt;&lt;endl;
++        cout &lt;&lt;&quot;The sum of stderror difference is &quot;&lt;&lt;sumdiff_stderr&lt;&lt;endl;
++        cout &lt;&lt;&quot;The sum of missing difference is &quot;&lt;&lt;sumdiff_missing&lt;&lt;endl;
+ 
+     }
+     else
+
+Modified: trunk/plearn/vmat/VMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/VMatrix.cc	2008-01-22 20:05:48 UTC (rev 8399)
++++ trunk/plearn/vmat/VMatrix.cc	2008-01-22 20:07:59 UTC (rev 8400)
+@@ -1896,14 +1896,16 @@
+ 
+ int VMatrix:: compareStats(const VMat&amp; target,
+                            const real stderror_threshold,
+-                           const real missing_threshold) const
++                           const real missing_threshold,
++                           real* sumdiff_stderr,
++                           real* sumdiff_missing) const
+ {
+-#ifdef BOUNDCHECK
+     if(target-&gt;width()!=width())
+         PLERROR(&quot;In VecStatsCollector:: compareStats() - this vmatris have width %d witch differ from the target width of %d&quot;, width(), target-&gt;width());
+-#endif
+-    int diff = 0;
+ 
++    int nbdiff            = 0;
++    real sumdiff_stderr_  = 0;
++    real sumdiff_missing_ = 0;
+     for(int i=0;i&lt;width();i++)
+     {
+         const StatsCollector tstats = target-&gt;getStats(i);
+@@ -1911,26 +1913,47 @@
+ 
+         real tmissing = tstats.nmissing()/tstats.n();
+         real lmissing = lstats.nmissing()/lstats.n();
+-        if(lmissing&lt;(tmissing-missing_threshold/100) || lmissing&gt;(tmissing+missing_threshold/100))
++        real terr = sqrt(tmissing*(1-tmissing)+lmissing*(1-lmissing));
++        real th = fabs(tmissing-lmissing)/terr;
++        if(terr==0)
++            PLCHECK(tmissing==0 &amp;&amp; lmissing==0);
++        else if(isnan(th))
++            PLWARNING(&quot;In VMatrix::compareStats - should not happen!&quot;);
++        else
++            sumdiff_missing_ += th;
++        if(th&gt;missing_threshold)
+         {
+-            PLWARNING(&quot;In VMatrix::compareStats - field %d(%s) have %f missing while target stats have %f&quot;,
+-                      i, fieldName(i).c_str(), lmissing, tmissing);
+-            diff++;
++            PLWARNING(&quot;In VMatrix::compareStats - field %d(%s) have %f&quot;
++                      &quot; missing while target stats have %f.&quot;
++                      &quot; The stats difference is %f.&quot;, 
++                      i, fieldName(i).c_str(), lmissing, tmissing, th);
++            nbdiff++;
+         }
+         real tmean = tstats.mean();
+         real lmean = lstats.mean();
+-        real tstderror = tstats.stderror();
+-        real  th = (lmean-tmean)/tstderror;
+-
++        real tstderror = sqrt(pow(tstats.stderror(),2.) + 
++                              pow(lstats.stderror(),2.));
++        th = fabs(lmean-tmean)/tstderror;
++        if(tstderror==0)
++            PLWARNING(&quot;In VMatrix::compareStats - field %d(%s) have a&quot;
++                      &quot; stderror of 0 for both matrice.&quot;,
++                      i, fieldName(i).c_str());
++        else
++            sumdiff_stderr_+=th;
+         if(th&gt;stderror_threshold)
+         {
+             PLWARNING(&quot;In VMatrix::compareStats - field %d(%s) have mean %f&quot;
+-                      &quot; while target mean is %f and target stderror is %f. They differ by %f stderror&quot;,
++                      &quot; while target mean is %f and target stderror is %f.&quot;
++                      &quot; They differ by %f stderror&quot;,
+                       i, fieldName(i).c_str(), lmean, tmean, tstderror, th);
+-            diff++;
++            nbdiff++;
+         }
+     }
+-     return diff;
++    if(sumdiff_stderr!=NULL)
++        *sumdiff_stderr = sumdiff_stderr_;
++    if(sumdiff_missing!=NULL)
++        *sumdiff_missing = sumdiff_missing_;
++    return nbdiff;
+ }
+ } // end of namespace PLearn
+ 
+
+Modified: trunk/plearn/vmat/VMatrix.h
+===================================================================
+--- trunk/plearn/vmat/VMatrix.h	2008-01-22 20:05:48 UTC (rev 8399)
++++ trunk/plearn/vmat/VMatrix.h	2008-01-22 20:07:59 UTC (rev 8400)
+@@ -598,14 +598,16 @@
+ 
+     
+     //! Compare the stats of this VecStatsCollector with the target one.
+-    //! @param target the VecStatsCollector we compare again
+-    //! @param stderror_threshold The threshold alowed for the standard error
+-    //! @param missing_threshold The threshold alowed for the % of missing
++    //! @param target the VMat we compare again
++    //! @param stderror_threshold The threshold allowed for the standard error
++    //! @param missing_threshold The threshold allowed for the % of missing
+     //! @return If they are comparable with respect to the gived threshold,
+-    //! we return true. Otherwise false
++    //! we return true. Otherwise we return false.
+     int compareStats(const VMat&amp; target,
+                      const real stderror_threshold = 2,
+-                     const real missing_threshold = 10) const;
++                     const real missing_threshold = 2,
++                     real* sumdiff_stderr = NULL,
++                     real* sumdiff_missing = NULL) const;
+ 
+ 
+     /**
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001847.html">[Plearn-commits] r8399 - trunk
+</A></li>
+	<LI>Next message: <A HREF="001849.html">[Plearn-commits] r8401 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1848">[ date ]</a>
+              <a href="thread.html#1848">[ thread ]</a>
+              <a href="subject.html#1848">[ subject ]</a>
+              <a href="author.html#1848">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

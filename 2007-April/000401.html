@@ -1,0 +1,254 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6952 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6952%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704300330.l3U3U4gp012557%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000400.html">
+   <LINK REL="Next"  HREF="000402.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6952 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6952%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704300330.l3U3U4gp012557%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6952 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Mon Apr 30 05:30:04 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000400.html">[Plearn-commits] r6951 - in trunk:	plearn_learners/generic/EXPERIMENTAL plearn_learners/online scripts
+</A></li>
+        <LI>Next message: <A HREF="000402.html">[Plearn-commits] r6953 - trunk/speedtest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#401">[ date ]</a>
+              <a href="thread.html#401">[ thread ]</a>
+              <a href="subject.html#401">[ subject ]</a>
+              <a href="author.html#401">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-04-30 05:30:03 +0200 (Mon, 30 Apr 2007)
+New Revision: 6952
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+Log:
+Beginning work to add side Gibbs chain for negative phase.
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-04-28 15:14:28 UTC (rev 6951)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-04-30 03:30:03 UTC (rev 6952)
+@@ -67,6 +67,8 @@
+     reconstruct_layerwise( false ),
+     n_layers( 0 ),
+     online ( false ),
++    background_gibbs_update_ratio(0),
++    gibbs_chain_statistics_forgetting_factor(0.999),
+     minibatch_size(0),
+     final_module_has_learning_rate( false ),
+     final_cost_has_learning_rate( false ),
+@@ -208,6 +210,21 @@
+                   &quot;If true then all unsupervised training stages (as well as\n&quot;
+                   &quot;the fine-tuning stage) are done simultaneously.\n&quot;);
+ 
++    declareOption(ol, &quot;background_gibbs_update_ratio&quot;, &amp;DeepBeliefNet::background_gibbs_update_ratio,
++                  OptionBase::buildoption,
++                  &quot;Coefficient between 0 and 1. If non-zero, run a background Gibbs chain and use\n&quot;
++                  &quot;the visible-hidden statistics to contribute in the negative phase update\n&quot;
++                  &quot;(in proportion background_gibbs_update_ratio wrt the contrastive divergence\n&quot;
++                  &quot;negative phase statistics). If = 1, then do not perform any contrastive\n&quot;
++                  &quot;divergence negative phase (use only the Gibbs chain statistics).\n&quot;);
++
++    declareOption(ol, &quot;gibbs_chain_statistics_forgetting_factor&quot;, 
++                  &amp;DeepBeliefNet::gibbs_chain_statistics_forgetting_factor,
++                  OptionBase::buildoption,
++                  &quot;Negative chain statistics are forgotten at this rate (a value of 0\n&quot;
++                  &quot;would only use the current sample, a value of .99 would use 1% of\n&quot;
++                  &quot;the current sample and 99% of the old statistics).\n&quot;);
++
+     declareOption(ol, &quot;top_layer_joint_cd&quot;, &amp;DeepBeliefNet::top_layer_joint_cd,
+                   OptionBase::buildoption,
+                   &quot;Wether we do a step of joint contrastive divergence on&quot;
+@@ -296,6 +313,8 @@
+     activations_gradients.resize( n_layers );
+     expectation_gradients.resize( n_layers );
+     expectations_gradients.resize( n_layers );
++    gibbs_up_state.resize( n_layers-1 );
++    gibbs_down_state.resize( n_layers-1 );
+ 
+     for( int i=0 ; i&lt;n_layers-1 ; i++ )
+     {
+@@ -483,6 +502,8 @@
+     deepCopyField(pos_up_val,               copies);
+     deepCopyField(pos_down_vals,            copies);
+     deepCopyField(pos_up_vals,              copies);
++    deepCopyField(gibbs_up_state,           copies);
++    deepCopyField(gibbs_down_state,           copies);
+     deepCopyField(optimized_costs,          copies);
+     deepCopyField(final_cost_indices,       copies);
+     deepCopyField(partial_cost_indices,     copies);
+@@ -550,6 +571,12 @@
+         for (int i = 0 ; i &lt; n_layers; i++) {
+             activations_gradients[i].resize(minibatch_size, layers[i]-&gt;size);
+             expectation_gradients[i].resize(minibatch_size, layers[i]-&gt;size);
++
++            if (background_gibbs_update_ratio&gt;0)
++            {
++                gibbs_up_state[i].resize(minibatch_size, layers[i]-&gt;size);
++                gibbs_down_state[i].resize(minibatch_size, layers[i]-&gt;size);
++            }
+         }
+         if (final_cost)
+             final_cost_gradients.resize(minibatch_size, final_cost-&gt;input_size);
+@@ -1472,8 +1499,6 @@
+     }
+ 
+     if (mbatch) {
+-        up_layer-&gt;generateSamples();
+-
+         // accumulate positive stats using the expectation
+         // we deep-copy because the value will change during negative phase
+         pos_down_vals.resize(minibatch_size, down_layer-&gt;size);
+@@ -1483,13 +1508,36 @@
+         pos_up_vals &lt;&lt; up_layer-&gt;getExpectations();
+ 
+         // down propagation, starting from a sample of up_layer
+-        connection-&gt;setAsUpInputs( up_layer-&gt;samples );
++        if (background_gibbs_update_ratio&lt;1) 
++        {
++            // then do some contrastive divergence, o/w only background Gibbs
++            up_layer-&gt;generateSamples();
++            connection-&gt;setAsUpInputs( up_layer-&gt;samples );
++            down_layer-&gt;getAllActivations( connection, 0, true );
++            down_layer-&gt;generateSamples();
++            // negative phase
++            connection-&gt;setAsDownInputs( down_layer-&gt;samples );
++            up_layer-&gt;getAllActivations( connection, 0, mbatch );
++            up_layer-&gt;computeExpectations();
+ 
+-        down_layer-&gt;getAllActivations( connection, 0, true );
++            // accumulate negative stats
++            // no need to deep-copy because the values won't change before update
++            Mat neg_down_vals = down_layer-&gt;samples;
++            Mat neg_up_vals = up_layer-&gt;getExpectations();
+ 
+-        down_layer-&gt;generateSamples();
+-        // negative phase
+-        connection-&gt;setAsDownInputs( down_layer-&gt;samples );
++            // update
++            if (background_gibbs_update_ratio==0)
++            {
++                down_layer-&gt;update( pos_down_vals, neg_down_vals );
++                connection-&gt;update( pos_down_vals, pos_up_vals,
++                                    neg_down_vals, neg_up_vals );
++                up_layer-&gt;update( pos_up_vals, neg_up_vals );
++            }
++        }
++        // 
++        if (background_gibbs_update_ratio&gt;0) 
++        {
++        }
+     } else {
+         up_layer-&gt;generateSample();
+ 
+@@ -1509,28 +1557,10 @@
+         down_layer-&gt;generateSample();
+         // negative phase
+         connection-&gt;setAsDownInput( down_layer-&gt;sample );
+-    }
+-
+-    up_layer-&gt;getAllActivations( connection, 0, mbatch );
+-    if (mbatch)
+-        up_layer-&gt;computeExpectations();
+-    else
++        up_layer-&gt;getAllActivations( connection, 0, mbatch );
+         up_layer-&gt;computeExpectation();
+-
+-    if (mbatch) {
+         // accumulate negative stats
+         // no need to deep-copy because the values won't change before update
+-        Mat neg_down_vals = down_layer-&gt;samples;
+-        Mat neg_up_vals = up_layer-&gt;getExpectations();
+-
+-        // update
+-        down_layer-&gt;update( pos_down_vals, neg_down_vals );
+-        connection-&gt;update( pos_down_vals, pos_up_vals,
+-                            neg_down_vals, neg_up_vals );
+-        up_layer-&gt;update( pos_up_vals, neg_up_vals );
+-    } else {
+-        // accumulate negative stats
+-        // no need to deep-copy because the values won't change before update
+         Vec neg_down_val = down_layer-&gt;sample;
+         Vec neg_up_val = up_layer-&gt;expectation;
+ 
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2007-04-28 15:14:28 UTC (rev 6951)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2007-04-30 03:30:03 UTC (rev 6952)
+@@ -140,6 +140,17 @@
+     //! whether to do things by stages, including fine-tuning, or on-line
+     bool online;
+ 
++    // Coefficient between 0 and 1. If non-zero, run a background Gibbs chain and use 
++    // the visible-hidden statistics to contribute in the negative phase update
++    // (in proportion background_gibbs_update_ratio wrt the contrastive divergence
++    // negative phase statistics). If = 1, then do not perform any contrastive
++    // divergence negative phase (use only the Gibbs chain statistics).
++    real background_gibbs_update_ratio;
++    // negative chain statistics are forgotten at this rate (a value of 0
++    // would only use the current sample, a value of .99 would use 1% of
++    // the new sample and 99% of the old statistics).
++    real gibbs_chain_statistics_forgetting_factor;
++
+     //! Wether we do a step of joint contrastive divergence on top-layer
+     //! Only used if online for the moment
+     bool top_layer_joint_cd;
+@@ -308,6 +319,10 @@
+     mutable Vec pos_up_val;
+     mutable Mat pos_down_vals;
+     mutable Mat pos_up_vals;
++    
++    //! Store the state of the Gibbs chain for each RBM
++    mutable TVec&lt;Mat&gt; gibbs_up_state;
++    mutable TVec&lt;Mat&gt; gibbs_down_state;
+ 
+     //! Used to store the costs optimized by the final cost module.
+     Vec optimized_costs;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000400.html">[Plearn-commits] r6951 - in trunk:	plearn_learners/generic/EXPERIMENTAL plearn_learners/online scripts
+</A></li>
+	<LI>Next message: <A HREF="000402.html">[Plearn-commits] r6953 - trunk/speedtest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#401">[ date ]</a>
+              <a href="thread.html#401">[ thread ]</a>
+              <a href="subject.html#401">[ subject ]</a>
+              <a href="author.html#401">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

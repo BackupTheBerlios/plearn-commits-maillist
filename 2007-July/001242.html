@@ -1,0 +1,355 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7794 - in trunk/plearn: base python
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7794%20-%20in%20trunk/plearn%3A%20base%20python&In-Reply-To=%3C200707181727.l6IHRaMs019663%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001241.html">
+   <LINK REL="Next"  HREF="001243.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7794 - in trunk/plearn: base python</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7794%20-%20in%20trunk/plearn%3A%20base%20python&In-Reply-To=%3C200707181727.l6IHRaMs019663%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7794 - in trunk/plearn: base python">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Wed Jul 18 19:27:36 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001241.html">[Plearn-commits] r7793 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001243.html">[Plearn-commits] r7795 - trunk/plearn/base
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1242">[ date ]</a>
+              <a href="thread.html#1242">[ thread ]</a>
+              <a href="subject.html#1242">[ subject ]</a>
+              <a href="author.html#1242">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2007-07-18 19:27:35 +0200 (Wed, 18 Jul 2007)
+New Revision: 7794
+
+Modified:
+   trunk/plearn/base/Object.h
+   trunk/plearn/python/PythonObjectWrapper.cc
+   trunk/plearn/python/PythonObjectWrapper.h
+Log:
+- fixed PLearn/Python bridge:
+  - classes deriving from PP&lt;T&gt; (merci Pascal)
+  - non-PP pointers to Objects, enums, etc. (merci Nicolas)
+
+
+
+Modified: trunk/plearn/base/Object.h
+===================================================================
+--- trunk/plearn/base/Object.h	2007-07-18 17:06:05 UTC (rev 7793)
++++ trunk/plearn/base/Object.h	2007-07-18 17:27:35 UTC (rev 7794)
+@@ -48,7 +48,10 @@
+ #define Object_INC
+ 
+ // Python stuff must be included first
+-#include &lt;plearn/python/PythonIncludes.h&gt;
++#ifdef PL_PYTHON_VERSION 
++#  include &lt;plearn/python/PythonIncludes.h&gt;
++#  include &lt;plearn/python/PythonObjectWrapper.h&gt;
++#endif //ifdef PL_PYTHON_VERSION 
+ 
+ #include &lt;map&gt;
+ #include &lt;string&gt;
+@@ -504,7 +507,7 @@
+  *  used to serialize the new smart pointer type
+  */
+ 
+-#define DECLARE_OBJECT_PP(PPCLASSTYPE, CLASSTYPE)                       \
++#define DECLARE_OBJECT_PP_SERIALIZE(PPCLASSTYPE, CLASSTYPE)             \
+         inline PStream &amp;operator&gt;&gt;(PStream &amp;in, PPCLASSTYPE &amp;o)         \
+           { Object *ptr = 0;                                            \
+             in &gt;&gt; ptr;                                                  \
+@@ -514,7 +517,27 @@
+           { out &lt;&lt; static_cast&lt;const PP&lt;CLASSTYPE&gt; &amp;&gt;(o); return out; } \
+         DECLARE_TYPE_TRAITS(PPCLASSTYPE)
+ 
++#ifdef PL_PYTHON_VERSION 
++#define DECLARE_OBJECT_PP(PPCLASSTYPE, CLASSTYPE)                       \
++        struct ConvertFromPyObject&lt;PPCLASSTYPE&gt;                         \
++        {                                                               \
++            static PPCLASSTYPE convert(PyObject* o,                     \
++                                       bool print_traceback)            \
++            { return PPCLASSTYPE(ConvertFromPyObject&lt;PP&lt;CLASSTYPE&gt; &gt;    \
++                                  ::convert(o, print_traceback)); }     \
++        };                                                              \
++        template&lt;&gt; struct ConvertToPyObject&lt;PPCLASSTYPE&gt;                \
++        {                                                               \
++            static PyObject* newPyObject(const PPCLASSTYPE&amp; x)          \
++            {return ConvertToPyObject&lt;PP&lt;CLASSTYPE&gt; &gt;::newPyObject(x);} \
++        };                                                              \
++        DECLARE_OBJECT_PP_SERIALIZE(PPCLASSTYPE, CLASSTYPE)
++#else //def PL_PYTHON_VERSION 
++#define DECLARE_OBJECT_PP(PPCLASSTYPE, CLASSTYPE)                       \
++        DECLARE_OBJECT_PP_SERIALIZE(PPCLASSTYPE, CLASSTYPE)
++#endif //def PL_PYTHON_VERSION 
+ 
++
+ //#####  PLearn::Object  ######################################################
+ 
+ /**
+
+Modified: trunk/plearn/python/PythonObjectWrapper.cc
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.cc	2007-07-18 17:06:05 UTC (rev 7793)
++++ trunk/plearn/python/PythonObjectWrapper.cc	2007-07-18 17:27:35 UTC (rev 7794)
+@@ -260,7 +260,8 @@
+     return m;
+ }
+ 
+-VMat ConvertFromPyObject&lt;VMat&gt;::convert(PyObject* pyobj, bool print_traceback)
++//VMat ConvertFromPyObject&lt;VMat&gt;::convert(PyObject* pyobj, bool print_traceback)
++PP&lt;VMatrix&gt; ConvertFromPyObject&lt;PP&lt;VMatrix&gt; &gt;::convert(PyObject* pyobj, bool print_traceback)
+ {
+     PLASSERT(pyobj);
+     if(PyObject_HasAttrString(pyobj, &quot;_cptr&quot;))
+@@ -268,7 +269,7 @@
+             ConvertFromPyObject&lt;Object*&gt;::convert(pyobj, print_traceback));
+     Mat m;
+     ConvertFromPyObject&lt;Mat&gt;::convert(pyobj, m, print_traceback);
+-    return m;
++    return VMat(m);
+ }
+ 
+ PythonObjectWrapper ConvertFromPyObject&lt;PythonObjectWrapper&gt;::convert(PyObject* pyobj, bool print_traceback)
+@@ -802,12 +803,13 @@
+     return (PyObject*)pyarr;
+ }
+ 
+-PyObject* ConvertToPyObject&lt;VMat&gt;::newPyObject(const VMat&amp; vm)
++//PyObject* ConvertToPyObject&lt;VMat&gt;::newPyObject(const VMat&amp; vm)
++PyObject* ConvertToPyObject&lt;PP&lt;VMatrix&gt; &gt;::newPyObject(const PP&lt;VMatrix&gt;&amp; vm)
+ {
+     if (vm.isNull())
+         return ConvertToPyObject&lt;Mat&gt;::newPyObject(Mat());
+     else
+-        return ConvertToPyObject&lt;Mat&gt;::newPyObject(vm.toMat());
++        return ConvertToPyObject&lt;Mat&gt;::newPyObject(vm-&gt;toMat());
+     //return ConvertToPyObject&lt;Object*&gt;::newPyObject(static_cast&lt;Object*&gt;(vm));
+ }
+ 
+
+Modified: trunk/plearn/python/PythonObjectWrapper.h
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.h	2007-07-18 17:06:05 UTC (rev 7793)
++++ trunk/plearn/python/PythonObjectWrapper.h	2007-07-18 17:27:35 UTC (rev 7794)
+@@ -61,6 +61,11 @@
+ #include &lt;plearn/base/TypeTraits.h&gt;
+ #include &lt;plearn/base/tuple.h&gt;
+ 
++// from boost
++#include &lt;boost/static_assert.hpp&gt;
++#include &lt;boost/type_traits.hpp&gt;
++
++
+ #ifdef USEFLOAT
+ #define tReal tFloat32
+ #else
+@@ -71,7 +76,7 @@
+ 
+ class PythonObjectWrapper;                   // Forward-declare
+ class Object;
+-class VMat;
++class VMatrix;
+ 
+ //! Used for error reporting.  If 'print_traceback' is true, a full
+ //! Python traceback is printed to stderr.  Otherwise, raise PLERROR.
+@@ -97,13 +102,7 @@
+ template &lt;class T&gt;
+ struct ConvertFromPyObject
+ { 
+-    static T convert(PyObject*, bool print_traceback)
+-    {
+-        PLERROR(&quot;Cannot convert this object by value from python (type=%s).&quot;,
+-                TypeTraits&lt;T&gt;::name().c_str());
+-        return T();//to silence compiler
+-    }
+-
++    static T convert(PyObject* x, bool print_traceback);
+ };
+ 
+ template &lt;&gt;
+@@ -190,6 +189,32 @@
+     static Object* convert(PyObject*, bool print_traceback);
+ };
+ 
++
++///***///***
++// PARTIAL specialisation from T*.  Assume Object*.
++// TODO: fix this assumption
++template &lt;class T&gt;
++struct ConvertFromPyObject&lt;T*&gt;
++{
++    static T* convert(PyObject* pyobj, bool print_traceback)
++    {
++        // Compile-time assertion:
++        BOOST_STATIC_ASSERT((boost::is_base_of&lt;Object, T&gt;::value));
++        //N.B.: If this assertion fails, it probably means that you are trying
++        //      to retrieve a pointer to something that is not an Object from
++        //      python.  Only Object pointers are supported.
++
++        Object* obj = ConvertFromPyObject&lt;Object*&gt;::convert(pyobj, print_traceback);
++        if (T* tobj = dynamic_cast&lt;T*&gt;(obj))
++            return tobj;
++        else
++            PLERROR(&quot;Cannot convert object from python (type='%s').&quot;,
++                    TypeTraits&lt;T*&gt;::name().c_str());
++        return 0;                            // Silence compiler
++    }
++};
++///***///***
++
+ template &lt;&gt;
+ struct ConvertFromPyObject&lt;Vec&gt;
+ {
+@@ -213,10 +238,10 @@
+ };
+ 
+ template &lt;&gt;
+-struct ConvertFromPyObject&lt;VMat&gt;
++struct ConvertFromPyObject&lt;PP&lt;VMatrix&gt; &gt;
+ {
+     // Return new MemoryVMatrix
+-    static VMat convert(PyObject*, bool print_traceback);
++    static PP&lt;VMatrix&gt; convert(PyObject*, bool print_traceback);
+ };
+ 
+ template &lt;&gt;
+@@ -271,15 +296,40 @@
+ {
+     static PyObject* newPyObject(const T&amp; x)
+     {
+-        PLERROR(&quot;Cannot convert type %s by value to python&quot;,
++        PLERROR(&quot;Cannot convert type %s by value to python.&quot;,
+                 TypeTraits&lt;T&gt;::name().c_str());
+         return 0;//shut up compiler
+     }
+ };
+ 
++// Specialization for Object*
+ template&lt;&gt; struct ConvertToPyObject&lt;Object*&gt;
+ { static PyObject* newPyObject(const Object* x); };
+ 
++///***///***
++// Specialization for General T*.  Attempt to cast into Object*.  If that works
++// we're all set; for specific pointer types (e.g.  map&lt;U,V&gt;* and vector&lt;T&gt;*,
++// below, since they are more specialized they should kick in before this one.
++template &lt;typename T&gt;
++struct ConvertToPyObject&lt;T*&gt;
++{
++    static PyObject* newPyObject(const T* x)
++    {
++        if(!x) // null ptr. becomes None
++            return PythonObjectWrapper::newPyObject();
++
++        if (const Object* objx = dynamic_cast&lt;const Object*&gt;(x))
++            return ConvertToPyObject&lt;Object*&gt;::newPyObject(objx);
++
++        PLERROR(&quot;Cannot convert type %s by value to python&quot;,
++                TypeTraits&lt;T*&gt;::name().c_str());
++        return 0;//shut up compiler
++    }
++};
++
++// Other specializations
++///***///***
++
+ template&lt;&gt; struct ConvertToPyObject&lt;bool&gt;
+ { static PyObject* newPyObject(const bool&amp; x); };
+ 
+@@ -331,8 +381,8 @@
+ //! are lost when converting to Python.
+ //!
+ //! @TODO  Must provide a complete Python wrapper over VMatrix objects
+-template&lt;&gt; struct ConvertToPyObject&lt;VMat&gt;
+-{ static PyObject* newPyObject(const VMat&amp; vm); };
++template&lt;&gt; struct ConvertToPyObject&lt;PP&lt;VMatrix&gt; &gt;
++{ static PyObject* newPyObject(const PP&lt;VMatrix&gt;&amp; vm); };
+     
+ //! Generic PP: wrap pointed object
+ template&lt;class T&gt; struct ConvertToPyObject&lt;PP&lt;T&gt; &gt;
+@@ -624,7 +674,44 @@
+ 
+ //#####  ConvertFromPyObject Implementations  #################################
+ 
++template&lt;class U, bool is_enum&gt; 
++struct StaticConvertEnumFromPyObject 
++{
++    static U convert(PyObject* x, bool print_traceback)
++    {
++        PLERROR(&quot;Cannot convert this object by value from python (type=%s).&quot;,
++                TypeTraits&lt;U&gt;::name().c_str());
++        return U();//to silence compiler
++    }
++};
++    
++template&lt;class U&gt;
++struct StaticConvertEnumFromPyObject&lt;U, true&gt;
++{
++    static U convert(PyObject* x, bool print_traceback)
++    {
++        return static_cast&lt;U&gt;(
++            ConvertFromPyObject&lt;int&gt;::convert(x, print_traceback));
++    }
++};
++
+ template &lt;class T&gt;
++T ConvertFromPyObject&lt;T&gt;::convert(PyObject* x, bool print_traceback)
++{
++    return StaticConvertEnumFromPyObject&lt;T, boost::is_enum&lt;T&gt;::value&gt;
++        ::convert(x, print_traceback);
++    /*
++    if(boost::is_enum&lt;T&gt;::value)
++        return ConvertFromPyObject&lt;int&gt;::convert(x, print_traceback);
++    
++    PLERROR(&quot;Cannot convert this object by value from python (type=%s).&quot;,
++            TypeTraits&lt;T&gt;::name().c_str());
++    return T();//to silence compiler
++    */
++}
++
++
++template &lt;class T&gt;
+ PP&lt;T&gt; ConvertFromPyObject&lt;PP&lt;T&gt; &gt;::convert(PyObject* pyobj, bool print_traceback)
+ {
+     PLASSERT( pyobj );
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001241.html">[Plearn-commits] r7793 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001243.html">[Plearn-commits] r7795 - trunk/plearn/base
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1242">[ date ]</a>
+              <a href="thread.html#1242">[ thread ]</a>
+              <a href="subject.html#1242">[ subject ]</a>
+              <a href="author.html#1242">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,358 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8698 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8698%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200803172109.m2HL9uOq008957%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002145.html">
+   <LINK REL="Next"  HREF="002147.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8698 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8698%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200803172109.m2HL9uOq008957%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8698 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Mon Mar 17 22:09:56 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002145.html">[Plearn-commits] r8697 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="002147.html">[Plearn-commits] r8699 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2146">[ date ]</a>
+              <a href="thread.html#2146">[ thread ]</a>
+              <a href="subject.html#2146">[ subject ]</a>
+              <a href="author.html#2146">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2008-03-17 22:09:56 +0100 (Mon, 17 Mar 2008)
+New Revision: 8698
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+Log:
+Change the way the training stats are computed. You can now use
+&quot;train_stats_window&quot; to choose on how many training samples they will be
+computed. The default behaviour is the number of samples in the training
+set.
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2008-03-17 19:58:23 UTC (rev 8697)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2008-03-17 21:09:56 UTC (rev 8698)
+@@ -75,6 +75,7 @@
+     background_gibbs_update_ratio(0),
+     gibbs_chain_reinit_freq( INT_MAX ),
+     use_mean_field_contrastive_divergence( false ),
++    train_stats_window( -1 ),
+     minibatch_size( 0 ),
+     initialize_gibbs_chain( false ),
+     final_module_has_learning_rate( false ),
+@@ -286,6 +287,12 @@
+                   &quot;Indication that mean-field contrastive divergence\n&quot;
+                   &quot;should be used instead of standard contrastive divergence.\n&quot;);
+ 
++    declareOption(ol, &quot;train_stats_window&quot;,
++                  &amp;DeepBeliefNet::train_stats_window,
++                  OptionBase::buildoption,
++                  &quot;The number of samples to use to compute training stats.\n&quot;
++                  &quot;-1 (default) means the number of training samples.\n&quot;);
++
+     declareOption(ol, &quot;top_layer_joint_cd&quot;, &amp;DeepBeliefNet::top_layer_joint_cd,
+                   OptionBase::buildoption,
+                   &quot;Wether we do a step of joint contrastive divergence on&quot;
+@@ -848,6 +855,10 @@
+         &lt;&lt; &quot;, target nstages = &quot; &lt;&lt; nstages &lt;&lt; endl;
+ 
+     PLASSERT( train_set );
++    int n_train_stats_samples = (train_stats_window &gt;= 0)
++        ? train_stats_window
++        : train_set-&gt;length();
++
+     if (stage == 0) {
+         // Training set-dependent initialization.
+         minibatch_size = batch_size &gt; 0 ? batch_size : train_set-&gt;length();
+@@ -901,27 +912,43 @@
+                                   nstages - stage );
+ 
+         setLearningRate( grad_learning_rate );
+-        for( ; stage&lt;nstages; stage++)
++        train_stats-&gt;forget();
++
++        for( ; stage&lt;nstages; stage+=minibatch_size)
+         {
+             initialize_gibbs_chain=(stage%gibbs_chain_reinit_freq==0);
++
+             // Do a step every 'minibatch_size' examples.
+-            if (stage % minibatch_size == 0) {
+-                int sample_start = stage % nsamples;
+-                if( !fast_exact_is_equal( grad_decrease_ct, 0. ) )
+-                    setLearningRate( grad_learning_rate
+-                                     / (1. + grad_decrease_ct * stage ));
+-                if (batch_size &gt; 1 || minibatch_hack) {
+-                    train_set-&gt;getExamples(sample_start, minibatch_size,
+-                                           inputs, targets, weights, NULL, true);
+-                    train_costs_m.fill(MISSING_VALUE);
+-                    if (reconstruct_layerwise)
+-                        train_costs_m.column(reconstruction_cost_index).clear();
+-                    onlineStep( inputs, targets, train_costs_m );
+-                } else {
+-                    train_set-&gt;getExample(sample_start, input, target, weight);
+-                    onlineStep( input, target, train_costs );
+-                }
++            int sample_start = stage % nsamples;
++            if( !fast_exact_is_equal( grad_decrease_ct, 0. ) )
++                setLearningRate( grad_learning_rate
++                                 / (1. + grad_decrease_ct * stage ));
++
++            if (batch_size &gt; 1 || minibatch_hack)
++            {
++                train_set-&gt;getExamples(sample_start, minibatch_size,
++                                       inputs, targets, weights, NULL, true);
++                train_costs_m.fill(MISSING_VALUE);
++
++                if (reconstruct_layerwise)
++                    train_costs_m.column(reconstruction_cost_index).clear();
++
++                onlineStep( inputs, targets, train_costs_m );
+             }
++            else
++            {
++                train_set-&gt;getExample(sample_start, input, target, weight);
++                onlineStep( input, target, train_costs );
++            }
++
++            // Update stats if we are in the last n_train_stats_samples
++            if (stage &gt;= nstages - n_train_stats_samples)
++                if (minibatch_size &gt; 1 || minibatch_hack)
++                    for (int k = 0; k &lt; minibatch_size; k++)
++                        train_stats-&gt;update(train_costs_m(k));
++                else
++                    train_stats-&gt;update(train_costs);
++
+             if( pb )
+                 pb-&gt;update( stage + 1 );
+         }
+@@ -955,17 +982,17 @@
+ 
+             for( ; stage&lt;end_stage ; stage++ )
+             {
+-                 if( !fast_exact_is_equal( cd_decrease_ct, 0. ) )
+-                 {
+-                     real lr = cd_learning_rate 
+-                         / (1. + cd_decrease_ct * 
+-                            (stage - cumulative_schedule[i]));
+-                     
+-                     layers[i]-&gt;setLearningRate( lr );
+-                     connections[i]-&gt;setLearningRate( lr );
+-                     layers[i+1]-&gt;setLearningRate( lr );
+-                 }
+-                 
++                if( !fast_exact_is_equal( cd_decrease_ct, 0. ) )
++                {
++                    real lr = cd_learning_rate
++                        / (1. + cd_decrease_ct *
++                           (stage - cumulative_schedule[i]));
++
++                    layers[i]-&gt;setLearningRate( lr );
++                    connections[i]-&gt;setLearningRate( lr );
++                    layers[i+1]-&gt;setLearningRate( lr );
++                }
++
+                 initialize_gibbs_chain=(stage%gibbs_chain_reinit_freq==0);
+                 // Do a step every 'minibatch_size' examples.
+                 if (stage % minibatch_size == 0) {
+@@ -1016,8 +1043,8 @@
+             {
+                 if( !fast_exact_is_equal( cd_decrease_ct, 0. ) )
+                 {
+-                    real lr = cd_learning_rate / 
+-                        (1. + cd_decrease_ct * 
++                    real lr = cd_learning_rate /
++                        (1. + cd_decrease_ct *
+                          (stage - cumulative_schedule[n_layers-2]));
+                     joint_layer-&gt;setLearningRate( lr );
+                     classification_module-&gt;joint_connection-&gt;setLearningRate( lr );
+@@ -1057,29 +1084,29 @@
+             MODULE_LOG &lt;&lt; &quot;  up_down_stage = &quot; &lt;&lt; up_down_stage &lt;&lt; endl;
+             MODULE_LOG &lt;&lt; &quot;  up_down_nstages = &quot; &lt;&lt; up_down_nstages &lt;&lt; endl;
+             MODULE_LOG &lt;&lt; &quot;  up_down_learning_rate = &quot; &lt;&lt; up_down_learning_rate &lt;&lt; endl;
+-            
++
+             int init_stage = up_down_stage;
+             if( report_progress )
+                 pb = new ProgressBar( &quot;Up-down gradient descent algorithm &quot;
+                                       + classname(),
+                                       up_down_nstages - init_stage );
+-            
++
+             setLearningRate( up_down_learning_rate );
+ 
+             train_stats-&gt;forget();
+             int sample_start;
+             for( ; up_down_stage&lt;up_down_nstages ; up_down_stage++ )
+             {
+-                sample_start = up_down_stage % nsamples;                
++                sample_start = up_down_stage % nsamples;
+                 if( !fast_exact_is_equal( up_down_decrease_ct, 0. ) )
+                     setLearningRate( up_down_learning_rate
+-                                     / (1. + up_down_decrease_ct * 
++                                     / (1. + up_down_decrease_ct *
+                                         up_down_stage) );
+-                
++
+                 train_set-&gt;getExample( sample_start, input, target, weight );
+                 upDownStep( input, target, train_costs );
+                 train_stats-&gt;update( train_costs );
+-                
++
+                 if( pb )
+                     pb-&gt;update( up_down_stage - init_stage + 1 );
+             }
+@@ -1101,41 +1128,38 @@
+                                   end_stage - init_stage );
+ 
+         setLearningRate( grad_learning_rate );
++        train_stats-&gt;forget();
+ 
+-        train_stats-&gt;forget();
+-        bool update_stats = false;
+-        for( ; stage&lt;end_stage ; stage++ )
++        for( ; stage&lt;end_stage ; stage+=minibatch_size )
+         {
++            int sample_start = stage % nsamples;
+ 
+-            // Update every 'minibatch_size' samples.
+-            if (stage % minibatch_size == 0) {
+-                int sample_start = stage % nsamples;
+-                // Only update train statistics for the last 'epoch', i.e. last
+-                // 'nsamples' seen.
+-                update_stats = update_stats || stage &gt;= end_stage - nsamples;
++            if( !fast_exact_is_equal( grad_decrease_ct, 0. ) )
++                setLearningRate( grad_learning_rate
++                        / (1. + grad_decrease_ct *
++                           (stage - cumulative_schedule[n_layers-1])) );
+ 
+-                if( !fast_exact_is_equal( grad_decrease_ct, 0. ) )
+-                    setLearningRate( grad_learning_rate
+-                            / (1. + grad_decrease_ct * 
+-                               (stage - cumulative_schedule[n_layers-1])) );
++            if (minibatch_size &gt; 1 || minibatch_hack)
++            {
++                train_set-&gt;getExamples(sample_start, minibatch_size, inputs,
++                        targets, weights, NULL, true);
++                train_costs_m.fill(MISSING_VALUE);
++                fineTuningStep(inputs, targets, train_costs_m);
++            }
++            else
++            {
++                train_set-&gt;getExample( sample_start, input, target, weight );
++                fineTuningStep( input, target, train_costs );
++            }
+ 
+-                if (minibatch_size &gt; 1 || minibatch_hack) {
+-                    train_set-&gt;getExamples(sample_start, minibatch_size, inputs,
+-                            targets, weights, NULL, true);
+-                    train_costs_m.fill(MISSING_VALUE);
+-                    fineTuningStep(inputs, targets, train_costs_m);
+-                } else {
+-                    train_set-&gt;getExample( sample_start, input, target, weight );
+-                    fineTuningStep( input, target, train_costs );
+-                }
+-                if (update_stats)
+-                    if (minibatch_size &gt; 1 || minibatch_hack)
+-                        for (int k = 0; k &lt; minibatch_size; k++)
+-                            train_stats-&gt;update(train_costs_m(k));
+-                    else
+-                        train_stats-&gt;update( train_costs );
++            // Update stats if we are in the last n_train_stats_samples samples
++            if (stage &gt;= end_stage - n_train_stats_samples)
++                if (minibatch_size &gt; 1 || minibatch_hack)
++                    for (int k = 0; k &lt; minibatch_size; k++)
++                        train_stats-&gt;update(train_costs_m(k));
++                else
++                    train_stats-&gt;update(train_costs);
+ 
+-            }
+             if( pb )
+                 pb-&gt;update( stage - init_stage + 1 );
+         }
+@@ -1154,11 +1178,11 @@
+     if (verbosity &gt; 1)
+         cout &lt;&lt; &quot;The cumulative time spent in train() up until now is &quot; &lt;&lt; cumulative_training_time &lt;&lt; &quot; cpu seconds&quot; &lt;&lt; endl;
+ 
+-    train_costs_m.column(training_cpu_time_cost_index).fill(cpu_time);
+-    train_costs_m.column(cumulative_training_time_cost_index).fill(cumulative_training_time);
+-    train_stats-&gt;update( train_costs_m );
++    train_costs.fill(MISSING_VALUE);
++    train_costs[training_cpu_time_cost_index] = cpu_time;
++    train_costs[cumulative_training_time_cost_index] = cumulative_training_time;
++    train_stats-&gt;update( train_costs );
+     train_stats-&gt;finalize();
+-
+ }
+ 
+ ////////////////
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2008-03-17 19:58:23 UTC (rev 8697)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2008-03-17 21:09:56 UTC (rev 8698)
+@@ -75,7 +75,7 @@
+     //! The learning rate used in the up-down algorithm during the 
+     //! unsupervised fine tuning gradient descent
+     real up_down_learning_rate;
+-    
++
+     //! The decrease constant of the learning rate used in the
+     //! up-down algorithm during the unsupervised fine tuning gradient descent
+     real up_down_decrease_ct;
+@@ -197,6 +197,10 @@
+     //! should be used instead of standard contrastive divergence.
+     bool use_mean_field_contrastive_divergence;
+ 
++    //! The number of samples to use to compute training stats.
++    //! -1 (default) means the number of training samples.
++    int train_stats_window;
++
+     //#####  Not Options  #####################################################
+ 
+     //! Timer for monitoring the speed
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002145.html">[Plearn-commits] r8697 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="002147.html">[Plearn-commits] r8699 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2146">[ date ]</a>
+              <a href="thread.html#2146">[ thread ]</a>
+              <a href="subject.html#2146">[ subject ]</a>
+              <a href="author.html#2146">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

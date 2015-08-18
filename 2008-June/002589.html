@@ -1,0 +1,225 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9141 - trunk/python_modules/plearn/gui_tools
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9141%20-%20trunk/python_modules/plearn/gui_tools&In-Reply-To=%3C200806181458.m5IEwp98008219%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002588.html">
+   <LINK REL="Next"  HREF="002590.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9141 - trunk/python_modules/plearn/gui_tools</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9141%20-%20trunk/python_modules/plearn/gui_tools&In-Reply-To=%3C200806181458.m5IEwp98008219%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9141 - trunk/python_modules/plearn/gui_tools">chapados at mail.berlios.de
+       </A><BR>
+    <I>Wed Jun 18 16:58:51 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002588.html">[Plearn-commits] r9140 - trunk/plearn_learners/generic
+</A></li>
+        <LI>Next message: <A HREF="002590.html">[Plearn-commits] r9142 - in trunk/plearn: base io
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2589">[ date ]</a>
+              <a href="thread.html#2589">[ thread ]</a>
+              <a href="subject.html#2589">[ subject ]</a>
+              <a href="author.html#2589">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2008-06-18 16:58:51 +0200 (Wed, 18 Jun 2008)
+New Revision: 9141
+
+Added:
+   trunk/python_modules/plearn/gui_tools/__init__.py
+Modified:
+   trunk/python_modules/plearn/gui_tools/console_logger.py
+   trunk/python_modules/plearn/gui_tools/xp_workbench.py
+Log:
+More robust parsing of command-line options
+
+Added: trunk/python_modules/plearn/gui_tools/__init__.py
+===================================================================
+
+Modified: trunk/python_modules/plearn/gui_tools/console_logger.py
+===================================================================
+--- trunk/python_modules/plearn/gui_tools/console_logger.py	2008-06-18 14:37:01 UTC (rev 9140)
++++ trunk/python_modules/plearn/gui_tools/console_logger.py	2008-06-18 14:58:51 UTC (rev 9141)
+@@ -1,4 +1,4 @@
+-# xp_workbench.py
++# console_logger.py
+ # Copyright (C) 2008 by Nicolas Chapados
+ #
+ #  Redistribution and use in source and binary forms, with or without
+
+Modified: trunk/python_modules/plearn/gui_tools/xp_workbench.py
+===================================================================
+--- trunk/python_modules/plearn/gui_tools/xp_workbench.py	2008-06-18 14:37:01 UTC (rev 9140)
++++ trunk/python_modules/plearn/gui_tools/xp_workbench.py	2008-06-18 14:58:51 UTC (rev 9141)
+@@ -154,7 +154,8 @@
+         experiment is currently running.  If so, pop a dialog to ask
+         whether it's really OK to close the thing.
+         &quot;&quot;&quot;
+-        workbench = info.ui.context['object']
++        #workbench = info.ui.context['object']
++        workbench = info.object
+         if workbench.curworker is not None:
+             msg = &quot;An experiment is currently running.\n&quot; \
+                   &quot;Do you really want to interrupt it and\n&quot; \
+@@ -187,14 +188,14 @@
+ 
+     ## The main view
+     traits_view  = View(
+-        HSplit(Group(Item(&quot;script_params@&quot;, show_label=False, springy=True),
+-                     spring, spring,
++        HSplit(Group(Group(Item(&quot;script_params@&quot;, show_label=False, springy=False)),
++                     #spring,
+                      Group(Item(&quot;launch&quot;, springy=True, enabled_when=&quot;curworker is None&quot;),
+                            Item(&quot;cancel&quot;, springy=True, enabled_when=&quot;curworker is not None&quot;),
+                            show_labels=False, orientation=&quot;horizontal&quot;)),
+                Group(Item(&quot;experiments@&quot;, dock=&quot;fixed&quot;, show_label=False, width=300),
+                      springy=True)),
+-        resizable=True,
++        resizable=True, #scrollable=True,
+         height=0.75, width=0.75,
+         buttons=NoButtons,
+         handler=WorkbenchHandler() )
+@@ -285,9 +286,29 @@
+             if arg.startswith('-'):
+                 continue
+             if '=' in arg:
+-                (k,v) = arg.split('=')
+-                exec(&quot;params.%s = %s&quot; % (k,v))
++                (k,v) = arg.split('=', 1)
++                v = v.replace(&quot;'&quot;, &quot;\\'&quot;)
+ 
++                ## For compatibility between mixed plnamespace and traits,
++                ## if the first argument to a compound option does not
++                ## exist, skip it without complaining -- it is destined for
++                ## plnamespace, which have been processed before
++                if '.' in k:
++                    k_parts = k.split('.')
++                    try:
++                        getattr(params, k_parts[0])
++                    except AttributeError:
++                        continue
++                
++                if isinstance(eval(&quot;params.%s&quot; % k), str):
++                    exec(&quot;params.%s = '%s'&quot; % (k,v))
++                else:
++                    ## Potentially dangerous use of 'eval' with
++                    ## command-line arguments; expeditive solution for now,
++                    ## but may opt for more restricted/lenient parsing in
++                    ## the future, like we had for plargs.
++                    exec(&quot;params.%s = eval('%s')&quot; % (k,v))
++
+         return params
+ 
+ 
+@@ -297,6 +318,59 @@
+                             datetime.now().strftime(&quot;expdir_%Y%m%d_%H%m%S&quot;))
+ 
+ 
++#####  Top-Level Options  ###################################################
++
++class SingletonOptions(HasStrictTraits):
++    &quot;&quot;&quot;Subclasses of this class are singletons, designed to provide an
++    approximate drop-in traits-based replacement to plnamespace.  If you
++    don't want or need the singleton behavior, simply have your options
++    classes inherit from HasTraits or HasStrictTraits.
++
++    Note: this class inherits from HasStrictTraits since it is intended to
++    mimic plnamespace as closely as possible to ease migration.  It should
++    be avoided for writing new code.
++    &quot;&quot;&quot;
++    class __metaclass__(HasStrictTraits.__metaclass__):
++        __instances = {}
++        
++        def __call__(cls, *args, **kwargs):
++            klass_key = str(cls)
++            if klass_key not in SingletonOptions.__instances:
++                instance = type.__call__(cls, *args, **kwargs)
++                SingletonOptions.__instances[klass_key] = instance
++                return instance
++            else:
++                return SingletonOptions.__instances[klass_key]
++                
++
++class TopLevelOptions(HasStrictTraits):
++    &quot;&quot;&quot;Utility class from which one can inherit for top-level options.
++    It provides a reasonable default traits_view implementation.
++    &quot;&quot;&quot;
++    def trait_view(self, name=None, view_element=None):
++        if (name or view_element) != None:
++            return super(TopLevelOptions, self).trait_view( name=name,
++                                                            view_element=view_element )
++
++        items  = [ Item(t+&quot;@&quot;) for t in self.trait_names()
++                   if t not in [ &quot;expdir_root&quot;, &quot;trait_added&quot;, &quot;trait_modified&quot; ] ]
++        kwargs = { &quot;show_labels&quot;:False, &quot;layout&quot;:&quot;tabbed&quot; }
++        return View(Group(*items, **kwargs))
++
++    @staticmethod
++    def print_all_traits(root, out = sys.stdout, prefix=&quot;&quot;):
++        &quot;&quot;&quot;Recursively print out all traits in a key=value format.
++        Useful for generating metainfo files for experiments.
++        &quot;&quot;&quot;
++        for (trait_name, trait_value) in root.get():
++            if trait_name in [&quot;trait_added&quot;, &quot;trait_modified&quot;]:
++                continue
++            elif isinstance(trait_value, &quot;HasTraits&quot;):
++                print_all_traits(trait_value, out, trait_name+&quot;.&quot;)
++            else:
++                print prefix+trait_name+&quot; = &quot;+str(trait_value)
++    
++
+ #####  Utilities  ###########################################################
+ 
+ def _async_raise(tid, exctype):
+@@ -325,9 +399,9 @@
+         weight_decay      = Trait(1e-8,  desc=&quot;weight decay to use for neural-net training&quot;)
+ 
+     class MinorOpt(HasStrictTraits):
+-        earlystop_fraction  = Trait(  0.0, Desc=&quot;fraction of training set to use for early stopping&quot;)
+-        earlystop_check     = Trait(    1, Desc=&quot;check early-stopping criterion every N epochs&quot;)
+-        earlystop_minstage  = Trait(    1, Desc=&quot;minimum optimization stage after which early-stopping can kick in&quot;)
++        earlystop_fraction  = Trait(  0.0, desc=&quot;fraction of training set to use for early stopping&quot;)
++        earlystop_check     = Trait(    1, desc=&quot;check early-stopping criterion every N epochs&quot;)
++        earlystop_minstage  = Trait(    1, desc=&quot;minimum optimization stage after which early-stopping can kick in&quot;)
+ 
+     class AllOpt(HasStrictTraits):
+         expdir_root = Delegate(&quot;GlobalOpt&quot;)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002588.html">[Plearn-commits] r9140 - trunk/plearn_learners/generic
+</A></li>
+	<LI>Next message: <A HREF="002590.html">[Plearn-commits] r9142 - in trunk/plearn: base io
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2589">[ date ]</a>
+              <a href="thread.html#2589">[ thread ]</a>
+              <a href="subject.html#2589">[ subject ]</a>
+              <a href="author.html#2589">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

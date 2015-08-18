@@ -1,0 +1,177 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8548 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8548%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200802202009.m1KK9GGT002525%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001995.html">
+   <LINK REL="Next"  HREF="001997.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8548 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8548%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200802202009.m1KK9GGT002525%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8548 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Wed Feb 20 21:09:16 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001995.html">[Plearn-commits] r8547 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001997.html">[Plearn-commits] r8549 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1996">[ date ]</a>
+              <a href="thread.html#1996">[ thread ]</a>
+              <a href="subject.html#1996">[ subject ]</a>
+              <a href="author.html#1996">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-02-20 21:09:16 +0100 (Wed, 20 Feb 2008)
+New Revision: 8548
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+Log:
+Added an option to use a sample for the top layer statistic.
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2008-02-20 20:01:04 UTC (rev 8547)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2008-02-20 20:09:16 UTC (rev 8548)
+@@ -66,6 +66,7 @@
+     use_classification_cost( true ),
+     reconstruct_layerwise( false ),
+     i_output_layer( -1 ),
++    use_sample_for_up_layer( false ),
+     online ( false ),
+     background_gibbs_update_ratio(0),
+     gibbs_chain_reinit_freq( INT_MAX ),
+@@ -228,6 +229,11 @@
+                   &quot;(except the first one) of the RBM. These costs are not\n&quot;
+                   &quot;back-propagated to previous layers.\n&quot;);
+ 
++    declareOption(ol, &quot;use_sample_for_up_layer&quot;, &amp;DeepBeliefNet::use_sample_for_up_layer,
++                  OptionBase::buildoption,
++                  &quot;Indication that the update of the top layer during CD uses\n&quot;
++                  &quot;a sample, not the expectation.\n&quot;);
++
+     declareOption(ol, &quot;online&quot;, &amp;DeepBeliefNet::online,
+                   OptionBase::buildoption,
+                   &quot;If true then all unsupervised training stages (as well as\n&quot;
+@@ -1996,13 +2002,16 @@
+         pos_up_vals.resize(minibatch_size, up_layer-&gt;size);
+ 
+         pos_down_vals &lt;&lt; down_layer-&gt;getExpectations();
+-        pos_up_vals &lt;&lt; up_layer-&gt;getExpectations();
++        if( !use_sample_for_up_layer )
++            pos_up_vals &lt;&lt; up_layer-&gt;getExpectations();
+ 
+         // down propagation, starting from a sample of up_layer
+         if (background_gibbs_update_ratio&lt;1)
+             // then do some contrastive divergence, o/w only background Gibbs
+         {
+             up_layer-&gt;generateSamples();
++            if( use_sample_for_up_layer )
++                pos_up_vals &lt;&lt; up_layer-&gt;samples;
+             connection-&gt;setAsUpInputs( up_layer-&gt;samples );
+             down_layer-&gt;getAllActivations( connection, 0, true );
+             down_layer-&gt;computeExpectations();
+@@ -2015,7 +2024,14 @@
+             // accumulate negative stats
+             // no need to deep-copy because the values won't change before update
+             Mat neg_down_vals = down_layer-&gt;samples;
+-            Mat neg_up_vals = up_layer-&gt;getExpectations();
++            Mat neg_up_vals;
++            if( use_sample_for_up_layer)
++            {
++                up_layer-&gt;generateSamples();
++                neg_up_vals = up_layer-&gt;samples;
++            }
++            else
++                neg_up_vals = up_layer-&gt;getExpectations();
+ 
+             if (background_gibbs_update_ratio==0)
+             // update here only if there is ONLY contrastive divergence
+@@ -2097,7 +2113,10 @@
+         pos_up_val.resize( up_layer-&gt;size );
+ 
+         pos_down_val &lt;&lt; down_layer-&gt;expectation;
+-        pos_up_val &lt;&lt; up_layer-&gt;expectation;
++        if( use_sample_for_up_layer )
++            pos_up_val &lt;&lt; up_layer-&gt;sample;
++        else
++            pos_up_val &lt;&lt; up_layer-&gt;expectation;
+ 
+         // down propagation, starting from a sample of up_layer
+         connection-&gt;setAsUpInput( up_layer-&gt;sample );
+@@ -2113,8 +2132,16 @@
+         // accumulate negative stats
+         // no need to deep-copy because the values won't change before update
+         Vec neg_down_val = down_layer-&gt;sample;
+-        Vec neg_up_val = up_layer-&gt;expectation;
++        Vec neg_up_val;
++        if( use_sample_for_up_layer )
++        {
++            up_layer-&gt;generateSample();
++            neg_up_val = up_layer-&gt;sample;
++        }
++        else
++            neg_up_val = up_layer-&gt;expectation;
+ 
++
+         // update
+         down_layer-&gt;update( pos_down_val, neg_down_val );
+         connection-&gt;update( pos_down_val, pos_up_val,
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2008-02-20 20:01:04 UTC (rev 8547)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2008-02-20 20:09:16 UTC (rev 8548)
+@@ -144,6 +144,10 @@
+     //! costs are not back-propagated to previous layers.
+     TVec&lt; PP&lt;CostModule&gt; &gt; partial_costs;
+ 
++    //! Indication that the update of the top layer during CD uses
++    //! a sample, not the expectation.
++    bool use_sample_for_up_layer;
++
+     //#####  Public Learnt Options  ###########################################
+     //! The module computing the probabilities of the different classes.
+     PP&lt;RBMClassificationModule&gt; classification_module;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001995.html">[Plearn-commits] r8547 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001997.html">[Plearn-commits] r8549 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1996">[ date ]</a>
+              <a href="thread.html#1996">[ thread ]</a>
+              <a href="subject.html#1996">[ subject ]</a>
+              <a href="author.html#1996">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

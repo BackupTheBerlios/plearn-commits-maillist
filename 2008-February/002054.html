@@ -1,0 +1,193 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8606 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8606%20-%20trunk/plearn/vmat&In-Reply-To=%3C200802291657.m1TGv8Ix014333%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002053.html">
+   <LINK REL="Next"  HREF="002055.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8606 - trunk/plearn/vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8606%20-%20trunk/plearn/vmat&In-Reply-To=%3C200802291657.m1TGv8Ix014333%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8606 - trunk/plearn/vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Feb 29 17:57:08 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002053.html">[Plearn-commits] r8605 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="002055.html">[Plearn-commits] r8607 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2054">[ date ]</a>
+              <a href="thread.html#2054">[ thread ]</a>
+              <a href="subject.html#2054">[ subject ]</a>
+              <a href="author.html#2054">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-02-29 17:57:07 +0100 (Fri, 29 Feb 2008)
+New Revision: 8606
+
+Modified:
+   trunk/plearn/vmat/VMatrix.cc
+   trunk/plearn/vmat/VMatrix.h
+Log:
+Added function VMatrix::updateMtime() that will update the mtime_ to the more recent value. A value of 0 is unknow. If it is called with a value of 0, we assume that a dependence have an mtime of 0, thus we should have an mtime of 0 too. We remember this and subsequent call to updateMtime() won't change the mtime.
+
+
+Modified: trunk/plearn/vmat/VMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/VMatrix.cc	2008-02-29 16:32:43 UTC (rev 8605)
++++ trunk/plearn/vmat/VMatrix.cc	2008-02-29 16:57:07 UTC (rev 8606)
+@@ -46,7 +46,7 @@
+ #include &lt;plearn/base/tostring.h&gt;
+ #include &lt;plearn/base/lexical_cast.h&gt;
+ #include &lt;plearn/base/stringutils.h&gt; //!&lt; For pgetline()
+-#include &lt;plearn/io/fileutils.h&gt;     //!&lt; For isfile()
++#include &lt;plearn/io/fileutils.h&gt;     //!&lt; For isfile() mtime()
+ #include &lt;plearn/io/load_and_save.h&gt;
+ #include &lt;plearn/math/random.h&gt;      //!&lt; For uniform_multinomial_sample()
+ #include &lt;plearn/base/RemoteDeclareMethod.h&gt;
+@@ -74,9 +74,9 @@
+ 
+ VMatrix::VMatrix(bool call_build_):
+     inherited   (call_build_),
++    mtime_      (0),
+     length_     (-1),
+     width_      (-1),
+-    mtime_      (0),
+     inputsize_  (-1),
+     targetsize_ (-1),
+     weightsize_ (-1),
+@@ -90,9 +90,9 @@
+ 
+ VMatrix::VMatrix(int the_length, int the_width, bool call_build_):
+     inherited                       (call_build_),
++    mtime_                          (0),
+     length_                         (the_length),
+     width_                          (the_width),
+-    mtime_                          (0),
+     inputsize_                      (-1),
+     targetsize_                     (-1),
+     weightsize_                     (-1),
+@@ -1156,7 +1156,7 @@
+ /////////////////////
+ void VMatrix::setMetaInfoFrom(const VMatrix* vm)
+ {
+-    setMtime(max(getMtime(),vm-&gt;getMtime()));
++    updateMtime(vm-&gt;getMtime());
+ 
+     // copy length and width from vm if not set
+     if(length_&lt;0)
+@@ -1416,6 +1416,20 @@
+     return field_stats;
+ }
+ 
++/////////////////
++// updateMtime //
++/////////////////
++void VMatrix::updateMtime(time_t t)
++{
++    if(t&gt;mtime_ &amp;&amp; mtime_!=numeric_limits&lt;time_t&gt;::max())
++        mtime_=t;
++    else if(t==0)
++        mtime_=numeric_limits&lt;time_t&gt;::max();
++}
++void VMatrix::updateMtime(const PPath&amp; p){updateMtime(mtime(p));}
++
++void VMatrix::updateMtime(VMat v){updateMtime(v-&gt;getMtime());}
++
+ ////////////////////
+ // isFileUpToDate //
+ ////////////////////
+
+Modified: trunk/plearn/vmat/VMatrix.h
+===================================================================
+--- trunk/plearn/vmat/VMatrix.h	2008-02-29 16:32:43 UTC (rev 8605)
++++ trunk/plearn/vmat/VMatrix.h	2008-02-29 16:57:07 UTC (rev 8606)
+@@ -89,12 +89,12 @@
+     /// Used in the default dot(i,j) method to store the i-th and j-th rows.
+     mutable Vec dotrow_1;
+     mutable Vec dotrow_2;
++    time_t mtime_;          ///&lt; Time of &quot;last modification&quot; of data files.
+ 
+ protected:
+ 
+     mutable int length_;    ///&lt; Length of the VMatrix.
+     int width_;             ///&lt; Width of the VMatrix.
+-    time_t mtime_;          ///&lt; Time of &quot;last modification&quot; of data files.
+ 
+     /// For training/testing data sets we assume each row is composed of 4
+     /// parts: an input part, a target part, and a weight part.  These fields
+@@ -364,14 +364,32 @@
+      *  result returned is typically based on mtime of the files contianing
+      *  this matrix's data when the object is constructed.  mtime_ defaults to
+      *  0, so that's what will be returned by default, if the time was never
+-     *  set by a call to setMtime(t) (see below).
++     *  set by a call to updateMtime(t) or setMtime(t)(see below).
+      */
+-    inline time_t getMtime() const { return mtime_; }
++    inline time_t getMtime() const { return mtime_==numeric_limits&lt;time_t&gt;::max()? 0: mtime_; }
+ 
+     /**
+-     *  Sets the &quot;last modification&quot; time for this matrix For matrices on disk,
++     *  Update the &quot;last modification&quot; time for this matrix.
++     *  this should be called by the constructor for all dependence,
++     *  file or other VMatrix, VMat
++     *  This fonction remember the time that is the more recent. If
++     *  a dependence have a mtime of 0, getMtime() will always return 0
++     *  as if a dependence have an unknow mtime, we should have an unknow mtime
++     */
++    void updateMtime(time_t t);
++
++    void updateMtime(const PPath&amp; p);
++
++    void updateMtime(const VMatrix&amp; v){updateMtime(v.getMtime());}
++
++    void updateMtime(VMat v);
++
++    /**
++     *  Preferably use updateMtime()!
++     *  Sets the &quot;last modification&quot; time for this matrix,
+      *  this should be called by the constructor to reflect the mtime of the
+      *  disk files.
++     *  @see updateMtime 
+      */
+     inline void setMtime(time_t t) { mtime_ = t; }
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002053.html">[Plearn-commits] r8605 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="002055.html">[Plearn-commits] r8607 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2054">[ date ]</a>
+              <a href="thread.html#2054">[ thread ]</a>
+              <a href="subject.html#2054">[ subject ]</a>
+              <a href="author.html#2054">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

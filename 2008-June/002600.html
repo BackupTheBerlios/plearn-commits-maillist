@@ -1,0 +1,789 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9152 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9152%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200806201435.m5KEZN4t024269%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002599.html">
+   <LINK REL="Next"  HREF="002601.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9152 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9152%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200806201435.m5KEZN4t024269%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9152 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Fri Jun 20 16:35:23 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002599.html">[Plearn-commits] r9151 - trunk/plearn_learners_experimental
+</A></li>
+        <LI>Next message: <A HREF="002601.html">[Plearn-commits] r9153 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2600">[ date ]</a>
+              <a href="thread.html#2600">[ thread ]</a>
+              <a href="subject.html#2600">[ subject ]</a>
+              <a href="author.html#2600">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-06-20 16:35:22 +0200 (Fri, 20 Jun 2008)
+New Revision: 9152
+
+Added:
+   trunk/plearn_learners_experimental/ManifoldParzen.cc
+   trunk/plearn_learners_experimental/ManifoldParzen.h
+Log:
+Another, less memory intensive, version of Manifold Parzen Windows...
+
+
+Added: trunk/plearn_learners_experimental/ManifoldParzen.cc
+===================================================================
+--- trunk/plearn_learners_experimental/ManifoldParzen.cc	2008-06-20 14:32:34 UTC (rev 9151)
++++ trunk/plearn_learners_experimental/ManifoldParzen.cc	2008-06-20 14:35:22 UTC (rev 9152)
+@@ -0,0 +1,502 @@
++// -*- C ++ -*-
++
++// ManifoldParzen.cc
++//
++// Copyright (C) 2007 Hugo Larochelle
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Hugo Larochelle
++
++/*! \file ManifoldParzen.cc */
++
++
++#define PL_LOG_MODULE_NAME &quot;ManifoldParzen&quot;
++#include &lt;plearn/io/pl_log.h&gt;
++
++#include &quot;ManifoldParzen.h&quot;
++#include &lt;plearn/vmat/VMat_computeNearestNeighbors.h&gt;
++#include &lt;plearn/vmat/GetInputVMatrix.h&gt;
++#include &lt;plearn_learners/online/GradNNetLayerModule.h&gt;
++#include &lt;plearn/math/plapack.h&gt;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    ManifoldParzen,
++    &quot;Manifold Parzen Windows classifier and distribution&quot;,
++    &quot;&quot;);
++  
++ManifoldParzen::ManifoldParzen() :
++    nneighbors( 1 ),
++    ncomponents( 1 ),
++    global_lambda0( 0 ),
++    learn_mu( false ),
++    n_classes( -1 )
++{
++}
++
++void ManifoldParzen::declareOptions(OptionList&amp; ol)
++{
++    declareOption(ol, &quot;nneighbors&quot;, 
++                  &amp;ManifoldParzen::nneighbors,
++                  OptionBase::buildoption,
++                  &quot;Number of nearest neighbors to use to learn &quot;
++                  &quot;the manifold structure..\n&quot;);
++
++    declareOption(ol, &quot;ncomponents&quot;, 
++                  &amp;ManifoldParzen::ncomponents,
++                  OptionBase::buildoption,
++                  &quot;Dimensionality of the manifold.\n&quot;);
++
++    declareOption(ol, &quot;global_lambda0&quot;, 
++                  &amp;ManifoldParzen::global_lambda0,
++                  OptionBase::buildoption,
++                  &quot;Additive minimum value for the variance in all directions.\n&quot;);
++
++    declareOption(ol, &quot;learn_mu&quot;, 
++                  &amp;ManifoldParzen::learn_mu,
++                  OptionBase::buildoption,
++                  &quot;Additive minimum value for the variance in all directions.\n&quot;);
++
++    declareOption(ol, &quot;n_classes&quot;, 
++                  &amp;ManifoldParzen::n_classes,
++                  OptionBase::buildoption,
++                  &quot;Number of classes. If n_classes = 1, learner will output\n&quot;
++                  &quot;log likelihood of a given input. If n_classes &gt; 1,\n&quot;
++                  &quot;classification will be performed.\n&quot;);
++
++    declareOption(ol, &quot;train_set&quot;, 
++                  &amp;ManifoldParzen::train_set,
++                  OptionBase::learntoption,
++                  &quot;Training set.\n&quot;
++        );
++
++    declareOption(ol, &quot;eigenvalues&quot;, 
++                  &amp;ManifoldParzen::eigenvalues,
++                  OptionBase::learntoption,
++                  &quot;&quot;
++        );
++
++    declareOption(ol, &quot;sigma_noises&quot;, 
++                  &amp;ManifoldParzen::sigma_noises,
++                  OptionBase::learntoption,
++                  &quot;&quot;
++        );
++
++    declareOption(ol, &quot;mus&quot;, 
++                  &amp;ManifoldParzen::mus,
++                  OptionBase::learntoption,
++                  &quot;&quot;
++        );
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++void ManifoldParzen::build_()
++{
++    // ### This method should do the real building of the object,
++    // ### according to set 'options', in *any* situation.
++    // ### Typical situations include:
++    // ###  - Initial building of an object from a few user-specified options
++    // ###  - Building of a &quot;reloaded&quot; object: i.e. from the complete set of
++    // ###    all serialised options.
++    // ###  - Updating or &quot;re-building&quot; of an object after a few &quot;tuning&quot;
++    // ###    options have been modified.
++    // ### You should assume that the parent class' build_() has already been
++    // ### called.
++
++    MODULE_LOG &lt;&lt; &quot;build_() called&quot; &lt;&lt; endl;
++
++    if(inputsize_ &gt; 0 )
++    {
++        // Builds some variables using the training set
++        setTrainingSet(train_set, false);
++
++        if( n_classes &lt;= 0 )
++            PLERROR(&quot;ManifoldParzen::build_() - \n&quot;
++                    &quot;n_classes should be &gt; 0.\n&quot;);
++        test_votes.resize(n_classes);
++
++        if( nneighbors &lt;= 0 )
++            PLERROR(&quot;ManifoldParzen::build_() - \n&quot;
++                    &quot;nneighbors should be &gt; 0.\n&quot;);
++
++        if( weightsize_ &gt; 0 )
++            PLERROR(&quot;ManifoldParzen::build_() - \n&quot;
++                    &quot;usage of weighted samples (weight size &gt; 0) is not\n&quot;
++                    &quot;implemented yet.\n&quot;);
++
++        if( ncomponents &lt; 1 || ncomponents &gt; inputsize_)
++            PLERROR(&quot;ManifoldParzen::build_() - \n&quot;
++                    &quot;ncomponents should be &gt; 0 and &lt; or = to inputsize.\n&quot;);
++
++        if( global_lambda0 &lt; 0)
++            PLERROR(&quot;ManifoldParzen::build_() - \n&quot;
++                    &quot;global_lambda0 should be &gt; or = to 0.\n&quot;);
++
++    }
++}
++
++// ### Nothing to add here, simply calls build_
++void ManifoldParzen::build()
++{
++    inherited::build();
++    build_();
++}
++
++
++void ManifoldParzen::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++    // deepCopyField(, copies);
++
++    // Protected options
++    deepCopyField(mu, copies);
++    deepCopyField(Ut, copies);
++    deepCopyField(U, copies);
++    deepCopyField(V, copies);
++    deepCopyField(diff_neighbor_input, copies);
++    deepCopyField(uk, copies);
++    deepCopyField(sm_svd, copies);
++    deepCopyField(S, copies);
++    deepCopyField(diff, copies);
++    deepCopyField(eigenvectors, copies);
++    deepCopyField(eigenvalues, copies);
++    deepCopyField(sigma_noises, copies);
++    deepCopyField(mus, copies);
++    deepCopyField(class_datasets, copies);
++    deepCopyField(nearest_neighbors_indices, copies);
++    deepCopyField(test_votes, copies);
++}
++
++
++int ManifoldParzen::outputsize() const
++{
++    return 1;
++}
++
++void ManifoldParzen::forget()
++{
++    //! (Re-)initialize the PLearner in its fresh state (that state may depend
++    //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
++    //! a fresh learner!)
++    /*!
++      A typical forget() method should do the following:
++      - call inherited::forget() to initialize its random number generator
++        with the 'seed' option
++      - initialize the learner's parameters, using this random generator
++      - stage = 0
++    */
++    inherited::forget();
++
++    for(int i=0; i &lt; eigenvectors.length(); i++)
++      eigenvectors[i].clear();
++    eigenvalues.clear();
++    sigma_noises.clear();
++    mus.clear();
++    stage = 0;
++}
++
++void ManifoldParzen::train()
++{
++    MODULE_LOG &lt;&lt; &quot;train() called &quot; &lt;&lt; endl;
++
++    Vec input( inputsize() );
++    Vec nearest_neighbor( inputsize() );
++    Mat nearest_neighbors( nneighbors, inputsize() );
++    Vec target( targetsize() );
++    Vec target2( targetsize() );
++    real weight; // unused
++    real weight2; // unused
++
++    TVec&lt;string&gt; train_cost_names = getTrainCostNames() ;
++    Vec train_costs( train_cost_names.length() );
++    train_costs.fill(MISSING_VALUE) ;
++
++    int sample;
++    PP&lt;ProgressBar&gt; pb;
++
++    // clear stats of previous epoch
++    train_stats-&gt;forget();
++
++    if( stage &lt; 1 &amp;&amp; nstages &gt; 0 )
++      {
++	stage = 1;
++	MODULE_LOG &lt;&lt; &quot;Finding the nearest neighbors&quot; &lt;&lt; endl;
++	// Find training nearest neighbors
++	TVec&lt;int&gt; nearest_neighbors_indices_row;
++	nearest_neighbors_indices.resize(train_set-&gt;length(), nneighbors);
++	if( n_classes &gt; 1 )
++	  for(int k=0; k&lt;n_classes; k++)
++	    {
++	      for(int i=0; i&lt;class_datasets[k]-&gt;length(); i++)
++		{
++		  class_datasets[k]-&gt;getExample(i,input,target,weight);
++		  nearest_neighbors_indices_row = nearest_neighbors_indices(
++									    class_datasets[k]-&gt;indices[i]);
++		
++		  computeNearestNeighbors(
++					  new GetInputVMatrix((VMatrix *)class_datasets[k]),input,
++					  nearest_neighbors_indices_row,
++					  i);
++		}
++	    }
++	else
++	  for(int i=0; i&lt;train_set-&gt;length(); i++)
++	    {
++	      train_set-&gt;getExample(i,input,target,weight);
++	      nearest_neighbors_indices_row = nearest_neighbors_indices(i);
++	      computeNearestNeighbors(
++				      train_set,input,
++				      nearest_neighbors_indices_row,
++				      i);
++	    }
++      
++        train_costs.fill(MISSING_VALUE);
++
++        if( report_progress )
++	  pb = new ProgressBar( &quot;Training ManifoldParzen&quot;,
++				train_set-&gt;length() );
++
++	eigenvectors.resize( train_set-&gt;length() );
++	eigenvalues.resize( train_set-&gt;length(), ncomponents );
++	sigma_noises.resize( train_set-&gt;length(), 1 );
++	mus.resize( train_set-&gt;length(), inputsize() );
++	mus.clear();
++        for( sample = 0; sample &lt; train_set-&gt;length() ; sample++ )
++	  { 
++            train_set-&gt;getExample( sample, input, target, weight );
++	    
++            // Find nearest neighbors
++            if( n_classes &gt; 1 )
++	      for( int k=0; k&lt;nneighbors; k++ )
++                {
++		  class_datasets[(int)round(target[0])]-&gt;getExample(
++								    nearest_neighbors_indices(sample,k),
++								    nearest_neighbor, target2, weight2);
++		  
++		  if(round(target[0]) != round(target2[0]))
++		    PLERROR(&quot;ManifoldParzen::train(): similar&quot;
++			    &quot; example is not from same class!&quot;);
++		  nearest_neighbors(k) &lt;&lt; nearest_neighbor;
++                }
++            else
++	      for( int k=0; k&lt;nneighbors; k++ )
++                {
++		  train_set-&gt;getExample(
++					nearest_neighbors_indices(sample,k),
++					nearest_neighbor, target2, weight2);
++		  nearest_neighbors(k) &lt;&lt; nearest_neighbor;
++                }
++	    
++	    if( learn_mu )
++	      {
++		mu.resize(inputsize());
++		columnMean( nearest_neighbors, mu );
++		mus(sample) &lt;&lt; mu;
++		mus(sample) -= input;
++	      }
++	    substractFromRows(nearest_neighbors, input, false); // Boolean is somehow unused???
++	    lapackSVD(nearest_neighbors, Ut, S, V,'A',1.5);
++	    eigenvectors[sample].resize(ncomponents,inputsize());
++	    for (int k=0;k&lt;ncomponents;k++)
++	      {
++		eigenvalues(sample,k) = mypow(S[k],2);
++		eigenvectors[sample](k) &lt;&lt; Ut(k);
++	      }
++	    sigma_noises[sample] = 0; // HUGO: Seems stupid for now, but I keep 
++	                              //       this variable in case I want to use
++	                              //       the last eigen value or something...
++
++            if( pb )
++	      pb-&gt;update( sample + 1 );
++	  }
++      }
++    
++    train_stats-&gt;finalize();
++    MODULE_LOG &lt;&lt; &quot;  train costs = &quot; &lt;&lt; train_stats-&gt;getMean() &lt;&lt; endl;
++}
++
++void ManifoldParzen::computeOutput(const Vec&amp; input, Vec&amp; output) const
++{
++
++    test_votes.resize(n_classes);
++    test_votes.clear();
++
++    // Variables for probability computations
++    real log_p_x_g_y = 0;
++    real mahal = 0;
++    real norm_term = 0;
++    real n = inputsize();
++    real dotp = 0;
++    real coef = 0;
++    real sigma_noise = 0;
++    
++    Vec input_j(inputsize());
++    Vec target(targetsize());
++    real weight;
++
++    int input_j_index;
++    for( int i=0; i&lt;n_classes; i++ )
++      {
++	for( int j=0; 
++	     j&lt;(n_classes &gt; 1 ? 
++		class_datasets[i]-&gt;length() 
++		: train_set-&gt;length()); 
++	     j++ )
++	  {
++	    if( n_classes &gt; 1 )
++	      {
++		class_datasets[i]-&gt;getExample(j,input_j,target,weight);
++		input_j_index = class_datasets[i]-&gt;indices[j];
++	      }
++	    else
++	      {
++		train_set-&gt;getExample(j,input_j,target,weight);
++		input_j_index = j;
++	      }
++	    
++	    U &lt;&lt; eigenvectors[input_j_index];
++	    sm_svd &lt;&lt; eigenvalues(input_j_index);
++	    sigma_noise = sigma_noises[input_j_index] + global_lambda0;
++	    mu &lt;&lt; mus(input_j_index);
++	    
++	    substract(input,input_j,diff_neighbor_input); 
++	    substract(diff_neighbor_input,mu,diff); 
++            
++	    mahal = -0.5*pownorm(diff)/sigma_noise;      
++	    norm_term = - n/2.0 * Log2Pi - 0.5*(n-ncomponents)*
++	      pl_log(sigma_noise);
++	    
++	    for(int k=0; k&lt;ncomponents; k++)
++	      { 
++		uk = U(k);
++		dotp = dot(diff,uk);
++		coef = (1.0/(sm_svd[k]+global_lambda0) - 1.0/sigma_noise);
++		mahal -= dotp*dotp*0.5*coef;
++		norm_term -= 0.5*pl_log(sm_svd[k]+global_lambda0);
++	      }
++	    
++	    if( j==0 )
++	      log_p_x_g_y = norm_term + mahal;
++	    else
++	      log_p_x_g_y = logadd(norm_term + mahal, log_p_x_g_y);
++	  }
++        
++	test_votes[i] = log_p_x_g_y;
++      }
++
++    if( n_classes &gt; 1 )
++        output[0] = argmax(test_votes);
++    else
++        output[0] = test_votes[0]-pl_log(train_set-&gt;length());
++}
++
++void ManifoldParzen::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                           const Vec&amp; target, Vec&amp; costs) const
++{
++
++    //Assumes that computeOutput has been called
++
++    costs.resize( getTestCostNames().length() );
++    costs.fill( MISSING_VALUE );
++
++    if( n_classes &gt; 1 )
++      {
++	int target_class = ((int)round(target[0]));
++	if( ((int)round(output[0])) == target_class )
++	  costs[0] = 0;
++	else
++	  costs[0] = 1;
++	costs[1] = - test_votes[target_class]
++	  +pl_log(class_datasets[target_class]-&gt;length()); // Must take into account the 1/n normalization
++      }
++    else
++      {
++	costs[1] = - output[0]; // 1/n normalization already accounted for
++      }
++}
++
++TVec&lt;string&gt; ManifoldParzen::getTestCostNames() const
++{
++    // Return the names of the costs computed by computeCostsFromOutputs
++    // (these may or may not be exactly the same as what's returned by
++    // getTrainCostNames).
++
++    TVec&lt;string&gt; cost_names(0);
++
++    cost_names.append( &quot;class_error&quot; );
++    cost_names.append( &quot;NLL&quot; );
++
++    return cost_names;
++}
++
++TVec&lt;string&gt; ManifoldParzen::getTrainCostNames() const
++{
++    TVec&lt;string&gt; cost_names(0);
++    return cost_names ;    
++}
++
++void ManifoldParzen::setTrainingSet(VMat training_set, bool call_forget)
++{
++    inherited::setTrainingSet(training_set,call_forget);
++    
++    // Separate classes
++    if( n_classes &gt; 1 )
++    {
++        class_datasets.resize(n_classes);
++        for(int k=0; k&lt;n_classes; k++)
++        {
++            class_datasets[k] = new ClassSubsetVMatrix();
++            class_datasets[k]-&gt;classes.resize(1);
++            class_datasets[k]-&gt;classes[0] = k;
++            class_datasets[k]-&gt;source = training_set;
++            class_datasets[k]-&gt;build();
++        }
++    }
++
++}
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners_experimental/ManifoldParzen.h
+===================================================================
+--- trunk/plearn_learners_experimental/ManifoldParzen.h	2008-06-20 14:32:34 UTC (rev 9151)
++++ trunk/plearn_learners_experimental/ManifoldParzen.h	2008-06-20 14:35:22 UTC (rev 9152)
+@@ -0,0 +1,203 @@
++// -*- C++ -*-
++
++// ManifoldParzen.h
++//
++// Copyright (C) 2007 Hugo Larochelle
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Hugo Larochelle
++
++/*! \file ManifoldParzen.h */
++
++
++#ifndef ManifoldParzen_INC
++#define ManifoldParzen_INC
++
++#include &lt;plearn/vmat/ClassSubsetVMatrix.h&gt;
++#include &lt;plearn_learners/generic/PLearner.h&gt;
++
++namespace PLearn {
++
++/**
++ * Manifold Parzen Windows classifier and distribution.
++ */
++class ManifoldParzen : public PLearner
++{
++    typedef PLearner inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! Number of nearest neighbors to use to learn
++    //! the manifold structure.
++    int nneighbors;
++
++    //! Dimensionality of the manifold
++    int ncomponents;
++
++    //! Additive minimum value for the variance in all directions.
++    real global_lambda0;
++
++    //! Indication that the meam of the gaussians should also be learned
++    bool learn_mu;
++
++    //! Number of classes
++    int n_classes;
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    ManifoldParzen();
++
++    //#####  PLearner Member Functions  #######################################
++
++    //! Returns the size of this learner's output, (which typically
++    //! may depend on its inputsize(), targetsize() and set options).
++    virtual int outputsize() const;
++
++    //! (Re-)initializes the PLearner in its fresh state (that state may depend
++    //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
++    //! a fresh learner!).
++    virtual void forget();
++
++    //! The role of the train method is to bring the learner up to
++    //! stage==nstages, updating the train_stats collector with training costs
++    //! measured on-line in the process.
++    virtual void train();
++
++    //! Computes the output from the input.
++    virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
++
++    //! Computes the costs from already computed output.
++    virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                         const Vec&amp; target, Vec&amp; costs) const;
++
++    //! Returns the names of the costs computed by computeCostsFromOutpus (and
++    //! thus the test method).
++    virtual TVec&lt;std::string&gt; getTestCostNames() const;
++
++    //! Returns the names of the objective costs that the train method computes
++    //! and  for which it updates the VecStatsCollector train_stats.
++    virtual TVec&lt;std::string&gt; getTrainCostNames() const;
++
++    /**
++     *  Declares the training set.  Then calls build() and forget() if
++     *  necessary.  Also sets this learner's inputsize_ targetsize_ weightsize_
++     *  from those of the training_set.  Note: You shouldn't have to override
++     *  this in subclasses, except in maybe to forward the call to an
++     *  underlying learner.
++     */
++    virtual void setTrainingSet(VMat training_set, bool call_forget=true);
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    // ### If your class is not instantiatable (it has pure virtual methods)
++    // ### you should replace this by PLEARN_DECLARE_ABSTRACT_OBJECT_METHODS
++    PLEARN_DECLARE_OBJECT(ManifoldParzen);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++    //#####  Not Options  #####################################################
++
++    //! Variables for density of a Gaussian
++    mutable Vec mu;
++
++    //! Variables for the SVD and gradient computation
++    mutable Mat Ut, U, V;
++    mutable Vec diff_neighbor_input, uk, sm_svd, S, diff;
++
++    // Saved components of manifold parzen windows
++    //! Eigenvectors
++    mutable TVec&lt;Mat&gt; eigenvectors;
++    //! Eigenvalues
++    mutable Mat eigenvalues;
++    //! Sigma noises
++    mutable Vec sigma_noises;
++    //! Mus
++    mutable Mat mus;
++
++    //! Datasets for each class
++    TVec&lt; PP&lt;ClassSubsetVMatrix&gt; &gt; class_datasets;
++
++    //! Proportions of examples from the other classes (columns), for each
++    //! class (rows)
++    //Vec class_proportions;
++
++    //! Nearest neighbors for each training example
++    TMat&lt;int&gt; nearest_neighbors_indices;
++
++    //! Nearest neighbor votes for test example
++    mutable Vec test_votes;
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here    
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(ManifoldParzen);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002599.html">[Plearn-commits] r9151 - trunk/plearn_learners_experimental
+</A></li>
+	<LI>Next message: <A HREF="002601.html">[Plearn-commits] r9153 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2600">[ date ]</a>
+              <a href="thread.html#2600">[ thread ]</a>
+              <a href="subject.html#2600">[ subject ]</a>
+              <a href="author.html#2600">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

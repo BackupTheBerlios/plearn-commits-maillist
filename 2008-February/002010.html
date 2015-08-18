@@ -1,0 +1,395 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8562 - trunk/plearn_learners/generic
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8562%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200802221923.m1MJNBwx029401%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002009.html">
+   <LINK REL="Next"  HREF="002011.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8562 - trunk/plearn_learners/generic</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8562%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200802221923.m1MJNBwx029401%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8562 - trunk/plearn_learners/generic">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Fri Feb 22 20:23:11 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002009.html">[Plearn-commits] r8561 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="002011.html">[Plearn-commits] r8563 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2010">[ date ]</a>
+              <a href="thread.html#2010">[ thread ]</a>
+              <a href="subject.html#2010">[ subject ]</a>
+              <a href="author.html#2010">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-02-22 20:23:10 +0100 (Fri, 22 Feb 2008)
+New Revision: 8562
+
+Modified:
+   trunk/plearn_learners/generic/NNet.cc
+   trunk/plearn_learners/generic/NNet.h
+Log:
+- Renamed obscure function 'f' into 'input_to_output'
+- Factorized some code into a new method 'applyTransferFunc'
+- Started to write code to operate on bags rather than single examples
+
+
+Modified: trunk/plearn_learners/generic/NNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/NNet.cc	2008-02-22 17:49:24 UTC (rev 8561)
++++ trunk/plearn_learners/generic/NNet.cc	2008-02-22 19:23:10 UTC (rev 8562)
+@@ -93,6 +93,8 @@
+ nhidden(0),
+ nhidden2(0),
+ noutputs(0),
++operate_on_bags(false),
++max_bag_size(20),
+ weight_decay(0),
+ bias_decay(0),
+ layer1_weight_decay(0),
+@@ -346,6 +348,32 @@
+         &quot; - \&quot;zero\&quot;           = all weights are set to 0\n&quot;);
+ 
+     declareOption(
++        ol, &quot;operate_on_bags&quot;, &amp;NNet::operate_on_bags, OptionBase::buildoption,
++        &quot;If True, then samples are no longer considered as unique entities.\n&quot;
++        &quot;Instead, each sample belongs to a so-called 'bag', that may contain\n&quot;
++        &quot;1 or more samples. The last column of the target is assumed to\n&quot;
++        &quot;provide information about bags (see help of SumOverBagsVariable for\n&quot;
++        &quot;details on the coding of bags).\n&quot;
++        &quot;When operating on bags, each bag is considered a training sample.\n&quot;
++        &quot;The activations a_ci of output units c for each bag sample i are\n&quot;
++        &quot;combined within each bag, yielding bag activation a_c given by:\n&quot;
++        &quot;   a_c = logadd(a_c1, ..., acn)\n&quot;
++        &quot;In particular, when using the 'softmax' output transfer function,\n&quot;
++        &quot;this corresponds to computing:\n&quot;
++        &quot;   P(class = c | x_1, ..., x_i, ..., x_n) =\n&quot;
++        &quot;                          (\\sum_i exp(a_ci)) / \\sum_c,i exp(a_ci)\n&quot;
++        &quot;where a_ci is the activation of output node c for the i-th sample\n&quot;
++        &quot;x_i in the bag.&quot;,
++        OptionBase::advanced_level);
++
++    declareOption(
++        ol, &quot;max_bag_size&quot;, &amp;NNet::max_bag_size, OptionBase::buildoption,
++        &quot;Maximum number of samples in a bag (used with 'operate_on_bags').&quot;,
++        OptionBase::advanced_level);
++
++    // Learnt options.
++    
++    declareOption(
+         ol, &quot;paramsvalues&quot;, &amp;NNet::paramsvalues, OptionBase::learntoption, 
+         &quot;The learned parameter vector\n&quot;);
+ 
+@@ -362,6 +390,26 @@
+     build_();
+ }
+ 
++Var to_define(const Var&amp; bag_inputs, const Var&amp; bag_size, const Func&amp; in_to_out, int max_bag_size)
++{
++    return NULL;
++}
++
++/////////////////////////////////
++// buildBagOutputFromBagInputs //
++/////////////////////////////////
++void NNet::buildBagOutputFromBagInputs(
++        const Var&amp; input, Var&amp; before_transfer_func,
++        const Var&amp; bag_inputs, const Var&amp; bag_size, Var&amp; bag_output,
++        int max_bag_size)
++{
++    Func in_to_out = Func(input, before_transfer_func);
++    before_transfer_func = to_define(bag_inputs, bag_size, in_to_out, max_bag_size);
++    // TODO Note that 'to_define' should basically be a logadd over the outputs
++    // before the transfer function.
++    applyTransferFunc(before_transfer_func, bag_output);
++}
++
+ ////////////
+ // build_ //
+ ////////////
+@@ -389,6 +437,13 @@
+         // Build main network graph.
+         buildOutputFromInput(input, hidden_layer, before_transfer_func);
+ 
++        // When operating on bags, use this network to compute the output on a
++        // whole bag, which also becomes the output of the network.
++        if (operate_on_bags)
++            buildBagOutputFromBagInputs(input, before_transfer_func,
++                                        bag_inputs, bag_size, output,
++                                        max_bag_size);
++
+         // Build target and weight variables.
+         buildTargetAndWeight();
+ 
+@@ -432,7 +487,9 @@
+         }
+ 
+         // Build functions.
+-        buildFuncs(input, output, target, sampleweight);
++        buildFuncs(operate_on_bags ? bag_inputs : input,
++                   output, target, sampleweight,
++                   operate_on_bags ? bag_size : NULL);
+ 
+     }
+ }
+@@ -454,7 +511,6 @@
+     //cout &lt;&lt; &quot;name = &quot; &lt;&lt; name &lt;&lt; endl &lt;&lt; &quot;targetsize = &quot; &lt;&lt; targetsize_ &lt;&lt; endl &lt;&lt; &quot;weightsize = &quot; &lt;&lt; weightsize_ &lt;&lt; endl;
+ }
+ 
+-
+ ////////////////
+ // buildCosts //
+ ////////////////
+@@ -583,7 +639,8 @@
+ ////////////////
+ // buildFuncs //
+ ////////////////
+-void NNet::buildFuncs(const Var&amp; the_input, const Var&amp; the_output, const Var&amp; the_target, const Var&amp; the_sampleweight) {
++void NNet::buildFuncs(const Var&amp; the_input, const Var&amp; the_output, const Var&amp; the_target, const Var&amp; the_sampleweight,
++        const Var&amp; the_bag_size) {
+     invars.resize(0);
+     VarArray outvars;
+     VarArray testinvars;
+@@ -592,6 +649,10 @@
+         invars.push_back(the_input);
+         testinvars.push_back(the_input);
+     }
++    if (the_bag_size) {
++        invars.append(the_bag_size);
++        testinvars.append(the_bag_size);
++    }
+     if (the_output)
+         outvars.push_back(the_output);
+     if(the_target)
+@@ -604,17 +665,19 @@
+     {
+         invars.push_back(the_sampleweight);
+     }
+-    f = Func(the_input, the_output);
++    input_to_output = Func(the_input, the_output);
+     test_costf = Func(testinvars, the_output&amp;test_costs);
+     test_costf-&gt;recomputeParents();
+     output_and_target_to_cost = Func(outvars, test_costs); 
+     // Since there will be a fprop() in the network, we need to make sure the
+     // input is valid.
+-    if (train_set &amp;&amp; train_set-&gt;length() &gt;= 1) {
++    if (train_set &amp;&amp; train_set-&gt;length() &gt;= the_input-&gt;width()) {
+         Vec input, target;
+         real weight;
+-        train_set-&gt;getExample(0, input, target, weight);
+-        the_input-&gt;matValue &lt;&lt; input;
++        for (int i = 0; i &lt; the_input-&gt;width(); i++) {
++            train_set-&gt;getExample(i, input, target, weight);
++            the_input-&gt;matValue.column(i) &lt;&lt; input;
++        }
+     }
+     output_and_target_to_cost-&gt;recomputeParents();
+ }
+@@ -725,35 +788,41 @@
+     }
+ 
+     before_transfer_func = output;
++    applyTransferFunc(before_transfer_func, output);
++}
+ 
+-    /*
+-     * output_transfer_func
+-     */
++///////////////////////
++// applyTransferFunc //
++///////////////////////
++void NNet::applyTransferFunc(const Var&amp; before_transfer_func, Var&amp; output)
++{
+     size_t p=0;
+     if(output_transfer_func!=&quot;&quot; &amp;&amp; output_transfer_func!=&quot;none&quot;)
+     {
+         if(output_transfer_func==&quot;tanh&quot;)
+-            output = tanh(output);
++            output = tanh(before_transfer_func);
+         else if(output_transfer_func==&quot;sigmoid&quot;)
+-            output = sigmoid(output);
++            output = sigmoid(before_transfer_func);
+         else if(output_transfer_func==&quot;softplus&quot;)
+-            output = softplus(output);
++            output = softplus(before_transfer_func);
+         else if(output_transfer_func==&quot;exp&quot;)
+-            output = exp(output);
++            output = exp(before_transfer_func);
+         else if(output_transfer_func==&quot;softmax&quot;)
+-            output = softmax(output);
++            output = softmax(before_transfer_func);
+         else if (output_transfer_func == &quot;log_softmax&quot;)
+-            output = log_softmax(output);
++            output = log_softmax(before_transfer_func);
+         else if ((p=output_transfer_func.find(&quot;interval&quot;))!=string::npos)
+         {
+             size_t q = output_transfer_func.find(&quot;,&quot;);
+             interval_minval = atof(output_transfer_func.substr(p+1,q-(p+1)).c_str());
+             size_t r = output_transfer_func.find(&quot;)&quot;);
+             interval_maxval = atof(output_transfer_func.substr(q+1,r-(q+1)).c_str());
+-            output = interval_minval + (interval_maxval - interval_minval)*sigmoid(output);
++            output = interval_minval + (interval_maxval - interval_minval)*sigmoid(before_transfer_func);
+         }
+         else
+-            PLERROR(&quot;In NNet::build_()  unknown output_transfer_func option: %s&quot;,output_transfer_func.c_str());
++            PLERROR(&quot;In NNet::applyTransferFunc() -Unknown value for the &quot;
++                   &quot;'output_transfer_func' option: %s&quot;,
++                   output_transfer_func.c_str());
+     }
+ }
+ 
+@@ -827,7 +896,7 @@
+ void NNet::computeOutput(const Vec&amp; inputv, Vec&amp; outputv) const
+ {
+     outputv.resize(outputsize());
+-    f-&gt;fprop(inputv,outputv);
++    input_to_output-&gt;fprop(inputv,outputv);
+ }
+ 
+ ///////////////////////////
+@@ -994,6 +1063,8 @@
+     varDeepCopyField(test_costs, copies);
+     deepCopyField(invars, copies);
+     deepCopyField(params, copies);
++    varDeepCopyField(bag_inputs, copies);
++    varDeepCopyField(bag_size, copies);
+     // public:
+     deepCopyField(paramsvalues, copies);
+     varDeepCopyField(input, copies);
+@@ -1006,7 +1077,7 @@
+     varDeepCopyField(wdirect, copies);
+     varDeepCopyField(wrec, copies);
+     varDeepCopyField(hidden_layer, copies);
+-    deepCopyField(f, copies);
++    deepCopyField(input_to_output, copies);
+     deepCopyField(test_costf, copies);
+     deepCopyField(output_and_target_to_cost, copies);
+     varDeepCopyField(first_hidden_layer, copies);
+@@ -1028,10 +1099,11 @@
+ {
+     // NNet nstages is number of epochs (whole passages through the training set)
+     // while optimizer nstages is number of weight updates.
+-    // So relationship between the 2 depends whether we are in stochastic, batch or minibatch mode
++    // So relationship between the 2 depends on whether we are in stochastic,
++    // batch or minibatch mode.
+ 
+     if(!train_set)
+-        PLERROR(&quot;In NNet::train, you did not setTrainingSet&quot;);
++        PLERROR(&quot;In NNet::train - No training set available&quot;);
+     
+     if(!train_stats)
+         setTrainStatsCollector(new VecStatsCollector());
+@@ -1039,7 +1111,7 @@
+ 
+     int l = train_set-&gt;length();  
+     
+-    if(f.isNull()) // Net has not been properly built yet (because build was called before the learner had a proper training set)
++    if(input_to_output.isNull()) // Net has not been properly built yet (because build was called before the learner had a proper training set)
+         build();
+ 
+     // number of samples seen by optimizer before each optimizer update
+
+Modified: trunk/plearn_learners/generic/NNet.h
+===================================================================
+--- trunk/plearn_learners/generic/NNet.h	2008-02-22 17:49:24 UTC (rev 8561)
++++ trunk/plearn_learners/generic/NNet.h	2008-02-22 19:23:10 UTC (rev 8562)
+@@ -70,6 +70,12 @@
+     VarArray invars;
+     VarArray params;  // all arameter input vars
+ 
++    //! Used to store the inputs in a bag when 'operate_on_bags' is true.
++    Var bag_inputs;
++
++    //! Used to store the size of a bag when 'operate_on_bags' is true.
++    Var bag_size;
++
+ // to put back later -- blip  Vec paramsvalues; // values of all parameters
+ 
+ public: // to set these values instead of getting them by training
+@@ -90,7 +96,7 @@
+ 
+ public:
+ 
+-    mutable Func f; // input -&gt; output
++    mutable Func input_to_output; // input -&gt; output
+     mutable Func test_costf; // input &amp; target -&gt; output &amp; test_costs
+     mutable Func output_and_target_to_cost; // output &amp; target -&gt; cost
+ 
+@@ -125,6 +131,9 @@
+      */
+     int noutputs;
+ 
++    bool operate_on_bags;
++    int max_bag_size;
++
+     real weight_decay; // default: 0
+     real bias_decay;   // default: 0 
+     real layer1_weight_decay; // default: MISSING_VALUE
+@@ -229,6 +238,15 @@
+     //! available in the 'before_transfer_func' parameter.
+     void buildOutputFromInput(const Var&amp; the_input, Var&amp; hidden_layer, Var&amp; before_transfer_func);
+ 
++    //! Build the output for a whole bag, from the network defined by the
++    //! 'input' to 'before_transfer_func' variables.
++    //! 'before_transfer_func' is modified so as to hold the activations for
++    //! the bag rather than for individual samples.
++    void buildBagOutputFromBagInputs(
++        const Var&amp; input, Var&amp; before_transfer_func,
++        const Var&amp; bag_inputs, const Var&amp; bag_size, Var&amp; bag_output,
++        int max_bag_size);
++
+     //! Builds the target and sampleweight variables.
+     void buildTargetAndWeight();
+ 
+@@ -236,8 +254,11 @@
+     void buildCosts(const Var&amp; output, const Var&amp; target, const Var&amp; hidden_layer, const Var&amp; before_transfer_func);
+ 
+     //! Build the various functions used in the network.
+-    void buildFuncs(const Var&amp; the_input, const Var&amp; the_output, const Var&amp; the_target, const Var&amp; the_sampleweight);
++    void buildFuncs(const Var&amp; the_input, const Var&amp; the_output, const Var&amp; the_target, const Var&amp; the_sampleweight, const Var&amp; the_bag_size);
+ 
++    //! Compute the final output from the activations of the output units.
++    void applyTransferFunc(const Var&amp; before_transfer_func, Var&amp; output);
++
+     //! Fill a matrix of weights according to the 'initialization_method' specified.
+     //! The 'clear_first_row' boolean indicates whether we should fill the first
+     //! row with zeros.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002009.html">[Plearn-commits] r8561 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="002011.html">[Plearn-commits] r8563 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2010">[ date ]</a>
+              <a href="thread.html#2010">[ thread ]</a>
+              <a href="subject.html#2010">[ subject ]</a>
+              <a href="author.html#2010">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

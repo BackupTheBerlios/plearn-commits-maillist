@@ -1,0 +1,250 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8585 - trunk/plearn_learners/generic
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8585%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200802261933.m1QJXg3d016139%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002032.html">
+   <LINK REL="Next"  HREF="002034.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8585 - trunk/plearn_learners/generic</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8585%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200802261933.m1QJXg3d016139%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8585 - trunk/plearn_learners/generic">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue Feb 26 20:33:42 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002032.html">[Plearn-commits] r8584 - in trunk/plearn/var/test: .	.pytest/PL_Variables/expected_results
+</A></li>
+        <LI>Next message: <A HREF="002034.html">[Plearn-commits] r8586 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2033">[ date ]</a>
+              <a href="thread.html#2033">[ thread ]</a>
+              <a href="subject.html#2033">[ subject ]</a>
+              <a href="author.html#2033">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-02-26 20:33:42 +0100 (Tue, 26 Feb 2008)
+New Revision: 8585
+
+Modified:
+   trunk/plearn_learners/generic/NNet.cc
+   trunk/plearn_learners/generic/NNet.h
+Log:
+Full (but not tested yet) implementation of the 'operate_on_bags' feature
+
+Modified: trunk/plearn_learners/generic/NNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/NNet.cc	2008-02-26 19:32:06 UTC (rev 8584)
++++ trunk/plearn_learners/generic/NNet.cc	2008-02-26 19:33:42 UTC (rev 8585)
+@@ -51,6 +51,7 @@
+ #include &lt;plearn/var/MarginPerceptronCostVariable.h&gt;
+ #include &lt;plearn/var/ConfRatedAdaboostCostVariable.h&gt;
+ #include &lt;plearn/var/GradientAdaboostCostVariable.h&gt;
++#include &lt;plearn/var/LogAddVariable.h&gt;
+ #include &lt;plearn/var/MulticlassLossVariable.h&gt;
+ #include &lt;plearn/var/NegCrossEntropySigmoidVariable.h&gt;
+ #include &lt;plearn/var/NegLogPoissonVariable.h&gt;
+@@ -63,10 +64,12 @@
+ #include &lt;plearn/var/SumVariable.h&gt;
+ #include &lt;plearn/var/SumAbsVariable.h&gt;
+ #include &lt;plearn/var/SumOfVariable.h&gt;
++#include &lt;plearn/var/SumOverBagsVariable.h&gt;
+ #include &lt;plearn/var/SumSquareVariable.h&gt;
+ #include &lt;plearn/var/TanhVariable.h&gt;
+ #include &lt;plearn/var/TransposeVariable.h&gt;
+ #include &lt;plearn/var/UnaryHardSlopeVariable.h&gt;
++#include &lt;plearn/var/UnfoldedFuncVariable.h&gt;
+ #include &lt;plearn/var/Var_operators.h&gt;
+ #include &lt;plearn/var/Var_utils.h&gt;
+ #include &lt;plearn/var/FNetLayerVariable.h&gt;
+@@ -88,8 +91,8 @@
+ //////////
+ // NNet //
+ //////////
+-NNet::NNet()
+-    :
++NNet::NNet():
++n_training_bags(-1),
+ nhidden(0),
+ nhidden2(0),
+ noutputs(0),
+@@ -390,23 +393,17 @@
+     build_();
+ }
+ 
+-Var to_define(const Var&amp; bag_inputs, const Var&amp; bag_size, const Func&amp; in_to_out, int max_bag_size)
+-{
+-    return NULL;
+-}
+-
+ /////////////////////////////////
+ // buildBagOutputFromBagInputs //
+ /////////////////////////////////
+ void NNet::buildBagOutputFromBagInputs(
+         const Var&amp; input, Var&amp; before_transfer_func,
+-        const Var&amp; bag_inputs, const Var&amp; bag_size, Var&amp; bag_output,
+-        int max_bag_size)
++        const Var&amp; bag_inputs, const Var&amp; bag_size, Var&amp; bag_output)
+ {
+     Func in_to_out = Func(input, before_transfer_func);
+-    before_transfer_func = to_define(bag_inputs, bag_size, in_to_out, max_bag_size);
+-    // TODO Note that 'to_define' should basically be a logadd over the outputs
+-    // before the transfer function.
++    Var tmp_out = new UnfoldedFuncVariable(bag_inputs, in_to_out, false,
++                                           bag_size);
++    before_transfer_func = new LogAddVariable(tmp_out, bag_size, &quot;per_column&quot;);
+     applyTransferFunc(before_transfer_func, bag_output);
+ }
+ 
+@@ -439,10 +436,11 @@
+ 
+         // When operating on bags, use this network to compute the output on a
+         // whole bag, which also becomes the output of the network.
+-        if (operate_on_bags)
++        if (operate_on_bags) {
++            bag_inputs = Var(max_bag_size, inputsize(), &quot;bag_inputs&quot;);
+             buildBagOutputFromBagInputs(input, before_transfer_func,
+-                                        bag_inputs, bag_size, output,
+-                                        max_bag_size);
++                                        bag_inputs, bag_size, output);
++        }
+ 
+         // Build target and weight variables.
+         buildTargetAndWeight();
+@@ -498,7 +496,6 @@
+ ////////////////////
+ // setTrainingSet //
+ ////////////////////
+-
+ void NNet::setTrainingSet(VMat training_set, bool call_forget)
+ {
+     PLASSERT( training_set );
+@@ -509,6 +506,25 @@
+ 
+     inherited::setTrainingSet(training_set, call_forget);
+     //cout &lt;&lt; &quot;name = &quot; &lt;&lt; name &lt;&lt; endl &lt;&lt; &quot;targetsize = &quot; &lt;&lt; targetsize_ &lt;&lt; endl &lt;&lt; &quot;weightsize = &quot; &lt;&lt; weightsize_ &lt;&lt; endl;
++    
++    if (operate_on_bags) {
++        // Compute the number of bags in the training set.
++        int n_train = training_set-&gt;length();
++        PP&lt;ProgressBar&gt; pb = 
++            report_progress ? new ProgressBar(&quot;Counting bags&quot;, n_train)
++                            : NULL;
++        Vec input, target;
++        real weight;
++        n_training_bags = 0;
++        for (int i = 0; i &lt; n_train; i++) {
++            training_set-&gt;getExample(i, input, target, weight);
++            if (int(round(target.lastElement()))
++                &amp; SumOverBagsVariable::TARGET_COLUMN_FIRST)
++                n_training_bags++;
++            if (pb)
++                pb-&gt;updateone();
++        }
++    }
+ }
+ 
+ ////////////////
+@@ -944,6 +960,7 @@
+     if(optimizer)
+         optimizer-&gt;reset();
+     stage = 0;
++    n_training_bags = -1;
+ }
+ 
+ ///////////////////////
+@@ -1111,15 +1128,19 @@
+         setTrainStatsCollector(new VecStatsCollector());
+     // PLERROR(&quot;In NNet::train, you did not setTrainStatsCollector&quot;);
+ 
+-    int l = train_set-&gt;length();  
++    int n_train = operate_on_bags ? n_training_bags
++                                  : train_set-&gt;length();  
+     
+     if(input_to_output.isNull()) // Net has not been properly built yet (because build was called before the learner had a proper training set)
+         build();
+ 
+     // number of samples seen by optimizer before each optimizer update
+-    int nsamples = batch_size&gt;0 ? batch_size : l;
++    int nsamples = batch_size&gt;0 ? batch_size : n_train;
+     Func paramf = Func(invars, training_cost); // parameterized function to optimize
+-    Var totalcost = meanOf(train_set, paramf, nsamples);
++    Var totalcost =
++        operate_on_bags ? sumOverBags(train_set, paramf, max_bag_size,
++                                      nsamples, true)
++                        : meanOf(train_set, paramf, nsamples);
+     if(optimizer)
+     {
+         optimizer-&gt;setToOptimize(params, totalcost);  
+@@ -1128,7 +1149,7 @@
+     else PLERROR(&quot;NNet::train can't train without setting an optimizer first!&quot;);
+ 
+     // number of optimizer stages corresponding to one learner stage (one epoch)
+-    int optstage_per_lstage = l/nsamples;
++    int optstage_per_lstage = n_train / nsamples;
+ 
+     PP&lt;ProgressBar&gt; pb;
+     if(report_progress)
+
+Modified: trunk/plearn_learners/generic/NNet.h
+===================================================================
+--- trunk/plearn_learners/generic/NNet.h	2008-02-26 19:32:06 UTC (rev 8584)
++++ trunk/plearn_learners/generic/NNet.h	2008-02-26 19:33:42 UTC (rev 8585)
+@@ -76,6 +76,9 @@
+     //! Used to store the size of a bag when 'operate_on_bags' is true.
+     Var bag_size;
+ 
++    //! Number of bags in the training set.
++    int n_training_bags;
++
+ // to put back later -- blip  Vec paramsvalues; // values of all parameters
+ 
+ public: // to set these values instead of getting them by training
+@@ -244,8 +247,7 @@
+     //! the bag rather than for individual samples.
+     void buildBagOutputFromBagInputs(
+         const Var&amp; input, Var&amp; before_transfer_func,
+-        const Var&amp; bag_inputs, const Var&amp; bag_size, Var&amp; bag_output,
+-        int max_bag_size);
++        const Var&amp; bag_inputs, const Var&amp; bag_size, Var&amp; bag_output);
+ 
+     //! Builds the target and sampleweight variables.
+     void buildTargetAndWeight();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002032.html">[Plearn-commits] r8584 - in trunk/plearn/var/test: .	.pytest/PL_Variables/expected_results
+</A></li>
+	<LI>Next message: <A HREF="002034.html">[Plearn-commits] r8586 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2033">[ date ]</a>
+              <a href="thread.html#2033">[ thread ]</a>
+              <a href="subject.html#2033">[ subject ]</a>
+              <a href="author.html#2033">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

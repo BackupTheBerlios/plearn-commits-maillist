@@ -1,0 +1,152 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9585 - trunk/plearn_learners/meta
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9585%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200810201751.m9KHpFCI029680%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003024.html">
+   <LINK REL="Next"  HREF="003026.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9585 - trunk/plearn_learners/meta</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9585%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200810201751.m9KHpFCI029680%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9585 - trunk/plearn_learners/meta">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Oct 20 19:51:15 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003024.html">[Plearn-commits] r9584 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="003026.html">[Plearn-commits] r9586 - trunk/plearn_learners/hyper
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3025">[ date ]</a>
+              <a href="thread.html#3025">[ thread ]</a>
+              <a href="subject.html#3025">[ subject ]</a>
+              <a href="author.html#3025">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-10-20 19:51:15 +0200 (Mon, 20 Oct 2008)
+New Revision: 9585
+
+Modified:
+   trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+Log:
+parallelised MultiClassAdaBoost::computeOutput and MultiClassAdaBoost::computeOutputAndCosts
+
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-10-20 17:29:26 UTC (rev 9584)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-10-20 17:51:15 UTC (rev 9585)
+@@ -104,16 +104,7 @@
+ 
+ void MultiClassAdaBoost::build_()
+ {
+-    // ### This method should do the real building of the object,
+-    // ### according to set 'options', in *any* situation.
+-    // ### Typical situations include:
+-    // ###  - Initial building of an object from a few user-specified options
+-    // ###  - Building of a &quot;reloaded&quot; object: i.e. from the complete set of
+-    // ###    all serialised options.
+-    // ###  - Updating or &quot;re-building&quot; of an object after a few &quot;tuning&quot;
+-    // ###    options have been modified.
+-    // ### You should assume that the parent class' build_() has already been
+-    // ### called.
++    //reuse object to same allocation time
+     sub_target_tmp.resize(2);
+     for(int i=0;i&lt;sub_target_tmp.size();i++)
+         sub_target_tmp[i].resize(1);
+@@ -238,9 +229,19 @@
+     PLASSERT(output.size()==outputsize());
+     PLASSERT(output1.size()==learner1-&gt;outputsize());
+     PLASSERT(output2.size()==learner2-&gt;outputsize());
++#ifdef _OPENMP
++#pragma omp parallel sections default(none)
++{
++#pragma omp section 
++    learner1-&gt;computeOutput(input, output1);
++#pragma omp section 
++    learner2-&gt;computeOutput(input, output2);
++}
+ 
++#else
+     learner1-&gt;computeOutput(input, output1);
+     learner2-&gt;computeOutput(input, output2);
++#endif
+     int ind1=int(round(output1[0]));
+     int ind2=int(round(output2[0]));
+ 
+@@ -271,11 +272,23 @@
+     subcosts2.resize(learner1-&gt;nTestCosts());
+ 
+     getSubLearnerTarget(target, sub_target_tmp);
++#ifdef _OPENMP
++#pragma omp parallel sections default(none)
++{
++#pragma omp section 
++    learner1-&gt;computeOutputAndCosts(input, sub_target_tmp[0],
++                                    output1, subcosts1);
++#pragma omp section 
++    learner2-&gt;computeOutputAndCosts(input, sub_target_tmp[1],
++                                    output2, subcosts2);
++}
+ 
++#else
+     learner1-&gt;computeOutputAndCosts(input, sub_target_tmp[0],
+-                                   output1, subcosts1);
++                                    output1, subcosts1);
+     learner2-&gt;computeOutputAndCosts(input, sub_target_tmp[1],
+-                                   output2, subcosts2);
++                                    output2, subcosts2);
++#endif
+ 
+     int ind1=int(round(output1[0]));
+     int ind2=int(round(output2[0]));
+@@ -345,8 +358,11 @@
+         subcosts2.resize(learner1-&gt;nTestCosts());
+         getSubLearnerTarget(target, sub_target_tmp);
+ 
++//not paralized as this to add more overhead then the time saved.
++//meaby not true for all weak_learner.
+         learner1-&gt;computeCostsOnly(input,sub_target_tmp[0],subcosts1);
+         learner2-&gt;computeCostsOnly(input,sub_target_tmp[1],subcosts2);
++
+         subcosts1+=subcosts2;
+         costs.append(subcosts1);
+     }
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003024.html">[Plearn-commits] r9584 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="003026.html">[Plearn-commits] r9586 - trunk/plearn_learners/hyper
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3025">[ date ]</a>
+              <a href="thread.html#3025">[ thread ]</a>
+              <a href="subject.html#3025">[ subject ]</a>
+              <a href="author.html#3025">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

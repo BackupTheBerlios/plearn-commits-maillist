@@ -1,0 +1,182 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9188 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9188%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200806271834.m5RIY2ts021602%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002635.html">
+   <LINK REL="Next"  HREF="002637.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9188 - trunk/plearn_learners_experimental</H1>
+    <B>plearner at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9188%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200806271834.m5RIY2ts021602%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9188 - trunk/plearn_learners_experimental">plearner at mail.berlios.de
+       </A><BR>
+    <I>Fri Jun 27 20:34:02 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002635.html">[Plearn-commits] r9187 - in trunk: plearn/var plearn/vmat	plearn_learners/generic
+</A></li>
+        <LI>Next message: <A HREF="002637.html">[Plearn-commits] r9189 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2636">[ date ]</a>
+              <a href="thread.html#2636">[ thread ]</a>
+              <a href="subject.html#2636">[ subject ]</a>
+              <a href="author.html#2636">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: plearner
+Date: 2008-06-27 20:34:01 +0200 (Fri, 27 Jun 2008)
+New Revision: 9188
+
+Modified:
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+Log:
+
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2008-06-27 15:33:36 UTC (rev 9187)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2008-06-27 18:34:01 UTC (rev 9188)
+@@ -72,11 +72,10 @@
+ 
+ 
+ DenoisingRecurrentNet::DenoisingRecurrentNet() :
+-    //rbm_learning_rate( 0.01 ),
+     recurrent_net_learning_rate( 0.01),
+     use_target_layers_masks( false ),
+-    end_of_sequence_symbol( -1000 )
+-    //rbm_nstages( 0 ),
++    end_of_sequence_symbol( -1000 ),
++    encoding(&quot;raw_masked_supervised&quot;)
+ {
+     random_gen = new PRandom();
+ }
+@@ -153,12 +152,11 @@
+                   OptionBase::buildoption,
+                   &quot;The RBMConnection from input_layer to hidden_layer.\n&quot;);
+ 
+-    /*
+-    declareOption(ol, &quot;&quot;, 
+-                  &amp;DenoisingRecurrentNet::,
++    declareOption(ol, &quot;encoding&quot;, 
++                  &amp;DenoisingRecurrentNet::encoding,
+                   OptionBase::buildoption,
+-                  &quot;&quot;);
+-    */
++                  &quot;Chooses what type of encoding to apply to an input sequence\n&quot;
++                  &quot;Possibilities: timeframe, note_duration, note_octav_duration, raw_masked_supervised&quot;);
+ 
+ 
+     declareOption(ol, &quot;target_layers_n_of_target_elements&quot;, 
+@@ -667,40 +665,26 @@
+             if( !fast_exact_is_equal(target_layers_weights[tar],0) )
+             {
+                 Vec target_prediction_i = target_prediction_list[tar](i);
+-                Vec target_prediction_act_no_bias_i = target_prediction_act_no_bias_i;
++                Vec target_prediction_act_no_bias_i = target_prediction_act_no_bias_list[tar](i);
+                 target_connections[tar]-&gt;fprop(last_hidden, target_prediction_act_no_bias_i);
+                 target_layers[tar]-&gt;fprop(target_prediction_act_no_bias_i, target_prediction_i);
+                 if( use_target_layers_masks )
+                     target_prediction_i *= masks_list[tar](i);
+-            }
+-        }
+ 
+-        int sum_target_elements = 0;
+-        for( int tar=0; tar &lt; ntargets; tar++ )
+-        {
+-            if( !fast_exact_is_equal(target_layers_weights[tar],0) )
+-            {
+-                target_layers[tar]-&gt;activation &lt;&lt; target_prediction_act_no_bias_list[tar](i);
++                target_layers[tar]-&gt;activation &lt;&lt; target_prediction_act_no_bias_i;
+                 target_layers[tar]-&gt;activation += target_layers[tar]-&gt;bias;
+-                target_layers[tar]-&gt;setExpectation(target_prediction_list[tar](i));
++                target_layers[tar]-&gt;setExpectation(target_prediction_i);
++
+                 Vec target_vec = targets_list[tar](i);
+                 nll_list(i,tar) = target_layers[tar]-&gt;fpropNLL(target_vec); 
+                 train_costs[tar] += nll_list(i,tar);
+-                        
++
+                 // Normalize by the number of things to predict
+                 if( use_target_layers_masks )
+-                {
+-                    train_n_items[tar] += sum(
+-                        input.subVec( inputsize_without_masks 
+-                                      + sum_target_elements, 
+-                                      target_layers_n_of_target_elements[tar]) );
+-                }
++                    train_n_items[tar] += sum(masks_list[tar](i));
+                 else
+                     train_n_items[tar]++;
+             }
+-            if( use_target_layers_masks )
+-                sum_target_elements += target_layers_n_of_target_elements[tar];
+-                    
+         }
+     }
+ }
+@@ -1541,8 +1525,8 @@
+ {
+     int len = testset.length();
+ 
+-    //Vec output(outputsize());
+-    //output.clear();
++    Vec output(outputsize());
++    output.clear();
+ 
+     Vec costs(nTestCosts());
+     costs.clear();
+@@ -1596,6 +1580,8 @@
+                 }
+                 testoutputs-&gt;putOrAppendRow(pos++, output);
+             }
++            output.fill(end_of_sequence_symbol);
++            testoutputs-&gt;putOrAppendRow(pos++, output);
+         }
+         else
+             pos += seqlen;
+@@ -1615,7 +1601,7 @@
+         testcosts-&gt;putOrAppendRow(0, costs);
+     
+     if (test_stats)
+-        test_stats-&gt;update(costs, weight);
++        test_stats-&gt;update(costs, 1.);
+ }
+ 
+ /*
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002635.html">[Plearn-commits] r9187 - in trunk: plearn/var plearn/vmat	plearn_learners/generic
+</A></li>
+	<LI>Next message: <A HREF="002637.html">[Plearn-commits] r9189 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2636">[ date ]</a>
+              <a href="thread.html#2636">[ thread ]</a>
+              <a href="subject.html#2636">[ subject ]</a>
+              <a href="author.html#2636">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

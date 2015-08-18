@@ -1,0 +1,225 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6814 - trunk/plearn/var
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6814%20-%20trunk/plearn/var&In-Reply-To=%3C200704021829.l32ITJ0Q013216%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000262.html">
+   <LINK REL="Next"  HREF="000264.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6814 - trunk/plearn/var</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6814%20-%20trunk/plearn/var&In-Reply-To=%3C200704021829.l32ITJ0Q013216%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6814 - trunk/plearn/var">chapados at mail.berlios.de
+       </A><BR>
+    <I>Mon Apr  2 20:29:19 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000262.html">[Plearn-commits] r6813 - in trunk: . plearn/base
+</A></li>
+        <LI>Next message: <A HREF="000264.html">[Plearn-commits] r6815 - trunk/python_modules/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#263">[ date ]</a>
+              <a href="thread.html#263">[ thread ]</a>
+              <a href="subject.html#263">[ subject ]</a>
+              <a href="author.html#263">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2007-04-02 20:29:19 +0200 (Mon, 02 Apr 2007)
+New Revision: 6814
+
+Modified:
+   trunk/plearn/var/ObjectOptionVariable.cc
+   trunk/plearn/var/ObjectOptionVariable.h
+Log:
+- Bugfix in fprop in the case of sliced variables -- major impact
+  on optimisation results when using Automatic Relevance Determination
+  with Gaussian Processes
+
+- Removed the option to exponentiate a variable, since this was not
+  used and complicated the code unnecessarily.
+
+
+Modified: trunk/plearn/var/ObjectOptionVariable.cc
+===================================================================
+--- trunk/plearn/var/ObjectOptionVariable.cc	2007-04-02 18:01:05 UTC (rev 6813)
++++ trunk/plearn/var/ObjectOptionVariable.cc	2007-04-02 18:29:19 UTC (rev 6814)
+@@ -60,19 +60,17 @@
+     &quot;a changeOption on the object.\n&quot;);
+ 
+ ObjectOptionVariable::ObjectOptionVariable()
+-    : m_log_variable(false),
+-      m_final_object(0),
++    : m_final_object(0),
+       m_option_type(OptionTypeUnknown),
+       m_option_int(0),
+       m_index(-1)
+ { }
+ 
+ ObjectOptionVariable::ObjectOptionVariable(PP&lt;Object&gt; root, const string&amp; option_name,
+-                                           const string&amp; initial_value, bool log_variable)
++                                           const string&amp; initial_value)
+     : m_root(root),
+       m_option_name(option_name),
+       m_initial_value(initial_value),
+-      m_log_variable(log_variable),
+       m_final_object(0),
+       m_option_type(OptionTypeUnknown),
+       m_option_int(0),
+@@ -159,22 +157,32 @@
+     case OptionTypeVec:
+         // Assume row vector
+         PLASSERT( m_option_vec );
+-        inherited::resize(1, m_option_vec-&gt;size());
+-        value &lt;&lt; *m_option_vec;
++        if (m_index &lt; 0 || m_option_vec-&gt;size() == 0) {
++            inherited::resize(1, m_option_vec-&gt;size());
++            value &lt;&lt; *m_option_vec;
++        }
++        else {
++            inherited::resize(1,1);
++            value[0] = (*m_option_vec)[m_index];
++        }
+         break;
+         
+     case OptionTypeMat:
++        // Indexing works for ROWS in the case of matrices
+         PLASSERT( m_option_mat );
+-        inherited::resize(m_option_mat-&gt;length(), m_option_mat-&gt;width());
+-        matValue &lt;&lt; *m_option_mat;
++        if (m_index &lt; 0 || m_option_mat-&gt;length() == 0) {
++            inherited::resize(m_option_mat-&gt;length(), m_option_mat-&gt;width());
++            matValue &lt;&lt; *m_option_mat;
++        }
++        else {
++            inherited::resize(1, m_option_mat-&gt;width());
++            value &lt;&lt; (*m_option_mat)(m_index);
++        }
+         break;
+ 
+     default:
+         PLASSERT( false );
+     }
+-
+-    if (m_log_variable)
+-        compute_log(value, value);
+ }
+ 
+ void ObjectOptionVariable::build()
+@@ -197,37 +205,38 @@
+     // Depending on the type of the option, set the proper contents of the option.
+     switch (m_option_type) {
+     case OptionTypeInt:
++    {
+         PLASSERT( m_option_int );
+-        if (m_log_variable)
+-            *m_option_int = int(exp(value[0]));
+-        else
+-            *m_option_int = int(value[0]);
++        *m_option_int = int(value[0]);
+         break;
++    }
+ 
+     case OptionTypeReal:
++    {
+         PLASSERT( m_option_real );
+-        if (m_log_variable)
+-            *m_option_real = exp(value[0]);
+-        else
+-            *m_option_real = value[0];
++        *m_option_real = value[0];
+         break;
++    }
+ 
+     case OptionTypeVec:
++    {
+         PLASSERT( m_option_vec );
+-        if (m_log_variable)
+-            exp(value, *m_option_vec);
++        if (m_index &lt; 0)
++            *m_option_vec &lt;&lt; value;
+         else
+-            *m_option_vec &lt;&lt; value;
++            (*m_option_vec)[m_index] = value[0];
+         break;
++    }
+ 
+     case OptionTypeMat:
++    {
+         PLASSERT( m_option_mat );
+-        *m_option_mat &lt;&lt; matValue;
+-        if (m_log_variable) {
+-            Vec option_vec = m_option_mat-&gt;toVec();
+-            exp(option_vec, option_vec);
+-        }
++        if (m_index &lt; 0)
++            *m_option_mat &lt;&lt; matValue;
++        else
++            (*m_option_mat)(m_index)&lt;&lt; value;
+         break;
++    }
+ 
+     default:
+         PLASSERT( false );
+
+Modified: trunk/plearn/var/ObjectOptionVariable.h
+===================================================================
+--- trunk/plearn/var/ObjectOptionVariable.h	2007-04-02 18:01:05 UTC (rev 6813)
++++ trunk/plearn/var/ObjectOptionVariable.h	2007-04-02 18:29:19 UTC (rev 6814)
+@@ -77,19 +77,11 @@
+      */
+     string m_initial_value;
+ 
+-    /**
+-     *  If true, the contents ('value') of the variable is assumed to be the
+-     *  log of the contents of the mirrored object option.  This can be useful
+-     *  when performing unconstrained optimization on the variable, but the
+-     *  option values should remain positive.
+-     */
+-    bool m_log_variable;
+-    
+ public:
+     //!  Default constructor for persistence
+     ObjectOptionVariable();
+     ObjectOptionVariable(PP&lt;Object&gt; root, const string&amp; option_name,
+-                         const string&amp; initial_value=&quot;&quot;, bool log_variable=false);
++                         const string&amp; initial_value=&quot;&quot;);
+ 
+     
+     //#####  PLearn::Object Protocol  #########################################
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000262.html">[Plearn-commits] r6813 - in trunk: . plearn/base
+</A></li>
+	<LI>Next message: <A HREF="000264.html">[Plearn-commits] r6815 - trunk/python_modules/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#263">[ date ]</a>
+              <a href="thread.html#263">[ thread ]</a>
+              <a href="subject.html#263">[ subject ]</a>
+              <a href="author.html#263">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

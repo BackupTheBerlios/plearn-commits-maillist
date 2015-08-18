@@ -1,0 +1,317 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8773 - in trunk: plearn/python plearn/var	plearn_learners/distributions plearn_learners/sequential
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8773%20-%20in%20trunk%3A%20plearn/python%20plearn/var%0A%09plearn_learners/distributions%20plearn_learners/sequential&In-Reply-To=%3C200804081936.m38Ja9ah002091%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002220.html">
+   <LINK REL="Next"  HREF="002222.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8773 - in trunk: plearn/python plearn/var	plearn_learners/distributions plearn_learners/sequential</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8773%20-%20in%20trunk%3A%20plearn/python%20plearn/var%0A%09plearn_learners/distributions%20plearn_learners/sequential&In-Reply-To=%3C200804081936.m38Ja9ah002091%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8773 - in trunk: plearn/python plearn/var	plearn_learners/distributions plearn_learners/sequential">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Tue Apr  8 21:36:09 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002220.html">[Plearn-commits] r8772 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="002222.html">[Plearn-commits] r8774 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2221">[ date ]</a>
+              <a href="thread.html#2221">[ thread ]</a>
+              <a href="subject.html#2221">[ subject ]</a>
+              <a href="author.html#2221">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2008-04-08 21:36:07 +0200 (Tue, 08 Apr 2008)
+New Revision: 8773
+
+Modified:
+   trunk/plearn/python/PythonObjectWrapper.cc
+   trunk/plearn/python/PythonObjectWrapper.h
+   trunk/plearn/var/ProjectionErrorVariable.cc
+   trunk/plearn_learners/distributions/HistogramDistribution.cc
+   trunk/plearn_learners/distributions/HistogramDistribution.h
+   trunk/plearn_learners/sequential/SequentialValidation.cc
+Log:
+- enable real=float (32bits) instead of double
+
+
+
+Modified: trunk/plearn/python/PythonObjectWrapper.cc
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.cc	2008-04-08 17:59:43 UTC (rev 8772)
++++ trunk/plearn/python/PythonObjectWrapper.cc	2008-04-08 19:36:07 UTC (rev 8773)
+@@ -67,6 +67,7 @@
+         fprintf(stderr,&quot;For python object: &quot;);
+         PyObject_Print(pyobj, stderr, Py_PRINT_RAW);
+     }
++    if (PyErr_Occurred()) PyErr_Print();
+     PLERROR(&quot;Cannot convert Python object using %s&quot;, function_name);
+ }
+ 
+@@ -78,6 +79,7 @@
+         // must be in each translation unit that makes use of libnumarray;
+         // weird stuff related to table of function pointers that's being
+         // initialized into a STATIC VARIABLE of the translation unit!
++        import_array();//needed for PyArray_DescFromType (will segfault otherwise)
+         import_libnumarray();
+         numarray_initialized = true;
+     }
+@@ -109,6 +111,12 @@
+         return PyLong_AsDouble(pyobj);
+     if(PyInt_Check(pyobj))
+         return (double)PyInt_AS_LONG(pyobj);
++    if(PyArray_CheckScalar(pyobj))
++    {
++        double ret= 0.;
++        PyArray_CastScalarToCtype(pyobj, &amp;ret, PyArray_DescrFromType(NPY_DOUBLE));
++        return ret;
++    }
+     PLPythonConversionError(&quot;ConvertFromPyObject&lt;double&gt;&quot;, pyobj,
+                             print_traceback);
+     return 0;//shut up compiler
+@@ -124,6 +132,12 @@
+         return (float)PyLong_AsDouble(pyobj);
+     if(PyInt_Check(pyobj))
+         return (float)PyInt_AS_LONG(pyobj);
++    if(PyArray_CheckScalar(pyobj))
++    {
++        float ret= 0.;
++        PyArray_CastScalarToCtype(pyobj, &amp;ret, PyArray_DescrFromType(NPY_FLOAT));
++        return ret;
++    }
+     PLPythonConversionError(&quot;ConvertFromPyObject&lt;float&gt;&quot;, pyobj,
+                             print_traceback);
+     return 0;//shut up compiler
+@@ -187,19 +201,17 @@
+ void ConvertFromPyObject&lt;Vec&gt;::convert(PyObject* pyobj, Vec&amp; v,
+                                        bool print_traceback)
+ {
+-    // NA_InputArray possibly creates a well-behaved temporary (i.e. not
+-    // discontinuous is memory)
+     PLASSERT( pyobj );
+-    PyArrayObject* pyarr = NA_InputArray(pyobj, tReal, NUM_C_ARRAY);
++    PyObject* pyarr0= PyArray_CheckFromAny(pyobj, NULL,
++                                           1, 1, NPY_CARRAY_RO, Py_None);
++    PyObject* pyarr= 
++        PyArray_CastToType(reinterpret_cast&lt;PyArrayObject*&gt;(pyarr0),
++                           PyArray_DescrFromType(PL_NPY_REAL), 0);
+     if (! pyarr)
+         PLPythonConversionError(&quot;ConvertFromPyObject&lt;Vec&gt;&quot;, pyobj,
+                                 print_traceback);
+-    if (pyarr-&gt;nd != 1)
+-        PLERROR(&quot;ConvertFromPyObject&lt;Vec&gt;: Dimensionality of the returned array &quot;
+-                &quot;should be 1; got %d&quot;, pyarr-&gt;nd);
+-
+-    v.resize(pyarr-&gt;dimensions[0]);
+-    v.copyFrom((real*)(NA_OFFSETDATA(pyarr)), pyarr-&gt;dimensions[0]);
++    v.resize(PyArray_DIM(pyarr,0));
++    v.copyFrom((real*)(PyArray_DATA(pyarr)), PyArray_DIM(pyarr,0));
+     Py_XDECREF(pyarr);
+ }
+ 
+@@ -213,20 +225,18 @@
+ void ConvertFromPyObject&lt;Mat&gt;::convert(PyObject* pyobj, Mat&amp; m,
+                                        bool print_traceback)
+ {
+-    // NA_InputArray possibly creates a well-behaved temporary (i.e. not
+-    // discontinuous is memory)
+     PLASSERT( pyobj );
+-    PyArrayObject* pyarr = NA_InputArray(pyobj, tReal, NUM_C_ARRAY);
++    PyObject* pyarr0= PyArray_CheckFromAny(pyobj, NULL,
++                                           2, 2, NPY_CARRAY_RO, Py_None);
++    PyObject* pyarr= 
++        PyArray_CastToType(reinterpret_cast&lt;PyArrayObject*&gt;(pyarr0),
++                           PyArray_DescrFromType(PL_NPY_REAL), 0);
+     if (! pyarr)
+         PLPythonConversionError(&quot;ConvertFromPyObject&lt;Mat&gt;&quot;, pyobj,
+                                 print_traceback);
+-    if (pyarr-&gt;nd != 2)
+-        PLERROR(&quot;ConvertFromPyObject&lt;Mat&gt;: Dimensionality of the returned array &quot;
+-                &quot;should be 2; got %d&quot;, pyarr-&gt;nd);
+-
+-    m.resize(pyarr-&gt;dimensions[0], pyarr-&gt;dimensions[1]);
+-    m.toVec().copyFrom((real*)(NA_OFFSETDATA(pyarr)),
+-                       pyarr-&gt;dimensions[0] * pyarr-&gt;dimensions[1]);
++    m.resize(PyArray_DIM(pyarr,0), PyArray_DIM(pyarr,1));
++    m.toVec().copyFrom((real*)(PyArray_DATA(pyarr)),
++                       PyArray_DIM(pyarr,0) * PyArray_DIM(pyarr,1));
+     Py_XDECREF(pyarr);
+ }
+ 
+
+Modified: trunk/plearn/python/PythonObjectWrapper.h
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.h	2008-04-08 17:59:43 UTC (rev 8772)
++++ trunk/plearn/python/PythonObjectWrapper.h	2008-04-08 19:36:07 UTC (rev 8773)
+@@ -70,8 +70,10 @@
+ 
+ 
+ #ifdef USEFLOAT
++#define PL_NPY_REAL NPY_FLOAT
+ #define tReal tFloat32
+ #else
++#define PL_NPY_REAL NPY_DOUBLE
+ #define tReal tFloat64
+ #endif
+ 
+
+Modified: trunk/plearn/var/ProjectionErrorVariable.cc
+===================================================================
+--- trunk/plearn/var/ProjectionErrorVariable.cc	2008-04-08 17:59:43 UTC (rev 8772)
++++ trunk/plearn/var/ProjectionErrorVariable.cc	2008-04-08 19:36:07 UTC (rev 8773)
+@@ -227,7 +227,7 @@
+     {
+         // use SVD of (F' -T')
+         FT1 &lt;&lt; F;
+-        multiply(FT2,TT,-1.0);
++        multiply(FT2,TT,static_cast&lt;real&gt;(-1.0));
+         lapackSVD(FT, Ut, S, V);
+         wwuu.clear();//
+         for (int k=0;k&lt;S.length();k++)
+@@ -254,7 +254,7 @@
+             Vec res(ww.length());
+             product(res,A11,ww);
+             productAcc(res,A12,uu);
+-            res -= 1.0;
++            res -= static_cast&lt;real&gt;(1.0);
+             cout &lt;&lt; &quot;norm of error in w equations: &quot; &lt;&lt; norm(res) &lt;&lt; endl;
+             Vec res2(uu.length());
+             transposeProduct(res2,A12,ww);
+
+Modified: trunk/plearn_learners/distributions/HistogramDistribution.cc
+===================================================================
+--- trunk/plearn_learners/distributions/HistogramDistribution.cc	2008-04-08 17:59:43 UTC (rev 8772)
++++ trunk/plearn_learners/distributions/HistogramDistribution.cc	2008-04-08 19:36:07 UTC (rev 8773)
+@@ -196,13 +196,13 @@
+     deepCopyField(smoother, copies);
+ }
+ 
+-double HistogramDistribution::log_density(const Vec&amp; x) const
++real HistogramDistribution::log_density(const Vec&amp; x) const
+ {
+     return pl_log(density(x));
+ }
+ 
+ 
+-double HistogramDistribution::density(const Vec&amp; x) const
++real HistogramDistribution::density(const Vec&amp; x) const
+ {
+     if(x.size() != 1)
+         PLERROR(&quot;HistogramDistribution::density implemented only for univariate data (vec size == 1).&quot;);
+@@ -210,7 +210,7 @@
+ }
+ 
+ 
+-double HistogramDistribution::survival_fn(const Vec&amp; x) const
++real HistogramDistribution::survival_fn(const Vec&amp; x) const
+ {
+     if(x.size() != 1)
+         PLERROR(&quot;HistogramDistribution::survival_fn implemented only for univariate data (vec size == 1).&quot;);
+@@ -228,7 +228,7 @@
+     return survival_values[bin];
+ }
+ 
+-double HistogramDistribution::cdf(const Vec&amp; x) const
++real HistogramDistribution::cdf(const Vec&amp; x) const
+ {
+     return 1.0-survival_fn(x);
+ }
+@@ -259,7 +259,7 @@
+     cov(0,0) = abs(sumsq-(sum*sum)/n)/n;
+ }
+ 
+-double HistogramDistribution::prob_in_range(const Vec&amp; x0, const Vec&amp; x1) const
++real HistogramDistribution::prob_in_range(const Vec&amp; x0, const Vec&amp; x1) const
+ {
+     return survival_fn(x0) - survival_fn(x1);
+ }
+
+Modified: trunk/plearn_learners/distributions/HistogramDistribution.h
+===================================================================
+--- trunk/plearn_learners/distributions/HistogramDistribution.h	2008-04-08 17:59:43 UTC (rev 8772)
++++ trunk/plearn_learners/distributions/HistogramDistribution.h	2008-04-08 19:36:07 UTC (rev 8773)
+@@ -134,17 +134,17 @@
+     // ************************
+ 
+     //! return log of probability density log(p(x))
+-    virtual double log_density(const Vec&amp; x) const;
++    virtual real log_density(const Vec&amp; x) const;
+ 
+     //! return probability density p(x)
+     //! [ default version returns exp(log_density(x)) ]
+-    virtual double density(const Vec&amp; x) const;
++    virtual real density(const Vec&amp; x) const;
+ 
+     //! return survival fn = P(X&gt;x)
+-    virtual double survival_fn(const Vec&amp; x) const;
++    virtual real survival_fn(const Vec&amp; x) const;
+ 
+     //! return survival fn = P(X&lt;x)
+-    virtual double cdf(const Vec&amp; x) const;
++    virtual real cdf(const Vec&amp; x) const;
+ 
+     //! return E[X]
+     virtual void expectation(Vec&amp; mu) const;
+@@ -153,7 +153,7 @@
+     virtual void variance(Mat&amp; cov) const;
+ 
+     //! return P(x0 &lt; X &lt; x1)
+-    virtual double prob_in_range(const Vec&amp; x0, const Vec&amp; x1) const;
++    virtual real prob_in_range(const Vec&amp; x0, const Vec&amp; x1) const;
+ 
+     //protected:
+     //the following methods are used internally by HistogramDistribution
+
+Modified: trunk/plearn_learners/sequential/SequentialValidation.cc
+===================================================================
+--- trunk/plearn_learners/sequential/SequentialValidation.cc	2008-04-08 17:59:43 UTC (rev 8772)
++++ trunk/plearn_learners/sequential/SequentialValidation.cc	2008-04-08 19:36:07 UTC (rev 8773)
+@@ -621,7 +621,7 @@
+ 
+ void SequentialValidation::testLearners(VMat test_set)
+ {
+-    double weight;
++    real weight;
+     test_set.getExample(test_set.length()-1, input, target, weight);
+     for (int a=0, n=accessory_learners.length() ; a&lt;n ; ++a )
+     {
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002220.html">[Plearn-commits] r8772 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="002222.html">[Plearn-commits] r8774 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2221">[ date ]</a>
+              <a href="thread.html#2221">[ thread ]</a>
+              <a href="subject.html#2221">[ subject ]</a>
+              <a href="author.html#2221">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

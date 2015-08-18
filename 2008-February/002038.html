@@ -1,0 +1,288 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8590 - trunk/python_modules/plearn/pytest
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8590%20-%20trunk/python_modules/plearn/pytest&In-Reply-To=%3C200802272032.m1RKWE3e013151%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002037.html">
+   <LINK REL="Next"  HREF="002039.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8590 - trunk/python_modules/plearn/pytest</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8590%20-%20trunk/python_modules/plearn/pytest&In-Reply-To=%3C200802272032.m1RKWE3e013151%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8590 - trunk/python_modules/plearn/pytest">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Wed Feb 27 21:32:14 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002037.html">[Plearn-commits] r8589 - trunk/python_modules/plearn/utilities
+</A></li>
+        <LI>Next message: <A HREF="002039.html">[Plearn-commits] r8591 - trunk/python_modules/plearn/pyplearn
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2038">[ date ]</a>
+              <a href="thread.html#2038">[ thread ]</a>
+              <a href="subject.html#2038">[ subject ]</a>
+              <a href="author.html#2038">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2008-02-27 21:32:13 +0100 (Wed, 27 Feb 2008)
+New Revision: 8590
+
+Modified:
+   trunk/python_modules/plearn/pytest/programs.py
+Log:
+- allow compilation of python extension modules (WIP)
+
+
+
+Modified: trunk/python_modules/plearn/pytest/programs.py
+===================================================================
+--- trunk/python_modules/plearn/pytest/programs.py	2008-02-27 20:04:25 UTC (rev 8589)
++++ trunk/python_modules/plearn/pytest/programs.py	2008-02-27 20:32:13 UTC (rev 8590)
+@@ -49,6 +49,10 @@
+     return program_path
+ 
+ def find_local_program(name):
++    name= ppath.expandEnvVariables(name)
++    name2, ext= os.path.splitext(name)
++    if ext=='.so':
++        name= name2
+     if os.path.exists( name ) or \
+            os.path.exists( name+'.cc' ):
+         return os.path.abspath(name)
+@@ -123,7 +127,7 @@
+         ##  initialize the '_program_path' and '__is_global' members
+         logging.debug(&quot;\nProgram: &quot;+self.getProgramPath())
+ 
+-        internal_exec_path = self.getInternalExecPath(self.__signature())
++        internal_exec_path = self.getInternalExecPath(self._signature())
+         logging.debug(&quot;Internal Exec Path: %s&quot;%internal_exec_path)
+         if self.isCompilable():
+             if self.compiler is None:
+@@ -152,7 +156,7 @@
+                           self.name, self.compile_options, options)
+             self.compile_options = options
+             
+-    def __signature(self):
++    def _signature(self):
+         if self.compiler is None:
+             signature = self.name
+         else:
+@@ -303,7 +307,7 @@
+         
+     def getInternalExecPath(self, candidate=None):
+         if hasattr(self, '_internal_exec_path'):
+-            assert candidate is None
++            assert candidate is None, 'candidate is not None:'+repr(candidate)
+             return self._internal_exec_path
+ 
+         logging.debug(&quot;Parsing for internal exec path; candidate=%s&quot;%candidate)
+@@ -393,6 +397,172 @@
+     def isPLearnCommand(self):
+         return self.isGlobal() and self.isCompilable()
+ 
++
++class PythonSharedLibrary(Program):
++    &quot;&quot;&quot;
++    Version of Program for shared libraries used as python extension modules.
++    WARNING: the compilation produces an .so file in the same directory as
++    the source (instead of ~/.plearn/pytest/compiled_programs)
++    &quot;&quot;&quot;
++    def __init__(self, **overrides):
++        Program.__init__(self, **overrides)
++
++    def getProgramPath(self):
++        if hasattr(self, '_program_path'):
++            return self._program_path        
++        pp= super(PythonSharedLibrary, self).getProgramPath()
++        ppd, ext= os.path.splitext(pp)
++        if ext == '':
++            pp+= '.cc'
++        self._program_path= pp
++        return self._program_path
++
++    def _signature(self):
++        return self.getProgramPath()[:-2]+'so'
++
++        
++class PythonSharedLibrary2(Program):
++    &quot;&quot;&quot;
++    DO NOT USE (unless you fix it).
++    Old, incomplete version of PythonSharedLibrary;
++    should produce executable in ~/.plearn/pytest/compiled_programs
++    &quot;&quot;&quot;
++
++    def __init__(self, **overrides):
++        Program.__init__(self, **overrides)
++        internal_exec_path= self.getInternalExecPath()
++        internal_exec_dir= os.path.dirname(internal_exec_path)
++        module_path= self.getPythonModulePath()
++
++        base_exec_dir= internal_exec_dir[:-len(module_path)]
++        base_exec_dir= os.path.dirname(base_exec_dir)
++
++        def mkInit(d):
++            logging.debug(&quot;** &quot;+d)
++            try:
++                os.mkdir(d)
++            except:
++                pass
++            try:
++                os.mknod(os.path.join(d, '__init__.py'))
++                logging.debug(&quot;\t**! &quot;+d)
++            except:
++                pass
++
++        to_init= base_exec_dir
++        mkInit(to_init)
++        subdirs= module_path.split('/')
++        for d in subdirs:
++            to_init= os.path.join(to_init, d)
++            mkInit(to_init)
++            
++        os.environ['PYTHONPATH']= base_exec_dir+':'+os.getenv('PYTHONPATH','')
++        
++        logging.debug(&quot;PYTHONPATH: &quot;+os.environ['PYTHONPATH']+&quot;\tinternal_exec_path=&quot;+internal_exec_path)
++        logging.debug(&quot;NAME: &quot;+self.name)
++        p= ppath.expandEnvVariables(self.name)
++        logging.debug(&quot;path: &quot;+p)
++
++
++    def getPythonModulePath(self):
++        if hasattr(self, '_python_module_path'):
++            return self._python_module_path
++        pythonpath= os.getenv('PYTHONPATH','').split(':')
++        module_path= None
++        common_prefix= None
++        name= ppath.expandEnvVariables(self.name)
++        for p in pythonpath:
++            c= os.path.commonprefix([p, name])
++            if c == p:
++                logging.debug(&quot;Common Prefix Match: &quot;+c+' -- '+repr(name[len(p):].split('/')))
++                module_path= name[len(p):]
++                while module_path[0] == '/':
++                    module_path= module_path[1:]
++                while module_path[-1] == '/':
++                    module_path= module_path[:-1]
++                module_path= os.path.dirname(module_path)
++                common_prefix= c
++                break
++            else:
++                logging.debug(&quot;NO Common Prefix: &quot;+p+' -- '+name)
++        self._python_module_path= module_path
++        return module_path
++
++    def _signature(self):
++        &quot;&quot;&quot;
++        
++        &quot;&quot;&quot;
++        if self.compiler is None:
++            signature = self.name
++        else:
++            name= os.path.basename(self.name)
++            if self.compile_options == &quot;&quot;:
++                self.compile_options = None
++            module_path= self.getPythonModulePath()
++            signature = &quot;SHARED_OBJS__compiler_%s__options_%s&quot;%(
++               self.compiler, self.compile_options)
++            signature= os.path.join(signature, module_path, name)
++        signature = signature.replace('-', '') # Compile options...
++        return signature.replace(' ', '_')
++
++#      def getInternalExecPath(self, candidate=None):
++#         if hasattr(self, '_internal_exec_path'):
++#             return self._internal_exec_path
++#         iep= super(PythonSharedLibrary, self).getInternalExecPath(self, candidate)
++#         if iep.endswith('.so'):
++#             return iep
++#         self._internal_exec_path= iep+'.so'
++#         return self._internal_exec_path
++
++
++
++         
++#         if hasattr(self, '_internal_exec_path'):
++#             assert candidate is None
++#             return self._internal_exec_path
++
++#         logging.debug(&quot;Parsing for internal exec path; candidate=%s&quot;%candidate)
++
++#         if candidate == self.name:
++#             self._internal_exec_path = self.getProgramPath()
++#         else:
++#             self._internal_exec_path = \
++#                 os.path.join(core.pytest_config_path(), &quot;compiled_programs&quot;, candidate)
++#         if sys.platform == 'win32':
++#             # Cygwin has trouble with the \ characters.
++#             self._internal_exec_path = \
++#                 self._internal_exec_path.replace('\\', '/')
++#             # In addition, we need to add the '.exe' extension as otherwise it
++#             # may not be able to run it.
++#             self._internal_exec_path += '.exe'
++#         return self._internal_exec_path
++
++    def getProgramPath(self):
++        if hasattr(self, '_program_path'):
++            return self._program_path        
++        pp= super(PythonSharedLibrary, self).getProgramPath()
++        ppd, ext= os.path.splitext(pp)
++        if ext == '':
++            pp+= '.cc'
++        self._program_path= pp
++        return self._program_path
++         
++#         if hasattr(self, '_program_path'):
++#             return self._program_path        
++
++#         try:
++#             self._program_path = find_local_program(self.name)
++#             self.__is_global = False
++#         except core.PyTestUsageError, not_local:
++#             try:
++#                 self._program_path = find_global_program(self.name)
++#                 self.__is_global = True                
++#             except core.PyTestUsageError, neither_global:
++#                 raise core.PyTestUsageError(&quot;%s %s&quot;%(not_local, neither_global))
++#         return self._program_path
++
++
++
+ if __name__ == &quot;__main__&quot;:
+     # In Python2.4
+     # logging.basicConfig(level=logging.DEBUG)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002037.html">[Plearn-commits] r8589 - trunk/python_modules/plearn/utilities
+</A></li>
+	<LI>Next message: <A HREF="002039.html">[Plearn-commits] r8591 - trunk/python_modules/plearn/pyplearn
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2038">[ date ]</a>
+              <a href="thread.html#2038">[ thread ]</a>
+              <a href="subject.html#2038">[ subject ]</a>
+              <a href="author.html#2038">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

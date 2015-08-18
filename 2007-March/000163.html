@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6714 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6714%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200703022220.l22MKTBW021593%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000162.html">
+   <LINK REL="Next"  HREF="000164.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6714 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6714%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200703022220.l22MKTBW021593%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6714 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Fri Mar  2 23:20:29 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000162.html">[Plearn-commits] r6713 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000164.html">[Plearn-commits] r6715 - tags
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#163">[ date ]</a>
+              <a href="thread.html#163">[ thread ]</a>
+              <a href="subject.html#163">[ subject ]</a>
+              <a href="author.html#163">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-03-02 23:20:28 +0100 (Fri, 02 Mar 2007)
+New Revision: 6714
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+Log:
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-03-01 22:16:00 UTC (rev 6713)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-03-02 22:20:28 UTC (rev 6714)
+@@ -63,7 +63,6 @@
+     final_cost_has_learning_rate( false ),
+     nll_cost_index( -1 ),
+     class_cost_index( -1 ),
+-    final_cost_index( -1 ),
+     recons_cost_index( -1 )
+ 
+ {
+@@ -525,7 +524,12 @@
+     if ( classification_cost )
+         nll_cost_index = train_cost_names.find(classification_cost-&gt;name()[0]);
+     if ( final_cost )
+-        final_cost_index = train_cost_names.find(final_cost-&gt;name()[0]);
++    {
++        TVec&lt;string&gt; names = final_cost-&gt;name();
++        final_cost_indices.resize(names.length());
++        for (int i=0;i&lt;names.length();i++)
++            final_cost_indices[i] = train_cost_names.find(names[i]);
++    }
+     if ( partial_costs )
+     {
+         partial_cost_indices.resize(partial_costs.size());
+@@ -801,7 +805,8 @@
+                                      true);
+         }
+ 
+-        train_costs[final_cost_index] = final_cost_value[0];
++        for (int j=0;j&lt;final_cost_indices.length();j++)
++            train_costs[final_cost_indices[j]] = final_cost_value[j];
+     }
+ 
+     if ( final_cost || (partial_costs &amp;&amp; partial_costs[n_layers-2]) )
+@@ -1074,7 +1079,8 @@
+                                      expectation_gradients[ n_layers-1 ] );
+         }
+ 
+-        train_costs[final_cost_index] = final_cost_value[0];
++        for (int j=0;j&lt;final_cost_indices.length();j++)
++            train_costs[final_cost_indices[j]] = final_cost_value[j];
+ 
+         layers[ n_layers-1 ]-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;activation,
+                                            layers[ n_layers-1 ]-&gt;expectation,
+@@ -1228,7 +1234,6 @@
+ 
+     TVec&lt;string&gt; test_cost_names = getTestCostNames() ;
+ 
+-    int test_final_cost_index = -1 ;
+     int test_class_cost_index = test_cost_names.find(&quot;class_error&quot;) ;
+ 
+     costs.resize( test_cost_names.length() );
+@@ -1236,20 +1241,6 @@
+ 
+     // TO MAKE FOR CLEANER CODE INDEPENDENT OF ORDER OF CALLING THIS
+     // METHOD AND computeOutput, THIS SHOULD BE IN A REDEFINITION OF computeOutputAndCosts
+-    if( partial_costs )
+-    {
+-        Vec pcosts;
+-        for( int i=0 ; i&lt;n_layers-1 ; i++ )
+-            // propagate into local cost associated to output of layer i+1
+-            if( partial_costs[ i ] )
+-            {
+-                partial_costs[ i ]-&gt;fprop( layers[ i+1 ]-&gt;expectation,
+-                                           target, pcosts);
+-                for (int j=0;j&lt;pcosts.length();j++)
+-                    costs[partial_cost_indices[i][j]] = pcosts[j];
+-            }
+-    }
+-
+     if( use_classification_cost )
+     {
+         int test_nll_cost_index =
+@@ -1269,19 +1260,25 @@
+ 
+     if( final_cost )
+     {
+-
+-        test_final_cost_index = test_cost_names.find(final_cost-&gt;name()[0]) ;
+         int init = use_classification_cost ? n_classes : 0;
+-        Vec final_costs;
+         final_cost-&gt;fprop( output.subVec( init, output.size() - init ),
+                            target, final_cost_value );
++        for (int j=0;j&lt;final_cost_indices.length();j++)
++            costs[final_cost_indices[j]] = final_cost_value[j];
++    }
+ 
+-        if ( final_cost_value.length() &gt; 1 )
+-            PLERROR(&quot;DeepBeliefNet::computeCostsFromOutputs needs to be fixed&quot;
+-                    &quot;to handle final costs with more then one element&quot;) ;
+-
+-        costs[test_final_cost_index] = final_cost_value[0] ;
+-        costs.append(final_cost_value[0]);
++    if( partial_costs )
++    {
++        Vec pcosts;
++        for( int i=0 ; i&lt;n_layers-1 ; i++ )
++            // propagate into local cost associated to output of layer i+1
++            if( partial_costs[ i ] )
++            {
++                partial_costs[ i ]-&gt;fprop( layers[ i+1 ]-&gt;expectation,
++                                           target, pcosts);
++                for (int j=0;j&lt;pcosts.length();j++)
++                    costs[partial_cost_indices[i][j]] = pcosts[j];
++            }
+     }
+ 
+ }
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2007-03-01 22:16:00 UTC (rev 6713)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2007-03-02 22:20:28 UTC (rev 6714)
+@@ -286,8 +286,8 @@
+     //! Keeps the index of the CLASS cost in train_costs
+     int class_cost_index;
+ 
+-    //! Keeps the index of the final cost in train_costs
+-    int final_cost_index;
++    //! Keeps the indices of the final costs in train_costs
++    TVec&lt;int&gt; final_cost_indices;
+ 
+     //! Keeps the index of the reconstruction cost in train_costs
+     int recons_cost_index;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000162.html">[Plearn-commits] r6713 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000164.html">[Plearn-commits] r6715 - tags
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#163">[ date ]</a>
+              <a href="thread.html#163">[ thread ]</a>
+              <a href="subject.html#163">[ subject ]</a>
+              <a href="author.html#163">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

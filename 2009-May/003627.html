@@ -1,0 +1,162 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10187 - trunk/commands/PLearnCommands
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10187%20-%20trunk/commands/PLearnCommands&In-Reply-To=%3C200905071549.n47Fn1rG012422%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003626.html">
+   <LINK REL="Next"  HREF="003628.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10187 - trunk/commands/PLearnCommands</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10187%20-%20trunk/commands/PLearnCommands&In-Reply-To=%3C200905071549.n47Fn1rG012422%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10187 - trunk/commands/PLearnCommands">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Thu May  7 17:49:01 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003626.html">[Plearn-commits] r10186 - trunk/plearn/io
+</A></li>
+        <LI>Next message: <A HREF="003628.html">[Plearn-commits] r10188 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3627">[ date ]</a>
+              <a href="thread.html#3627">[ thread ]</a>
+              <a href="subject.html#3627">[ subject ]</a>
+              <a href="author.html#3627">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-05-07 17:48:59 +0200 (Thu, 07 May 2009)
+New Revision: 10187
+
+Modified:
+   trunk/commands/PLearnCommands/ReadAndWriteCommand.cc
+Log:
+to the read_and_write command, it now use smartLoadObject() to load more type offile and have a new option --mode={plearn_ascii,plearn_binary} to test the different format.
+
+
+Modified: trunk/commands/PLearnCommands/ReadAndWriteCommand.cc
+===================================================================
+--- trunk/commands/PLearnCommands/ReadAndWriteCommand.cc	2009-05-07 15:43:03 UTC (rev 10186)
++++ trunk/commands/PLearnCommands/ReadAndWriteCommand.cc	2009-05-07 15:48:59 UTC (rev 10187)
+@@ -40,10 +40,9 @@
+ #include &quot;ReadAndWriteCommand.h&quot;
+ #include &lt;plearn/base/Object.h&gt;
+ #include &lt;plearn/base/stringutils.h&gt;      //!&lt; For extract_extension.
+-#include &lt;plearn/io/fileutils.h&gt;        //!&lt; For readFileAndMacroProcess.
+-#include &lt;plearn/io/load_and_save.h&gt;
++#include &lt;plearn/io/fileutils.h&gt;        //!&lt; For mtime.
++#include &lt;plearn/io/PyPLearnScript.h&gt;   //!&lt; For smartLoadObject
+ #include &lt;plearn/io/openFile.h&gt;
+-#include &lt;plearn/io/openString.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -56,7 +55,7 @@
+                 
+                   &quot;Used to check (debug) the serialization system&quot;,
+                 
+-                  &quot;read_and_write &lt;sourcefile&gt; &lt;destfile&gt; [--updaet] [modification string] ...\n&quot;
++                  &quot;read_and_write &lt;sourcefile&gt; &lt;destfile&gt; [--update] [modification string] ...\n&quot;
+                   &quot;Reads an Object (in PLearn serialization format) from the &lt;sourcefile&gt; and writes it to the &lt;destfile&gt;\n&quot;
+                   &quot;If the sourcefile ends with a .psave file, then it will not be subjected to macro preprosessing \n&quot;
+                   &quot;Otherwise (ex: .plearn .vmat) it will. \n&quot;
+@@ -69,7 +68,7 @@
+ void ReadAndWriteCommand::run(const vector&lt;string&gt;&amp; args)
+ {
+     if(args.size()&lt;2)
+-        PLERROR(&quot;read_and_write takes 2 or more arguments: &lt;sourcefile&gt; &lt;destfile&gt; [--update] [modification string] ...&quot;);
++        PLERROR(&quot;read_and_write takes 2 or more arguments: &lt;sourcefile&gt; &lt;destfile&gt; [--update] [--mode={plearn_ascii,plearn_binary}][modification string] ...&quot;);
+     string source = args[0];
+     string dest = args[1];
+ 
+@@ -78,27 +77,25 @@
+     time_t date_src=0;
+ 
+     //read the file
+-    if(ext==&quot;.psave&quot;) // may be binay. Don't macro-process
+-    {
+-        PLearn::load(source,o);
+-        date_src=mtime(source);
+-    }
+-    else
+-    {
+-        map&lt;string, string&gt; vars;
+-        string script = readFileAndMacroProcess(source, vars, date_src);
+-        PStream in = openString(script,PStream::plearn_ascii);
+-        o = readObject(in);
+-    }
+-    int idx_start=2;
+-    if(args.size()&gt;2 &amp;&amp; args[2]==&quot;--update&quot;){
+-        PLCHECK(date_src&gt;0);
++    o=smartLoadObject(source, date_src);
++
++    uint idx_start=2;
++    PStream::mode_t mode = PStream::plearn_ascii;
++    for(;idx_start&lt;args.size();){
++        if(args[idx_start]==&quot;--update&quot;){
++            PLCHECK(date_src&gt;0);
++            time_t date_dst=mtime(dest);
++            if((date_dst&gt;date_src) &amp;&amp; (date_src&gt;0)){
++                pout &lt;&lt; &quot;The file is up to date. We don't regenerate it.&quot;&lt;&lt;endl;
++                return;
++            }
++        } else if(args[idx_start]==&quot;--mode=plearn_ascii&quot;){
++            mode=PStream::plearn_ascii;
++        } else if(args[idx_start]==&quot;--mode=plearn_binary&quot;){
++            mode=PStream::plearn_binary;
++        } else
++            break;//the rest are modification string
+         idx_start++;
+-        time_t date_dst=mtime(dest);
+-        if((date_dst&gt;date_src) &amp;&amp; (date_src&gt;0)){
+-            pout &lt;&lt; &quot;The file is up to date. We do not regenerate it.&quot;&lt;&lt;endl;
+-            return;
+-        }
+     }
+ 
+     //modif the object
+@@ -110,7 +107,7 @@
+     }
+ 
+     //write the file
+-    PStream out = openFile(dest,PStream::plearn_ascii,&quot;w&quot;);
++    PStream out = openFile(dest, mode, &quot;w&quot;);
+     if(!out)
+         PLERROR(&quot;Could not open file %s for writing&quot;,dest.c_str());
+     out &lt;&lt; *o;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003626.html">[Plearn-commits] r10186 - trunk/plearn/io
+</A></li>
+	<LI>Next message: <A HREF="003628.html">[Plearn-commits] r10188 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3627">[ date ]</a>
+              <a href="thread.html#3627">[ thread ]</a>
+              <a href="subject.html#3627">[ subject ]</a>
+              <a href="author.html#3627">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

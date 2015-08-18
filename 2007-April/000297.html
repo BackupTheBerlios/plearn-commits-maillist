@@ -1,0 +1,473 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6848 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6848%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200704070243.l372hgC3013547%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000296.html">
+   <LINK REL="Next"  HREF="000298.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6848 - trunk/plearn_learners_experimental</H1>
+    <B>laulysta at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6848%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200704070243.l372hgC3013547%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6848 - trunk/plearn_learners_experimental">laulysta at mail.berlios.de
+       </A><BR>
+    <I>Sat Apr  7 04:43:42 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000296.html">[Plearn-commits] r6847 - in trunk: plearn/misc	plearn_learners/generic/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="000298.html">[Plearn-commits] r6849 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#297">[ date ]</a>
+              <a href="thread.html#297">[ thread ]</a>
+              <a href="subject.html#297">[ subject ]</a>
+              <a href="author.html#297">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: laulysta
+Date: 2007-04-07 04:43:40 +0200 (Sat, 07 Apr 2007)
+New Revision: 6848
+
+Modified:
+   trunk/plearn_learners_experimental/DynamicallyLinkedRBMsModel.cc
+   trunk/plearn_learners_experimental/DynamicallyLinkedRBMsModel.h
+Log:
+With a dynamic connection between the visible layers
+
+
+Modified: trunk/plearn_learners_experimental/DynamicallyLinkedRBMsModel.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DynamicallyLinkedRBMsModel.cc	2007-04-07 01:34:55 UTC (rev 6847)
++++ trunk/plearn_learners_experimental/DynamicallyLinkedRBMsModel.cc	2007-04-07 02:43:40 UTC (rev 6848)
+@@ -111,6 +111,11 @@
+                   &quot;OnlineLearningModule corresponding to dynamic links &quot;
+                   &quot;between RBMs' hidden layers&quot;);
+ 
++    declareOption(ol, &quot;visible_connections&quot;, &amp;DynamicallyLinkedRBMsModel::visible_connections,
++                  OptionBase::buildoption,
++                  &quot;OnlineLearningModule corresponding to dynamic links &quot;
++                  &quot;between RBMs' visible layers&quot;);
++
+     /*
+     declareOption(ol, &quot;&quot;, &amp;DynamicallyLinkedRBMsModel::,
+                   OptionBase::learntoption,
+@@ -171,6 +176,9 @@
+         pos_up_values.resize(hidden_layer-&gt;size);
+         hidden_layer_target.resize(hidden_layer-&gt;size);
+         hidden_layer_sample.resize(hidden_layer-&gt;size);
++        visible_layer_sample.resize(visible_size);
++        previous_hidden_layer.resize(hidden_layer-&gt;size);
++        previous_visible_layer.resize(visible_size);
+ 
+         visible_layer-&gt;size = visible_size;
+ 
+@@ -180,17 +188,22 @@
+         dynamic_connections-&gt;input_size = hidden_layer-&gt;size;
+         dynamic_connections-&gt;output_size = hidden_layer-&gt;size;
+ 
++        visible_connections-&gt;input_size = visible_size;
++        visible_connections-&gt;output_size = visible_size;
++
+         // Set random generators
+         visible_layer-&gt;random_gen = random_gen;
+         hidden_layer-&gt;random_gen = random_gen;
+         connections-&gt;random_gen = random_gen;
+         dynamic_connections-&gt;random_gen = random_gen;
++        visible_connections-&gt;random_gen = random_gen;
+ 
+         // Build components
+         visible_layer-&gt;build();
+         hidden_layer-&gt;build();
+         connections-&gt;build();
+         dynamic_connections-&gt;build();
++        visible_connections-&gt;build();
+     }
+ 
+ }
+@@ -211,15 +224,20 @@
+     deepCopyField( hidden_layer , copies);
+     deepCopyField( dynamic_connections , copies);
+     deepCopyField( dynamic_connections_copy , copies);
++    deepCopyField( visible_connections , copies);
+     deepCopyField( connections , copies);
+     deepCopyField( symbol_sizes , copies);
+     deepCopyField(cond_bias , copies);
++    deepCopyField(visi_cond_bias , copies);
+     deepCopyField(bias_gradient , copies);
++    deepCopyField(visi_bias_gradient , copies);
+     deepCopyField( hidden_layer_target , copies);
+     deepCopyField( input_gradient , copies);
+     deepCopyField(previous_input , copies);
+     deepCopyField(previous_hidden_layer , copies);
++    deepCopyField(previous_visible_layer , copies);
+     deepCopyField(hidden_layer_sample , copies);
++    deepCopyField(visible_layer_sample , copies);
+     deepCopyField(pos_down_values , copies);
+     deepCopyField(pos_up_values , copies);
+     deepCopyField(alpha , copies);
+@@ -255,6 +273,7 @@
+     hidden_layer-&gt;forget();
+     connections-&gt;forget();
+     dynamic_connections-&gt;forget();
++    visible_connections-&gt;forget();
+ 
+     stage = 0;
+ }
+@@ -351,8 +370,23 @@
+                     continue;
+ 
+                 clamp_visible_units(input);
+-                
++//                if(sample == 0)
++//                {
++//                    cout &lt;&lt; &quot;Pre rbm_update&quot; &lt;&lt; endl;
++//                    cout &lt;&lt; &quot;connection=&quot; &lt;&lt; dynamic_cast&lt;RBMMatrixConnection*&gt;((RBMConnection *)connections)-&gt;weights &lt;&lt; endl;
++//                    cout &lt;&lt; &quot;visible_bias=&quot; &lt;&lt; visible_layer-&gt;bias &lt;&lt; endl;
++//                    cout &lt;&lt; &quot;hidden_bias=&quot; &lt;&lt; hidden_layer-&gt;bias &lt;&lt; endl;
++//                }
+                 mean_cost += rbm_update();
++//                if(sample == 0)
++//                {
++//                    cout &lt;&lt; &quot;Post rbm_update&quot; &lt;&lt; endl;
++//                    cout &lt;&lt; &quot;hidden-&gt;expectation&quot; &lt;&lt; hidden_layer-&gt;expectation &lt;&lt; endl;
++//                    cout &lt;&lt; &quot;visible-&gt;expectation&quot; &lt;&lt; visible_layer-&gt;expectation &lt;&lt; endl;
++//                    cout &lt;&lt; &quot;connection=&quot; &lt;&lt; dynamic_cast&lt;RBMMatrixConnection*&gt;((RBMConnection *)connections)-&gt;weights &lt;&lt; endl;
++//                    cout &lt;&lt; &quot;visible_bias=&quot; &lt;&lt; visible_layer-&gt;bias &lt;&lt; endl;
++//                    cout &lt;&lt; &quot;hidden_bias=&quot; &lt;&lt; hidden_layer-&gt;bias &lt;&lt; endl;
++//                }
+             }
+ 
+             if( pb )
+@@ -389,7 +423,9 @@
+                                   end_stage - init_stage );
+ 
+         previous_hidden_layer.resize(hidden_layer-&gt;size);
++        previous_visible_layer.resize(visible_layer-&gt;size);
+         dynamic_connections-&gt;setLearningRate( dynamic_learning_rate );
++        visible_connections-&gt;setLearningRate( dynamic_learning_rate );
+         real mean_cost = 0;
+         while(stage &lt; end_stage)
+         {
+@@ -398,18 +434,23 @@
+                 if(sample &gt; 0)
+                 {
+                     previous_hidden_layer &lt;&lt; hidden_layer_sample;
++                    previous_visible_layer &lt;&lt; visible_layer_sample;
+                     // ** or **
+                     // hidden_layer-&gt;generateSample();
+                     // previous_hidden_layer &lt;&lt; hidden_layer-&gt;sample;
+                 }
+                 else
++                {
+                     previous_hidden_layer.clear();
++                    previous_visible_layer.clear();
++                }
+ 
+                 train_set-&gt;getExample(sample, input, target, weight);
+ 
+                 if(train_set-&gt;getString(sample,0) == &quot;&lt;oov&gt;&quot;)
+                 {
+                     hidden_layer_sample.clear();
++                    visible_layer_sample.clear();
+                     continue;
+                 }
+             
+@@ -433,14 +474,15 @@
+             pb = 0;
+         }
+ 
+-    }
++        //Make a copy of the dynamique phase
++        CopiesMap map;
++        dynamic_connections_copy = dynamic_connections-&gt;deepCopy(map);
+ 
+ 
+-    //Make a copy of the dynamique phase
+-    CopiesMap map;
++    }
+ 
+-    dynamic_connections_copy = dynamic_connections-&gt;deepCopy(map);
+ 
++    //cout &lt;&lt; dynamic_connections_copy-&gt;weights &lt;&lt; endl;
+ 
+ 
+     //alpha = Vec(hidden_layer-&gt;size,1);
+@@ -515,6 +557,10 @@
+ 
+     }
+ 
++    //cout &lt;&lt; dynamic_connections-&gt;weights - dynamic_connections_copy-&gt;weights&lt;&lt; endl;
++
++
++
+     train_stats-&gt;finalize();
+ }
+ 
+@@ -595,7 +641,7 @@
+     
+     connections-&gt;update( 
+         pos_down_values, pos_up_values, visible_layer-&gt;sample
+-        , hidden_layer-&gt;sample ); // ... of connections between layers.
++        , hidden_layer-&gt;expectation  ); // ... of connections between layers.
+     
+     // Compute reconstruction error
+     
+@@ -603,14 +649,18 @@
+ 
+     visible_layer-&gt;getAllActivations( connections );
+ 
++    
+     visible_layer-&gt;computeExpectation();
+     
++    
+     return visible_layer-&gt;fpropNLL(pos_down_values);
+    
+ }
+ 
+ real DynamicallyLinkedRBMsModel::dynamic_connections_update()
+ {
++    
++
+     // Obtain target hidden_layer h_t
+     connections-&gt;setAsDownInput(visible_layer-&gt;expectation);
+     hidden_layer-&gt;getAllActivations(connections);
+@@ -621,27 +671,52 @@
+     
+     // Use &quot;previous_hidden_layer&quot; field and &quot;dynamic_connections&quot; module 
+     // to set bias of &quot;hidden_layer&quot;
+-
+     dynamic_connections-&gt;fprop(previous_hidden_layer,hidden_layer-&gt;activation);
+-    // hidden_layer-&gt;activation *= alpha;
+     hidden_layer-&gt;expectation_is_up_to_date = false;
+     hidden_layer-&gt;computeExpectation();
+ 
++    
++
+     // Ask &quot;hidden_layer&quot; for maximum likelyhood gradient on bias
+     real nll = hidden_layer-&gt;fpropNLL(hidden_layer_target);
+     hidden_layer-&gt;bpropNLL(hidden_layer_target, nll, bias_gradient);
+ 
+-    // bpropUpdate through dynamic_connections
+-    // real delta = 0;
+-    // for(int i=0; i&lt;hidden_layer-&gt;size; i++)
+-    //    delta -= dynamic_learning_rate * bias_gradient[i] * hidden_layer-&gt;activation[i]/alpha;
+-    // bias_gradient *= alpha;
+-    // alpha += delta;
++   
+     dynamic_connections-&gt;bpropUpdate(previous_hidden_layer,
+                                      hidden_layer-&gt;activation,
+                                      input_gradient, bias_gradient);
+ 
+-    return nll;
++
++
++
++
++
++
++
++    //////////////////// VISIBLE DYNAMIC CONNECTION
++
++    visible_layer_sample &lt;&lt; visible_layer-&gt;expectation;
++
++    // Use &quot;previous_visible_layer&quot; field and &quot;visible_connections&quot; module 
++    // to set bias of &quot;visible_layer&quot;
++   
++    visible_connections-&gt;fprop(previous_visible_layer,visible_layer-&gt;activation);
++    visible_layer-&gt;expectation_is_not_up_to_date();
++    visible_layer-&gt;computeExpectation();
++
++    
++
++    // Ask &quot;visible_layer&quot; for maximum likelyhood gradient on bias
++    real nll_visi = visible_layer-&gt;fpropNLL(visible_layer_sample);
++    visible_layer-&gt;bpropNLL(visible_layer_sample, nll_visi, visi_bias_gradient);
++
++
++    visible_connections-&gt;bpropUpdate(previous_visible_layer,
++                                     visible_layer-&gt;activation,
++                                     input_gradient, visi_bias_gradient);
++
++
++    return nll_visi;
+ }
+ 
+ real DynamicallyLinkedRBMsModel::fine_tuning_update()
+@@ -748,7 +823,7 @@
+     
+     connections-&gt;update( 
+         pos_down_values, pos_up_values, visible_layer-&gt;sample
+-        , hidden_layer-&gt;sample ); // ... of connections between layers.
++        , hidden_layer-&gt;expectation ); // ... of connections between layers.
+ 
+     //cout &lt;&lt; ((PLearn::PP&lt;PLearn::GradNNetLayerModule&gt;)dynamic_connections)-&gt;weights &lt;&lt; endl;
+ 
+@@ -831,6 +906,8 @@
+     int len = testset.length();
+     Vec input;
+     Vec target;
++    Vec bias_tempo;
++    Vec visi_bias_tempo;
+     real weight;
+ 
+     Vec output(outputsize());
+@@ -878,10 +955,13 @@
+             //h*_{t-1}
+             //////////////////////////////////
+             dynamic_connections-&gt;fprop(previous_hidden_layer, cond_bias);
+-           
+             hidden_layer-&gt;getAllBias(cond_bias); //**************************
+ 
+-
++            //v*_{t-1} VISIBLE DYNAMIC CONNECTION
++            //////////////////////////////////
++            visible_connections-&gt;fprop(previous_input, visi_cond_bias);
++            visible_layer-&gt;getAllBias(visi_cond_bias); //**************************
++            
+             //up phase
+             connections-&gt;setAsDownInput( previous_input );
+             hidden_layer-&gt;getAllActivations( connections );
+@@ -889,6 +969,7 @@
+             //////////////////////////////////
+ 
+             previous_hidden_layer &lt;&lt; hidden_layer-&gt;expectation;//h_{t-2} au prochain tour//******************************
++            
+ 
+             //h*_{t}
+             ////////////
+@@ -905,12 +986,31 @@
+         {
+             previous_hidden_layer.clear();//h_{t-1}
+             dynamic_connections-&gt;fprop(previous_hidden_layer,hidden_layer-&gt;activation);//conection entre h_{t-1} et h_{t}
++
+             //dynamic_connections_copy-&gt;fprop(previous_hidden_layer,hidden_layer-&gt;activation);//conection entre h_{t-1} et h_{t}
+             hidden_layer-&gt;expectation_is_up_to_date = false;
+             hidden_layer-&gt;computeExpectation();//h_{t}
+ 
+             previous_input.resize(visible_layer-&gt;size);
+             previous_input &lt;&lt; visible_layer-&gt;expectation;
++
++            bias_tempo.resize(hidden_layer-&gt;bias.length());
++            bias_tempo &lt;&lt; hidden_layer-&gt;bias;
++
++
++
++
++            /////////VISIBLE DYNAMIC CONNECTION
++            previous_visible_layer.clear();//v_{t-1}
++            visible_connections-&gt;fprop(previous_visible_layer,visible_layer-&gt;activation);//conection entre v_{t-1} et v_{t}
++
++            visible_layer-&gt;expectation_is_not_up_to_date();
++            visible_layer-&gt;computeExpectation();//v_{t}
++
++            visi_bias_tempo.resize(visible_layer-&gt;bias.length());
++            visi_bias_tempo &lt;&lt; visible_layer-&gt;bias;
++
++            
+             begin++;
+         }
+ 
+@@ -936,9 +1036,10 @@
+ 
+         costs[0] = visible_layer-&gt;fpropNLL(previous_input) / inputsize() ;
+ 
++       
++        hidden_layer-&gt;getAllBias(bias_tempo); 
++        visible_layer-&gt;getAllBias(visi_bias_tempo); 
+ 
+-
+-
+         // costs[0] = 0; //nll/nb_de_temps_par_mesure
+ 
+         if (testoutputs)
+
+Modified: trunk/plearn_learners_experimental/DynamicallyLinkedRBMsModel.h
+===================================================================
+--- trunk/plearn_learners_experimental/DynamicallyLinkedRBMsModel.h	2007-04-07 01:34:55 UTC (rev 6847)
++++ trunk/plearn_learners_experimental/DynamicallyLinkedRBMsModel.h	2007-04-07 02:43:40 UTC (rev 6848)
+@@ -91,11 +91,15 @@
+ 
+     //! OnlineLearningModule corresponding to dynamic links
+     //! between RBMs' hidden layers
+-    PP&lt;OnlineLearningModule&gt; dynamic_connections;
++    PP&lt;GradNNetLayerModule&gt; dynamic_connections;
+ 
++    //! OnlineLearningModule corresponding to dynamic links
++    //! between RBMs' visible layers
++    PP&lt;GradNNetLayerModule&gt; visible_connections;
++
+     //! Copy OnlineLearningModule corresponding to dynamic links
+     //! between RBMs' hidden layers
+-    PP&lt;OnlineLearningModule&gt; dynamic_connections_copy;
++    PP&lt;GradNNetLayerModule&gt; dynamic_connections_copy;
+ 
+     //! The weights of the connections between the RBM visible and hidden layers
+     PP&lt;RBMConnection&gt; connections;
+@@ -207,9 +211,15 @@
+     //! Stores conditional bias
+     mutable Vec cond_bias;
+ 
++    //! Stores visible conditional bias
++    mutable Vec visi_cond_bias;
++
+     //! Stores bias gradient
+     mutable Vec bias_gradient;
+ 
++     //! Stores bias gradient
++    mutable Vec visi_bias_gradient;
++
+     //! Stores hidden layer target in dynamic learning phase
+     mutable Vec hidden_layer_target;
+ 
+@@ -222,9 +232,15 @@
+     //! Stores previous hidden layer value
+     mutable Vec previous_hidden_layer;
+ 
++    //! Stores previous visible layer value
++    mutable Vec previous_visible_layer;
++
+     //! Stores a sample from the hidden layer
+     mutable Vec hidden_layer_sample;
+ 
++    //! Stores a sample from the visible layer
++    mutable Vec visible_layer_sample;
++
+     //! Store a copy of the positive phase values
+     mutable Vec pos_down_values;
+     mutable Vec pos_up_values;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000296.html">[Plearn-commits] r6847 - in trunk: plearn/misc	plearn_learners/generic/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="000298.html">[Plearn-commits] r6849 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#297">[ date ]</a>
+              <a href="thread.html#297">[ thread ]</a>
+              <a href="subject.html#297">[ subject ]</a>
+              <a href="author.html#297">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,422 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9818 - trunk/plearn_learners/meta
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9818%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200901092024.n09KOvlS025758%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003257.html">
+   <LINK REL="Next"  HREF="003259.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9818 - trunk/plearn_learners/meta</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9818%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200901092024.n09KOvlS025758%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9818 - trunk/plearn_learners/meta">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Jan  9 21:24:57 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003257.html">[Plearn-commits] r9817 - trunk/scripts
+</A></li>
+        <LI>Next message: <A HREF="003259.html">[Plearn-commits] r9819 - trunk/python_modules/plearn/plotting
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3258">[ date ]</a>
+              <a href="thread.html#3258">[ thread ]</a>
+              <a href="subject.html#3258">[ subject ]</a>
+              <a href="author.html#3258">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-01-09 21:24:56 +0100 (Fri, 09 Jan 2009)
+New Revision: 9818
+
+Modified:
+   trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+   trunk/plearn_learners/meta/MultiClassAdaBoost.h
+Log:
+first implementation of MultiClassAdaBoost::test that forward the call to the sublearner to use some futur optimisation.
+
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2009-01-09 19:56:57 UTC (rev 9817)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2009-01-09 20:24:56 UTC (rev 9818)
+@@ -62,7 +62,8 @@
+     total_train_time(0),
+     test_time(0),
+     total_test_time(0),
+-    forward_sub_learner_test_costs(false)
++    forward_sub_learner_test_costs(false),
++    forward_test(false)
+ /* ### Initialize all fields to their default value here */
+ {
+     // ...
+@@ -108,6 +109,10 @@
+                   &amp;MultiClassAdaBoost::learner_template,
+                   OptionBase::buildoption,
+                   &quot;The template to use for learner1 and learner2.\n&quot;);
++    declareOption(ol, &quot;forward_test&quot;, 
++                  &amp;MultiClassAdaBoost::forward_test,
++                  OptionBase::buildoption,
++                  &quot;Did we add forward the test fct to the sub learner.\n&quot;);
+ 
+     declareOption(ol, &quot;train_time&quot;,
+                   &amp;MultiClassAdaBoost::train_time, OptionBase::learntoption,
+@@ -139,6 +144,8 @@
+         if(!learner2)
+             learner2 = ::PLearn::deepCopy(learner_template);
+     }
++    tmp_target.resize(1);
++    tmp_output.resize(outputsize());
+     if(learner1)
+         output1.resize(learner1-&gt;outputsize());
+     if(learner2)
+@@ -171,6 +178,10 @@
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
++    deepCopyField(tmp_input,             copies);
++    deepCopyField(tmp_target,            copies);
++    deepCopyField(tmp_output,            copies);
++    deepCopyField(tmp_costs,             copies);
+     deepCopyField(output1,           copies);
+     deepCopyField(output2,           copies);
+     deepCopyField(subcosts1,         copies);
+@@ -249,7 +260,6 @@
+     learner1-&gt;train();
+     learner2-&gt;train();
+ #endif
+-
+     stage=max(learner1-&gt;stage,learner2-&gt;stage);
+ 
+     train_stats-&gt;stats.resize(0);
+@@ -272,7 +282,7 @@
+     const Profiler::Stats&amp; stats_test = Profiler::getStats(&quot;MultiClassAdaBoost::test&quot;);
+     tmp=stats_test.wall_duration/Profiler::ticksPerSecond();
+     test_time=tmp-total_test_time;
+-    total_test_time=tmp; 
++    total_test_time=tmp;
+     EXTREME_MODULE_LOG&lt;&lt;&quot;train() end&quot;&lt;&lt;endl;
+ }
+ 
+@@ -310,6 +320,7 @@
+     output[1]=output1[0];
+     output[2]=output2[0];
+ }
++
+ void MultiClassAdaBoost::computeOutputAndCosts(const Vec&amp; input,
+                                                const Vec&amp; target,
+                                                Vec&amp; output, Vec&amp; costs) const
+@@ -385,6 +396,15 @@
+ void MultiClassAdaBoost::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
+                                            const Vec&amp; target, Vec&amp; costs) const
+ {
++  subcosts1.resize(0);
++  subcosts2.resize(0);
++  computeCostsFromOutputs_(input, output, target, subcosts1, subcosts2, costs);
++}
++
++void MultiClassAdaBoost::computeCostsFromOutputs_(const Vec&amp; input, const Vec&amp; output,
++						  const Vec&amp; target, Vec&amp; sub_costs1,
++						  Vec&amp; sub_costs2, Vec&amp; costs) const
++{
+     PLASSERT(costs.size()==nTestCosts());
+ 
+     int out = int(round(output[0]));
+@@ -406,20 +426,24 @@
+     costs[8]=total_train_time;
+     costs[9]=test_time;
+     costs[10]=total_test_time;
+-
+     if(forward_sub_learner_test_costs){
+         costs.resize(7+4);
+-        subcosts1.resize(learner1-&gt;nTestCosts());
+-        subcosts2.resize(learner1-&gt;nTestCosts());
++	PLASSERT(sub_costs1.size()==learner1-&gt;nTestCosts() || sub_costs1.size()==0);
++	PLASSERT(sub_costs2.size()==learner2-&gt;nTestCosts() || sub_costs2.size()==0);
++
+         getSubLearnerTarget(target, sub_target_tmp);
+-
+-//not paralized as this to add more overhead then the time saved.
+-//meaby not true for all weak_learner.
+-        learner1-&gt;computeCostsOnly(input,sub_target_tmp[0],subcosts1);
+-        learner2-&gt;computeCostsOnly(input,sub_target_tmp[1],subcosts2);
+-
+-        subcosts1+=subcosts2;
+-        costs.append(subcosts1);
++	if(sub_costs1.size()==0){
++            PLASSERT(input.size()&gt;0);
++            sub_costs1.resize(learner1-&gt;nTestCosts());
++            learner1-&gt;computeCostsOnly(input,sub_target_tmp[0],sub_costs1);
++	}
++	if(sub_costs2.size()==0){
++            PLASSERT(input.size()&gt;0);
++            sub_costs2.resize(learner2-&gt;nTestCosts());
++            learner2-&gt;computeCostsOnly(input,sub_target_tmp[1],sub_costs2);
++	}
++        sub_costs1+=sub_costs2;
++        costs.append(sub_costs1);
+     }
+ 
+     PLASSERT(costs.size()==nTestCosts());
+@@ -516,7 +540,7 @@
+         weight_prg = &quot;[%&quot;+tostring(index)+&quot;]&quot;;
+     }else
+         weight_prg = &quot;1 :weights&quot;;
+-        
++    
+     //We don't give it if the script give them one explicitly.
+     //This can be usefull for optimization
+     if(training_set_has_changed || !learner1-&gt;getTrainingSet()){
+@@ -527,14 +551,14 @@
+     if(training_set_has_changed || !learner2-&gt;getTrainingSet()){
+         VMat vmat2 = new ProcessingVMatrix(training_set, input_prg,
+                                            target_prg2,  weight_prg);
+-        PP&lt;RegressionTreeRegisters&gt; t1 = 
++        PP&lt;RegressionTreeRegisters&gt; t1 =
+             (PP&lt;RegressionTreeRegisters&gt;)learner1-&gt;getTrainingSet();
+         if(t1-&gt;classname()==&quot;RegressionTreeRegisters&quot;){
+             vmat2 = new RegressionTreeRegisters(vmat2,
+-                                               t1-&gt;getTSortedRow(), 
+-                                               t1-&gt;getTSource(),
+-                                               learner1-&gt;report_progress,
+-                                               learner1-&gt;verbosity);
++                                                t1-&gt;getTSortedRow(),
++                                                t1-&gt;getTSource(),
++                                                learner1-&gt;report_progress,
++                                                learner1-&gt;verbosity);
+         }
+         learner2-&gt;setTrainingSet(vmat2, call_forget);
+     }
+@@ -551,12 +575,147 @@
+                               VMat testoutputs, VMat testcosts) const
+ {
+     Profiler::pl_profile_start(&quot;MultiClassAdaBoost::test&quot;);
++    if(!forward_test){
++        inherited::test(testset,test_stats,testoutputs,testcosts);
++        Profiler::end(&quot;MultiClassAdaBoost::test&quot;);
++	return;
++    }
++    Profiler::pl_profile_start(&quot;MultiClassAdaBoost::test() part1&quot;);
++    int index=-1;
++    for(int i=0;i&lt;saved_testset.length();i++){
++        if(saved_testset[i]==testset){
++            index=i;break;
++        }
++    }
++    PP&lt;VecStatsCollector&gt; test_stats1 = 0;
++    PP&lt;VecStatsCollector&gt; test_stats2 = 0;
++    VMat testoutputs1 = VMat(new MemoryVMatrix(testset-&gt;length(),
++                                               learner1-&gt;outputsize()));
++    VMat testoutputs2 = VMat(new MemoryVMatrix(testset-&gt;length(),
++                                               learner2-&gt;outputsize()));
++    VMat testcosts1 = 0;
++    VMat testcosts2 = 0;
++    VMat testset1 = 0;
++    VMat testset2 = 0;
++    if ((testcosts || test_stats )){
++        //comment
++        testcosts1 = VMat(new MemoryVMatrix(testset-&gt;length(),
++                                            learner1-&gt;nTestCosts()));
++        testcosts2 = VMat(new MemoryVMatrix(testset-&gt;length(),
++                                            learner2-&gt;nTestCosts()));
++    }
++    if(index&lt;0){
++        testset1 = new ProcessingVMatrix(testset, input_prg,
++                                         target_prg1,  weight_prg);
++        testset2 = new ProcessingVMatrix(testset, input_prg,
++                                         target_prg2,  weight_prg);
++        saved_testset.append(testset);
++        saved_testset1.append(testset1);
++        saved_testset2.append(testset2);
++    }else{
++        //we need to do that as AdaBoost need 
++        //the same dataset to reuse their test results
++        testset1=saved_testset1[index];
++        testset2=saved_testset2[index];
++        PLCHECK(((PP&lt;ProcessingVMatrix&gt;)testset1)-&gt;source==testset);
++        PLCHECK(((PP&lt;ProcessingVMatrix&gt;)testset2)-&gt;source==testset);
++    }
+ 
+-    //we need this in case we reload the learner without training it.
+-    subcosts1.resize(learner1-&gt;nTestCosts());
+-    subcosts2.resize(learner2-&gt;nTestCosts());
++    if (test_stats){
++        
++    }
++    Profiler::pl_profile_end(&quot;MultiClassAdaBoost::test() part1&quot;);
++    Profiler::start(&quot;MultiClassAdaBoost::subtest&quot;);
++    learner1-&gt;test(testset1,test_stats1,testoutputs1,testcosts1);
++    learner2-&gt;test(testset2,test_stats2,testoutputs2,testcosts2);
++    Profiler::end(&quot;MultiClassAdaBoost::subtest&quot;);
+ 
+-    inherited::test(testset,test_stats,testoutputs,testcosts);
++    VMat my_outputs = 0;
++    VMat my_costs = 0;
++    if(testoutputs){
++        my_outputs=testoutputs;
++    }else if(bool(testcosts) | bool(test_stats)){
++        my_outputs=VMat(new MemoryVMatrix(testset-&gt;length(),
++                                          outputsize()));
++    }
++    if(testcosts){
++        my_costs=testcosts;
++    }else if(test_stats){
++        my_costs=VMat(new MemoryVMatrix(testset-&gt;length(),
++					nTestCosts()));
++    }
++    Profiler::pl_profile_start(&quot;MultiClassAdaBoost::test() my_outputs&quot;);
++    if(my_outputs){
++        for(int row=0;row&lt;testset.length();row++){
++            real out1=testoutputs1-&gt;get(row,0);
++            real out2=testoutputs2-&gt;get(row,0);
++            int ind1=int(round(out1));
++            int ind2=int(round(out2));
++            int ind=-1;
++            if(ind1==0 &amp;&amp; ind2==0)
++                ind=0;
++            else if(ind1==1 &amp;&amp; ind2==0)
++                ind=1;
++            else if(ind1==1 &amp;&amp; ind2==1)
++                ind=2;
++            else
++                ind=1;//TODOself.confusion_target;
++            tmp_output[0]=ind;
++            tmp_output[1]=out1;
++            tmp_output[2]=out2;
++	    my_outputs-&gt;putOrAppendRow(row,tmp_output);
++	}
++    }
++    Profiler::pl_profile_end(&quot;MultiClassAdaBoost::test() my_outputs&quot;);
++    Profiler::pl_profile_start(&quot;MultiClassAdaBoost::test() my_costs&quot;);
++
++    if (my_costs){
++        tmp_costs.resize(nTestCosts());
++//        if (forward_sub_learner_test_costs)
++	    //TODO optimize by reusing testoutputs1 and testoutputs2
++            //            PLWARNING(&quot;will be long&quot;);
++	int target_index = testset-&gt;inputsize();
++	PLASSERT(testset-&gt;targetsize()==1);
++        Vec costs1(learner1-&gt;nTestCosts());
++        Vec costs2(learner1-&gt;nTestCosts());
++        for(int row=0;row&lt;testset.length();row++){
++            //default version
++            //testset.getExample(row, input, target, weight);
++	    //computeCostsFromOutputs(input,my_outputs(row),target,costs);
++            
++            //the input is not needed for the cost of this class if the subcost are know.
++            testset-&gt;getSubRow(row,target_index,tmp_target);
++//	    Vec costs1=testcosts1(row);
++//	    Vec costs2=testcosts2(row);
++            testcosts1-&gt;getRow(row,costs1);
++            testcosts2-&gt;getRow(row,costs2);
++            //TODO??? tmp_input is empty!!!
++	    computeCostsFromOutputs_(tmp_input, my_outputs(row), tmp_target, costs1,
++                                     costs2, tmp_costs);
++	    my_costs-&gt;putOrAppendRow(row,tmp_costs);
++        }
++    }
++    Profiler::pl_profile_end(&quot;MultiClassAdaBoost::test() my_costs&quot;);
++    Profiler::pl_profile_start(&quot;MultiClassAdaBoost::test() test_stats&quot;);
++
++    if (test_stats){
++	if(testset-&gt;weightsize()==0){
++            for(int row=0;row&lt;testset.length();row++){
++                Vec costs = my_costs(row);
++                test_stats-&gt;update(costs, 1);
++            }
++	}else{
++            int weight_index=inputsize()+targetsize();
++            Vec costs(my_costs.width());
++            for(int row=0;row&lt;testset.length();row++){
++//                Vec costs = my_costs(row);
++                my_costs-&gt;getRow(row, costs);
++                test_stats-&gt;update(costs, testset-&gt;get(row, weight_index));
++            }
++	}
++    }
++    Profiler::pl_profile_end(&quot;MultiClassAdaBoost::test() test_stats&quot;);
++
+     Profiler::pl_profile_end(&quot;MultiClassAdaBoost::test&quot;);
+ }
+ 
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.h	2009-01-09 19:56:57 UTC (rev 9817)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.h	2009-01-09 20:24:56 UTC (rev 9818)
+@@ -59,11 +59,20 @@
+ {
+     typedef PLearner inherited;
+ 
++    mutable Vec tmp_input;
++    mutable Vec tmp_target;
++    mutable Vec tmp_output;
++    mutable Vec tmp_costs;
++
+     mutable Vec output1;
+     mutable Vec output2;
+     mutable Vec subcosts1;
+     mutable Vec subcosts2;
+ 
++    mutable TVec&lt;VMat&gt; saved_testset;
++    mutable TVec&lt;VMat&gt; saved_testset1;
++    mutable TVec&lt;VMat&gt; saved_testset2;
++
+     //! The time it took for the last execution of the train() function
+     real train_time;
+     //! The total time passed in training
+@@ -82,6 +91,9 @@
+     //! Did we add the learner1 and learner2 costs to our costs
+     bool forward_sub_learner_test_costs;
+ 
++    //! Did we forward the test function to the sub learner?
++    bool forward_test;
++
+     //! The learner1 and learner2 must be trained!
+     PP&lt;AdaBoost&gt; learner1;
+     PP&lt;AdaBoost&gt; learner2;
+@@ -126,6 +138,9 @@
+     virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
+                                          const Vec&amp; target, Vec&amp; costs) const;
+ 
++    void computeCostsFromOutputs_(const Vec&amp; input, const Vec&amp; output,
++                                  const Vec&amp; target, Vec&amp; sub_costs1,
++                                  Vec&amp; sub_costs2, Vec&amp; costs) const;
+     virtual TVec&lt;string&gt; getOutputNames() const;
+ 
+     //! Returns the names of the costs computed by computeCostsFromOutpus (and
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003257.html">[Plearn-commits] r9817 - trunk/scripts
+</A></li>
+	<LI>Next message: <A HREF="003259.html">[Plearn-commits] r9819 - trunk/python_modules/plearn/plotting
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3258">[ date ]</a>
+              <a href="thread.html#3258">[ thread ]</a>
+              <a href="subject.html#3258">[ subject ]</a>
+              <a href="author.html#3258">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

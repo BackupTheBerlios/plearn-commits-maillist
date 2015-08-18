@@ -1,0 +1,270 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9680 - trunk/plearn_learners/unsupervised
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9680%20-%20trunk/plearn_learners/unsupervised&In-Reply-To=%3C200811122227.mACMRbrL023715%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003119.html">
+   <LINK REL="Next"  HREF="003121.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9680 - trunk/plearn_learners/unsupervised</H1>
+    <B>plearner at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9680%20-%20trunk/plearn_learners/unsupervised&In-Reply-To=%3C200811122227.mACMRbrL023715%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9680 - trunk/plearn_learners/unsupervised">plearner at mail.berlios.de
+       </A><BR>
+    <I>Wed Nov 12 23:27:37 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003119.html">[Plearn-commits] r9679 - trunk/plearn_learners/classifiers
+</A></li>
+        <LI>Next message: <A HREF="003121.html">[Plearn-commits] r9681 - trunk/python_modules/plearn/pyplearn
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3120">[ date ]</a>
+              <a href="thread.html#3120">[ thread ]</a>
+              <a href="subject.html#3120">[ subject ]</a>
+              <a href="author.html#3120">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: plearner
+Date: 2008-11-12 23:27:37 +0100 (Wed, 12 Nov 2008)
+New Revision: 9680
+
+Modified:
+   trunk/plearn_learners/unsupervised/NormalizationLearner.cc
+   trunk/plearn_learners/unsupervised/NormalizationLearner.h
+Log:
+Important upgrade to NormalizationLearner that can now also chose to exclude some input features based on their marginal statistics 
+(too small standard deviation, or too large fration of missing values).
+
+
+Modified: trunk/plearn_learners/unsupervised/NormalizationLearner.cc
+===================================================================
+--- trunk/plearn_learners/unsupervised/NormalizationLearner.cc	2008-11-12 22:25:53 UTC (rev 9679)
++++ trunk/plearn_learners/unsupervised/NormalizationLearner.cc	2008-11-12 22:27:37 UTC (rev 9680)
+@@ -44,17 +44,23 @@
+ 
+ PLEARN_IMPLEMENT_OBJECT(
+     NormalizationLearner,
+-    &quot;This learner performs normalization of its input (subtracting the mean and dividing by stddev)&quot;,
+-    &quot;NormalizationLearner produces as output a normalized version of its input\n&quot;
++    &quot;This learner can perform normalization of its input (subtracting the mean and dividing by stddev) &quot;
++    &quot;and can also exclude input components that have too low standard deviation, or too many missing values.&quot;,
++    &quot;NormalizationLearner produces as output a possibly normalized version of its input\n&quot;
+     &quot;obtained by subtracting the mean and dividing by the standard deviation.\n&quot;
+-    &quot;It also has a simple policy switch for the handling of missing values.\n&quot;
++    &quot;It can also exclude input components whose standard deviation is below a specified value,\n&quot;
++    &quot;or whose missing values exceed a certain proportion of times.&quot;,
++    &quot;It also has a simple policy switch for deciding to keep missing values as is or replace them by 0.\n&quot;
+     &quot;It is typically used as an early preprocessing step in a ChainedLearner \n&quot;
+     &quot;NOTE: you may also consider using PCA(normalize=1), if you wan to obtain \n&quot;
+     &quot;decorrelated 'sphered' data.&quot; );
+ 
+ NormalizationLearner::NormalizationLearner()
+     :min_allowed_stddev(1e-6),
+-     set_missing_to_zero(true)
++     remove_components_with_stddev_smaller_than(-1),
++     remove_components_whose_missing_proportion_exceeds(1),
++     set_missing_to_zero(true),
++     do_normalize(true)
+ {
+ }
+ 
+@@ -65,11 +71,28 @@
+                   &quot;If the empirical standard deviation is lower than this, we'll use this value to \n&quot;
+                   &quot;compute inv_stddev (this is to prevent getting too large or even infinite values for inv_stddev&quot;);
+ 
++    declareOption(ol, &quot;remove_components_with_stddev_smaller_than&quot;, &amp;NormalizationLearner::remove_components_with_stddev_smaller_than,
++                  OptionBase::buildoption,
++                  &quot;Components of the input whose stddev is strictly below that value will be excluded from the output\n&quot;);
++
++    declareOption(ol, &quot;remove_components_whose_missing_proportion_exceeds&quot;, &amp;NormalizationLearner::remove_components_whose_missing_proportion_exceeds,
++                  OptionBase::buildoption,
++                  &quot;Components of the input that are missing more than that given fraction of times will be excluded from the output\n&quot;
++                  &quot;The default 1 means no component will be excluded for being missing.\n&quot;
++                  &quot;At the other extreme 0 means any component that was missing at east once wil be excluded\n&quot;
++                  &quot;0.75 would exclude components that are missing more than 75\% of the time\n&quot;);
++
++    declareOption(ol, &quot;do_normalize&quot;, &amp;NormalizationLearner::do_normalize,
++                  OptionBase::buildoption,
++                  &quot;If true (the default) then subtract mean and divide by stddev.\n&quot;
++                  &quot;It can be useful to set this to false if all you want to do is remove components with small\n&quot;
++                  &quot;stddev (see option remove_components with_small_stddev) but leave the others untouched.&quot;);
++
+     declareOption(ol, &quot;set_missing_to_zero&quot;, &amp;NormalizationLearner::set_missing_to_zero,
+                   OptionBase::buildoption,
+                   &quot;How to handle missing values: \n&quot;
+-                  &quot;  If true (the default), missing values will be replaced by \n&quot;
+-                  &quot;  the post-normalization mean, which is 0. \n&quot;
++                  &quot;  If true (the default), missing values will be replaced by 0\n&quot;
++                  &quot;  (this corresponds to post-normalization mean if indeed we d_normakize) \n&quot;
+                   &quot;  If false missing values will be left as missing values. \n&quot;);
+ 
+     declareOption(ol, &quot;meanvec&quot;, &amp;NormalizationLearner::meanvec,
+@@ -80,10 +103,16 @@
+                   OptionBase::learntoption,
+                   &quot;The vector of factors by which to multiply (input-meanvec)\n&quot;);
+ 
++    declareOption(ol, &quot;kept_components&quot;, &amp;NormalizationLearner::kept_components,
++                  OptionBase::learntoption,
++                  &quot;The indices of the input components kept in the final output\n&quot;);
++
+     declareOption(ol, &quot;inputnames&quot;, &amp;NormalizationLearner::inputnames,
+                   OptionBase::learntoption,
+                   &quot;We store the inputnames, which are also the outputnames\n&quot;);
+ 
++
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -100,6 +129,14 @@
+     // ###    options have been modified.
+     // ### You should assume that the parent class' build_() has already been
+     // ### called.
++
++    int d = meanvec.length();
++    if(d&gt;0 &amp;&amp; kept_components.length()==0) // fill uninitialized kept_components
++    {
++        kept_components.resize(d);
++        for(int k=0; k&lt;d; k++)
++            kept_components[k] = k;
++    }
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+@@ -127,7 +164,7 @@
+ 
+ int NormalizationLearner::outputsize() const
+ {
+-    return meanvec.length();
++    return kept_components.length();
+ }
+ 
+ void NormalizationLearner::forget()
+@@ -169,8 +206,18 @@
+         st.getMean(meanvec);
+         Vec stddev = st.getStdDev();
+         inv_stddev.resize(n);
++        kept_components.resize(n);
++        kept_components.resize(0);
+         for(int k=0; k&lt;n; k++)
+-            inv_stddev[k] = 1.0/max(min_allowed_stddev, stddev[k]);
++        {
++            const StatsCollector&amp; stk = st.stat[k];
++            real sd = stk.stddev();
++            inv_stddev[k] = 1/max(min_allowed_stddev,sd);
++            double missing_proportion = (double)st.nmissing()/(double)l;
++            if( (missing_proportion&lt;=remove_components_whose_missing_proportion_exceeds)
++                &amp;&amp; (sd&gt;=remove_components_with_stddev_smaller_than) )
++                kept_components.append(k);
++        }
+         ++stage;
+         train_stats-&gt;finalize(); 
+     }
+@@ -182,19 +229,22 @@
+     int n = meanvec.length();
+     if(input.length()!=n)
+         PLERROR(&quot;length of input differs from length of meanvec!&quot;);
+-    output.resize(n);
++    int n2 = kept_components.length();
++    output.resize(n2);
+     real* p_input = input.data();
+     real* p_output = output.data();
+     real* p_meanvec = meanvec.data();
+     real* p_inv_stddev = inv_stddev.data();
++    int*  p_kept_components = kept_components.data();
+ 
+-    for(int k=0; k&lt;n; k++)
++    for(int k=0; k&lt;n2; k++)
+     {
+-        real val = p_input[k];
++        int pos = p_kept_components[k];
++        real val = p_input[pos];
+         if(is_missing(val))
+             p_output[k] = set_missing_to_zero?0.:val;
+-        else
+-            p_output[k] = p_inv_stddev[k]*(val - p_meanvec[k]);
++        else if(do_normalize)
++            p_output[k] = p_inv_stddev[pos]*(val - p_meanvec[pos]);
+     }
+ }
+ 
+@@ -216,9 +266,20 @@
+ 
+ TVec&lt;string&gt; NormalizationLearner::getOutputNames() const
+ {
+-    return inputnames;
++    TVec&lt;string&gt; outnames;
++    if(kept_components.length()==inputnames.length())
++        outnames = inputnames;
++    else
++    {
++        int n2 = kept_components.length();
++        outnames.resize(n2);
++        for(int k=0; k&lt;n2; k++)
++            outnames[k] = inputnames[kept_components[k]];
++    }
++    return outnames;
+ }
+ 
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/unsupervised/NormalizationLearner.h
+===================================================================
+--- trunk/plearn_learners/unsupervised/NormalizationLearner.h	2008-11-12 22:25:53 UTC (rev 9679)
++++ trunk/plearn_learners/unsupervised/NormalizationLearner.h	2008-11-12 22:27:37 UTC (rev 9680)
+@@ -66,12 +66,16 @@
+ 
+     // Build options
+     real min_allowed_stddev;
++    double remove_components_with_stddev_smaller_than;
++    double remove_components_whose_missing_proportion_exceeds;
+     bool set_missing_to_zero;
++    bool do_normalize;
+ 
+     // Learnt option
+     Vec meanvec;
+     Vec inv_stddev;
+     TVec&lt;string&gt; inputnames;
++    TVec&lt;int&gt; kept_components;
+ 
+ public:
+     //#####  Public Member Functions  #########################################
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003119.html">[Plearn-commits] r9679 - trunk/plearn_learners/classifiers
+</A></li>
+	<LI>Next message: <A HREF="003121.html">[Plearn-commits] r9681 - trunk/python_modules/plearn/pyplearn
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3120">[ date ]</a>
+              <a href="thread.html#3120">[ thread ]</a>
+              <a href="subject.html#3120">[ subject ]</a>
+              <a href="author.html#3120">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

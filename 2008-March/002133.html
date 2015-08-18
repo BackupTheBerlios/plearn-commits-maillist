@@ -1,0 +1,237 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8685 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8685%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200803140255.m2E2tT0q016976%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002132.html">
+   <LINK REL="Next"  HREF="002135.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8685 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8685%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200803140255.m2E2tT0q016976%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8685 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Fri Mar 14 03:55:29 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002132.html">[Plearn-commits] r8684 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="002135.html">[Plearn-commits] r8686 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2133">[ date ]</a>
+              <a href="thread.html#2133">[ thread ]</a>
+              <a href="subject.html#2133">[ subject ]</a>
+              <a href="author.html#2133">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2008-03-14 03:55:28 +0100 (Fri, 14 Mar 2008)
+New Revision: 8685
+
+Modified:
+   trunk/plearn_learners/online/ProcessInputCostModule.cc
+   trunk/plearn_learners/online/ProcessInputCostModule.h
+Log:
+Add minibatch
+
+
+Modified: trunk/plearn_learners/online/ProcessInputCostModule.cc
+===================================================================
+--- trunk/plearn_learners/online/ProcessInputCostModule.cc	2008-03-14 02:54:25 UTC (rev 8684)
++++ trunk/plearn_learners/online/ProcessInputCostModule.cc	2008-03-14 02:55:28 UTC (rev 8685)
+@@ -126,13 +126,19 @@
+ 
+     deepCopyField(processing_module, copies);
+     deepCopyField(cost_module, copies);
++    deepCopyField(processed_value, copies);
++    deepCopyField(processed_values, copies);
++    deepCopyField(processed_gradient, copies);
++    deepCopyField(processed_gradients, copies);
++    deepCopyField(processed_diag_hessian, copies);
++    deepCopyField(processed_diag_hessians, copies);
+ }
+ 
+ ///////////
+ // fprop //
+ ///////////
+ void ProcessInputCostModule::fprop(const Vec&amp; input, const Vec&amp; target,
+-                                   Vec&amp; cost) const
++                                   real&amp; cost) const
+ {
+     PLASSERT( processing_module );
+     PLASSERT( cost_module );
+@@ -143,8 +149,21 @@
+     cost_module-&gt;fprop( processed_value, target, cost );
+ }
+ 
++void ProcessInputCostModule::fprop(const Mat&amp; inputs, const Mat&amp; targets,
++                                   Vec&amp; costs )
++{
++    PLASSERT( processing_module );
++    PLASSERT( cost_module );
++    PLASSERT( inputs.width() == input_size );
++    PLASSERT( targets.width() == target_size );
++    PLASSERT( inputs.length() == targets.length() );
++
++    processing_module-&gt;fprop( inputs, processed_values );
++    cost_module-&gt;fprop( processed_values, targets, costs );
++}
++
+ void ProcessInputCostModule::fprop(const Vec&amp; input, const Vec&amp; target,
+-                                   real&amp; cost) const
++                                   Vec&amp; cost) const
+ {
+     PLASSERT( processing_module );
+     PLASSERT( cost_module );
+@@ -155,6 +174,21 @@
+     cost_module-&gt;fprop( processed_value, target, cost );
+ }
+ 
++void ProcessInputCostModule::fprop(const Mat&amp; inputs, const Mat&amp; targets,
++                                   Mat&amp; costs ) const
++{
++    PLASSERT( processing_module );
++    PLASSERT( cost_module );
++    PLASSERT( inputs.width() == input_size );
++    PLASSERT( targets.width() == target_size );
++    PLASSERT( inputs.length() == targets.length() );
++
++    processing_module-&gt;fprop( inputs, processed_values );
++    cost_module-&gt;fprop( processed_values, targets, costs );
++}
++
++
++
+ /////////////////
+ // bpropUpdate //
+ /////////////////
+@@ -180,8 +214,32 @@
+                                     accumulate );
+ }
+ 
++void ProcessInputCostModule::bpropUpdate(const Mat&amp; inputs, const Mat&amp; targets,
++                                         const Vec&amp; costs, Mat&amp; input_gradients,
++                                         bool accumulate)
++{
++    PLASSERT( processing_module );
++    PLASSERT( cost_module );
++    PLASSERT( inputs.width() == input_size );
++    PLASSERT( targets.width() == target_size );
++    PLASSERT( inputs.length() == targets.length() );
++    PLASSERT( inputs.length() == costs.size() );
+ 
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradients.width() == input_size
++                      &amp;&amp; input_gradients.length() == inputs.length(),
++                      &quot;Cannot resize input_gradient AND accumulate into it&quot; );
++    }
+ 
++    cost_module-&gt;bpropUpdate( processed_values, targets, costs,
++                              processed_gradients );
++    processing_module-&gt;bpropUpdate( inputs, processed_values,
++                                    input_gradients, processed_gradients,
++                                    accumulate );
++}
++
++
+ /////////////////
+ // bbpropUpdate //
+ /////////////////
+@@ -219,6 +277,9 @@
+ ////////////
+ void ProcessInputCostModule::forget()
+ {
++    PLASSERT( processing_module );
++    PLASSERT( cost_module );
++
+     processed_value.clear();
+     processed_gradient.clear();
+     processed_diag_hessian.clear();
+
+Modified: trunk/plearn_learners/online/ProcessInputCostModule.h
+===================================================================
+--- trunk/plearn_learners/online/ProcessInputCostModule.h	2008-03-14 02:54:25 UTC (rev 8684)
++++ trunk/plearn_learners/online/ProcessInputCostModule.h	2008-03-14 02:55:28 UTC (rev 8685)
+@@ -76,18 +76,30 @@
+     //! Default constructor
+     ProcessInputCostModule();
+ 
++    //! Given the input and the target, compute only the first cost
++    //! (of which we will compute the gradient)
++    virtual void fprop(const Vec&amp; input, const Vec&amp; target, real&amp; cost) const;
++
++    //! Minibatch version
++    virtual void fprop(const Mat&amp; inputs, const Mat&amp; targets, Vec&amp; costs );
++
+     //! Given the input and the target, compute a vector of costs
+     //! (possibly resize it appropriately)
+     virtual void fprop(const Vec&amp; input, const Vec&amp; target, Vec&amp; cost) const;
+ 
+-    //! Given the input and the target, compute only the first cost
+-    //! (of which we will compute the gradient)
+-    virtual void fprop(const Vec&amp; input, const Vec&amp; target, real&amp; cost) const;
++    //! Minibatch version
++    virtual void fprop(const Mat&amp; inputs, const Mat&amp; targets, Mat&amp; costs )
++        const;
+ 
+     //! Adapt based on the cost, and compute input gradient to backpropagate.
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost,
+                              Vec&amp; input_gradient, bool accumulate=false);
+ 
++    //! Minibatch version
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; targets,
++                             const Vec&amp; costs, Mat&amp; input_gradients,
++                             bool accumulate=false);
++
+     /* Optional
+        N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS, WHICH
+        JUST CALLS
+@@ -167,8 +179,11 @@
+     // The rest of the private stuff goes here
+     //#####  Not Options  #####################################################
+     mutable Vec processed_value;
++    mutable Mat processed_values;
+     mutable Vec processed_gradient;
++    mutable Mat processed_gradients;
+     mutable Vec processed_diag_hessian;
++    mutable Mat processed_diag_hessians;
+ };
+ 
+ // Declares a few other classes and functions related to this class
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002132.html">[Plearn-commits] r8684 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="002135.html">[Plearn-commits] r8686 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2133">[ date ]</a>
+              <a href="thread.html#2133">[ thread ]</a>
+              <a href="subject.html#2133">[ subject ]</a>
+              <a href="author.html#2133">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,330 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9429 - trunk/python_modules/plearn/parallel
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-September/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9429%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200809031359.m83DxblM020051%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002868.html">
+   <LINK REL="Next"  HREF="002870.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9429 - trunk/python_modules/plearn/parallel</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9429%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200809031359.m83DxblM020051%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9429 - trunk/python_modules/plearn/parallel">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed Sep  3 15:59:37 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002868.html">[Plearn-commits] r9428 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="002870.html">[Plearn-commits] r9430 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2869">[ date ]</a>
+              <a href="thread.html#2869">[ thread ]</a>
+              <a href="subject.html#2869">[ subject ]</a>
+              <a href="author.html#2869">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-09-03 15:59:36 +0200 (Wed, 03 Sep 2008)
+New Revision: 9429
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+implemented dbidispatch --condor=nb_concurent_proc
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2008-09-02 21:53:30 UTC (rev 9428)
++++ trunk/python_modules/plearn/parallel/dbi.py	2008-09-03 13:59:36 UTC (rev 9429)
+@@ -691,6 +691,7 @@
+         self.stderrs = ''
+         self.base_tasks_log_file = []
+         self.set_special_env = True
++        self.nb_proc = 0 # 0 mean unlimited
+ 
+         DBIBase.__init__(self, commands, **args)
+         self.mem=int(self.mem)*1024
+@@ -802,7 +803,201 @@
+                                    self.args))
+             id+=1
+             #keeps a list of the temporary files created, so that they can be deleted at will
++    def run_dag(self):
++        if len(self.tasks)==0:
++            return #no task to run
+ 
++        #set special environment variable
++        if self.set_special_env:
++            self.env+='&quot; OMP_NUM_THREADS=$$(CPUS) GOTO_NUM_THREADS=$$(CPUS) MKL_NUM_THREADS=$$(CPUS) &quot;'
++
++
++        condor_file = os.path.join(self.log_dir, &quot;dag.condor&quot;)
++        self.temp_files.append(condor_file)
++        condor_dat = open( condor_file, 'w' )
++
++        if self.req:
++            req = self.req
++        else:
++            req = &quot;True&quot;
++        if self.targetcondorplatform == 'BOTH':
++            req+=&quot;&amp;&amp;((Arch == \&quot;INTEL\&quot;)||(Arch == \&quot;X86_64\&quot;))&quot;
++        else :
++            req+=&quot;&amp;&amp;(Arch == \&quot;%s\&quot;)&quot;%(self.targetcondorplatform)
++
++        if self.os:
++            req=reduce(lambda x,y:x+' || (OpSys == &quot;'+str(y)+'&quot;)',
++                       self.os.split(','),
++                       req+'&amp;&amp;(False ')+&quot;)&quot;
++
++        source_file=os.getenv(&quot;CONDOR_LOCAL_SOURCE&quot;)
++        condor_home = os.getenv('CONDOR_HOME')
++        if source_file and source_file.endswith(&quot;.cshrc&quot;):
++            launch_file = os.path.join(self.log_dir, 'launch.csh')
++        else:
++            launch_file = os.path.join(self.log_dir, 'launch.sh')
++
++        if self.mem&lt;=0:
++            try:
++                self.mem = os.stat(self.tasks[0].commands[0].split()[0]).st_size/1024
++            except:
++                pass
++
++        self.log_file = os.path.join(&quot;/tmp/bastienf/dbidispatch&quot;,self.log_dir)
++        os.system('mkdir -p ' + self.log_file)
++        self.log_file = os.path.join(self.log_file,&quot;condor.log&quot;)
++
++        condor_dat.write( dedent('''\
++                executable     = %s
++                universe       = vanilla
++                requirements   = %s
++                output         = $(stdout)
++                error          = $(stderr)
++                log            = %s
++                getenv         = %s
++                nice_user      = %s
++                arguments      = $(args)
++                ''' % (launch_file,req,
++                       self.log_file,str(self.getenv),str(self.nice))))
++        if self.mem&gt;0:
++            #condor need value in Kb
++            condor_dat.write('ImageSize      = %d\n'%(self.mem))
++
++        if self.files: #ON_EXIT_OR_EVICT
++            condor_dat.write( dedent('''\
++                when_to_transfer_output = ON_EXIT
++                should_transfer_files   = Yes
++                transfer_input_files    = %s
++                '''%(self.files+','+launch_file+','+self.tasks[0].commands[0].split()[0]))) # no directory
++        if self.env:
++            condor_dat.write('environment    = '+self.env+'\n')
++        if self.raw:
++            condor_dat.write( self.raw+'\n')
++        if self.rank:
++            condor_dat.write( dedent('''\
++                rank = %s
++                ''' %(self.rank)))
++
++        condor_dat.write(&quot;\nqueue\n&quot;)
++        condor_dat.close()
++
++        condor_file_dag = condor_file+&quot;.dag&quot;
++        condor_dag = open( condor_file_dag, 'w' )
++        for i in range(len(self.tasks)):
++            task=self.tasks[i]
++            argstring =condor_escape_argument(' ; '.join(task.commands))
++            argstring =' ; '.join(task.commands)
++            condor_dag.write(&quot;JOB %d %s\n&quot;%(i,condor_file))
++            condor_dag.write('VARS %d args=&quot;%s&quot;\n'%(i,argstring))
++            s=os.path.join(self.log_dir,&quot;condor&quot;+self.base_tasks_log_file[i])
++            condor_dag.write('VARS %d stdout=&quot;%s&quot;\n'%(i,s+&quot;.out&quot;))
++            condor_dag.write('VARS %d stderr=&quot;%s&quot;\n\n'%(i,s+&quot;.err&quot;))
++        condor_dag.close()
++
++        dbi_file=get_plearndir()+'/python_modules/plearn/parallel/dbi.py'
++        overwrite_launch_file=False
++        if not os.path.exists(dbi_file):
++            print '[DBI] WARNING: Can\'t locate file &quot;dbi.py&quot;. Maybe the file &quot;'+launch_file+'&quot; is not up to date!'
++        else:
++            if os.path.exists(launch_file):
++                mtimed=os.stat(dbi_file)[8]
++                mtimel=os.stat(launch_file)[8]
++                if mtimed&gt;mtimel:
++                    print '[DBI] WARNING: We overwrite the file &quot;'+launch_file+'&quot; with a new version. Update it to your needs!'
++                    overwrite_launch_file=True
++
++        if self.copy_local_source_file:
++            source_file_dest = os.path.join(self.log_dir,
++                                            os.path.basename(source_file))
++            shutil.copy( source_file, source_file_dest)
++            self.temp_files.append(source_file_dest)
++            os.chmod(source_file_dest, 0755)
++            source_file=source_file_dest
++
++        if not os.path.exists(launch_file) or overwrite_launch_file:
++            self.temp_files.append(launch_file)
++            launch_dat = open(launch_file,'w')
++            if source_file and not source_file.endswith(&quot;.cshrc&quot;):
++                launch_dat.write(dedent('''\
++                    #!/bin/sh
++                    '''))
++                if condor_home:
++                    launch_dat.write('export HOME=%s\n' % condor_home)
++                if source_file:
++                    launch_dat.write('source ' + source_file + '\n')
++
++                launch_dat.write(dedent('''\
++                    echo &quot;Executing on &quot; `/bin/hostname` 1&gt;&amp;2
++                    echo &quot;HOSTNAME: ${HOSTNAME}&quot; 1&gt;&amp;2
++                    echo &quot;PATH: $PATH&quot; 1&gt;&amp;2
++                    echo &quot;PYTHONPATH: $PYTHONPATH&quot; 1&gt;&amp;2
++                    echo &quot;LD_LIBRARY_PATH: $LD_LIBRARY_PATH&quot; 1&gt;&amp;2
++                    echo &quot;OMP_NUM_THREADS: $OMP_NUM_THREADS&quot; 1&gt;&amp;2
++                    #which python 1&gt;&amp;2
++                    #echo -n python version: 1&gt;&amp;2
++                    #python -V 1&gt;&amp;2
++                    #echo -n /usr/bin/python version: 1&gt;&amp;2
++                    #/usr/bin/python -V 1&gt;&amp;2
++                    echo &quot;Running: command: sh -c \\&quot;$@\\&quot;&quot; 1&gt;&amp;2
++                    sh -c &quot;$@&quot;
++                    '''))
++            else:
++                launch_dat.write(dedent('''\
++                    #! /bin/tcsh
++                    \n'''))
++                if condor_home:
++                    launch_dat.write('setenv HOME %s\n' % condor_home)
++                if source_file:
++                    launch_dat.write('source ' + source_file + '\n')
++                launch_dat.write(dedent('''\
++                    echo &quot;Executing on &quot; `/bin/hostname`
++                    echo &quot;HOSTNAME: ${HOSTNAME}&quot;
++                    echo &quot;PATH: $PATH&quot;
++                    echo &quot;PYTHONPATH: $PYTHONPATH&quot;
++                    echo &quot;LD_LIBRARY_PATH: $LD_LIBRARY_PATH&quot;
++                    #which python
++                    #echo -n python version:
++                    #python -V
++                    #echo -n /usr/bin/python version:
++                    #/usr/bin/python -V
++                    #echo ${PROGRAM} $@
++                    #${PROGRAM} &quot;$@&quot;
++                    echo &quot;Running command: $argv&quot;
++                    $argv
++                    '''))
++            launch_dat.close()
++            os.chmod(launch_file, 0755)
++
++        utils_file = os.path.join(self.tmp_dir, 'utils.py')
++        if not os.path.exists(utils_file):
++            shutil.copy( get_plearndir()+
++                         '/python_modules/plearn/parallel/utils.py', utils_file)
++            self.temp_files.append(utils_file)
++            os.chmod(utils_file, 0755)
++
++        configobj_file = os.path.join(self.tmp_dir, 'configobj.py')
++        if not os.path.exists('configobj.py'):
++            shutil.copy( get_plearndir()+
++                         '/python_modules/plearn/parallel/configobj.py',  configobj_file)
++            self.temp_files.append(configobj_file)
++            os.chmod(configobj_file, 0755)
++
++        # Launch condor
++        condor_cmd = 'condor_submit_dag -maxjobs %s %s'%(str(self.nb_proc), condor_file_dag)
++        if self.test == False:
++            (output,error)=self.get_redirection(self.log_file + '.out',self.log_file + '.err')
++            print &quot;[DBI] Executing: &quot; + condor_cmd
++            for task in self.tasks:
++                task.set_scheduled_time()
++            self.p = Popen( condor_cmd, shell=True)
++            self.p.wait()
++            if self.p.returncode != 0:
++                print &quot;[DBI] condor_submit_dag failed! We can't stard the jobs&quot;
++        else:
++            print &quot;[DBI] In test mode we don't launch the jobs. To to it, you need to execute '&quot;+condor_cmd+&quot;'&quot;
++            if self.dolog:
++                print &quot;[DBI] The scheduling time will not be logged when you will submit the condor file&quot;
++
+     def run_all_job(self):
+         if len(self.tasks)==0:
+             return #no task to run
+@@ -855,6 +1050,8 @@
+         else:
+             launch_file = os.path.join(self.log_dir, 'launch.sh')
+ 
++        self.log_file= os.path.join(self.log_dir,&quot;condog.log&quot;)
++
+         if self.mem&lt;=0:
+             try:
+                 self.mem = os.stat(self.tasks[0].commands[0].split()[0]).st_size/1024
+@@ -866,13 +1063,13 @@
+                 requirements   = %s
+                 output         = %s/condor.$(Process).out
+                 error          = %s/condor.$(Process).error
+-                log            = %s/condor.log
++                log            = %s
+                 getenv         = %s
+                 nice_user      = %s
+                 ''' % (launch_file,req,
+                        self.log_dir,
+                        self.log_dir,
+-                       self.log_dir,str(self.getenv),str(self.nice))))
++                       self.log_file,str(self.getenv),str(self.nice))))
+         if self.mem&gt;0:
+             #condor need value in Kb
+             condor_dat.write('ImageSize      = %d\n'%(self.mem))
+@@ -1041,13 +1238,15 @@
+         print &quot;[DBI] The Log file are under %s&quot;%self.log_dir
+ 
+         self.exec_pre_batch()
++        if self.nb_proc != 0:
++            self.run_dag()
++        else:
++            self.run_all_job()
+ 
+-        self.run_all_job()
+-
+         self.exec_post_batch()
+ 
+     def wait(self):
+-        print &quot;[DBI] WARNING no waiting for all job to finish implemented for condor, use 'condor_q' or 'condor_wait %s/condor.log'&quot;%(self.log_dir)
++        print &quot;[DBI] WARNING no waiting for all job to finish implemented for condor, use 'condor_q' or 'condor_wait %s'&quot;%(self.log_file)
+ 
+     def clean(self):
+         pass
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002868.html">[Plearn-commits] r9428 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="002870.html">[Plearn-commits] r9430 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2869">[ date ]</a>
+              <a href="thread.html#2869">[ thread ]</a>
+              <a href="subject.html#2869">[ subject ]</a>
+              <a href="author.html#2869">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

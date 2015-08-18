@@ -1,0 +1,415 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7053 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7053%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705101941.l4AJfe8r016976%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000501.html">
+   <LINK REL="Next"  HREF="000503.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7053 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7053%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705101941.l4AJfe8r016976%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7053 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Thu May 10 21:41:40 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000501.html">[Plearn-commits] r7052 - in trunk/python_modules/plearn: . var
+</A></li>
+        <LI>Next message: <A HREF="000503.html">[Plearn-commits] r7054 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#502">[ date ]</a>
+              <a href="thread.html#502">[ thread ]</a>
+              <a href="subject.html#502">[ subject ]</a>
+              <a href="author.html#502">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-05-10 21:41:40 +0200 (Thu, 10 May 2007)
+New Revision: 7053
+
+Added:
+   trunk/plearn_learners/online/RBMMatrixConnectionNatGrad.cc
+   trunk/plearn_learners/online/RBMMatrixConnectionNatGrad.h
+Log:
+Subclass of RBMMatrixConnection which uses NatGradEstimator
+to correct the update direction, for contrastive divergence
+and back-prop gradient updates.
+
+
+Added: trunk/plearn_learners/online/RBMMatrixConnectionNatGrad.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnectionNatGrad.cc	2007-05-10 18:58:00 UTC (rev 7052)
++++ trunk/plearn_learners/online/RBMMatrixConnectionNatGrad.cc	2007-05-10 19:41:40 UTC (rev 7053)
+@@ -0,0 +1,191 @@
++// -*- C++ -*-
++
++// RBMMatrixConnectionNatGrad.cc
++//
++// Copyright (C) 2006 Yoshua Bengio
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Yoshua Bengio
++
++/*! \file RBMMatrixConnectionNatGrad.cc */
++
++
++
++#include &quot;RBMMatrixConnectionNatGrad.h&quot;
++#include &lt;plearn/math/TMat_maths.h&gt;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    RBMMatrixConnectionNatGrad,
++    &quot;Subclass of RBMMatrixConnection which uses a block-diagonal natural gradient.\n&quot;,
++    &quot;The natural gradient algorithm used to adjust the update direction is the\n&quot;
++    &quot;one implemented in NatGradEstimator, a template of which is provided by the\n&quot;
++    &quot;user. One such estimator is adapted separately for each neuron (for the input\n&quot;
++    &quot;weights of each neuron), i.e. for each row of the weights matrix.\n&quot;);
++
++RBMMatrixConnectionNatGrad::RBMMatrixConnectionNatGrad( real the_learning_rate ) :
++    inherited(the_learning_rate)
++{
++}
++
++void RBMMatrixConnectionNatGrad::declareOptions(OptionList&amp; ol)
++{
++    declareOption(ol, &quot;natgrad_template&quot;, &amp;RBMMatrixConnectionNatGrad::natgrad_template,
++                  OptionBase::learntoption,
++                  &quot;An object of type NatGradEstimator which will be copied for each row of the\n&quot;
++                  &quot;weights matrix; each will compute the adjustment to the update direction\n&quot;
++                  &quot;based on the natural gradient.\n&quot;);
++
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++void RBMMatrixConnectionNatGrad::build_()
++{
++    cd_natgrad.resize(up_size);
++    bp_natgrad.resize(up_size);
++    for (int i=0;i&lt;up_size;i++)
++    {
++        cd_natgrad[i] = PLearn::deepCopy(natgrad_template);
++        bp_natgrad[i] = PLearn::deepCopy(natgrad_template);
++    }
++    weights_gradient.resize(up_size,down_size);
++    natural_gradient.resize(down_size);
++}
++
++void RBMMatrixConnectionNatGrad::build()
++{
++    inherited::build();
++    build_();
++}
++
++
++void RBMMatrixConnectionNatGrad::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    deepCopyField(natgrad_template, copies);
++    deepCopyField(cd_natgrad, copies);
++    deepCopyField(bp_natgrad, copies);
++    deepCopyField(weights_gradient, copies);
++    deepCopyField(natural_gradient, copies);
++}
++
++void RBMMatrixConnectionNatGrad::update( const Mat&amp; pos_down_values, // v_0
++                                         const Mat&amp; pos_up_values,   // h_0
++                                         const Mat&amp; neg_down_values, // v_1
++                                         const Mat&amp; neg_up_values )  // h_1
++{
++    // weights -= learning_rate * ( h_0 v_0' - h_1 v_1' );
++    // or:
++    // weights[i][j] += learning_rate * (h_1[i] v_1[j] - h_0[i] v_0[j]);
++
++    PLASSERT( pos_up_values.width() == weights.length() );
++    PLASSERT( neg_up_values.width() == weights.length() );
++    PLASSERT( pos_down_values.width() == weights.width() );
++    PLASSERT( neg_down_values.width() == weights.width() );
++    if( momentum == 0. )
++    {
++        // We use the average gradient over a mini-batch.
++        real mbnorm = 1. / pos_down_values.length();
++
++        productScaleAcc(weights_gradient, pos_up_values, true, pos_down_values, false,
++                        mbnorm, 0);
++        productScaleAcc(weights_gradient, neg_up_values, true, neg_down_values, false,
++                        -mbnorm, 1);
++
++        for (int i=0;i&lt;up_size;i++)
++        {
++            (*cd_natgrad[i])(pos_count,weights_gradient(i),natural_gradient);
++            multiplyAcc(weights(i),natural_gradient,-learning_rate);
++        }
++        pos_count++;
++    }
++    else
++        PLERROR(&quot;RBMMatrixConnectionNatGrad::update with momentum - Not implemented&quot;);
++}
++
++
++void RBMMatrixConnectionNatGrad::bpropUpdate(const Mat&amp; inputs, 
++                                             const Mat&amp; outputs,
++                                             Mat&amp; input_gradients,
++                                             const Mat&amp; output_gradients,
++                                             bool accumulate)
++{
++    PLASSERT( inputs.width() == down_size );
++    PLASSERT( outputs.width() == up_size );
++    PLASSERT( output_gradients.width() == up_size );
++
++    if( accumulate )
++    {
++        PLASSERT_MSG( input_gradients.width() == down_size &amp;&amp;
++                      input_gradients.length() == inputs.length(),
++                      &quot;Cannot resize input_gradients and accumulate into it&quot; );
++
++        // input_gradients += output_gradient * weights
++        productAcc(input_gradients, output_gradients, weights);
++    }
++    else
++    {
++        input_gradients.resize(inputs.length(), down_size);
++        // input_gradients = output_gradient * weights
++        product(input_gradients, output_gradients, weights);
++    }
++
++    // weights_gradient = 1/n * output_gradients' * inputs
++    productScaleAcc(weights_gradient, output_gradients, true, inputs, false,
++                    1. / inputs.length(), 0);
++    for (int i=0;i&lt;up_size;i++)
++    {
++        (*bp_natgrad[i])(pos_count,weights_gradient(i),natural_gradient);
++        multiplyAcc(weights(i),natural_gradient,-learning_rate);
++    }
++    neg_count++;
++}
++ 
++
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/online/RBMMatrixConnectionNatGrad.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnectionNatGrad.h	2007-05-10 18:58:00 UTC (rev 7052)
++++ trunk/plearn_learners/online/RBMMatrixConnectionNatGrad.h	2007-05-10 19:41:40 UTC (rev 7053)
+@@ -0,0 +1,138 @@
++// -*- C++ -*-
++
++// RBMMatrixConnectionNatGrad.h
++//
++// Copyright (C) 2006 Yoshua Bengio
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Yoshua Bengio
++
++/*! \file RBMMatrixConnectionNatGrad.h */
++
++
++#ifndef RBMMatrixConnectionNatGrad_INC
++#define RBMMatrixConnectionNatGrad_INC
++
++#include &quot;RBMMatrixConnection.h&quot;
++#include &lt;plearn_learners/generic/NatGradEstimator.h&gt;
++
++namespace PLearn {
++using namespace std;
++
++
++/**
++ * Stores and learns the parameters between two linear layers of an RBM.
++ *
++ */
++class RBMMatrixConnectionNatGrad: public RBMMatrixConnection
++{
++    typedef RBMMatrixConnection inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! natural gradient estimator for neurons
++    //! (if 0 then do not correct the gradient on neurons)
++    PP&lt;NatGradEstimator&gt; natgrad_template;
++
++    //#####  Learned Options  #################################################
++    TVec&lt;PP&lt;NatGradEstimator&gt; &gt; cd_natgrad;
++    TVec&lt;PP&lt;NatGradEstimator&gt; &gt; bp_natgrad;
++
++    //#####  Not Options  #####################################################
++
++    Mat weights_gradient;
++    Vec natural_gradient;
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    RBMMatrixConnectionNatGrad( real the_learning_rate=0 );
++
++    // Your other public member functions go here
++
++    virtual void update( const Mat&amp; pos_down_values,
++                         const Mat&amp; pos_up_values,
++                         const Mat&amp; neg_down_values,
++                         const Mat&amp; neg_up_values);
++
++    virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
++                             Mat&amp; input_gradients,
++                             const Mat&amp; output_gradients,
++                             bool accumulate = false);
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    PLEARN_DECLARE_OBJECT(RBMMatrixConnectionNatGrad);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++    //#####  Protected Member Functions  ######################################
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(RBMMatrixConnectionNatGrad);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000501.html">[Plearn-commits] r7052 - in trunk/python_modules/plearn: . var
+</A></li>
+	<LI>Next message: <A HREF="000503.html">[Plearn-commits] r7054 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#502">[ date ]</a>
+              <a href="thread.html#502">[ thread ]</a>
+              <a href="subject.html#502">[ subject ]</a>
+              <a href="author.html#502">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

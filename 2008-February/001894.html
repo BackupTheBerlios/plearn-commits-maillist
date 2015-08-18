@@ -1,0 +1,295 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8446 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8446%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200802012139.m11LddKg011472%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001893.html">
+   <LINK REL="Next"  HREF="001895.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8446 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8446%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200802012139.m11LddKg011472%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8446 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Fri Feb  1 22:39:39 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001893.html">[Plearn-commits] r8445 - trunk/plearn/math
+</A></li>
+        <LI>Next message: <A HREF="001895.html">[Plearn-commits] r8447 -	trunk/plearn_learners/distributions/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1894">[ date ]</a>
+              <a href="thread.html#1894">[ thread ]</a>
+              <a href="subject.html#1894">[ subject ]</a>
+              <a href="author.html#1894">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-02-01 22:39:39 +0100 (Fri, 01 Feb 2008)
+New Revision: 8446
+
+Modified:
+   trunk/plearn_learners_experimental/DiscriminativeRBM.cc
+   trunk/plearn_learners_experimental/DiscriminativeRBM.h
+Log:
+Added an option that can speed up generative learning
+
+
+Modified: trunk/plearn_learners_experimental/DiscriminativeRBM.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DiscriminativeRBM.cc	2008-02-01 16:46:16 UTC (rev 8445)
++++ trunk/plearn_learners_experimental/DiscriminativeRBM.cc	2008-02-01 21:39:39 UTC (rev 8446)
+@@ -70,8 +70,8 @@
+     do_not_use_discriminative_learning( false ),
+     unlabeled_class_index_begin( 0 ),
+     n_classes_at_test_time( -1 ),
+-    n_mean_field_iterations( 1 )
+-
++    n_mean_field_iterations( 1 ),
++    gen_learning_every_n_samples( 1 )
+ {
+     random_gen = new PRandom();
+ }
+@@ -162,6 +162,14 @@
+                   &quot;Number of mean field iterations for the approximate computation of p(y|x)\n&quot;
+                   &quot;for multitask learning.\n&quot;);
+ 
++    declareOption(ol, &quot;gen_learning_every_n_samples&quot;, 
++                  &amp;DiscriminativeRBM::gen_learning_every_n_samples,
++                  OptionBase::buildoption,
++                  &quot;Determines the frequency of a generative learning update.\n&quot;
++                  &quot;For example, set this option to 100 in order to do an\n&quot;
++                  &quot;update every 100 samples. The gen_learning_weight will\n&quot;
++                  &quot;then be multiplied by 100.&quot;);
++
+     declareOption(ol, &quot;classification_module&quot;,
+                   &amp;DiscriminativeRBM::classification_module,
+                   OptionBase::learntoption,
+@@ -620,12 +628,15 @@
+         pb = new ProgressBar( &quot;Training &quot;
+                               + classname(),
+                               nstages - stage );
+-        
++
++    //! This makes sure that the samples on which generative learning 
++    //! is done changes from one epoch to another
++    int offset = (int)round(stage/nstages) % gen_learning_every_n_samples;
++
+     for( ; stage&lt;nstages ; stage++ )
+     {
+         train_set-&gt;getExample(stage%nsamples, input, target, weight);
+ 
+-
+         if( pb )
+             pb-&gt;update( stage - init_stage + 1 );
+ 
+@@ -682,70 +693,73 @@
+             disc_neg_up_val &lt;&lt; hidden_layer-&gt;expectation;
+         }
+ 
+-        // ... for generative learning        
+-        if( ( !is_missing(target[0]) || targetsize() &gt; 1 ) &amp;&amp; 
+-            gen_learning_weight &gt; 0 )
+-        {
+-            // Positive phase
+-            if( !use_exact_disc_gradient &amp;&amp; !do_not_use_discriminative_learning )
++        // ... for generative learning
++        if( (stage + offset) % gen_learning_every_n_samples == 0 )
++        {            
++            if( ( !is_missing(target[0]) || targetsize() &gt; 1 ) &amp;&amp; 
++                gen_learning_weight &gt; 0 )
+             {
+-                // Use previous computations
+-                gen_pos_down_val &lt;&lt; disc_pos_down_val;
+-                gen_pos_up_val &lt;&lt; disc_pos_up_val;
++                // Positive phase
++                if( !use_exact_disc_gradient &amp;&amp; !do_not_use_discriminative_learning )
++                {
++                    // Use previous computations
++                    gen_pos_down_val &lt;&lt; disc_pos_down_val;
++                    gen_pos_up_val &lt;&lt; disc_pos_up_val;
+ 
+-                hidden_layer-&gt;setExpectation( gen_pos_up_val );
+-                hidden_layer-&gt;generateSample();
+-            }
+-            else
+-            {
+-                // Clamp visible units
+-                target_layer-&gt;sample &lt;&lt; target_one_hot;
+-                input_layer-&gt;sample &lt;&lt; input ;
++                    hidden_layer-&gt;setExpectation( gen_pos_up_val );
++                    hidden_layer-&gt;generateSample();
++                }
++                else
++                {
++                    // Clamp visible units
++                    target_layer-&gt;sample &lt;&lt; target_one_hot;
++                    input_layer-&gt;sample &lt;&lt; input ;
+                 
+-                // Up pass
+-                joint_connection-&gt;setAsDownInput( joint_layer-&gt;sample );
+-                hidden_layer-&gt;getAllActivations( joint_connection );
+-                hidden_layer-&gt;computeExpectation();
+-                hidden_layer-&gt;generateSample();
++                    // Up pass
++                    joint_connection-&gt;setAsDownInput( joint_layer-&gt;sample );
++                    hidden_layer-&gt;getAllActivations( joint_connection );
++                    hidden_layer-&gt;computeExpectation();
++                    hidden_layer-&gt;generateSample();
+                 
+-                gen_pos_down_val &lt;&lt; joint_layer-&gt;sample;
+-                gen_pos_up_val &lt;&lt; hidden_layer-&gt;expectation;
+-            }
++                    gen_pos_down_val &lt;&lt; joint_layer-&gt;sample;
++                    gen_pos_up_val &lt;&lt; hidden_layer-&gt;expectation;
++                }
+ 
+-            // Negative phase
++                // Negative phase
+ 
+-            if( !use_multi_conditional_learning )
+-            {
+-                // Down pass
+-                joint_connection-&gt;setAsUpInput( hidden_layer-&gt;sample );
+-                joint_layer-&gt;getAllActivations( joint_connection );
+-                joint_layer-&gt;computeExpectation();
+-                joint_layer-&gt;generateSample();
++                if( !use_multi_conditional_learning )
++                {
++                    // Down pass
++                    joint_connection-&gt;setAsUpInput( hidden_layer-&gt;sample );
++                    joint_layer-&gt;getAllActivations( joint_connection );
++                    joint_layer-&gt;computeExpectation();
++                    joint_layer-&gt;generateSample();
+                 
+-                // Up pass
+-                joint_connection-&gt;setAsDownInput( joint_layer-&gt;sample );
+-                hidden_layer-&gt;getAllActivations( joint_connection );
+-                hidden_layer-&gt;computeExpectation();
+-            }
+-            else
+-            {
+-                target_layer-&gt;sample &lt;&lt; target_one_hot;
++                    // Up pass
++                    joint_connection-&gt;setAsDownInput( joint_layer-&gt;sample );
++                    hidden_layer-&gt;getAllActivations( joint_connection );
++                    hidden_layer-&gt;computeExpectation();
++                }
++                else
++                {
++                    target_layer-&gt;sample &lt;&lt; target_one_hot;
+ 
+-                // Down pass
+-                connection-&gt;setAsUpInput( hidden_layer-&gt;sample );
+-                input_layer-&gt;getAllActivations( connection );
+-                input_layer-&gt;computeExpectation();
+-                input_layer-&gt;generateSample();
++                    // Down pass
++                    connection-&gt;setAsUpInput( hidden_layer-&gt;sample );
++                    input_layer-&gt;getAllActivations( connection );
++                    input_layer-&gt;computeExpectation();
++                    input_layer-&gt;generateSample();
+                 
+-                // Up pass
+-                joint_connection-&gt;setAsDownInput( joint_layer-&gt;sample );
+-                hidden_layer-&gt;getAllActivations( joint_connection );
+-                hidden_layer-&gt;computeExpectation(); 
+-            }
++                    // Up pass
++                    joint_connection-&gt;setAsDownInput( joint_layer-&gt;sample );
++                    hidden_layer-&gt;getAllActivations( joint_connection );
++                    hidden_layer-&gt;computeExpectation(); 
++                }
+ 
+-            gen_neg_down_val &lt;&lt; joint_layer-&gt;sample;
+-            gen_neg_up_val &lt;&lt; hidden_layer-&gt;expectation;
++                gen_neg_down_val &lt;&lt; joint_layer-&gt;sample;
++                gen_neg_up_val &lt;&lt; hidden_layer-&gt;expectation;
+ 
++            }
+         }
+ 
+         // ... and for semi-supervised learning
+@@ -895,16 +909,18 @@
+                                 disc_neg_down_val, disc_neg_up_val);
+         }
+ 
+-        
+-        if( !is_missing(target[0]) &amp;&amp; gen_learning_weight &gt; 0 )
+-        {
+-            setLearningRate( gen_learning_weight * disc_learning_rate / 
+-                             (1. + disc_decrease_ct * stage ));
+-            joint_layer-&gt;update( gen_pos_down_val, gen_neg_down_val );
+-            hidden_layer-&gt;update( gen_pos_up_val, gen_neg_up_val );
+-            joint_connection-&gt;update( gen_pos_down_val, gen_pos_up_val,
+-                                gen_neg_down_val, gen_neg_up_val);
+-        }
++        if( (stage + offset) % gen_learning_every_n_samples == 0 )
++        { 
++            if( !is_missing(target[0]) &amp;&amp; gen_learning_weight &gt; 0 )
++            {
++                setLearningRate( gen_learning_every_n_samples * gen_learning_weight * disc_learning_rate / 
++                                 (1. + disc_decrease_ct * stage ));
++                joint_layer-&gt;update( gen_pos_down_val, gen_neg_down_val );
++                hidden_layer-&gt;update( gen_pos_up_val, gen_neg_up_val );
++                joint_connection-&gt;update( gen_pos_down_val, gen_pos_up_val,
++                                          gen_neg_down_val, gen_neg_up_val);
++            }
++        }            
+ 
+         if( is_missing(target[0]) &amp;&amp; semi_sup_learning_weight &gt; 0 )
+         {
+
+Modified: trunk/plearn_learners_experimental/DiscriminativeRBM.h
+===================================================================
+--- trunk/plearn_learners_experimental/DiscriminativeRBM.h	2008-02-01 16:46:16 UTC (rev 8445)
++++ trunk/plearn_learners_experimental/DiscriminativeRBM.h	2008-02-01 21:39:39 UTC (rev 8446)
+@@ -120,6 +120,12 @@
+     //! for multitask learning.
+     int n_mean_field_iterations;
+ 
++    //! Determines the frequency of a generative learning update.
++    //! For example, set this option to 100 in order to do an
++    //! update every 100 samples. The gen_learning_weight will
++    //! then be multiplied by 100.
++    int gen_learning_every_n_samples;
++
+     //#####  Public Learnt Options  ###########################################
+     //! The module computing the probabilities of the different classes.
+     PP&lt;RBMClassificationModule&gt; classification_module;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001893.html">[Plearn-commits] r8445 - trunk/plearn/math
+</A></li>
+	<LI>Next message: <A HREF="001895.html">[Plearn-commits] r8447 -	trunk/plearn_learners/distributions/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1894">[ date ]</a>
+              <a href="thread.html#1894">[ thread ]</a>
+              <a href="subject.html#1894">[ subject ]</a>
+              <a href="author.html#1894">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

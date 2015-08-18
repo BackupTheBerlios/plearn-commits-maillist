@@ -1,0 +1,208 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9532 - trunk/python_modules/plearn/parallel
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9532%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200810081844.m98Ii68j015012%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002971.html">
+   <LINK REL="Next"  HREF="002973.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9532 - trunk/python_modules/plearn/parallel</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9532%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200810081844.m98Ii68j015012%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9532 - trunk/python_modules/plearn/parallel">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed Oct  8 20:44:06 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002971.html">[Plearn-commits] r9531 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="002973.html">[Plearn-commits] r9533 - in trunk: . python_modules/plearn/pymake
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2972">[ date ]</a>
+              <a href="thread.html#2972">[ thread ]</a>
+              <a href="subject.html#2972">[ subject ]</a>
+              <a href="author.html#2972">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-10-08 20:44:06 +0200 (Wed, 08 Oct 2008)
+New Revision: 9532
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+first version that partly work on condor
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2008-10-07 20:13:52 UTC (rev 9531)
++++ trunk/python_modules/plearn/parallel/dbi.py	2008-10-08 18:44:06 UTC (rev 9532)
+@@ -825,7 +825,7 @@
+             id+=1
+             #keeps a list of the temporary files created, so that they can be deleted at will
+ 
+-    def make_wrapper_script(self,launch_file, bash_exec):
++    def make_wrapper_script(self,launch_file, bash_exec, condor_file):
+         dbi_file=get_plearndir()+'/python_modules/plearn/parallel/dbi.py'
+         overwrite_launch_file=False
+         if not os.path.exists(dbi_file):
+@@ -857,8 +857,59 @@
+                     launch_dat.write('export HOME=%s\n' % self.condor_home)
+                 if self.source_file:
+                     launch_dat.write('source ' + self.source_file + '\n')
++                if self.condor_submit_exec==&quot;pkdilly&quot;:
++                    cmd=self.condor_submit_exec+&quot; -S &quot;+condor_file
++                    self.p = Popen( cmd, shell=True, stdout=PIPE, stderr=PIPE)
++                    self.p.wait()
++                    assert self.p.stdout.readline()==&quot;&quot;
++                    err = self.p.stderr.readline()
++#example de sortie de pkdilly
++#La tache a soumettre est dans: /tmp/soumet_12368_Qbr7Av
++                    assert err.startswith('La tache a soumettre est dans: ')
++                    pkdilly_file = err.split()[-1]
++                    print pkdilly_file
++                    pkdilly_fd = open( pkdilly_file, 'r' )
++                    lines = pkdilly_fd.readlines()
++                    get=[]
++                    for line in lines:
++                        if get and line.rfind('&quot;')&gt;=0:
++                            tmp= line.split('&quot;')[0].strip()
++                            if tmp:
++                                get.append(tmp)
++                            del get[0]
++                            break#we got all the env variable...
++                        elif get:
++                            get.append(line.strip()[:-1])
++                        elif line.startswith(&quot;environment&quot;):
++                            get.append(line.strip()[:-1])
++                    get=[x for x in get if x.startswith(&quot;KRV&quot;)]
++                    get=[x for x in get if not x.startswith(&quot;KRVEXECUTE=&quot;)]
++                    launch_dat.write(dedent('''\
++                    echo &quot;Executing on &quot; `/bin/hostname` 1&gt;&amp;2
++                    echo &quot;HOSTNAME: ${HOSTNAME}&quot; 1&gt;&amp;2
++                    echo &quot;PATH: $PATH&quot; 1&gt;&amp;2
++                    echo &quot;PYTHONPATH: $PYTHONPATH&quot; 1&gt;&amp;2
++                    echo &quot;LD_LIBRARY_PATH: $LD_LIBRARY_PATH&quot; 1&gt;&amp;2
++                    echo &quot;OMP_NUM_THREADS: $OMP_NUM_THREADS&quot; 1&gt;&amp;2
++                    #which python 1&gt;&amp;2
++                    #echo -n python version: 1&gt;&amp;2
++                    #python -V 1&gt;&amp;2
++                    #echo -n /usr/bin/python version: 1&gt;&amp;2
++                    #/usr/bin/python -V 1&gt;&amp;2
++                    '''))
+ 
+-                launch_dat.write(dedent('''\
++                    for g in get:
++                        launch_dat.write(&quot;export &quot;+g+&quot;\n&quot;)
++                    launch_dat.write(dedent('''
++                    declare -a Array=($*)
++                    export KRVEXECUTE=${Array[0]}
++                    echo &quot;COMMAND=${Array[0]}&quot; 1&gt;&amp;2
++                    echo &quot;ARGS=${Array[*]:1}&quot; 1&gt;&amp;2
++                    /usr/sbin/circus ${Array[*]:1}
++                    '''))
++                    self.condor_submit_exec=&quot;condor_submit&quot;
++                else:
++                    launch_dat.write(dedent('''\
+                     echo &quot;Executing on &quot; `/bin/hostname` 1&gt;&amp;2
+                     echo &quot;HOSTNAME: ${HOSTNAME}&quot; 1&gt;&amp;2
+                     echo &quot;PATH: $PATH&quot; 1&gt;&amp;2
+@@ -872,7 +923,7 @@
+                     #/usr/bin/python -V 1&gt;&amp;2
+                     echo &quot;Running: command: \\&quot;$@\\&quot;&quot; 1&gt;&amp;2
+                     %s
+-                    '''%(bash_exec)))
++                    '''%(bash_exec))) 
+             else:
+                 launch_dat.write(dedent('''\
+                     #! /bin/tcsh
+@@ -1058,25 +1109,24 @@
+             for i in condor_datas:
+                 condor_dat.write(&quot;arguments      = sh &quot;+i+&quot; $$(Arch) \nqueue\n&quot;)
+         else:
++            def print_task(task, stdout_file, stderr_file):
++                argstring = condor_escape_argument(' ; '.join(task.commands))
++                condor_dat.write(&quot;arguments    = %s \n&quot; %argstring)
++                condor_dat.write(&quot;output       = %s \n&quot; %stdout_file)
++                condor_dat.write(&quot;error        = %s \nqueue\n&quot; %stderr_file)
++
+             if self.base_tasks_log_file:
+                 for (task,task_log) in zip(self.tasks,self.base_tasks_log_file):
+-                    argstring =condor_escape_argument(' ; '.join(task.commands))
+                     stdout_file=self.log_dir+&quot;/condor&quot;+task_log+&quot;.out&quot;
+                     stderr_file=self.log_dir+&quot;/condor&quot;+task_log+&quot;.err&quot;
+-
+-                    condor_dat.write(&quot;arguments    = %s \n&quot; %argstring)
+-                    condor_dat.write(&quot;output       = %s \n&quot; %stdout_file)
+-                    condor_dat.write(&quot;error        = %s \nqueue\n&quot; %stderr_file)
++                    print_task(task,stdout_file,stderr_file)
+             elif self.stdouts and self.stderrs:
+                 assert len(self.stdouts)==len(self.stderrs)==len(self.tasks)
+                 for (task,stdout_file,stderr_file) in zip(self.tasks,self.stdouts,self.stderrs):
+                     if stdout_file==stderr_file:
+                         print &quot;Condor can't redirect the stdout and stderr to the same file!&quot;
+                         sys.exit(1)
+-                    argstring =condor_escape_argument(' ; '.join(task.commands))
+-                    condor_dat.write(&quot;arguments    = %s \n&quot; %argstring)
+-                    condor_dat.write(&quot;output       = %s \n&quot; %stdout_file)
+-                    condor_dat.write(&quot;error        = %s \nqueue\n&quot; %stderr_file)
++                    print_task(task,stdout_file,stderr_file)
+             elif self.stdouts or self.stderrs:
+                 print &quot;DBICondor should have stdouts and stderrs or none of them&quot;
+                 sys.exit(1)
+@@ -1087,7 +1137,7 @@
+         condor_dat.close()
+ 
+ 
+-        self.make_wrapper_script(launch_file,'sh -c &quot;$@&quot;')
++        self.make_wrapper_script(launch_file,'sh -c &quot;$@&quot;',condor_file)
+ 
+         return self.condor_submit_exec + &quot; &quot; + condor_file
+ 
+@@ -1103,6 +1153,9 @@
+ 
+ 
+     def run(self):
++        if (self.condor_submit_exec==&quot;pkdilly&quot; and self.nb_proc &gt; 0):
++            print &quot;curently pkdilly with nb_proc &gt;0 is not supported!&quot;
++
+         print &quot;[DBI] The Log file are under %s&quot;%self.log_dir
+ 
+         self.exec_pre_batch()
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002971.html">[Plearn-commits] r9531 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="002973.html">[Plearn-commits] r9533 - in trunk: . python_modules/plearn/pymake
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2972">[ date ]</a>
+              <a href="thread.html#2972">[ thread ]</a>
+              <a href="subject.html#2972">[ subject ]</a>
+              <a href="author.html#2972">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

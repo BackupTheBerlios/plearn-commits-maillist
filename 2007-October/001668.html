@@ -1,0 +1,252 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8220 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8220%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200710291739.l9THd4of027158%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001667.html">
+   <LINK REL="Next"  HREF="001669.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8220 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8220%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200710291739.l9THd4of027158%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8220 - trunk/plearn_learners/generic/EXPERIMENTAL">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Mon Oct 29 18:39:04 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001667.html">[Plearn-commits] r8219 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+        <LI>Next message: <A HREF="001669.html">[Plearn-commits] r8221 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1668">[ date ]</a>
+              <a href="thread.html#1668">[ thread ]</a>
+              <a href="subject.html#1668">[ subject ]</a>
+              <a href="author.html#1668">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-10-29 18:38:58 +0100 (Mon, 29 Oct 2007)
+New Revision: 8220
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h
+Log:
+- Added a new option 'synchronize_update' which is a variant where CPUs are synchronized after each mini-batch
+- Made sure parameters updates are filled to 0 at build time (though this was probably the case already)
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc	2007-10-29 15:18:43 UTC (rev 8219)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc	2007-10-29 17:38:58 UTC (rev 8220)
+@@ -73,6 +73,7 @@
+ NatGradSMPNNet::NatGradSMPNNet():
+       delayed_update(true),
+       wait_for_final_update(true),
++      synchronize_update(false),
+       noutputs(-1),
+       params_averaging_coeff(1.0),
+       params_averaging_freq(5),
+@@ -129,6 +130,14 @@
+         &quot;update. It should impact performance only when 'delayed_update' is\n&quot;
+         &quot;also true.&quot;);
+ 
++    declareOption(ol, &quot;synchronize_update&quot;, &amp;NatGradSMPNNet::synchronize_update,
++                  OptionBase::buildoption,
++        &quot;If true, then processors will in turn update the shared paremeters\n&quot;
++        &quot;after each mini-batch and will wait until all processors did their\n&quot;
++        &quot;update before processing the next mini-batch. Otherwise, no\n&quot;
++        &quot;synchronization is performed and a processor may process multiple\n&quot;
++        &quot;mini-batches before doing a parameter update.&quot;);
++
+     declareOption(ol, &quot;noutputs&quot;, &amp;NatGradSMPNNet::noutputs,
+                   OptionBase::buildoption,
+                   &quot;Number of outputs of the neural network, which can be derived from  output_type and targetsize_\n&quot;);
+@@ -458,6 +467,7 @@
+     all_params_gradient.resize(n_params);
+     all_params_delta.resize(n_params);
+     params_update.resize(n_params);
++    params_update.fill(0);
+ 
+     // depending on how parameters are grouped on the first layer
+     int n_groups = params_natgrad_per_input_template ? (n_neurons-layer_sizes[1]+layer_sizes[0]+1) : n_neurons;
+@@ -579,6 +589,9 @@
+     //    ng_corrprof-&gt;build();
+     //}
+ 
++    if (synchronize_update &amp;&amp; !delayed_update)
++        PLERROR(&quot;NatGradSMPNNet::build_ - 'synchronize_update' cannot be used &quot;
++                &quot;when 'delayed_update' is false&quot;);
+ }
+ 
+ ///////////
+@@ -777,22 +790,26 @@
+                     &quot;semaphore (errno = %d)&quot;, errno);
+         semaphore_id = -1;
+     }
+-    // The semaphore has 'ncpus' + 1 values.
++    // The semaphore has 'ncpus' + 2 values.
+     // The first one is the index of the CPU that will be next to update
+     // weights.
+     // The other ones are 0/1 values that are initialized with 0, and take 1
+     // once the corresponding CPU has finished all updates for this training
+     // period.
+-    // Finally, the last value is the current stage, i.e. the number of samples
+-    // with which the network has been updated so far.
+-    semaphore_id = semget(IPC_PRIVATE, ncpus + 1, 0666 | IPC_CREAT);
++    // Finally, the last value is 0 when 'synchronize_update' is false, and
++    // otherwise is:
++    // - in a first step, the number of CPUs that have finished performing
++    // their mini-batch computation,
++    // - in a second step, the number of CPUs that have finished updating the
++    // shared parameters.
++    semaphore_id = semget(IPC_PRIVATE, ncpus + 2, 0666 | IPC_CREAT);
+     if (semaphore_id == -1)
+         PLERROR(&quot;In NatGradSMPNNet::train - Could not create semaphore &quot;
+                 &quot;(errno = %d)&quot;, errno);
+     // Initialize all values in the semaphore to zero.
+     semun semun_v;
+     semun_v.val = 0;
+-    for (int i = 0; i &lt; ncpus + 1; i++) {
++    for (int i = 0; i &lt; ncpus + 2; i++) {
+         int success = semctl(semaphore_id, i, SETVAL, semun_v);
+         if (success != 0)
+             PLERROR(&quot;In NatGradSMPNNet::train - Could not initialize semaphore&quot;
+@@ -876,7 +893,17 @@
+             // Note that we should actually call onlineStep only on the subset
+             // of samples that are new (compared to the previous mini-batch).
+             // This is left as a TODO since it is not a priority.
++            /*
++            string samples_str = tostring(samples);
++            printf(&quot;CPU %d computing (cur_stage = %d) on samples: %s\n&quot;,
++                    iam, cur_stage, samples_str.c_str());
++                    */
+             onlineStep(cur_stage, targets, train_costs, example_weights );
++            /*
++            sleep(iam);
++            string update = tostring(params_update);
++            printf(&quot;\nCPU %d's current update: %s\n&quot;, iam, update.c_str());
++            */
+             nsteps += b + 1;
+             /*
+             for (int i=0;i&lt;minibatch_size;i++)
+@@ -886,18 +913,35 @@
+             }
+             */
+             // Update weights if it is this cpu's turn.
++            bool performed_update = false; // True when this CPU has updated.
++            while (true) {
+             int sem_value = semctl(semaphore_id, 0, GETVAL);
+             if (sem_value == iam) {
+-                //printf(&quot;CPU %d updating (nsteps =%d)\n&quot;, iam, nsteps);
+-                if (delayed_update) {
++                int n_ready = 2 * ncpus;
++                if (synchronize_update &amp;&amp; !performed_update) {
++                    // We first indicate that this CPU is ready to perform his
++                    // update.
++                    n_ready = semctl(semaphore_id, ncpus + 1, GETVAL);
++                    n_ready++;
++                    semun_v.val = n_ready;
++                    int success = semctl(semaphore_id, ncpus + 1, SETVAL,
++                                         semun_v);
++                    PLCHECK( success == 0 );
++                }
++                if (delayed_update &amp;&amp; n_ready &gt; ncpus &amp;&amp; !performed_update) {
++                    //printf(&quot;CPU %d updating (nsteps = %d)\n&quot;, iam, nsteps);
+                     all_params += params_update;
+                     params_update.clear();
++                    performed_update = true;
+                 }
+-                // Update the current stage.
+-                cur_stage = params_int_ptr[stage_idx];
+-                PLASSERT( cur_stage &gt;= 0 );
+-                int new_stage = cur_stage + nsteps;
+-                params_int_ptr[stage_idx] = new_stage;
++                if (nsteps &gt; 0) {
++                    // Update the current stage.
++                    cur_stage = params_int_ptr[stage_idx];
++                    PLASSERT( cur_stage &gt;= 0 );
++                    int new_stage = cur_stage + nsteps;
++                    params_int_ptr[stage_idx] = new_stage;
++                    nsteps = 0;
++                }
+                 // Give update token to next CPU.
+                 sem_value = (sem_value + 1) % ncpus;
+                 semun_v.val = sem_value;
+@@ -907,14 +951,20 @@
+                             &quot;semaphore with next CPU (errno = %d, returned &quot;
+                             &quot;value = %d, set value = %d)&quot;, errno, success,
+                             semun_v.val);
+-                nsteps = 0;
+-            } else {
+-#if 0
+-                printf(&quot;CPU %d NOT updating (sem_value = %d)\n&quot;,
+-                        iam, sem_value);
+-#endif
++                if (!delayed_update || n_ready &gt;= 2 * ncpus)
++                    // If 'synchronize_update' is false this is always true.
++                    // If 'synchronize_update' is true this means all CPUs have
++                    // updated the parameters.
++                    break;
+             }
++            }
+         }
++        if (synchronize_update &amp;&amp; iam == 0) {
++            // Reset the 'ready' semaphore.
++            semun_v.val = 0;
++            int success = semctl(semaphore_id, ncpus + 1, SETVAL, semun_v);
++            PLCHECK( success == 0 );
++        }
+         /*
+         if (params_averaging_coeff!=1.0 &amp;&amp; 
+             b==minibatch_size-1 &amp;&amp; 
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h	2007-10-29 15:18:43 UTC (rev 8219)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h	2007-10-29 17:38:58 UTC (rev 8220)
+@@ -59,6 +59,7 @@
+ 
+     bool delayed_update;
+     bool wait_for_final_update;
++    bool synchronize_update;
+ 
+     int noutputs;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001667.html">[Plearn-commits] r8219 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+	<LI>Next message: <A HREF="001669.html">[Plearn-commits] r8221 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1668">[ date ]</a>
+              <a href="thread.html#1668">[ thread ]</a>
+              <a href="subject.html#1668">[ subject ]</a>
+              <a href="author.html#1668">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

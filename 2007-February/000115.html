@@ -1,0 +1,720 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6666 - in trunk/plearn: ker var
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6666%20-%20in%20trunk/plearn%3A%20ker%20var&In-Reply-To=%3C200702160004.l1G04pMk011668%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000114.html">
+   <LINK REL="Next"  HREF="000116.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6666 - in trunk/plearn: ker var</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6666%20-%20in%20trunk/plearn%3A%20ker%20var&In-Reply-To=%3C200702160004.l1G04pMk011668%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6666 - in trunk/plearn: ker var">chapados at mail.berlios.de
+       </A><BR>
+    <I>Fri Feb 16 01:04:51 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000114.html">[Plearn-commits] r6665 - trunk/doc
+</A></li>
+        <LI>Next message: <A HREF="000116.html">[Plearn-commits] r6667 - in trunk/python_modules/plearn: parallel	report utilities
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#115">[ date ]</a>
+              <a href="thread.html#115">[ thread ]</a>
+              <a href="subject.html#115">[ subject ]</a>
+              <a href="author.html#115">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2007-02-16 01:04:50 +0100 (Fri, 16 Feb 2007)
+New Revision: 6666
+
+Modified:
+   trunk/plearn/ker/IIDNoiseKernel.cc
+   trunk/plearn/ker/IIDNoiseKernel.h
+   trunk/plearn/ker/MemoryCachedKernel.h
+   trunk/plearn/ker/RationalQuadraticARDKernel.cc
+   trunk/plearn/ker/RationalQuadraticARDKernel.h
+   trunk/plearn/var/GaussianProcessNLLVariable.cc
+   trunk/plearn/var/GaussianProcessNLLVariable.h
+Log:
+New optimizations to gaussian processes computations
+
+Modified: trunk/plearn/ker/IIDNoiseKernel.cc
+===================================================================
+--- trunk/plearn/ker/IIDNoiseKernel.cc	2007-02-15 23:29:15 UTC (rev 6665)
++++ trunk/plearn/ker/IIDNoiseKernel.cc	2007-02-16 00:04:50 UTC (rev 6666)
+@@ -214,8 +214,8 @@
+             
+             // Fill upper triangle if not on diagonal
+             *Ki++ = Kij;
+-            if (j &lt; i)
+-                *Kji = Kij;
++            // if (j &lt; i)
++            //     *Kji = Kij;
+         }
+     }
+ }
+@@ -263,9 +263,11 @@
+                              LKS.size(), kernel_param.size() - LKS.size() - 1));
+         PLASSERT( arg &lt; m_kronecker_indexes.size() );
+ 
+-        computeGramMatrixDerivNV&lt;
+-            IIDNoiseKernel, &amp;IIDNoiseKernel::derivKronecker&gt;(KD, this, arg);
++        computeGramMatrixDerivKronecker(KD, arg);
+         
++        // computeGramMatrixDerivNV&lt;
++        //     IIDNoiseKernel, &amp;IIDNoiseKernel::derivKronecker&gt;(KD, this, arg);
++        
+         // int W = nExamples();
+         // KD.resize(W,W);
+         // real deriv = 2*exp(2*m_log_kronecker_sigma[arg]);
+@@ -314,6 +316,46 @@
+ }
+ 
+ 
++//#####  computeGramMatrixDerivKronecker  #####################################
++
++void IIDNoiseKernel::computeGramMatrixDerivKronecker(Mat&amp; KD, int arg) const
++{
++    // Precompute some terms
++    real kronecker_sigma_arg = 2. * exp(2. * m_log_kronecker_sigma[arg]);
++    int index = m_kronecker_indexes[arg];
++    
++    // Compute Gram Matrix derivative w.r.t. log_kronecker_sigma[arg]
++    int  l = data-&gt;length();
++
++    // Variables that walk over the data matrix
++    int  cache_mod = m_data_cache.mod();
++    real *data_start = &amp;m_data_cache(0,0);
++    real *xi = data_start+index;             // Iterator on data rows
++
++    // Variables that walk over the kernel derivative matrix (KD)
++    KD.resize(l,l);
++    real* KDi = KD.data();                   // Start of row i
++    real* KDij;                              // Current element on row i
++    int   KD_mod = KD.mod();
++
++    // Iterate on rows of derivative matrix
++    for (int i=0 ; i&lt;l ; ++i, xi += cache_mod, KDi += KD_mod)
++    {
++        KDij = KDi;
++        real xi_cur = *xi;
++        real *xj  = data_start+index;        // Inner iterator on data rows
++
++        // Iterate on columns of derivative matrix
++        for (int j=0 ; j &lt;= i ; ++j, xj += cache_mod)
++        {
++            // Set into derivative matrix
++            *KDij++ = fast_is_equal(xi_cur, *xj)? kronecker_sigma_arg : 0.0;
++        }
++    }
++}
++
++
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn/ker/IIDNoiseKernel.h
+===================================================================
+--- trunk/plearn/ker/IIDNoiseKernel.h	2007-02-15 23:29:15 UTC (rev 6665)
++++ trunk/plearn/ker/IIDNoiseKernel.h	2007-02-16 00:04:50 UTC (rev 6666)
+@@ -129,6 +129,9 @@
+     //! Derivative function with respect to kronecker_indexes[arg] hyperparameter
+     real derivKronecker(int i, int j, int arg, real K) const;
+ 
++    //! Derivative w.r.t kronecker_indexes[arg] for WHOLE MATRIX
++    void computeGramMatrixDerivKronecker(Mat&amp; KD, int arg) const;
++    
+ protected:
+     //! Buffer for exponential of m_log_kronecker_sigma
+     mutable Vec m_kronecker_sigma;
+
+Modified: trunk/plearn/ker/MemoryCachedKernel.h
+===================================================================
+--- trunk/plearn/ker/MemoryCachedKernel.h	2007-02-15 23:29:15 UTC (rev 6665)
++++ trunk/plearn/ker/MemoryCachedKernel.h	2007-02-16 00:04:50 UTC (rev 6666)
+@@ -285,21 +285,18 @@
+ 
+     int W = nExamples();
+     KD.resize(W,W);
+-    int m=KD.mod();
+     
+     real KDij;
+     real* KDi;
+-    real* KDji;
+     real  K  = MISSING_VALUE;
+     real* Ki = 0;                       // Current row of kernel matrix, if cached
+ 
+     for (int i=0 ; i&lt;W ; ++i) {
+         KDi  = KD[i];
+-        KDji = &amp;KD[0][i];
+         if (gram_matrix_is_cached)
+             Ki = gram_matrix[i];
+         
+-        for (int j=0 ; j &lt;= i ; ++j, KDji += m) {
++        for (int j=0 ; j &lt;= i ; ++j) {
+             // Access the current kernel value depending on whether it's cached
+             if (Ki)
+                 K = *Ki++;
+@@ -312,8 +309,6 @@
+             // Compute and store the derivative
+             KDij   = (This-&gt;*derivativeFunc)(i, j, arg, K);
+             *KDi++ = KDij;
+-            if (j &lt; i)
+-                *KDji = KDij;
+         }
+     }
+ }
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.cc
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-02-15 23:29:15 UTC (rev 6665)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-02-16 00:04:50 UTC (rev 6666)
+@@ -106,7 +106,8 @@
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+-    deepCopyField(m_noise_gram_cache, copies);
++    deepCopyField(m_noise_gram_cache,        copies);
++    deepCopyField(m_pow_minus_alpha_minus_1, copies);
+ }
+ 
+ 
+@@ -173,6 +174,11 @@
+         m_input_sigma += m_log_input_sigma;
+     m_input_sigma *= 2.0;
+     exp(m_input_sigma, m_input_sigma);
++
++    // Prepare the cache for the pow terms
++    m_pow_minus_alpha_minus_1.resize(K.length(), K.width());
++    int   pow_cache_mod = m_pow_minus_alpha_minus_1.mod();
++    real* pow_cache_row = m_pow_minus_alpha_minus_1.data();
+     
+     // Compute Gram Matrix
+     int  l = data-&gt;length();
+@@ -181,23 +187,25 @@
+     int  cache_mod = m_data_cache.mod();
+ 
+     real *data_start = &amp;m_data_cache(0,0);
+-    real Kij;
+-    real *Ki, *Kji, *x1, *x2;
++    real *Ki = K[0];                         // Start of current row
++    real *Kij;                               // Current element along row
+     real *input_sigma_data = m_input_sigma.data();
+     real *xi = data_start;
+     
+-    for (int i=0 ; i&lt;l ; ++i, xi += cache_mod) {
+-        Ki  = K[i];
+-        Kji = &amp;K[0][i];
++    for (int i=0 ; i&lt;l
++             ; ++i, xi += cache_mod, pow_cache_row+=pow_cache_mod, Ki+=m)
++    {
++        Kij = Ki;
+         real *xj = data_start;
++        real *pow_cache_cur = pow_cache_row;
+ 
+-        for (int j=0; j&lt;=i; ++j, Kji += m, xj += cache_mod) {
++        for (int j=0; j&lt;=i; ++j, xj += cache_mod) {
+             // Kernel evaluation per se
+-            x1 = xi;
+-            x2 = xj;
+-            real* p_inpsigma = input_sigma_data;
++            real *x1 = xi;
++            real *x2 = xj;
++            real *p_inpsigma = input_sigma_data;
+             real sum_wt = 0.0;
+-            int k = n;
++            int  k = n;
+ 
+             // Use Duff's device to unroll the following loop:
+             //     while (k--) {
+@@ -216,13 +224,14 @@
+             case 1:      diff = *x1++ - *x2++; sum_wt += (diff*diff) / *p_inpsigma++;
+                        } while((k -= 8) &gt; 0);
+             }
++
++            real inner_pow   = 1 + sum_wt / (2.*alpha);
++            real pow_alpha   = pow(inner_pow, -alpha);
++            real Kij_cur     = sf2 * pow_alpha;
++            *pow_cache_cur++ = Kij_cur / inner_pow;
+             
+-            Kij = sf2 * pow(1 + sum_wt / (2.*alpha), -alpha);
+-            
+             // Update kernel matrix (already pre-filled with IID noise terms)
+-            *Ki++ += Kij;
+-            if (j &lt; i)
+-                *Kji += Kij;
++            *Kij++ += Kij_cur;
+         }
+     }
+     if (cache_gram_matrix) {
+@@ -267,9 +276,7 @@
+         //     &amp;RationalQuadraticARDKernel::derivLogInputSigma&gt;(KD, this, arg);
+     }
+     else if (kernel_param == LAL) {
+-        computeGramMatrixDerivNV&lt;
+-            RationalQuadraticARDKernel,
+-            &amp;RationalQuadraticARDKernel::derivLogAlpha&gt;(KD, this, -1);
++        computeGramMatrixDerivLogAlpha(KD);
+     }
+     else
+         inherited::computeGramMatrixDerivative(KD, kernel_param, epsilon);
+@@ -322,13 +329,10 @@
+     // Rederive the value of k
+     Vec&amp; row_i   = *dataRow(i);
+     Vec&amp; row_j   = *dataRow(j);
+-    real alpha   = exp(m_log_alpha);
+-    real noise   = m_noise_gram_cache(i,j);
+-    K -= noise;
+-    real k       = exp(- (pl_log(K) - 2*m_log_signal_sigma) / alpha);
++    real K_over_k= m_pow_minus_alpha_minus_1(i,j);
+     real diff    = row_i[arg] - row_j[arg];
+     real sq_diff = diff * diff;
+-    return (K / k) * exp(-2 * (m_log_global_sigma + m_log_input_sigma[arg])) * sq_diff;
++    return K_over_k * exp(-2 * (m_log_global_sigma + m_log_input_sigma[arg])) * sq_diff;
+ }
+ 
+ 
+@@ -353,62 +357,109 @@
+                                                                      int arg) const
+ {
+     // Precompute some terms
+-    real alpha = exp(m_log_alpha);
+-    real twice_log_signal_sigma = 2.*m_log_signal_sigma;
++    real input_sigma_arg = m_input_sigma[arg];
+     
+     // Compute Gram Matrix derivative w.r.t. log_input_sigma[arg]
+     int  l = data-&gt;length();
+-    int  k_mod     = gram_matrix.mod();
++
++    // Variables that walk over the data matrix
+     int  cache_mod = m_data_cache.mod();
++    real *data_start = &amp;m_data_cache(0,0);
++    real *xi = data_start+arg;               // Iterator on data rows
+ 
+-    // Variables that walk over the pre-computed kernel (K) and data matrices
+-    real *input_sigma_data = m_input_sigma.data();
+-    real *data_start = &amp;m_data_cache(0,0);
+-    real *xi = data_start;                   // Iterator on data rows
++    // Variables that walk over the pow cache
++    int   pow_cache_mod = m_pow_minus_alpha_minus_1.mod();
++    real *pow_cache_row = m_pow_minus_alpha_minus_1.data();
++    real *pow_cache_cur;
++    
++    // Variables that walk over the kernel derivative matrix (KD)
++    KD.resize(l,l);
++    real* KDi = KD.data();                   // Start of row i
++    real* KDij;                              // Current element on row i
++    int   KD_mod = KD.mod();
++
++    // Iterate on rows of derivative matrix
++    for (int i=0 ; i&lt;l ; ++i, xi += cache_mod, KDi += KD_mod,
++             pow_cache_row += pow_cache_mod)
++    {
++        KDij = KDi;
++        real *xj  = data_start+arg;           // Inner iterator on data rows
++        pow_cache_cur = pow_cache_row;
++
++        // Iterate on columns of derivative matrix
++        for (int j=0 ; j &lt;= i
++                 ; ++j, xj += cache_mod, ++pow_cache_cur)
++        {
++            real diff    = *xi - *xj;
++            real sq_diff = diff * diff;
++            real KD_cur  = *pow_cache_cur * sq_diff / input_sigma_arg;
++
++            // Set into derivative matrix
++            *KDij++ = KD_cur;
++        }
++    }
++}
++
++
++//#####  computeGramMatrixDerivLogAlpha  ######################################
++
++void RationalQuadraticARDKernel::computeGramMatrixDerivLogAlpha(Mat&amp; KD) const
++{
++    // Precompute some terms
++    real alpha = exp(m_log_alpha);
++    
++    // Compute Gram Matrix derivative w.r.t. log_alpha
++    int  l = data-&gt;length();
++    int  k_mod     = gram_matrix.mod();
++
++    // Variables that walk over the pre-computed kernel matrix (K) 
+     real *Ki = &amp;gram_matrix(0,0);            // Current row of kernel matrix
+     real *Kij;                               // Current element of kernel matrix
+ 
++    // Variables that walk over the pow cache
++    int   pow_cache_mod = m_pow_minus_alpha_minus_1.mod();
++    real *pow_cache_row = m_pow_minus_alpha_minus_1.data();
++    real *pow_cache_cur;
++
+     // Variables that walk over the noise cache
+-    real *noise_start_row = m_noise_gram_cache.data();
+-    real *cur_noise;                         // Current element of noise matrix
+-    int  noise_mod = m_noise_gram_cache.mod();
++    int   noise_cache_mod = m_noise_gram_cache.mod();
++    real *noise_cache_row = m_noise_gram_cache[0];
++    real *noise_cache_cur;
+     
+     // Variables that walk over the kernel derivative matrix (KD)
+     KD.resize(l,l);
+     real* KDi = KD.data();                   // Start of row i
+-    real* KDj = KD.data();                   // Start of column j
+     real* KDij;                              // Current element on row i
+-    real* KDji;                              // Current element on column j
+     int   KD_mod = KD.mod();
+ 
+     // Iterate on rows of derivative matrix
+-    for (int i=0 ; i&lt;l ; ++i, xi += cache_mod, Ki += k_mod,
+-             KDi += KD_mod, ++KDj, noise_start_row += noise_mod)
++    for (int i=0 ; i&lt;l ; ++i, Ki += k_mod,
++             KDi += KD_mod, pow_cache_row += pow_cache_mod,
++             noise_cache_row += noise_cache_mod)
+     {
+         Kij  = Ki;
+         KDij = KDi;
+-        KDji = KDj;
+-        real *xj  = data_start;              // Inner iterator on data rows
+-        cur_noise = noise_start_row;
++        pow_cache_cur   = pow_cache_row;
++        noise_cache_cur = noise_cache_row;
+ 
+         // Iterate on columns of derivative matrix
+         for (int j=0 ; j &lt;= i
+-                 ; ++j, ++Kij, KDji+=KD_mod, xj += cache_mod, ++cur_noise)
++                 ; ++j, ++Kij, ++noise_cache_cur, ++pow_cache_cur)
+         {
+-            real K       = *Kij - *cur_noise;
+-            real k       = exp(- (pl_log(K) - twice_log_signal_sigma) / alpha);
+-            real diff    = xi[arg] - xj[arg];
+-            real sq_diff = diff * diff;
+-            real KD_cur  = (K / k) * sq_diff / input_sigma_data[arg];
++            real K      = *Kij - *noise_cache_cur;
++            real k      = K / *pow_cache_cur;
++            real left   = -alpha * pl_log(k);
++            real num    = (k - 1) * 2. * alpha;
++            real denum  = 2. * k;
++            real KD_cur = K * (left + num / denum);
+             
+             // Set into derivative matrix
+             *KDij++ = KD_cur;
+-            if (j &lt; i)
+-                *KDji = KD_cur;
+         }
+     }
+ }
+ 
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.h
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-02-15 23:29:15 UTC (rev 6665)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-02-16 00:04:50 UTC (rev 6666)
+@@ -127,10 +127,19 @@
+     // Compute derivative w.r.t. log_input_sigma[arg] for WHOLE MATRIX
+     void computeGramMatrixDerivLogInputSigma(Mat&amp; KD, int arg) const;
+     
++    // Compute derivative w.r.t. log_alpha for WHOLE MATRIX
++    void computeGramMatrixDerivLogAlpha(Mat&amp; KD) const;
++    
+ protected:
+     //! Cached version of IID noise gram matrix
+     mutable Mat m_noise_gram_cache;
+ 
++    /**
++     *  Cached version of the K / k terms, useful for computing derivatives
++     *      pow(1 + sum_wt / (2*alpha), -alpha-1)
++     */
++    mutable Mat m_pow_minus_alpha_minus_1;
++
+ private:
+     //! This does the actual building.
+     void build_();
+
+Modified: trunk/plearn/var/GaussianProcessNLLVariable.cc
+===================================================================
+--- trunk/plearn/var/GaussianProcessNLLVariable.cc	2007-02-15 23:29:15 UTC (rev 6665)
++++ trunk/plearn/var/GaussianProcessNLLVariable.cc	2007-02-16 00:04:50 UTC (rev 6666)
+@@ -117,7 +117,8 @@
+     deepCopyField(m_gram,            copies);
+     deepCopyField(m_gram_derivative, copies);
+     deepCopyField(m_cholesky_gram,   copies);
+-    deepCopyField(m_alpha,           copies);
++    deepCopyField(m_alpha_t,         copies);
++    deepCopyField(m_alpha_buf,       copies);
+     deepCopyField(m_inverse_gram,    copies);
+     deepCopyField(m_cholesky_gram,   copies);
+ }
+@@ -136,22 +137,34 @@
+ }
+ 
+ 
++//#####  alpha  ###############################################################
++
++const Mat&amp; GaussianProcessNLLVariable::alpha() const
++{
++    m_alpha_buf.resize(m_alpha_t.width(), m_alpha_t.length());
++    transpose(m_alpha_t, m_alpha_buf);
++    return m_alpha_buf;
++}
++    
++
+ //#####  fprop  ###############################################################
+ 
+ // ### computes value from varray values
+ void GaussianProcessNLLVariable::fprop()
+ {
+     fbpropFragments(m_kernel, m_noise, m_inputs, m_targets, m_allow_bprop,
+-                    m_gram, m_cholesky_gram, m_alpha, m_inverse_gram,
++                    m_gram, m_cholesky_gram, m_alpha_t, m_inverse_gram,
+                     m_cholesky_tmp, m_rhs_tmp);
+ 
+     // Assuming y is a column vector...  For multivariate targets, we
+     // separately dot each column of the targets with corresponding columns of
+     // alpha, and add as many of the other two terms as there are variables
+     //
+-    // 0.5 * y'*alpha + sum(log(diag(L))) + 0.5*n*log(2*pi)
+-    const int n = m_alpha.length();
+-    const int m = m_alpha.width();
++    //     0.5 * y'*alpha + sum(log(diag(L))) + 0.5*n*log(2*pi)
++    //
++    // Don't forget that alpha_t is transposed
++    const int n = m_alpha_t.width();
++    const int m = m_alpha_t.length();
+ 
+     real logdet_log2pi = 0;
+     for (int i=0 ; i&lt;n ; ++i)
+@@ -160,7 +173,7 @@
+     
+     real nll = 0;
+     for (int i=0 ; i&lt;m ; ++i)
+-        nll += 0.5*dot(m_targets.column(i), m_alpha.column(i)) + logdet_log2pi;
++        nll += 0.5*dot(m_targets.column(i), m_alpha_t.row(i)) + logdet_log2pi;
+     value[0] = nll;
+ }
+ 
+@@ -174,7 +187,7 @@
+                   &quot;GaussianProcessNLLVariable must be constructed with the option &quot;
+                   &quot;'will_bprop'=True in order to call bprop&quot; );
+     PLASSERT( m_hyperparam_names.size() == m_hyperparam_vars.size() );
+-    PLASSERT( m_alpha.length() == m_inverse_gram.width() );
++    PLASSERT( m_alpha_t.width() == m_inverse_gram.width() );
+     PLASSERT( m_inverse_gram.width() == m_inverse_gram.length() );
+     PLASSERT( m_kernel );
+     
+@@ -187,40 +200,44 @@
+     // Since both the first term inside the trace and the derivative of the
+     // gram matrix are symmetric square matrices, the trace is efficiently
+     // computed as the sum of the elementwise product of those matrices.
++    //
++    // Don't forget that m_alpha_t is transposed.
+     for (int j=0, m=m_hyperparam_names.size() ; j&lt;m ; ++j) {
+         real dnll_dj = 0;
+         m_kernel-&gt;computeGramMatrixDerivative(m_gram_derivative,
+                                               m_hyperparam_names[j]);
+-        for (int i=0, n=m_alpha.width() ; i&lt;n ; ++i) {
+-            Mat curalpha_mat = m_alpha.column(i);
+-            int curalpha_mod = curalpha_mat.mod();
+-            real* curalpha   = curalpha_mat[0];
+-            real  curtrace   = 0.0;
++        for (int i=0, n=m_alpha_t.length() ; i&lt;n ; ++i) {
++            real* curalpha = m_alpha_t[i];
++            real  cur_trace = 0.0;
+ 
+             // Sum over all rows and columns of matrix
+             real* curalpha_row = curalpha;
+             for (int row=0, nrows=m_inverse_gram.length()
+-                     ; row&lt;nrows ; ++row, curalpha_row += curalpha_mod)
++                     ; row&lt;nrows ; ++row, ++curalpha_row)
+             {
+-                real* p_inverse_gram    = m_inverse_gram[row];
+-                real* p_gram_derivative = m_gram_derivative[row];
+-                real  curalpha_row      = curalpha[row * curalpha_mod];
+-                real* curalpha_col      = curalpha;
++                real* p_inverse_gram     = m_inverse_gram[row];
++                real* p_gram_derivative  = m_gram_derivative[row];
++                real  curalpha_row_value = *curalpha_row;
++                real* curalpha_col       = curalpha;
++                real  row_trace          = 0.0;
+ 
+-                for (int col=0, ncols=m_inverse_gram.width()
+-                         ; col&lt;ncols ; ++col, curalpha_col += curalpha_mod)
++                for (int col=0 ; col &lt;= row ; ++col, ++curalpha_col)
+                 {
+-                    curtrace +=
+-                        (*p_inverse_gram++ - curalpha_row * *curalpha_col)
++                    if (col == row)
++                        row_trace *= 2.;
++                    
++                    row_trace +=
++                        (*p_inverse_gram++ - curalpha_row_value * *curalpha_col)
+                         * *p_gram_derivative++;
+ 
+                     // curtrace +=
+                     //     (m_inverse_gram(row,col) - curalpha(row,0)*curalpha(col,0))
+                     //     * m_gram_derivative(row,col);
+                 }
++                cur_trace += row_trace;
+             }
+ 
+-            dnll_dj += curtrace / 2.0;
++            dnll_dj += cur_trace / 2.0;
+         }
+         m_hyperparam_vars[j]-&gt;gradient[0] += dnll_dj * gradient[0];
+     }
+@@ -232,7 +249,7 @@
+ #ifndef USE_BLAS_SPECIALISATIONS
+ void GaussianProcessNLLVariable::fbpropFragments(
+     Kernel* kernel, real noise, const Mat&amp; inputs, const Mat&amp; targets,
+-    bool compute_inverse, Mat&amp; gram, Mat&amp; L, Mat&amp; alpha, Mat&amp; inv,
++    bool compute_inverse, Mat&amp; gram, Mat&amp; L, Mat&amp; alpha_t, Mat&amp; inv,
+     Vec&amp; tmp_chol, Mat&amp; tmp_rhs)
+ {
+     PLASSERT( kernel );
+@@ -259,15 +276,20 @@
+     addToDiagonal(gram, noise);
+ 
+     // Compute Cholesky decomposition and solve the linear system
+-    alpha.resize(trainlength, rhs_width);
++    alpha_t.resize(trainlength, rhs_width);
+     L.resize(trainlength, trainlength);
+     tmp_chol.resize(trainlength);
+-    solveLinearSystemByCholesky(gram, tmp_rhs, alpha, &amp;L, &amp;tmp_chol);
+-    
++    solveLinearSystemByCholesky(gram, tmp_rhs, alpha_t, &amp;L, &amp;tmp_chol);
++
++    // Must return transpose here since the code has been modified to work with
++    // a transposed alpha, to better interface with lapack (much faster in the
++    // latter case to avoid superfluous transposes).
+     if (compute_inverse) {
+-        inv   = alpha.subMatColumns(targetsize, trainlength);
+-        alpha = alpha.subMatColumns(0, targetsize);
++        inv     = alpha_t.subMatColumns(targetsize, trainlength);
++        alpha_t = transpose(alpha_t.subMatColumns(0, targetsize));
+     }
++    else
++        alpha_t = transpose(alpha_t);
+ }
+ #endif
+ 
+@@ -276,7 +298,7 @@
+ #ifdef USE_BLAS_SPECIALISATIONS
+ void GaussianProcessNLLVariable::fbpropFragments(
+     Kernel* kernel, real noise, const Mat&amp; inputs, const Mat&amp; targets,
+-    bool compute_inverse, Mat&amp; gram, Mat&amp; L, Mat&amp; alpha, Mat&amp; inv,
++    bool compute_inverse, Mat&amp; gram, Mat&amp; L, Mat&amp; alpha_t, Mat&amp; inv,
+     Vec&amp; tmp_chol, Mat&amp; tmp_rhs)
+ {
+     PLASSERT( kernel );
+@@ -287,12 +309,14 @@
+     // The RHS matrix (when solving the linear system Gram*Params=RHS) is made
+     // up of two parts: the regression targets themselves, and the identity
+     // matrix if we requested them (for confidence intervals).  After solving
+-    // the linear system, set the gram-inverse appropriately.
++    // the linear system, set the gram-inverse appropriately.  To interface
++    // nicely with LAPACK, we store this in a transposed format.
+     int rhs_width = targetsize + (compute_inverse? trainlength : 0);
+-    tmp_rhs.resize(trainlength, rhs_width);
+-    tmp_rhs.subMatColumns(0, targetsize) &lt;&lt; targets;
++    tmp_rhs.resize(rhs_width, trainlength);
++    Mat targets_submat = tmp_rhs.subMatRows(0, targetsize);
++    transpose(targets, targets_submat);
+     if (compute_inverse) {
+-        Mat rhs_identity = tmp_rhs.subMatColumns(targetsize, trainlength);
++        Mat rhs_identity = tmp_rhs.subMatRows(targetsize, trainlength);
+         identityMatrix(rhs_identity);
+     }
+ 
+@@ -307,13 +331,13 @@
+     // matrices after solving.  Note that for now we don't bother to create an
+     // appropriately transposed RHS (will come later).
+     lapackCholeskyDecompositionInPlace(gram);
+-    lapackCholeskySolveInPlace(gram, tmp_rhs);
+-    alpha = tmp_rhs;                         // LAPACK solves in-place
+-    L     = gram;                            // LAPACK solves in-place
++    lapackCholeskySolveInPlace(gram, tmp_rhs, true /* column-major */);
++    alpha_t = tmp_rhs;                         // LAPACK solves in-place
++    L       = gram;                            // LAPACK solves in-place
+     
+     if (compute_inverse) {
+-        inv   = alpha.subMatColumns(targetsize, trainlength);
+-        alpha = alpha.subMatColumns(0, targetsize);
++        inv     = alpha_t.subMatRows(targetsize, trainlength);
++        alpha_t = alpha_t.subMatRows(0, targetsize);
+     }
+ }
+ #endif
+
+Modified: trunk/plearn/var/GaussianProcessNLLVariable.h
+===================================================================
+--- trunk/plearn/var/GaussianProcessNLLVariable.h	2007-02-15 23:29:15 UTC (rev 6665)
++++ trunk/plearn/var/GaussianProcessNLLVariable.h	2007-02-16 00:04:50 UTC (rev 6666)
+@@ -129,7 +129,7 @@
+                                 Vec&amp; tmpch, Mat&amp; tmprhs);
+ 
+     //! Accessor to the last computed 'alpha' matrix in an fprop
+-    const Mat&amp; alpha() const { return m_alpha; }
++    const Mat&amp; alpha() const;
+ 
+     //! Accessor to the last computed gram matrix in an fprop
+     const Mat&amp; gram() const { return m_gram; }
+@@ -183,9 +183,14 @@
+     //! Holds the Cholesky decomposition of m_gram
+     Mat m_cholesky_gram;
+ 
+-    //! Solution of the linear system gram*alpha = targets
+-    Mat m_alpha;
++    //! Solution of the linear system gram*alpha = targets.  This is actually
++    //! stored as a transpose to interface better with lapack.
++    Mat m_alpha_t;
+ 
++    //! Temporary buffer to hold the transpose of m_alpha_t; used for the
++    //! alpha() accessor and outside-world interface
++    mutable Mat m_alpha_buf;
++    
+     //! Inverse of the Gram matrix
+     Mat m_inverse_gram;
+     
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000114.html">[Plearn-commits] r6665 - trunk/doc
+</A></li>
+	<LI>Next message: <A HREF="000116.html">[Plearn-commits] r6667 - in trunk/python_modules/plearn: parallel	report utilities
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#115">[ date ]</a>
+              <a href="thread.html#115">[ thread ]</a>
+              <a href="subject.html#115">[ subject ]</a>
+              <a href="author.html#115">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

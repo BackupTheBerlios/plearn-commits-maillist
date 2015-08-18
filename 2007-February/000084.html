@@ -1,0 +1,453 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6635 - in trunk: commands plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6635%20-%20in%20trunk%3A%20commands%20plearn_learners/online&In-Reply-To=%3C200702062046.l16KkI2a024375%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000083.html">
+   <LINK REL="Next"  HREF="000085.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6635 - in trunk: commands plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6635%20-%20in%20trunk%3A%20commands%20plearn_learners/online&In-Reply-To=%3C200702062046.l16KkI2a024375%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6635 - in trunk: commands plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Tue Feb  6 21:46:18 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000083.html">[Plearn-commits] r6634 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000085.html">[Plearn-commits] r6636 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#84">[ date ]</a>
+              <a href="thread.html#84">[ thread ]</a>
+              <a href="subject.html#84">[ subject ]</a>
+              <a href="author.html#84">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-02-06 21:46:17 +0100 (Tue, 06 Feb 2007)
+New Revision: 6635
+
+Added:
+   trunk/plearn_learners/online/ClassErrorCostModule.cc
+   trunk/plearn_learners/online/ClassErrorCostModule.h
+Modified:
+   trunk/commands/plearn_noblas_inc.h
+   trunk/plearn_learners/online/NLLCostModule.cc
+Log:
+Add new cost module, computing multiclass classification error
+
+
+Modified: trunk/commands/plearn_noblas_inc.h
+===================================================================
+--- trunk/commands/plearn_noblas_inc.h	2007-02-06 20:42:40 UTC (rev 6634)
++++ trunk/commands/plearn_noblas_inc.h	2007-02-06 20:46:17 UTC (rev 6635)
+@@ -185,6 +185,7 @@
+ 
+ // Online
+ #include &lt;plearn_learners/online/BackConvolution2DModule.h&gt;
++#include &lt;plearn_learners/online/ClassErrorCostModule.h&gt;
+ #include &lt;plearn_learners/online/CombiningCostsModule.h&gt;
+ #include &lt;plearn_learners/online/Convolution2DModule.h&gt;
+ #include &lt;plearn_learners/online/CostModule.h&gt;
+
+Added: trunk/plearn_learners/online/ClassErrorCostModule.cc
+===================================================================
+--- trunk/plearn_learners/online/ClassErrorCostModule.cc	2007-02-06 20:42:40 UTC (rev 6634)
++++ trunk/plearn_learners/online/ClassErrorCostModule.cc	2007-02-06 20:46:17 UTC (rev 6635)
+@@ -0,0 +1,164 @@
++// -*- C++ -*-
++
++// ClassErrorCostModule.cc
++//
++// Copyright (C) 2007 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file ClassErrorCostModule.cc */
++
++
++
++#include &quot;ClassErrorCostModule.h&quot;
++#include &lt;plearn/math/TMat_maths.h&gt;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    ClassErrorCostModule,
++    &quot;Multiclass classification error&quot;,
++    &quot;If input_size &gt; 1, outputs 0 if target == argmax(input), 1 else\n&quot;
++    &quot;If input_size == 1, outputs 0 if target is the closest integer to\n&quot;
++    &quot;input[0], 1 else.\n&quot;
++    &quot;There is no gradient to compute (it returns an error if you try), so if\n&quot;
++    &quot;you use this module inside a CombiningCostsModule, put its weight to 0.\n&quot;
++    );
++
++ClassErrorCostModule::ClassErrorCostModule()
++{
++    output_size = 1;
++    target_size = 1;
++}
++
++void ClassErrorCostModule::declareOptions(OptionList&amp; ol)
++{
++    // declareOption(ol, &quot;myoption&quot;, &amp;ClassErrorCostModule::myoption,
++    //               OptionBase::buildoption,
++    //               &quot;Help text describing this option&quot;);
++    // ...
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++void ClassErrorCostModule::build_()
++{
++    PLASSERT( output_size == 1 );
++    PLASSERT( target_size == 1 );
++}
++
++void ClassErrorCostModule::build()
++{
++    inherited::build();
++    build_();
++}
++
++
++void ClassErrorCostModule::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    // deepCopyField(trainvec, copies);
++}
++
++///////////
++// fprop //
++///////////
++void ClassErrorCostModule::fprop(const Vec&amp; input, const Vec&amp; target,
++                                 Vec&amp; cost) const
++{
++    cost.resize( output_size );
++    fprop( input, target, cost[0] );
++}
++
++void ClassErrorCostModule::fprop(const Vec&amp; input, const Vec&amp; target,
++                                 real&amp; cost) const
++{
++    PLASSERT( input.size() == input_size );
++    PLASSERT( target.size() == target_size );
++
++    if( input_size == 1 ) // is target[0] the closest integer to input[0]?
++        cost = ( round(input[0]) == round(target[0]) ) ? 0. : 1.;
++    else // is target[0] equals to argmax(input)?
++        cost = ( argmax(input) == int(round(target[0])) ) ? 0. : 1.;
++}
++
++/////////////////
++// bpropUpdate //
++/////////////////
++/*
++void ClassErrorCostModule::bpropUpdate(const Vec&amp; input, const Vec&amp; target,
++                                       real cost,
++                                       Vec&amp; input_gradient)
++{
++}
++*/
++
++////////////
++// forget //
++////////////
++void ClassErrorCostModule::forget()
++{
++}
++
++//////////
++// name //
++//////////
++TVec&lt;string&gt; ClassErrorCostModule::name()
++{
++    return TVec&lt;string&gt;(1, &quot;class_error&quot;);
++}
++
++//////////////////////
++// bpropDoesNothing //
++//////////////////////
++bool ClassErrorCostModule::bpropDoesNothing()
++{
++    return true;
++}
++
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/online/ClassErrorCostModule.h
+===================================================================
+--- trunk/plearn_learners/online/ClassErrorCostModule.h	2007-02-06 20:42:40 UTC (rev 6634)
++++ trunk/plearn_learners/online/ClassErrorCostModule.h	2007-02-06 20:46:17 UTC (rev 6635)
+@@ -0,0 +1,160 @@
++// -*- C++ -*-
++
++// ClassErrorCostModule.h
++//
++// Copyright (C) 2007 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file ClassErrorCostModule.h */
++
++
++#ifndef ClassErrorCostModule_INC
++#define ClassErrorCostModule_INC
++
++#include &lt;plearn_learners/online/CostModule.h&gt;
++
++namespace PLearn {
++
++/**
++ * Multiclass classification error.
++ * If input_size &gt; 1, outputs 0 if target == argmax(input), 1 else
++ * If input_size == 1, outputs 0 if target is the closest integer to
++ * input[0], 1 else.
++ * There is no gradient to compute (it returns an error if you try), so if you
++ * use this module inside a CombiningCostsModule, put its weight to 0.
++ */
++class ClassErrorCostModule : public CostModule
++{
++    typedef CostModule inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! ### declare public option fields (such as build options) here
++    //! Start your comments with Doxygen-compatible comments such as //!
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    // ### Make sure the implementation in the .cc
++    // ### initializes all fields to reasonable default values.
++    ClassErrorCostModule();
++
++    // Your other public member functions go here
++
++    //! Given the input and the target, compute a vector of costs
++    //! (possibly resize it appropriately)
++    virtual void fprop(const Vec&amp; input, const Vec&amp; target, Vec&amp; cost) const;
++
++    //! Given the input and the target, compute only the first cost
++    //! (of which we will compute the gradient)
++    virtual void fprop(const Vec&amp; input, const Vec&amp; target, real&amp; cost) const;
++
++    /* Default implementation in super class raises a PLERROR
++    //! No differentiable, so no gradient to backprop!
++    virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost,
++                             Vec&amp; input_gradient);
++    */
++
++    /* Optional
++       N.B. A DEFAULT IMPLEMENTATION IS PROVIDED IN THE SUPER-CLASS, WHICH
++       RAISES A PLERROR.
++    //! No differentiable, so no gradient to backprop!
++    virtual void bbpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost,
++                              Vec&amp; input_gradient, Vec&amp; input_diag_hessian);
++    */
++
++    //! Reset the parameters to the state they would be BEFORE starting
++    //! training.  Note that this method is necessarily called from
++    //! build().
++    virtual void forget();
++
++
++    //! In case bpropUpdate does not do anything, make it known
++    virtual bool bpropDoesNothing();
++
++    //! Indicates the name of the computed costs
++    virtual TVec&lt;string&gt; name();
++
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    // ### If your class is not instantiatable (it has pure virtual methods)
++    // ### you should replace this by PLEARN_DECLARE_ABSTRACT_OBJECT
++    PLEARN_DECLARE_OBJECT(ClassErrorCostModule);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(ClassErrorCostModule);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Modified: trunk/plearn_learners/online/NLLCostModule.cc
+===================================================================
+--- trunk/plearn_learners/online/NLLCostModule.cc	2007-02-06 20:42:40 UTC (rev 6634)
++++ trunk/plearn_learners/online/NLLCostModule.cc	2007-02-06 20:46:17 UTC (rev 6635)
+@@ -102,9 +102,9 @@
+     input_gradient.resize( input_size );
+ 
+     int the_target = (int) round( target[0] );
+-    input_gradient.clear();
+     // input_gradient[ i ] = 0 if i != t,
+     // input_gradient[ t ] = -1/x[t]
++    input_gradient.clear();
+     input_gradient[ the_target ] = - 1. / input[ the_target ];
+ }
+ 
+@@ -117,10 +117,10 @@
+ 
+     int the_target = (int) round( target[0] );
+     real input_gradient_t = input_gradient[ the_target ];
++    // input_diag_hessian[ i ] = 0 if i!=t
++    // input_diag_hessian[ t ] = 1/(x[t])^2
+     input_diag_hessian.resize( input_size );
+     input_diag_hessian.clear();
+-    // input_diag_hessian[ i ] = 0 if i!=t
+-    // input_diag_hessian[ t ] = 1/(x[t])^2
+     input_diag_hessian[ the_target ] = input_gradient_t * input_gradient_t;
+ }
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000083.html">[Plearn-commits] r6634 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000085.html">[Plearn-commits] r6636 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#84">[ date ]</a>
+              <a href="thread.html#84">[ thread ]</a>
+              <a href="subject.html#84">[ subject ]</a>
+              <a href="author.html#84">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

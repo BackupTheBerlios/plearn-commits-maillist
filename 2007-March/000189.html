@@ -1,0 +1,371 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6740 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6740%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200703152349.l2FNn0qY019404%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000188.html">
+   <LINK REL="Next"  HREF="000190.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6740 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6740%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200703152349.l2FNn0qY019404%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6740 - trunk/plearn_learners/generic/EXPERIMENTAL">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Fri Mar 16 00:49:00 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000188.html">[Plearn-commits] r6739 - trunk/plearn/math
+</A></li>
+        <LI>Next message: <A HREF="000190.html">[Plearn-commits] r6741 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#189">[ date ]</a>
+              <a href="thread.html#189">[ thread ]</a>
+              <a href="subject.html#189">[ subject ]</a>
+              <a href="author.html#189">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-03-16 00:48:58 +0100 (Fri, 16 Mar 2007)
+New Revision: 6740
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+Log:
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-03-15 21:21:37 UTC (rev 6739)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-03-15 23:48:58 UTC (rev 6740)
+@@ -58,6 +58,7 @@
+     : noutputs(-1),
+       init_lrate(0.01),
+       lrate_decay(0),
++      minibatch_size(1),
+       output_type(&quot;NLL&quot;),
+       n_layers(-1)
+ {
+@@ -98,6 +99,10 @@
+                   OptionBase::buildoption,
+                   &quot;Learning rate decay factor\n&quot;);
+ 
++    declareOption(ol, &quot;minibatch_size&quot;, &amp;NatGradNNet::minibatch_size,
++                  OptionBase::buildoption,
++                  &quot;Update the parameters only so often (number of examples).\n&quot;);
++
+     declareOption(ol, &quot;neurons_natgrad&quot;, &amp;NatGradNNet::neurons_natgrad,
+                   OptionBase::buildoption,
+                   &quot;Optional NatGradEstimator for the neurons gradient.\n&quot;
+@@ -174,15 +179,19 @@
+             params_natgrad_per_neuron[i] = PLearn::deepCopy(params_natgrad_template);
+         
+     }
+-    neuron_gradients.resize(n_neurons);
+-    neuron_outputs_per_layer.resize(n_layers-1);
+-    neuron_gradients_per_layer.resize(n_layers-1);
+-    for (int i=0,k=0;i&lt;n_layers-1;k+=layer_sizes[i+1],i++)
++    neuron_gradients.resize(minibatch_size,n_neurons);
++    neuron_outputs_per_layer.resize(n_layers); // layer 0 = input
++    neuron_gradients_per_layer.resize(n_layers); // layer 0 not used
++    neuron_outputs_per_layer[0].resize(minibatch_size,layer_sizes[0]);
++    for (int i=1,k=0;i&lt;n_layers;k+=layer_sizes[i],i++)
+     {
+-        neuron_outputs_per_layer[i].resize(layer_sizes[i+1]);
+-        neuron_gradients_per_layer[i] = neuron_gradients.subVec(k,layer_sizes[i+1]);
++        neuron_outputs_per_layer[i].resize(minibatch_size,layer_sizes[i]);
++        neuron_gradients_per_layer[i] = 
++            neuron_gradients.subMatColumns(k,layer_sizes[i]);
+     }
+-
++    example_weights.resize(minibatch_size);
++    TVec&lt;string&gt; train_cost_names = getTrainCostNames() ;
++    train_costs.resize(minibatch_size,train_cost_names.length() );
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+@@ -204,11 +213,12 @@
+     deepCopyField(params_natgrad_per_neuron, copies);
+     deepCopyField(full_natgrad, copies);
+     deepCopyField(layer_sizes, copies);
+-/*    deepCopyField(, copies);
++    deepCopyField(targets, copies);
++    deepCopyField(example_weights, copies);
++    deepCopyField(train_costs, copies);
++/*
+     deepCopyField(, copies);
+     deepCopyField(, copies);
+-    deepCopyField(, copies);
+-    deepCopyField(, copies);
+ */
+ }
+ 
+@@ -235,11 +245,7 @@
+ 
+ void NatGradNNet::train()
+ {
+-    static Vec input;  
+-    static Vec target; 
+-    input.resize(inputsize());    // the train_set's inputsize()
+-    target.resize(targetsize());  // the train_set's targetsize()
+-    real example_weight;
++    targets.resize(minibatch_size,targetsize());  // the train_set's targetsize()
+ 
+     if(!train_set)
+         PLERROR(&quot;In NNet::train, you did not setTrainingSet&quot;);
+@@ -247,8 +253,6 @@
+     if(!train_stats)
+         setTrainStatsCollector(new VecStatsCollector());
+ 
+-    TVec&lt;string&gt; train_cost_names = getTrainCostNames() ;
+-    Vec train_costs( train_cost_names.length() );
+     train_costs.fill(MISSING_VALUE) ;
+ 
+     train_stats-&gt;forget();
+@@ -263,9 +267,17 @@
+     for( ; stage&lt;nstages; stage++)
+     {
+         int sample = stage % nsamples;
+-        train_set-&gt;getExample(sample, input, target, example_weight);
+-        onlineStep( input, target, train_costs, example_weight );
+-        train_stats-&gt;update( train_costs );
++        int b = sample % minibatch_size;
++        Vec input = neuron_outputs_per_layer[0](b);
++        Vec target = targets(b);
++        train_set-&gt;getExample(sample, input, target, example_weights[b]);
++        if (b+1==minibatch_size)
++        {
++            onlineStep( neuron_outputs_per_layer[0], targets, 
++                        train_costs, example_weights );
++            for (int i=0;i&lt;minibatch_size;i++)
++                train_stats-&gt;update( train_costs(b) );
++        }
+         if( pb )
+             pb-&gt;update( stage + 1 );
+     }
+@@ -273,70 +285,97 @@
+     train_stats-&gt;finalize(); // finalize statistics for this epoch
+ }
+ 
+-void NatGradNNet::onlineStep(const Vec&amp; input, const Vec&amp; target,
+-                             Vec&amp; train_costs, real example_weight)
++void NatGradNNet::onlineStep(const Mat&amp; input, const Mat&amp; targets,
++                             Mat&amp; train_costs, Vec example_weights)
+ {
+     fpropNet(input);
+-    
++    fbpropLoss(neuron_outputs_per_layer[n_layers-2],targets,example_weights,train_costs);
++    for (int i=n_layers-2;i&gt;0;i--)
++    {
++    }
+ }
+ 
+ void NatGradNNet::computeOutput(const Vec&amp; input, Vec&amp; output) const
+ {
+-    fpropNet(input);
+-    if (output_type==&quot;NLL&quot;)
+-    {
+-        if (outputsize()&gt;1)
+-            softmax(neuron_outputs_per_layer[n_layers-1],output);
+-        // keep pre-softmax output in last layer output to allow for numerically more stable gradient computation
+-        else
+-            compute_sigmoid(neuron_outputs_per_layer[n_layers-1],output);
+-    } // else (MSE) do nothing, linear outputs
++    fpropNet(input.toMat(1,inputsize()));
++    output &lt;&lt; neuron_outputs_per_layer[n_layers-1](0);
+ }
+ 
+-void NatGradNNet::fpropNet(const Vec&amp; input) const
++//! compute (pre-final-non-linearity) network top-layer output given input
++void NatGradNNet::fpropNet(const Mat&amp; input) const
+ {
++    int n_examples = input.length();
++    PLASSERT_MSG(n_examples&lt;=minibatch_size,&quot;NatGradNNet::fpropNet: nb input vectors treated should be &lt;= minibatch_size\n&quot;);
++    Mat prev_layer = (n_examples==minibatch_size)?neuron_outputs_per_layer[0]:neuron_outputs_per_layer[0].subMatRows(0,n_examples);
+     for (int i=0;i&lt;n_layers-1;i++)
+     {
+-        Vec&amp; layer_i= neuron_outputs_per_layer[i];
+-        layer_i &lt;&lt; biases[i];
+-        productAcc(layer_i,weights[i],(i==0)?input:neuron_outputs_per_layer[i-1]);
++        Mat next_layer = (n_examples==minibatch_size)?neuron_outputs_per_layer[i+1]:neuron_outputs_per_layer[i+1].subMatRows(0,n_examples);
++        for (int k=0;k&lt;n_examples;k++)
++            next_layer(k) &lt;&lt; biases[k];
++        // try to use BLAS
++        productScaleAcc(next_layer, prev_layer, false, weights[i], true, 1, 1);
+         if (i&lt;n_layers-1)
+-            compute_tanh(layer_i,layer_i);
++            for (int k=0;k&lt;n_examples;k++)
++            {
++                Vec L=next_layer(k);
++                compute_tanh(L,L);
++            }
++        else
++            for (int k=0;k&lt;n_examples;k++)
++            {
++                Vec L=next_layer(k);
++                log_softmax(L,L);
++            }
++        prev_layer = next_layer;
+     }
+ }
+ 
+-void NatGradNNet::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
+-                                           const Vec&amp; target, Vec&amp; costs) const
++//! compute train costs given the (pre-final-non-linearity) network top-layer output
++void NatGradNNet::fbpropLoss(const Mat&amp; output, const Mat&amp; target, const Vec&amp; example_weight, Mat&amp; costs) const
+ {
+-    // Compute the costs from *already* computed output.
++    int n_examples = output.length();
++    Mat out_grad = (n_examples==minibatch_size)?neuron_gradients_per_layer[0]:neuron_gradients_per_layer[0].subMatRows(0,n_examples);
+     if (output_type==&quot;NLL&quot;)
+     {
+-        int target_class = int(round(target[0]));
+-        real p=0;
+-        if (outputsize()&gt;1)
++        for (int i=0;i&lt;n_examples;i++)
+         {
+-            p=output[target_class];
+-            costs[1] = (target_class == argmax(output))?0:1;
++            int target_class = int(round(target(i,0)));
++            Vec outp = output(i);
++            Vec grad = out_grad(i);
++            exp(outp,grad); // map log-prob to prob
++            costs(i,0) = outp[target_class];
++            costs(i,1) = (target_class == argmax(outp))?0:1;
++            grad[target_class]-=1;
++            if (example_weight[i]!=1.0)
++                costs(i,0) *= example_weight[i];
+         }
+-        else 
+-        {
+-            p = (target_class==1)?output[0]:1-output[0];
+-            costs[1] = target_class&gt;0? output[0]&lt;0.5: output[0]&gt;=0.5;
+-        }
+-        if (p!=0)
+-            costs[0] = -pl_log(p);
+-        else
+-        {
+-            costs[0] = 1e10;
+-            PLWARNING(&quot;NatGradNNet: do something better to handle near 0 probabilities...&quot;);
+-        }
+     }
+     else // if (output_type==&quot;MSE&quot;)
+     {
+-        costs[0] = powdistance(output,target);
++        substract(output,target,out_grad);
++        for (int i=0;i&lt;n_examples;i++)
++        {
++            costs(i,0) = pownorm(out_grad(i));
++            if (example_weight[i]!=1.0)
++            {
++                out_grad(i) *= example_weight[i];
++                costs(i,0) *= example_weight[i];
++            }
++        }
+     }
+ }
+ 
++void NatGradNNet::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                           const Vec&amp; target, Vec&amp; costs) const
++{
++    Vec w(1);
++    w[0]=1;
++    Mat outputM = output.toMat(1,output.length());
++    Mat targetM = target.toMat(1,output.length());
++    Mat costsM = costs.toMat(1,costs.length());
++    fbpropLoss(outputM,targetM,w,costsM);
++}
++
+ TVec&lt;string&gt; NatGradNNet::getTestCostNames() const
+ {
+     TVec&lt;string&gt; costs;
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-03-15 21:21:37 UTC (rev 6739)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-03-15 23:48:58 UTC (rev 6740)
+@@ -69,7 +69,10 @@
+ 
+     //! learning rate decay factor
+     real lrate_decay;
+-    
++
++    //! update the parameters only so often
++    int minibatch_size;
++
+     //! natural gradient estimator for neurons
+     //! (if 0 then do not correct the gradient on neurons)
+     PP&lt;NatGradEstimator&gt; neurons_natgrad;
+@@ -185,10 +188,17 @@
+     // (PLEASE IMPLEMENT IN .cc)
+     static void declareOptions(OptionList&amp; ol);
+ 
+-    void onlineStep( const Vec&amp; input, const Vec&amp; target, Vec&amp; train_costs, real example_weight );
++    //! one minibatch training step for the (input,target) pair
++    void onlineStep( const Mat&amp; input, const Mat&amp; target, Mat&amp; train_costs, Vec example_weights );
+ 
+-    void fpropNet(const Vec&amp; input) const;
++    //! compute network top-layer output given input
++    //! (note that log-probabilities are computed for classification tasks, output_type=NLL)
++    void fpropNet(const Mat&amp; input) const;
+ 
++    //! compute train costs given the network top-layer output
++    //! and write into neuron_gradients_per_layer[n_layers-2], gradient on pre-non-linearity activation
++    void fbpropLoss(const Mat&amp; output, const Mat&amp; target, const Vec&amp; example_weights, Mat&amp; train_costs) const;
++
+ private:
+     //#####  Private Member Functions  ########################################
+ 
+@@ -201,10 +211,12 @@
+ 
+     // The rest of the private stuff goes here
+ 
+-    Vec neuron_gradients;
+-    TVec&lt;Vec&gt; neuron_gradients_per_layer; // pointing into neuron_gradients
+-    mutable TVec&lt;Vec&gt; neuron_outputs_per_layer; 
+-    
++    Mat neuron_gradients; // one row per example of a minibatch, has concatenation of layer 0, layer 1, ... gradients.
++    TVec&lt;Mat&gt; neuron_gradients_per_layer; // pointing into neuron_gradients (one row per example of a minibatch)
++    mutable TVec&lt;Mat&gt; neuron_outputs_per_layer;  // same structure
++    Mat targets; // one target row per example in a minibatch
++    Vec example_weights; // one element per example in a minibatch
++    Mat train_costs; // one row per example in a minibatch
+ };
+ 
+ // Declares a few other classes and functions related to this class
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000188.html">[Plearn-commits] r6739 - trunk/plearn/math
+</A></li>
+	<LI>Next message: <A HREF="000190.html">[Plearn-commits] r6741 - trunk/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#189">[ date ]</a>
+              <a href="thread.html#189">[ thread ]</a>
+              <a href="subject.html#189">[ subject ]</a>
+              <a href="author.html#189">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

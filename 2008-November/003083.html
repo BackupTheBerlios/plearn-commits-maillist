@@ -1,0 +1,281 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9643 - trunk/plearn_learners/meta
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9643%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200811051509.mA5F95hd019469%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003082.html">
+   <LINK REL="Next"  HREF="003084.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9643 - trunk/plearn_learners/meta</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9643%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200811051509.mA5F95hd019469%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9643 - trunk/plearn_learners/meta">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed Nov  5 16:09:05 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003082.html">[Plearn-commits] r9642 - trunk/plearn_learners/regressors
+</A></li>
+        <LI>Next message: <A HREF="003084.html">[Plearn-commits] r9644 - in	trunk/plearn_learners/meta/test/MultiClassAdaBoost: .	.pytest/PL_MultiClassAdaBoost/expected_results/expdir	.pytest/PL_MultiClassAdaBoost/expected_results/expdir/Split0	.pytest/PL_MultiClassAdaBoost/expected_results/expdir/Split0/test1_costs.pmat.metadata	.pytest/PL_MultiClassAdaBoost/expected_results/expdir/Split0/test2_costs.pmat.metadata
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3083">[ date ]</a>
+              <a href="thread.html#3083">[ thread ]</a>
+              <a href="subject.html#3083">[ subject ]</a>
+              <a href="author.html#3083">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-11-05 16:09:04 +0100 (Wed, 05 Nov 2008)
+New Revision: 9643
+
+Modified:
+   trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+   trunk/plearn_learners/meta/MultiClassAdaBoost.h
+Log:
+added cost train_time, total_train_time, test_time, total_test_time in MultiClassAdaBoost.
+
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-11-05 15:06:58 UTC (rev 9642)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-11-05 15:09:04 UTC (rev 9643)
+@@ -39,6 +39,8 @@
+ 
+ #include &quot;MultiClassAdaBoost.h&quot;
+ #include &lt;plearn/vmat/ProcessingVMatrix.h&gt;
++#include &lt;plearn/vmat/SubVMatrix.h&gt;
++#include &lt;plearn/vmat/MemoryVMatrix.h&gt;
+ #ifdef _OPENMP
+ #include &lt;omp.h&gt;
+ #endif
+@@ -53,6 +55,10 @@
+     &quot; and 2 vs other.&quot;);
+ 
+ MultiClassAdaBoost::MultiClassAdaBoost():
++    train_time(0),
++    total_train_time(0),
++    test_time(0),
++    total_test_time(0),
+     forward_sub_learner_test_costs(false)
+ /* ### Initialize all fields to their default value here */
+ {
+@@ -104,7 +110,6 @@
+ 
+ void MultiClassAdaBoost::build_()
+ {
+-    //reuse object to same allocation time
+     sub_target_tmp.resize(2);
+     for(int i=0;i&lt;sub_target_tmp.size();i++)
+         sub_target_tmp[i].resize(1);
+@@ -126,7 +131,14 @@
+         target_prg1= &quot;@&quot;+targetname+&quot; 1 0 ifelse :&quot;+targetname;
+         target_prg2= &quot;@&quot;+targetname+&quot; 2 - 0 1 ifelse :&quot;+targetname;
+         weight_prg = &quot;1 :weight&quot;;
++        if(learner1-&gt;getTrainingSet()){
++            subcosts2.resize(learner2-&gt;nTestCosts());
++            subcosts1.resize(learner1-&gt;nTestCosts());
++        }
+     }
++
++    Profiler::activate();
++    Profiler::reset(&quot;MultiClassAdaBoost::test&quot;);
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+@@ -182,6 +194,8 @@
+ 
+ void MultiClassAdaBoost::train()
+ {
++    Profiler::start(&quot;MultiClassAdaBoost::train&quot;);
++
+     learner1-&gt;nstages = nstages;
+     learner2-&gt;nstages = nstages;
+ 
+@@ -190,15 +204,15 @@
+ #ifdef _OPENMP
+     //the AdaBoost and the weak learner should not print anything as this will cause race condition on the printing
+     if(omp_get_max_threads()&gt;1){
+-        PLCHECK(learner1-&gt;verbosity==0);
+-        PLCHECK(learner2-&gt;verbosity==0);
+-        PLCHECK(learner1-&gt;report_progress==false);
+-        PLCHECK(learner2-&gt;report_progress==false);
+-        
+-        PLCHECK(learner1-&gt;weak_learner_template-&gt;verbosity==0);
+-        PLCHECK(learner2-&gt;weak_learner_template-&gt;verbosity==0);
+-        PLCHECK(learner1-&gt;weak_learner_template-&gt;report_progress==false);
+-        PLCHECK(learner2-&gt;weak_learner_template-&gt;report_progress==false);
++      PLCHECK(learner1-&gt;verbosity==0);
++      PLCHECK(learner2-&gt;verbosity==0);
++      PLCHECK(learner1-&gt;report_progress==false);
++      PLCHECK(learner2-&gt;report_progress==false);
++      
++      PLCHECK(learner1-&gt;weak_learner_template-&gt;verbosity==0);
++      PLCHECK(learner2-&gt;weak_learner_template-&gt;verbosity==0);
++      PLCHECK(learner1-&gt;weak_learner_template-&gt;report_progress==false);
++      PLCHECK(learner2-&gt;weak_learner_template-&gt;report_progress==false);
+     }
+ #pragma omp parallel sections default(none)
+ {
+@@ -222,6 +236,19 @@
+         train_stats-&gt;append(*(v),&quot;sublearner1.&quot;);
+     if(v=learner2-&gt;getTrainStatsCollector())
+         train_stats-&gt;append(*(v),&quot;sublearner2.&quot;);
++
++    Profiler::end(&quot;MultiClassAdaBoost::train&quot;);
++    const Profiler::Stats&amp; stats = Profiler::getStats(&quot;MultiClassAdaBoost::train&quot;);
++    real tmp=stats.wall_duration/Profiler::ticksPerSecond();
++    train_time=tmp - total_train_time;
++    total_train_time=tmp;
++
++    //we get the test_time here as we want the test time for all dataset.
++    //if we put it in the test function, we would have it for one dataset.
++    const Profiler::Stats&amp; stats_test = Profiler::getStats(&quot;MultiClassAdaBoost::test&quot;);
++    tmp=stats_test.wall_duration/Profiler::ticksPerSecond();
++    test_time=tmp-total_test_time;
++    total_test_time=tmp;  
+ }
+ 
+ void MultiClassAdaBoost::computeOutput(const Vec&amp; input, Vec&amp; output) const
+@@ -232,9 +259,9 @@
+ #ifdef _OPENMP
+ #pragma omp parallel sections default(none)
+ {
+-#pragma omp section 
++#pragma omp section
+     learner1-&gt;computeOutput(input, output1);
+-#pragma omp section 
++#pragma omp section
+     learner2-&gt;computeOutput(input, output2);
+ }
+ 
+@@ -266,19 +293,15 @@
+     PLASSERT_MSG(output.length()==outputsize(),
+                  &quot;In MultiClassAdaBoost::computeOutputAndCosts -&quot;
+                  &quot; output don't have the good length!&quot;);
+-    output.resize(outputsize());
+ 
+-    subcosts1.resize(learner1-&gt;nTestCosts());
+-    subcosts2.resize(learner1-&gt;nTestCosts());
+-
+     getSubLearnerTarget(target, sub_target_tmp);
+ #ifdef _OPENMP
+ #pragma omp parallel sections default(none)
+ {
+-#pragma omp section 
++#pragma omp section
+     learner1-&gt;computeOutputAndCosts(input, sub_target_tmp[0],
+                                     output1, subcosts1);
+-#pragma omp section 
++#pragma omp section
+     learner2-&gt;computeOutputAndCosts(input, sub_target_tmp[1],
+                                     output2, subcosts2);
+ }
+@@ -320,9 +343,12 @@
+ 
+     costs[4]=costs[5]=costs[6]=0;
+     costs[out+4]=1;
+-
++    costs[7]=train_time;
++    costs[8]=total_train_time;
++    costs[9]=test_time;
++    costs[10]=total_test_time;
+     if(forward_sub_learner_test_costs){
+-        costs.resize(7);
++        costs.resize(7+4);
+         subcosts1+=subcosts2;
+         costs.append(subcosts1);
+     }
+@@ -351,6 +377,10 @@
+ 
+     costs[4]=costs[5]=costs[6]=0;
+     costs[out+4]=1;
++    costs[7]=train_time;
++    costs[8]=total_train_time;
++    costs[9]=test_time;
++    costs[10]=total_test_time;
+ 
+     if(forward_sub_learner_test_costs){
+         costs.resize(7);
+@@ -393,6 +423,10 @@
+     names.append(&quot;class0&quot;);
+     names.append(&quot;class1&quot;);
+     names.append(&quot;class2&quot;);
++    names.append(&quot;train_time&quot;);
++    names.append(&quot;total_train_time&quot;);
++    names.append(&quot;test_time&quot;);
++    names.append(&quot;total_test_time&quot;);
+     if(forward_sub_learner_test_costs){
+         TVec&lt;string&gt; subcosts=learner1-&gt;getTestCostNames();
+         for(int i=0;i&lt;subcosts.length();i++){
+@@ -455,11 +489,13 @@
+ 
+     //We don't give it if the script give them one explicitly.
+     //This can be usefull for optimization
+-    //can't be parallized as the training_set is meaby not thread save...
+     if(!learner1-&gt;getTrainingSet())
+         learner1-&gt;setTrainingSet(vmat1, call_forget);
+     if(!learner2-&gt;getTrainingSet())
+         learner2-&gt;setTrainingSet(vmat2, call_forget);
++    subcosts2.resize(learner2-&gt;nTestCosts());
++    subcosts1.resize(learner1-&gt;nTestCosts());
++
+ }
+ 
+ void MultiClassAdaBoost::test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.h	2008-11-05 15:06:58 UTC (rev 9642)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.h	2008-11-05 15:09:04 UTC (rev 9643)
+@@ -64,6 +64,15 @@
+     mutable Vec subcosts1;
+     mutable Vec subcosts2;
+ 
++    //! The time it took for the last execution of the train() function
++    real train_time;
++    //! The total time passed in training
++    real total_train_time;
++
++    //! The time it took for the last execution of the test() function
++    real test_time;
++    //! The total time passed in test()
++    real total_test_time;
+ public:
+     //#####  Public Build Options  ############################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003082.html">[Plearn-commits] r9642 - trunk/plearn_learners/regressors
+</A></li>
+	<LI>Next message: <A HREF="003084.html">[Plearn-commits] r9644 - in	trunk/plearn_learners/meta/test/MultiClassAdaBoost: .	.pytest/PL_MultiClassAdaBoost/expected_results/expdir	.pytest/PL_MultiClassAdaBoost/expected_results/expdir/Split0	.pytest/PL_MultiClassAdaBoost/expected_results/expdir/Split0/test1_costs.pmat.metadata	.pytest/PL_MultiClassAdaBoost/expected_results/expdir/Split0/test2_costs.pmat.metadata
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3083">[ date ]</a>
+              <a href="thread.html#3083">[ thread ]</a>
+              <a href="subject.html#3083">[ subject ]</a>
+              <a href="author.html#3083">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

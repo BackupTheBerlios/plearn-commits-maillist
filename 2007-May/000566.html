@@ -1,0 +1,729 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7117 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7117%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705160031.l4G0VRQJ026927%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000565.html">
+   <LINK REL="Next"  HREF="000567.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7117 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7117%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705160031.l4G0VRQJ026927%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7117 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Wed May 16 02:31:27 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000565.html">[Plearn-commits] r7116 - in trunk: plearn/base plearn/math	plearn/python plearn/vmat python_modules/plearn/pyext scripts
+</A></li>
+        <LI>Next message: <A HREF="000567.html">[Plearn-commits] r7118 - trunk/plearn/python
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#566">[ date ]</a>
+              <a href="thread.html#566">[ thread ]</a>
+              <a href="subject.html#566">[ subject ]</a>
+              <a href="author.html#566">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-05-16 02:31:26 +0200 (Wed, 16 May 2007)
+New Revision: 7117
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/RBMBinomialLayer.cc
+   trunk/plearn_learners/online/RBMBinomialLayer.h
+   trunk/plearn_learners/online/RBMLayer.cc
+   trunk/plearn_learners/online/RBMLayer.h
+   trunk/plearn_learners/online/RBMMatrixConnection.h
+   trunk/plearn_learners/online/RBMMixedLayer.cc
+   trunk/plearn_learners/online/RBMMixedLayer.h
+Log:
+Implemented more batch functions
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-15 23:44:46 UTC (rev 7116)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-16 00:31:26 UTC (rev 7117)
+@@ -1367,8 +1367,9 @@
+         {
+             connections[i]-&gt;setAsUpInputs(layers[i+1]-&gt;getExpectations());
+             layers[i]-&gt;getAllActivations(connections[i], 0, true);
+-            layers[i]-&gt;fpropNLL(save_layer_expectations, 
+-                                train_costs.column(reconstruction_cost_index+i+1));
++            layers[i]-&gt;fpropNLL(
++                save_layer_expectations,
++                train_costs.column(reconstruction_cost_index+i+1));
+             rc += train_costs.column(reconstruction_cost_index+i+1);
+         }
+ 
+
+Modified: trunk/plearn_learners/online/RBMBinomialLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMBinomialLayer.cc	2007-05-15 23:44:46 UTC (rev 7116)
++++ trunk/plearn_learners/online/RBMBinomialLayer.cc	2007-05-16 00:31:26 UTC (rev 7117)
+@@ -77,8 +77,6 @@
+ 
+     computeExpectation();
+ 
+-    //random_gen-&gt;manual_seed(123456);
+-
+     for( int i=0 ; i&lt;size ; i++ )
+         sample[i] = random_gen-&gt;binomial_sample( expectation[i] );
+ }
+@@ -92,12 +90,9 @@
+                  &quot;random_gen should be initialized before generating samples&quot;);
+ 
+     computeExpectations();
+-    int mbatch_size = expectations.length();
+-    PLASSERT( samples.width() == size );
+-    samples.resize(mbatch_size, size);
++    PLASSERT( samples.width() == size &amp;&amp; samples.length() == batch_size );
+ 
+-    for (int k = 0; k &lt; mbatch_size; k++) {
+-        //random_gen-&gt;manual_seed(123456);
++    for (int k = 0; k &lt; batch_size; k++) {
+         for (int i=0 ; i&lt;size ; i++)
+             samples(k, i) = random_gen-&gt;binomial_sample( expectations(k, i) );
+     }
+@@ -125,10 +120,9 @@
+     if( expectations_are_up_to_date )
+         return;
+ 
+-    int mbatch_size = activations.length();
+-    PLASSERT( expectations.width() == size );
+-    expectations.resize(mbatch_size, size);
+-    for (int k = 0; k &lt; mbatch_size; k++)
++    PLASSERT( expectations.width() == size
++              &amp;&amp; expectations.length() == batch_size );
++    for (int k = 0; k &lt; batch_size; k++)
+         for (int i = 0 ; i &lt; size ; i++)
+             expectations(k, i) = sigmoid(-activations(k, i));
+ 
+@@ -147,6 +141,17 @@
+         output[i] = sigmoid( -input[i] - bias[i] );
+ }
+ 
++void RBMBinomialLayer::fprop( const Mat&amp; inputs, Mat&amp; outputs ) const
++{
++    int mbatch_size = inputs.length();
++    PLASSERT( inputs.width() == size );
++    outputs.resize( mbatch_size, size );
++
++    for( int k = 0; k &lt; mbatch_size; k++ )
++        for( int i = 0; i &lt; size; i++ )
++            outputs(k,i) = sigmoid( -inputs(k,i) - bias[i] );
++}
++
+ void RBMBinomialLayer::fprop( const Vec&amp; input, const Vec&amp; rbm_bias,
+                               Vec&amp; output ) const
+ {
+@@ -207,24 +212,28 @@
+ }
+ 
+ void RBMBinomialLayer::bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
+-        Mat&amp; input_gradients,
+-        const Mat&amp; output_gradients,
+-        bool accumulate)
++                                   Mat&amp; input_gradients,
++                                   const Mat&amp; output_gradients,
++                                   bool accumulate)
+ {
+     PLASSERT( inputs.width() == size );
+     PLASSERT( outputs.width() == size );
+     PLASSERT( output_gradients.width() == size );
+ 
++    int batch_size = inputs.length();
++    PLASSERT( outputs.length() == batch_size );
++    PLASSERT( output_gradients.length() == batch_size );
++
+     if( accumulate )
+     {
+         PLASSERT_MSG( input_gradients.width() == size &amp;&amp;
+-                input_gradients.length() == inputs.length(),
++                input_gradients.length() == batch_size,
+                 &quot;Cannot resize input_gradients and accumulate into it&quot; );
+     }
+     else
+     {
+-        input_gradients.resize(inputs.length(), size);
+-        input_gradients.fill(0);
++        input_gradients.resize(batch_size, size);
++        input_gradients.clear();
+     }
+ 
+     if( momentum != 0. )
+@@ -235,7 +244,8 @@
+     // We use the average gradient over the mini-batch.
+     real avg_lr = learning_rate / inputs.length();
+ 
+-    for (int j = 0; j &lt; inputs.length(); j++) {
++    for (int j = 0; j &lt; batch_size; j++)
++    {
+         for( int i=0 ; i&lt;size ; i++ )
+         {
+             real output_i = outputs(j, i);
+@@ -309,13 +319,16 @@
+     return ret;
+ }
+ 
+-void RBMBinomialLayer::fpropNLL(const Mat&amp; targets, Mat costs_column)
++void RBMBinomialLayer::fpropNLL(const Mat&amp; targets, const Mat&amp; costs_column)
+ {
+     computeExpectations();
+ 
+     PLASSERT( targets.width() == input_size );
++    PLASSERT( targets.length() == batch_size );
++    PLASSERT( costs_column.width() == 1 );
++    PLASSERT( costs_column.length() == batch_size );
+ 
+-    for (int k=0;k&lt;targets.length();k++) // loop over minibatch
++    for (int k=0;k&lt;batch_size;k++) // loop over minibatch
+     {
+         real nll = 0;
+         real* activation = activations[k];
+
+Modified: trunk/plearn_learners/online/RBMBinomialLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMBinomialLayer.h	2007-05-15 23:44:46 UTC (rev 7116)
++++ trunk/plearn_learners/online/RBMBinomialLayer.h	2007-05-16 00:31:26 UTC (rev 7117)
+@@ -82,6 +82,9 @@
+     //! forward propagation
+     virtual void fprop( const Vec&amp; input, Vec&amp; output ) const;
+ 
++    //! Batch forward propagation
++    virtual void fprop( const Mat&amp; inputs, Mat&amp; outputs ) const;
++
+     //! forward propagation with provided bias
+     virtual void fprop( const Vec&amp; input, const Vec&amp; rbm_bias,
+                         Vec&amp; output ) const;
+@@ -106,7 +109,7 @@
+     //! Computes the negative log-likelihood of target given the
+     //! internal activations of the layer
+     virtual real fpropNLL(const Vec&amp; target);
+-    virtual void fpropNLL(const Mat&amp; target, Mat costs_column);
++    virtual void fpropNLL(const Mat&amp; targets, const Mat&amp; costs_column);
+ 
+     //! Computes the gradient of the negative log-likelihood of target
+     //! with respect to the layer's bias, given the internal activations
+
+Modified: trunk/plearn_learners/online/RBMLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.cc	2007-05-15 23:44:46 UTC (rev 7116)
++++ trunk/plearn_learners/online/RBMLayer.cc	2007-05-16 00:31:26 UTC (rev 7117)
+@@ -57,6 +57,7 @@
+     size(-1),
+     gibbs_ma_increment(0.1),
+     gibbs_initial_ma_coefficient(0.1),
++    batch_size(0),
+     expectation_is_up_to_date(false),
+     expectations_are_up_to_date(false),
+     pos_count(0),
+@@ -214,7 +215,21 @@
+     momentum = the_momentum;
+ }
+ 
++//////////////////
++// setBatchSize //
++//////////////////
++void RBMLayer::setBatchSize( int the_batch_size )
++{
++    batch_size = the_batch_size;
++    PLASSERT( activations.width() == size );
++    activations.resize( batch_size, size );
++    PLASSERT( expectations.width() == size );
++    expectations.resize( batch_size, size );
++    PLASSERT( samples.width() == size );
++    samples.resize( batch_size, size );
++}
+ 
++
+ ///////////////////////
+ // getUnitActivation //
+ ///////////////////////
+@@ -236,6 +251,7 @@
+     if (minibatch) {
+         rbmc-&gt;computeProducts( offset, size, activations );
+         activations += bias;
++        setBatchSize(activations.length());
+     } else {
+         rbmc-&gt;computeProduct( offset, size, activation );
+         activation += bias;
+@@ -296,7 +312,7 @@
+     return REAL_MAX;
+ }
+ 
+-void RBMLayer::fpropNLL(const Mat&amp; target, Mat costs_column)
++void RBMLayer::fpropNLL(const Mat&amp; targets, const Mat&amp; costs_column)
+ {
+     PLERROR(&quot;In RBMLayer::fpropNLL(): not implemented&quot;);
+ }
+@@ -366,7 +382,7 @@
+ }
+ 
+ void RBMLayer::update( const Vec&amp; grad )
+-{   
++{
+     real* b = bias.data();
+     real* gb = grad.data();
+     real* binc = momentum==0?0:bias_inc.data();
+@@ -418,6 +434,7 @@
+     // bias -= learning_rate * (pos_values - neg_values)
+ 
+     int n = pos_values.length();
++    PLASSERT( neg_values.length() == n );
+     if (ones.length() &lt; n) {
+         ones.resize(n);
+         ones.fill(1);
+@@ -524,7 +541,7 @@
+     if (increase_ma)
+         gibbs_ma_coefficient = sigmoid(gibbs_ma_increment + inverse_sigmoid(gibbs_ma_coefficient));
+ 
+-    
++
+     // delta w = -lrate * ( meanoverrows(pos_values) - neg_stats ) 
+     columnSum(pos_values,tmp);
+     multiplyAcc(bias, tmp, -learning_rate*normalize_factor);
+@@ -545,7 +562,8 @@
+ /////////////////////
+ void RBMLayer::setExpectations(const Mat&amp; the_expectations)
+ {
+-    expectations.resize(the_expectations.length(), the_expectations.width());
++    batch_size = the_expectations.length();
++    setBatchSize( batch_size );
+     expectations &lt;&lt; the_expectations;
+ }
+ 
+
+Modified: trunk/plearn_learners/online/RBMLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.h	2007-05-15 23:44:46 UTC (rev 7116)
++++ trunk/plearn_learners/online/RBMLayer.h	2007-05-16 00:31:26 UTC (rev 7117)
+@@ -88,17 +88,20 @@
+     Vec bias;
+ 
+     //! used for Gibbs chain methods only
+-    real gibbs_ma_coefficient; 
++    real gibbs_ma_coefficient;
+ 
+     //#####  Not Options  #####################################################
+ 
++    //! Size of batches when using mini-batch
++    int batch_size;
++
+     //! activation value: \sum Wx + b
+     Vec activation;
+     Mat activations; // for mini-batch operations
+ 
+     //! Contains a sample of the random variable in this layer
+     Vec sample;
+-    Mat samples;  
++    Mat samples;
+ 
+     //! Contains the expected value of the random variable in this layer
+     Vec expectation;
+@@ -125,6 +128,9 @@
+     //! Sets the momentum
+     virtual void setMomentum( real the_momentum );
+ 
++    //! Sets batch_size and resize activations, expectations, and samples
++    virtual void setBatchSize( int the_batch_size );
++
+     //! Copy the given expectations in the 'expectations' matrix.
+     void setExpectations(const Mat&amp; the_expectations);
+ 
+@@ -184,7 +190,7 @@
+     //! Computes the negative log-likelihood of target given the
+     //! internal activations of the layer
+     virtual real fpropNLL(const Vec&amp; target);
+-    virtual void fpropNLL(const Mat&amp; target, Mat costs_column);
++    virtual void fpropNLL(const Mat&amp; targets, const Mat&amp; costs_column);
+ 
+     //! Computes the gradient of the negative log-likelihood of target
+     //! with respect to the layer's bias, given the internal activations
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.h	2007-05-15 23:44:46 UTC (rev 7116)
++++ trunk/plearn_learners/online/RBMMatrixConnection.h	2007-05-16 00:31:26 UTC (rev 7117)
+@@ -194,7 +194,7 @@
+                              Mat&amp; input_gradients,
+                              const Mat&amp; output_gradients,
+                              bool accumulate = false);
+-    
++
+     //! reset the parameters to the state they would be BEFORE starting
+     //! training.  Note that this method is necessarily called from
+     //! build().
+
+Modified: trunk/plearn_learners/online/RBMMixedLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedLayer.cc	2007-05-15 23:44:46 UTC (rev 7116)
++++ trunk/plearn_learners/online/RBMMixedLayer.cc	2007-05-16 00:31:26 UTC (rev 7117)
+@@ -83,6 +83,15 @@
+         sub_layers[i]-&gt;setMomentum( the_momentum );
+ }
+ 
++//////////////////
++// setBatchSize //
++//////////////////
++void RBMMixedLayer::setBatchSize( int the_batch_size )
++{
++    inherited::setBatchSize( the_batch_size );
++    for( int i = 0; i &lt; n_layers; i++ )
++        sub_layers[i]-&gt;setBatchSize( the_batch_size );
++}
+ 
+ ///////////////////////
+ // getUnitActivation //
+@@ -104,7 +113,12 @@
+ {
+     inherited::getAllActivations( rbmc, offset, minibatch );
+     for( int i=0 ; i&lt;n_layers ; i++ )
+-        sub_layers[i]-&gt;expectation_is_up_to_date = false;
++    {
++        if( minibatch )
++            sub_layers[i]-&gt;expectations_are_up_to_date = false;
++        else
++            sub_layers[i]-&gt;expectation_is_up_to_date = false;
++    }
+ }
+ 
+ 
+@@ -117,6 +131,15 @@
+         sub_layers[i]-&gt;generateSample();
+ }
+ 
++////////////////////
++// generateSample //
++////////////////////
++void RBMMixedLayer::generateSamples()
++{
++    for( int i=0 ; i&lt;n_layers ; i++ )
++        sub_layers[i]-&gt;generateSamples();
++}
++
+ ////////////////////////
+ // computeExpectation //
+ ////////////////////////
+@@ -131,7 +154,23 @@
+     expectation_is_up_to_date = true;
+ }
+ 
++/////////////////////////
++// computeExpectations //
++/////////////////////////
++void RBMMixedLayer::computeExpectations()
++{
++    if( expectations_are_up_to_date )
++        return;
+ 
++    for( int i=0 ; i &lt; n_layers ; i++ )
++        sub_layers[i]-&gt;computeExpectations();
++
++    expectations_are_up_to_date = true;
++}
++
++///////////
++// fprop //
++///////////
+ void RBMMixedLayer::fprop( const Vec&amp; input, Vec&amp; output ) const
+ {
+     PLASSERT( input.size() == input_size );
+@@ -148,6 +187,28 @@
+     }
+ }
+ 
++///////////
++// fprop //
++///////////
++void RBMMixedLayer::fprop( const Mat&amp; inputs, Mat&amp; outputs ) const
++{
++    int mbatch_size = inputs.length();
++    PLASSERT( inputs.width() == size );
++    outputs.resize( mbatch_size, size );
++
++    for( int i=0 ; i&lt;n_layers ; i++ )
++    {
++        int begin = init_positions[i];
++        int size_i = sub_layers[i]-&gt;size;
++        Mat sub_inputs = inputs.subMatColumns(begin, size_i);
++        Mat sub_outputs = outputs.subMatColumns(begin, size_i);
++
++        // GCC bug? This doesn't work:
++        // sub_layers[i]-&gt;fprop( sub_inputs, sub_outputs );
++        sub_layers[i]-&gt;OnlineLearningModule::fprop( sub_inputs, sub_outputs );
++    }
++}
++
+ void RBMMixedLayer::fprop( const Vec&amp; input, const Vec&amp; rbm_bias,
+                            Vec&amp; output ) const
+ {
+@@ -206,24 +267,28 @@
+ }
+ 
+ void RBMMixedLayer::bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
+-        Mat&amp; input_gradients,
+-        const Mat&amp; output_gradients,
+-        bool accumulate)
++                                Mat&amp; input_gradients,
++                                const Mat&amp; output_gradients,
++                                bool accumulate)
+ {
+     PLASSERT( inputs.width() == size );
+     PLASSERT( outputs.width() == size );
+     PLASSERT( output_gradients.width() == size );
+ 
++    int batch_size = inputs.length();
++    PLASSERT( outputs.length() == batch_size );
++    PLASSERT( output_gradients.length() == batch_size );
++
+     if( accumulate )
+     {
+         PLASSERT_MSG( input_gradients.width() == size &amp;&amp;
+-                input_gradients.length() == inputs.length(),
++                input_gradients.length() == batch_size,
+                 &quot;Cannot resize input_gradients and accumulate into it&quot; );
+     }
+     else
+         // Note that, by construction of 'size', the whole gradient vector
+         // should be cleared in the calls to sub_layers-&gt;bpropUpdate(..) below.
+-        input_gradients.resize(inputs.length(), size);
++        input_gradients.resize(batch_size, size);
+ 
+     for( int i=0 ; i&lt;n_layers ; i++ )
+     {
+@@ -292,6 +357,26 @@
+     return ret;
+ }
+ 
++void RBMMixedLayer::fpropNLL(const Mat&amp; targets, const Mat&amp; costs_column)
++{
++    computeExpectation();
++
++    PLASSERT( targets.width() == input_size );
++    PLASSERT( targets.length() == batch_size );
++    PLASSERT( costs_column.width() == 1 );
++    PLASSERT( costs_column.length() == batch_size );
++
++    costs_column.clear();
++    mat_nlls.resize(batch_size, n_layers);
++    for( int i=0 ; i&lt;n_layers ; i++ )
++    {
++        int begin = init_positions[i];
++        int size_i = sub_layers[i]-&gt;size;
++        sub_layers[i]-&gt;fpropNLL( targets.subMatColumns(begin, size_i),
++                                 mat_nlls.column(i) );
++    }
++}
++
+ void RBMMixedLayer::bpropNLL(const Vec&amp; target, real nll, Vec&amp; bias_gradient)
+ {
+     computeExpectation();
+@@ -388,6 +473,19 @@
+     }
+ }
+ 
++void RBMMixedLayer::update( const Mat&amp; pos_values, const Mat&amp; neg_values )
++{
++    for( int i=0 ; i&lt;n_layers ; i++ )
++    {
++        int begin = init_positions[i];
++        int size_i = sub_layers[i]-&gt;size;
++        Mat sub_pos_values = pos_values.subMatColumns( begin, size_i );
++        Mat sub_neg_values = neg_values.subMatColumns( begin, size_i );
++
++        sub_layers[i]-&gt;update( sub_pos_values, sub_neg_values );
++    }
++}
++
+ void RBMMixedLayer::reset()
+ {
+     for( int i=0 ; i&lt;n_layers ; i++ )
+@@ -425,8 +523,11 @@
+ {
+     size = 0;
+     activation.resize( 0 );
++    activations.resize( batch_size, 0 );
+     sample.resize( 0 );
++    samples.resize( batch_size, 0 );
+     expectation.resize( 0 );
++    expectations.resize( batch_size, 0 );
+     expectation_is_up_to_date = false;
+     bias.resize( 0 );
+     layer_of_unit.resize( 0 );
+@@ -436,28 +537,52 @@
+ 
+     for( int i=0 ; i&lt;n_layers ; i++ )
+     {
++        int init_pos = size;
+         init_positions[i] = size;
+ 
+         PP&lt;RBMLayer&gt; cur_layer = sub_layers[i];
+         size += cur_layer-&gt;size;
+-
+-        activation = merge( activation, cur_layer-&gt;activation );
+-        sample = merge( sample, cur_layer-&gt;sample );
+-        expectation = merge( expectation, cur_layer-&gt;expectation );
+-        bias = merge( bias, cur_layer-&gt;bias );
+         layer_of_unit.append( TVec&lt;int&gt;( cur_layer-&gt;size, i ) );
+ 
++        activation.append( cur_layer-&gt;activation );
++        cur_layer-&gt;activation = activation.subVec( init_pos, cur_layer-&gt;size );
++        activations.resize( batch_size, size );
++        cur_layer-&gt;activations = activations.subMatColumns( init_pos,
++                                                            cur_layer-&gt;size );
++
++        sample.append( cur_layer-&gt;sample );
++        cur_layer-&gt;sample = sample.subVec( init_pos, cur_layer-&gt;size );
++        samples.resize( batch_size, size );
++        cur_layer-&gt;samples = samples.subMatColumns( init_pos,
++                                                    cur_layer-&gt;size );
++
++        expectation.append( cur_layer-&gt;expectation );
++        cur_layer-&gt;expectation = expectation.subVec( init_pos,
++                                                     cur_layer-&gt;size );
++        expectations.resize( batch_size, size );
++        cur_layer-&gt;getExpectations() =
++            expectations.subMatColumns( init_pos, cur_layer-&gt;size );
++
++        bias.append( cur_layer-&gt;bias );
++        cur_layer-&gt;bias = bias.subVec( init_pos, cur_layer-&gt;size );
++
++        cur_layer-&gt;setBatchSize( batch_size );
++
++        // We changed fields of cur_layer, so we need to rebuild it (especially
++        // if it is another RBMMixedLayer)
++        cur_layer-&gt;build();
++
+         if( learning_rate &gt;= 0. )
+-            sub_layers[i]-&gt;setLearningRate( learning_rate );
++            cur_layer-&gt;setLearningRate( learning_rate );
+ 
+         if( momentum &gt;= 0. )
+-            sub_layers[i]-&gt;setMomentum( momentum );
++            cur_layer-&gt;setMomentum( momentum );
+ 
+         // If we have a random_gen and sub_layers[i] does not, share it
+         if( random_gen &amp;&amp; !(sub_layers[i]-&gt;random_gen) )
+         {
+-            sub_layers[i]-&gt;random_gen = random_gen;
+-            sub_layers[i]-&gt;forget();
++            cur_layer-&gt;random_gen = random_gen;
++            cur_layer-&gt;forget();
+         }
+     }
+ }
+
+Modified: trunk/plearn_learners/online/RBMMixedLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedLayer.h	2007-05-15 23:44:46 UTC (rev 7116)
++++ trunk/plearn_learners/online/RBMMixedLayer.h	2007-05-16 00:31:26 UTC (rev 7117)
+@@ -76,6 +76,9 @@
+     //! Sets the momentum, also in the sub_layers
+     virtual void setMomentum( real the_momentum );
+ 
++    //! Sets batch_size and resize activations, expectations, and samples
++    virtual void setBatchSize( int the_batch_size );
++
+     // Your other public member functions go here
+     //! Uses &quot;rbmc&quot; to compute the activation of unit &quot;i&quot; of this layer.
+     //! This activation is computed by the &quot;i+offset&quot;-th unit of &quot;rbmc&quot;
+@@ -88,20 +91,23 @@
+                                     bool minibatch = false );
+ 
+     //! compute a sample, and update the sample field
+-    virtual void generateSample() ;
++    virtual void generateSample();
+ 
+-    //! Not implemented.
+-    virtual void generateSamples() { PLASSERT( false ); }
++    //! generate activations.length() samples
++    virtual void generateSamples();
+ 
+     //! compute the expectation
+-    virtual void computeExpectation() ;
++    virtual void computeExpectation();
+ 
+-    //! Not implemented.
+-    virtual void computeExpectations() { PLASSERT( false ); }
++    //! compute the expectations according to activations
++    virtual void computeExpectations();
+ 
+     //! forward propagation
+     virtual void fprop( const Vec&amp; input, Vec&amp; output ) const;
+ 
++    //! Batch forward propagation
++    virtual void fprop( const Mat&amp; inputs, Mat&amp; outputs ) const;
++
+     //! forward propagation with provided bias
+     virtual void fprop( const Vec&amp; input, const Vec&amp; rbm_bias,
+                         Vec&amp; output ) const;
+@@ -127,6 +133,9 @@
+     //! internal activations of the layer
+     virtual real fpropNLL(const Vec&amp; target);
+ 
++    //! Batch fpropNLL
++    virtual void fpropNLL(const Mat&amp; targets, const Mat&amp; costs_column);
++
+     //! Computes the gradient of the negative log-likelihood of target
+     //! with respect to the layer's bias, given the internal activations
+     virtual void bpropNLL(const Vec&amp; target, real nll, Vec&amp; bias_gradient);
+@@ -143,11 +152,8 @@
+     //! Update parameters according to one pair of vectors
+     virtual void update( const Vec&amp; pos_values, const Vec&amp; neg_values );
+ 
+-    //! Not implemented.
+-    virtual void update( const Mat&amp; pos_values, const Mat&amp; neg_values )
+-    {
+-        PLASSERT_MSG(false, &quot;Not implemented&quot;);
+-    }
++    //! Update parameters according to several pairs of vectors
++    virtual void update( const Mat&amp; pos_values, const Mat&amp; neg_values );
+ 
+     //! resets activations, sample and expectation fields
+     virtual void reset();
+@@ -200,6 +206,7 @@
+ 
+     // The rest of the private stuff goes here
+     mutable Vec nlls;
++    mutable Mat mat_nlls;
+ };
+ 
+ // Declares a few other classes and functions related to this class
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000565.html">[Plearn-commits] r7116 - in trunk: plearn/base plearn/math	plearn/python plearn/vmat python_modules/plearn/pyext scripts
+</A></li>
+	<LI>Next message: <A HREF="000567.html">[Plearn-commits] r7118 - trunk/plearn/python
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#566">[ date ]</a>
+              <a href="thread.html#566">[ thread ]</a>
+              <a href="subject.html#566">[ subject ]</a>
+              <a href="author.html#566">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

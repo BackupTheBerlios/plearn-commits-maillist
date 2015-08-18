@@ -1,0 +1,367 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9762 - in trunk/plearn_learners: meta regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9762%20-%20in%20trunk/plearn_learners%3A%20meta%20regressors&In-Reply-To=%3C200812091652.mB9Gqaci008734%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003201.html">
+   <LINK REL="Next"  HREF="003203.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9762 - in trunk/plearn_learners: meta regressors</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9762%20-%20in%20trunk/plearn_learners%3A%20meta%20regressors&In-Reply-To=%3C200812091652.mB9Gqaci008734%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9762 - in trunk/plearn_learners: meta regressors">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Dec  9 17:52:36 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003201.html">[Plearn-commits] r9761 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="003203.html">[Plearn-commits] r9763 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3202">[ date ]</a>
+              <a href="thread.html#3202">[ thread ]</a>
+              <a href="subject.html#3202">[ subject ]</a>
+              <a href="author.html#3202">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-12-09 17:52:35 +0100 (Tue, 09 Dec 2008)
+New Revision: 9762
+
+Modified:
+   trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+   trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+Log:
+-Memory optimization. Share common data between the the AdaBoost instance of an MultiClassAdaBoost.
+
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-12-09 16:18:35 UTC (rev 9761)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-12-09 16:52:35 UTC (rev 9762)
+@@ -218,6 +218,7 @@
+ 
+ void MultiClassAdaBoost::train()
+ {
++    EXTREME_MODULE_LOG&lt;&lt;&quot;train() start&quot;&lt;&lt;endl;
+     Profiler::start(&quot;MultiClassAdaBoost::train&quot;);
+ 
+     learner1-&gt;nstages = nstages;
+@@ -238,6 +239,8 @@
+       PLCHECK(learner1-&gt;weak_learner_template-&gt;report_progress==false);
+       PLCHECK(learner2-&gt;weak_learner_template-&gt;report_progress==false);
+     }
++    
++    EXTREME_MODULE_LOG&lt;&lt;&quot;train() // start&quot;&lt;&lt;endl;
+ #pragma omp parallel sections default(none)
+ {
+ #pragma omp section 
+@@ -245,6 +248,7 @@
+ #pragma omp section 
+     learner2-&gt;train();
+ }
++    EXTREME_MODULE_LOG&lt;&lt;&quot;train() // end&quot;&lt;&lt;endl;
+ #else
+     learner1-&gt;train();
+     learner2-&gt;train();
+@@ -272,7 +276,8 @@
+     const Profiler::Stats&amp; stats_test = Profiler::getStats(&quot;MultiClassAdaBoost::test&quot;);
+     tmp=stats_test.wall_duration/Profiler::ticksPerSecond();
+     test_time=tmp-total_test_time;
+-    total_test_time=tmp;  
++    total_test_time=tmp; 
++    EXTREME_MODULE_LOG&lt;&lt;&quot;train() end&quot;&lt;&lt;endl;
+ }
+ 
+ void MultiClassAdaBoost::computeOutput(const Vec&amp; input, Vec&amp; output) const
+@@ -516,32 +521,28 @@
+     }else
+         weight_prg = &quot;1 :weights&quot;;
+         
+-    bool tsorted = false;
+-
+     //We don't give it if the script give them one explicitly.
+     //This can be usefull for optimization
+     if(training_set_has_changed || !learner1-&gt;getTrainingSet()){
+         VMat vmat1 = new ProcessingVMatrix(training_set, input_prg,
+                                            target_prg1,  weight_prg);
+         learner1-&gt;setTrainingSet(vmat1, call_forget);
+-        tsorted = true;
+     }
+     if(training_set_has_changed || !learner2-&gt;getTrainingSet()){
+         VMat vmat2 = new ProcessingVMatrix(training_set, input_prg,
+                                            target_prg2,  weight_prg);
++        PP&lt;RegressionTreeRegisters&gt; t1 = 
++            (PP&lt;RegressionTreeRegisters&gt;)learner1-&gt;getTrainingSet();
++        if(t1-&gt;classname()==&quot;RegressionTreeRegisters&quot;){
++            vmat2 = new RegressionTreeRegisters(vmat2,
++                                               t1-&gt;getTSortedRow(), 
++                                               t1-&gt;getTSource(),
++                                               learner1-&gt;report_progress,
++                                               learner1-&gt;verbosity);
++        }
+         learner2-&gt;setTrainingSet(vmat2, call_forget);
+-        tsorted = true;
+     }
+ 
+-    if(tsorted &amp;&amp;
+-       learner1-&gt;getTrainingSet()-&gt;classname()==&quot;RegressionTreeRegisters&quot;
+-       &amp;&amp; learner2-&gt;getTrainingSet()-&gt;classname()==&quot;RegressionTreeRegisters&quot;)
+-    {
+-        TMat&lt;RTR_type&gt; t1 =  ((PP&lt;RegressionTreeRegisters&gt;)(learner1-&gt;getTrainingSet()))-&gt;getTSortedRow();
+-        DBG_MODULE_LOG&lt;&lt;&quot;removing duplicate tsorted_row in RegressionTreeRegisters to save memory&quot;&lt;&lt;endl;
+-        ((PP&lt;RegressionTreeRegisters&gt;)(learner2-&gt;getTrainingSet()))-&gt;setTSortedRow(t1);
+-    }
+-       
+     //we do it here as RegressionTree need a trainingSet to know
+     // the number of test.
+     subcosts2.resize(learner2-&gt;nTestCosts());
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2008-12-09 16:18:35 UTC (rev 9761)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.cc	2008-12-09 16:52:35 UTC (rev 9762)
+@@ -42,6 +42,7 @@
+ #include &quot;RegressionTreeRegisters.h&quot;
+ #include &lt;plearn/vmat/TransposeVMatrix.h&gt;
+ #include &lt;plearn/vmat/MemoryVMatrixNoSave.h&gt;
++#include &lt;plearn/vmat/SubVMatrix.h&gt;
+ #include &lt;limits&gt;
+ 
+ namespace PLearn {
+@@ -65,6 +66,8 @@
+ }
+ 
+ RegressionTreeRegisters::RegressionTreeRegisters(VMat source_,
++                                                 TMat&lt;RTR_type&gt; tsorted_row_,
++                                                 VMat tsource_,
+                                                  bool report_progress_,
+                                                  bool verbosity_):
+     report_progress(report_progress_),
+@@ -72,9 +75,22 @@
+     next_id(0)
+ {
+     source = source_;
++    tsource = tsource_;
++    tsorted_row = tsorted_row_;
+     build();
+ }
+ 
++RegressionTreeRegisters::RegressionTreeRegisters(VMat source_,
++                                                 bool report_progress_,
++                                                 bool verbosity_):
++    report_progress(report_progress_),
++    verbosity(verbosity_),
++    next_id(0)
++{
++    source = source_;
++    build();
++}
++
+ RegressionTreeRegisters::~RegressionTreeRegisters()
+ {
+ }
+@@ -110,7 +126,6 @@
+     inherited::makeDeepCopyFromShallowCopy(copies);
+     deepCopyField(tsorted_row, copies);
+     deepCopyField(leave_register, copies);
+-    deepCopyField(getExample_tmp, copies);
+ //tsource should be deep copied, but as currently when it is deep copied
+ // the copy is not used anymore to train. To save memory we don't do it.
+ // It is deep copied eavily by HyperLearner and HyperOptimizer
+@@ -134,13 +149,32 @@
+     PLCHECK(source.length()&gt;0 
+             &amp;&amp; (unsigned)source.length()
+             &lt;= std::numeric_limits&lt;RTR_type&gt;::max());
++    PLCHECK(source-&gt;targetsize()==1);
++    PLCHECK(source-&gt;weightsize()&lt;=1);
++    PLCHECK(source-&gt;inputsize()&gt;0);
+ 
+     if(!tsource){
+-        VMat tmp = VMat(new TransposeVMatrix(source));
++        VMat tmp = VMat(new TransposeVMatrix(new SubVMatrix(
++                                                 source, 0,0,source-&gt;length(),
++                                                 source-&gt;inputsize())));
+         PP&lt;MemoryVMatrixNoSave&gt; tmp2 = new MemoryVMatrixNoSave(tmp);
+         tsource = VMat(tmp2 );
+-        setMetaInfoFrom(source);
+     }
++    setMetaInfoFrom(source);
++    weightsize_=1;
++    targetsize_=1;
++    target_weight.resize(source-&gt;length());
++    if(source-&gt;weightsize()&lt;=0){
++        width_++;
++        for(int i=0;i&lt;source-&gt;length();i++){
++            target_weight[i].first=source-&gt;get(i,inputsize());
++            target_weight[i].second=1.0 / length();
++        }
++    }else
++        for(int i=0;i&lt;source-&gt;length();i++){
++            target_weight[i].first=source-&gt;get(i,inputsize());
++            target_weight[i].second=source-&gt;get(i,inputsize()+targetsize());
++        }
+     leave_register.resize(length());
+     sortRows();
+ }
+@@ -161,21 +195,19 @@
+     target.resize(reg.length());
+     weight.resize(reg.length());
+     value.resize(reg.length());
+-    int idx_target=inputsize();
+-    int idx_weight=inputsize() + targetsize();
+     if(weightsize() &lt;= 0){
+         weight.fill(1.0 / length());
+         for(int i=0;i&lt;reg.length();i++){            
+-            target[i] = tsource-&gt;get(idx_target, reg[i]);
++            target[i] = target_weight[reg[i]].first;
+             value[i]  = tsource-&gt;get(col, reg[i]);
+         }
+     } else {
+         //It is better to do multiple pass for memory access.
++        for(int i=0;i&lt;reg.length();i++){
++            target[i] = target_weight[reg[i]].first;
++            weight[i] = target_weight[reg[i]].second;
++        }
+         for(int i=0;i&lt;reg.length();i++)
+-            target[i] = tsource-&gt;get(idx_target, reg[i]);
+-        for(int i=0;i&lt;reg.length();i++)
+-            weight[i] = tsource-&gt;get(idx_weight, reg[i]);
+-        for(int i=0;i&lt;reg.length();i++)
+             value[i]  = tsource-&gt;get(col, reg[i]);
+     }
+ }
+@@ -350,22 +382,10 @@
+     if(weightsize()&lt;0)
+         PLERROR(&quot;In RegressionTreeRegisters::getExample, weightsize_ not defined for this vmat&quot;);
+ #endif
+-    input.resize(inputsize_);
+-    getExample_tmp.resize(width());
+-    tsource-&gt;getColumn(i,getExample_tmp);
+-    input &lt;&lt; getExample_tmp.subVec(0,input.size());
++    tsource-&gt;getColumn(i,input);
+ 
+-    target.resize(targetsize_);
+-    if (targetsize_ &gt; 0) {
+-        target&lt;&lt;getExample_tmp.subVec(inputsize(),targetsize());
+-    }
+-
+-    if(weightsize()==0)
+-        weight = 1;
+-    else if(weightsize()&gt;1)
+-        PLERROR(&quot;In VMatrix::getExample, weightsize_ &gt;1 not supported by this call&quot;);
+-    else
+-        weight = tsource-&gt;get(inputsize()+targetsize(),i);
++    target[0]=target_weight[i].first;
++    weight = target_weight[i].second;
+ }
+ 
+ 
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeRegisters.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2008-12-09 16:18:35 UTC (rev 9761)
++++ trunk/plearn_learners/regressors/RegressionTreeRegisters.h	2008-12-09 16:52:35 UTC (rev 9762)
+@@ -81,6 +81,9 @@
+     TMat&lt;RTR_type&gt; tsorted_row;
+     TVec&lt;RTR_type_id&gt; leave_register;
+     VMat tsource;
++    //we put it in pair instead of two vector to speed up
++    //the getAllRegisteredRow(leave_id, col, reg, target, weight, value) fct
++    TVec&lt;pair&lt;real,real&gt; &gt; target_weight;
+     VMat source;
+ 
+ public:
+@@ -88,6 +91,9 @@
+     RegressionTreeRegisters();
+     RegressionTreeRegisters(VMat source_, bool report_progress_ = false,
+                             bool vebosity_ = false);
++    RegressionTreeRegisters(VMat source_, TMat&lt;RTR_type&gt; tsorted_row_,
++                            VMat tsource_, bool report_progress_ = false,
++                            bool vebosity_ = false);
+     virtual              ~RegressionTreeRegisters();
+     
+     PLEARN_DECLARE_OBJECT(RegressionTreeRegisters);
+@@ -98,17 +104,18 @@
+     void         reinitRegisters();
+     inline void         registerLeave(RTR_type_id leave_id, int row)
+     { leave_register[row] = leave_id;    }
+-    inline virtual real get(int i, int j) const{return tsource-&gt;get(j,i);}
++    inline virtual real get(int i, int j) const{
++        if(j&lt;inputsize())return tsource-&gt;get(j,i);
++        if(j==inputsize())return target_weight[i].first;
++        else  return target_weight[i].second;
++    }
+     inline real         getTarget(int row)const
+-    {return tsource-&gt;get(inputsize(), row);}
++    {return target_weight[row].first;}
+     inline real         getWeight(int row)const{
+-        if (weightsize() &lt;= 0) return 1.0 / length();
+-        else return tsource-&gt;get(inputsize() + targetsize(), row );
++        return target_weight[row].second;
+     }
+     inline void         setWeight(int row,real val){
+-        PLASSERT(inputsize()&gt;0&amp;&amp;targetsize()&gt;0);
+-        PLASSERT(weightsize() &gt; 0);
+-        tsource-&gt;put( inputsize() + targetsize(), row, val );
++        target_weight[row].second = val;
+     }
+     inline RTR_type_id     getNextId(){
+         PLCHECK(next_id&lt;std::numeric_limits&lt;RTR_type_id&gt;::max());
+@@ -128,9 +135,8 @@
+     }
+     
+     //! usefull in MultiClassAdaBoost to save memory
+-    void         setTSortedRow(TMat&lt;RTR_type&gt; t){tsorted_row = t;}
+     TMat&lt;RTR_type&gt; getTSortedRow(){return tsorted_row;}
+-    //to lower total memory as this is not needed anymore
++    VMat          getTSource(){return tsource;}
+     virtual void finalize(){tsorted_row = TMat&lt;RTR_type&gt;();}
+ 
+ private:
+@@ -142,8 +148,6 @@
+     real         compare(real field1, real field2);
+     void         verbose(string msg, int level);
+ 
+-    mutable Vec  getExample_tmp;
+-
+ };
+ 
+ DECLARE_OBJECT_PTR(RegressionTreeRegisters);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003201.html">[Plearn-commits] r9761 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="003203.html">[Plearn-commits] r9763 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3202">[ date ]</a>
+              <a href="thread.html#3202">[ thread ]</a>
+              <a href="subject.html#3202">[ subject ]</a>
+              <a href="author.html#3202">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,180 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7947 - trunk/plearn_learners/meta
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7947%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200708072010.l77KAiG7018149%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001394.html">
+   <LINK REL="Next"  HREF="001396.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7947 - trunk/plearn_learners/meta</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7947%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200708072010.l77KAiG7018149%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7947 - trunk/plearn_learners/meta">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Aug  7 22:10:44 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001394.html">[Plearn-commits] r7946 - trunk/plearn_learners/generic
+</A></li>
+        <LI>Next message: <A HREF="001396.html">[Plearn-commits] r7948 - trunk/python_modules/plearn/learners/autolr
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1395">[ date ]</a>
+              <a href="thread.html#1395">[ thread ]</a>
+              <a href="subject.html#1395">[ subject ]</a>
+              <a href="author.html#1395">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-08-07 22:10:44 +0200 (Tue, 07 Aug 2007)
+New Revision: 7947
+
+Modified:
+   trunk/plearn_learners/meta/AdaBoost.cc
+   trunk/plearn_learners/meta/AdaBoost.h
+Log:
+-Reuse the sorted train set between the base regressor if it is RegressionTree
+
+
+Modified: trunk/plearn_learners/meta/AdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.cc	2007-08-07 20:09:21 UTC (rev 7946)
++++ trunk/plearn_learners/meta/AdaBoost.cc	2007-08-07 20:10:44 UTC (rev 7947)
+@@ -48,6 +48,7 @@
+ #include &lt;plearn/math/random.h&gt;
+ #include &lt;plearn/io/load_and_save.h&gt;
+ #include &lt;plearn/base/stringutils.h&gt;
++#include &lt;plearn_learners/regressors/RegressionTree.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -191,6 +192,11 @@
+                   &quot;Indication that a weak learner with 0 training error&quot;
+                   &quot;has been found.\n&quot;);
+ 
++    declareOption(ol, &quot;sorted_train_set&quot;,
++                  &amp;AdaBoost::sorted_train_set,
++                  OptionBase::learntoption,
++                  &quot;A sorted train set when using the class RegressionTree as a base regressor\n&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -300,6 +306,23 @@
+         }
+         sum_voting_weights = 0;
+         voting_weights.resize(0,nstages);
++
++        if (weak_learner_template-&gt;classname()==&quot;RegressionTree&quot; &amp;&amp; ! weight_by_resampling)
++        {
++            if(train_set-&gt;weightsize()&lt;=0)
++            {
++                Mat* m = new Mat(train_set-&gt;length(),1);
++                m-&gt;fill(1.0/m-&gt;length());
++                VMat data_weights = VMat(*m);
++                VMat new_train_set = new ConcatColumnsVMatrix(train_set,data_weights);
++                new_train_set-&gt;defineSizes(train_set-&gt;inputsize(),train_set-&gt;targetsize(),1);
++                train_set = new_train_set;
++            }
++            sorted_train_set = new RegressionTreeRegisters();
++            sorted_train_set-&gt;setOption(&quot;report_progress&quot;, tostring(report_progress));
++            sorted_train_set-&gt;setOption(&quot;verbosity&quot;, tostring(verbosity));
++            sorted_train_set-&gt;initRegisters(train_set);
++        }
+     }
+ 
+     VMat unweighted_data = train_set.subMatColumns(0, inputsize()+1);
+@@ -308,6 +331,7 @@
+     for ( ; stage &lt; nstages ; ++stage)
+     {
+         VMat weak_learner_training_set;
++        PP&lt;RegressionTreeRegisters&gt; weak_learner_sorted_training_set;
+         { 
+             PP&lt;ProgressBar&gt; pb;
+             if(report_progress) pb = new ProgressBar(
+@@ -349,6 +373,14 @@
+                     new SelectRowsVMatrix(unweighted_data, train_indices);
+                 weak_learner_training_set-&gt;defineSizes(inputsize(), 1, 0);
+             }
++            else if(weak_learner_template-&gt;classname()==&quot;RegressionTree&quot; &amp;&amp; ! weight_by_resampling)
++            {
++                //No Need for deep copy of the sorted_train_set as after the train it is not used anymore
++                // and the data are not modofied, but we need to change the weight
++                weak_learner_sorted_training_set = sorted_train_set;
++                for(int i=0;i&lt;example_weights.size();i++)
++                    weak_learner_sorted_training_set-&gt;setWeight(i,example_weights[i]);
++            }
+             else
+             {
+                 Mat data_weights_column = example_weights.toMat(n,1).copy();
+@@ -364,7 +396,10 @@
+ 
+         // Create new weak-learner and train it
+         PP&lt;PLearner&gt; new_weak_learner = ::PLearn::deepCopy(weak_learner_template);
+-        new_weak_learner-&gt;setTrainingSet(weak_learner_training_set);
++        if(weak_learner_template-&gt;classname()==&quot;RegressionTree&quot; &amp;&amp; ! weight_by_resampling)
++            ((PP&lt;RegressionTree&gt;)(new_weak_learner))-&gt;setSortedTrainSet(weak_learner_sorted_training_set);
++        else
++            new_weak_learner-&gt;setTrainingSet(weak_learner_training_set);
+         new_weak_learner-&gt;setTrainStatsCollector(new VecStatsCollector);
+         if(expdir!=&quot;&quot; &amp;&amp; provide_learner_expdir)
+             new_weak_learner-&gt;setExperimentDirectory( expdir / (&quot;WeakLearner&quot;+tostring(stage)+&quot;Expdir&quot;) );
+
+Modified: trunk/plearn_learners/meta/AdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/AdaBoost.h	2007-08-07 20:09:21 UTC (rev 7946)
++++ trunk/plearn_learners/meta/AdaBoost.h	2007-08-07 20:10:44 UTC (rev 7947)
+@@ -44,6 +44,7 @@
+ #define AdaBoost_INC
+ 
+ #include &lt;plearn_learners/generic/PLearner.h&gt;
++#include &lt;plearn_learners/regressors/RegressionTreeRegisters.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -76,7 +77,9 @@
+ 
+     //! Indication that a weak learner with 0 training error has been found
+     bool found_zero_error_weak_learner;
+-  
++
++    //! a sorted train set when using a tree as a base regressor  
++    PP&lt;RegressionTreeRegisters&gt; sorted_train_set;
+ public:
+ 
+     // ************************
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001394.html">[Plearn-commits] r7946 - trunk/plearn_learners/generic
+</A></li>
+	<LI>Next message: <A HREF="001396.html">[Plearn-commits] r7948 - trunk/python_modules/plearn/learners/autolr
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1395">[ date ]</a>
+              <a href="thread.html#1395">[ thread ]</a>
+              <a href="subject.html#1395">[ subject ]</a>
+              <a href="author.html#1395">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,638 @@
+From nouiz at mail.berlios.de  Mon Oct 18 17:30:54 2010
+From: nouiz at mail.berlios.de (nouiz at mail.berlios.de)
+Date: Mon, 18 Oct 2010 17:30:54 +0200
+Subject: [Plearn-commits] r10357 - trunk/python_modules/plearn/parallel
+Message-ID: <20101018153054.AE14D480177@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-10-18 17:30:54 +0200 (Mon, 18 Oct 2010)
+New Revision: 10357
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+fix --sge=N and display the warning about version only if bad/unknow version detected
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-09-21 17:38:59 UTC (rev 10356)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-10-18 15:30:54 UTC (rev 10357)
+@@ -806,8 +806,18 @@
+ 
+         # Warn for not implemented features
+         if getattr(self, 'nb_proc', -1) != -1:
+-            print "[DBI] WARNING: DBISge need sge 6.2u4 or higher to work for nb_proc!=-1 to work. Colosse have 6.2u3", self.nb_proc
++            sge_root = os.getenv("SGE_ROOT")
++            if not sge_root:
++                print "[DBI] WARNING: DBISge need sge 6.2u4 or higher to work for nb_proc!=-1 to work. Colosse have 6.2u3", self.nb_proc
++            elif os.path.split(sge_root)[1].startswith('ge'):
++                if os.path.split(sge_root)[1][2:]<'6.2u4':
++                    print "[DBI] WARNING: DBISge need sge 6.2u4 or higher to work for nb_proc!=-1 to work. We found version '%s' to be running."%(sge_root[2:]), self.nb_proc
++            else:
++                print "[DBI] WARNING: DBISge need sge 6.2u4 or higher to work for nb_proc!=-1 to work. Can't determine the version of sge that is running.", self.nb_proc
++            #print "[DBI] WARNING: DBISge need sge 6.2u4 or higher to work for nb_proc!=-1 to work. Colosse have 6.2u3", self.nb_proc
+ 
++
++
+     def add_commands(self,commands):
+         if not isinstance(commands, list):
+             commands=[commands]
+@@ -911,7 +921,7 @@
+             submit_sh_template += '''
+                 ## Maximum of concurrent jobs need sge 6.2u4 or more recent.
+                 #$ -tc %s
+-                '''%self.max_concurrent
++                '''%self.nb_proc
+ 
+         env = self.env
+         if self.set_special_env and self.cpu>0:
+
+
+
+From nouiz at mail.berlios.de  Mon Oct 18 19:15:06 2010
+From: nouiz at mail.berlios.de (nouiz at mail.berlios.de)
+Date: Mon, 18 Oct 2010 19:15:06 +0200
+Subject: [Plearn-commits] r10358 - trunk/python_modules/plearn/parallel
+Message-ID: <20101018171506.748304801AA@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-10-18 19:15:06 +0200 (Mon, 18 Oct 2010)
+New Revision: 10358
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+add info to print
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-10-18 15:30:54 UTC (rev 10357)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-10-18 17:15:06 UTC (rev 10358)
+@@ -991,7 +991,7 @@
+         pass
+ 
+     def wait(self):
+-        print "[DBI] WARNING cannot wait until all jobs are done for SGE, use qstat"
++        print "[DBI] WARNING cannot wait until all jobs are done for SGE, use qstat or qmon(need X11)"
+ 
+ 
+ 
+
+
+
+From nouiz at mail.berlios.de  Tue Oct 19 19:26:25 2010
+From: nouiz at mail.berlios.de (nouiz at mail.berlios.de)
+Date: Tue, 19 Oct 2010 19:26:25 +0200
+Subject: [Plearn-commits] r10359 - trunk/python_modules/plearn/parallel
+Message-ID: <20101019172625.50C73480428@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-10-19 19:26:25 +0200 (Tue, 19 Oct 2010)
+New Revision: 10359
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+small refactoring.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-10-18 17:15:06 UTC (rev 10358)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-10-19 17:26:25 UTC (rev 10359)
+@@ -1616,18 +1616,29 @@
+                 rank = %s
+                 ''' %(self.rank)))
+ 
++        if self.mem>0:
++            fd.write(dedent("""
++            request_memory = %i
++            """)%(self.mem))
++        if self.cpu>0:
++            fd.write(dedent("""
++            request_cpus = %i
++            """)%(self.cpu))
++
++        if self.pkdilly:
++            fd.write(dedent("""
++            stream_error            = True
++            stream_output           = True
++            transfer_executable     = True
++            when_to_transfer_output = ON_EXIT
++            """))
+         
+     def run_dag(self):
+         if self.to_all:
+             raise DBIError("[DBI] ERROR: condor backend don't support the option --to_all and a maximum number of process")
++
+         condor_submit_fd = open( self.condor_submit_file, 'w' )
+-        if os.path.exists("/Tmp"):
+-            self.log_file = "/Tmp"
+-        else:
+-            self.log_file = "/tmp"
+-        self.log_file = os.path.join(self.log_file,os.getenv("USER"),"dbidispatch",self.log_dir)
+-        os.system('mkdir -p ' + self.log_file)
+-        self.log_file = os.path.join(self.log_file,"condor.log")
++
+         self.print_common_condor_submit(condor_submit_fd, "$(stdout)", "$(stderr)","$(args)")
+         
+         condor_submit_fd.write("\nqueue\n")
+@@ -1644,7 +1655,6 @@
+             condor_dag_fd.write('VARS %d args="%s"\n'%(id,argstring))
+             condor_dag_fd.write('VARS %d stdout="%s"\n'%(id,stdout_file))
+             condor_dag_fd.write('VARS %d stderr="%s"\n\n'%(id,stderr_file))
+-
+             
+         for i in range(len(self.tasks)):
+             task=self.tasks[i]
+@@ -1662,6 +1672,7 @@
+ 
+         #we supose that each task in tasks have the same number of commands
+         #it should be true.
++        #NOT IN DAG VERSION
+         if len(self.tasks[0].commands)>1:
+             for task in self.tasks:
+                 condor_data = os.path.join(self.tmp_dir,self.unique_id +'.'+ task.unique_id + '.data')
+@@ -1676,33 +1687,11 @@
+ 
+ 
+         condor_submit_fd = open( self.condor_submit_file, 'w' )
+-        self.log_file = os.path.join(self.log_dir,"condor.log")
+-        if self.local_log_file:
+-            if os.path.exists("/Tmp"):
+-                self.log_file = "/Tmp"
+-            else:
+-                self.log_file = "/tmp"
+-            self.log_file = os.path.join(self.log_file,os.getenv("USER"),"dbidispatch",self.log_dir)
+-            os.system('mkdir -p ' + self.log_file)
+-            self.log_file = os.path.join(self.log_file,"condor.log")
++            
++        #DIFFER IN DAG VERSION
++        #self.print_common_condor_submit(condor_submit_fd, "$(stdout)", "$(stderr)","$(args)")
+         self.print_common_condor_submit(condor_submit_fd, self.log_dir+"/$(Process).out", self.log_dir+"/$(Process).error")
+ 
+-        if self.mem>0:
+-            condor_submit_fd.write(dedent("""
+-            request_memory = %i
+-            """)%(self.mem))
+-        if self.cpu>0:
+-            condor_submit_fd.write(dedent("""
+-            request_cpus = %i
+-            """)%(self.cpu))
+-
+-        if self.pkdilly:
+-            condor_submit_fd.write(dedent("""
+-            stream_error            = True
+-            stream_output           = True
+-            transfer_executable     = True
+-            when_to_transfer_output = ON_EXIT
+-            """))
+         if len(condor_datas)!=0:
+             for i in condor_datas:
+                 condor_submit_fd.write("arguments      = sh "+i+" $$(Arch) \nqueue\n")
+@@ -1820,6 +1809,17 @@
+                                                "submit_file.condor")
+         self.temp_files.append(self.condor_submit_file)
+ 
++        if self.local_log_file or self.pkdilly:
++            if os.path.exists("/Tmp"):
++                self.log_file = "/Tmp"
++            else:
++                self.log_file = "/tmp"
++            self.log_file = os.path.join(self.log_file,os.getenv("USER"),"dbidispatch",self.log_dir)
++            os.system('mkdir -p ' + self.log_file)
++            self.log_file = os.path.join(self.log_file,"condor.log")
++        else:
++            self.log_file = os.path.join(self.log_dir,"condor.log")
++
+         #exec dependent code
+         if self.nb_proc > 0:
+             cmd=self.run_dag()
+
+
+
+From nouiz at mail.berlios.de  Tue Oct 19 19:39:11 2010
+From: nouiz at mail.berlios.de (nouiz at mail.berlios.de)
+Date: Tue, 19 Oct 2010 19:39:11 +0200
+Subject: [Plearn-commits] r10360 - trunk/python_modules/plearn/parallel
+Message-ID: <20101019173911.7721B480428@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-10-19 19:39:11 +0200 (Tue, 19 Oct 2010)
+New Revision: 10360
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+make dbidispatch --condor=N work with pkdilly.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-10-19 17:26:25 UTC (rev 10359)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-10-19 17:39:11 UTC (rev 10360)
+@@ -1366,7 +1366,8 @@
+                           bash_exec, seconds=3600):
+         def line_header():
+             return "[DBICondor] "+str(datetime.datetime.now())+" "+str(os.getpid())+" "
+-        cmd="condor_wait -wait "+str(seconds)+" "+self.log_file
++        
++        cmd="condor_wait -wait "+str(seconds)+" "+self.condor_wait_file
+         pid=os.fork()
+         if pid==0:#in the childreen
+             #renew each hour
+@@ -1663,6 +1664,7 @@
+         condor_dag_fd.close()
+ 
+         self.make_launch_script('$@')
++        time.sleep(5)#we do this in hope that the error 'launch.sh2.sh is not executable' disapear
+ 
+         condor_cmd = self.condor_submit_dag_exec+' -maxjobs %s %s'%(str(self.nb_proc), condor_dag_file)
+         return condor_cmd
+@@ -1717,7 +1719,7 @@
+         condor_submit_fd.close()
+ 
+         self.make_launch_script('sh -c "$@"')
+-        time.sleep(5)#we do this in hope that the error 'launch.sh2.sh is not executable'
++        time.sleep(5)#we do this in hope that the error 'launch.sh2.sh is not executable' disapear
+ 
+         return self.condor_submit_exec + " " + self.condor_submit_file
+ 
+@@ -1732,8 +1734,6 @@
+                 pass
+ 
+     def run(self):
+-        if (self.pkdilly and self.nb_proc > 0):
+-            raise DBIError("[DBI] ERROR: curently pkdilly with nb_proc >0 is not supported!")
+         if (self.stdouts and not self.stderrs) or (self.stderrs and not self.stdouts):
+             raise DBIError("[DBI] ERROR: the condor back-end should have both stdouts and stderrs or none of them")
+         if self.stdouts and self.stderrs:
+@@ -1823,8 +1823,10 @@
+         #exec dependent code
+         if self.nb_proc > 0:
+             cmd=self.run_dag()
++            self.condor_wait_file = self.condor_submit_file+".dag.dagman.log"
+         else:
+             cmd=self.run_non_dag()
++            self.condor_wait_file = self.log_file
+ 
+         #add file if needed?
+         #why are they needed?
+@@ -1867,7 +1869,7 @@
+         self.exec_post_batch()
+ 
+     def wait(self):
+-        print "[DBI] WARNING no waiting for all job to finish implemented for condor, use 'condor_q' or 'condor_wait %s'"%(self.log_file)
++        print "[DBI] WARNING no waiting for all job to finish implemented for condor, use 'condor_q' or 'condor_wait %s'"%(self.condor_wait_file)
+ 
+     def clean(self):
+         pass
+
+
+
+From nouiz at mail.berlios.de  Thu Oct 21 16:35:07 2010
+From: nouiz at mail.berlios.de (nouiz at mail.berlios.de)
+Date: Thu, 21 Oct 2010 16:35:07 +0200
+Subject: [Plearn-commits] r10361 - trunk/python_modules/plearn/parallel
+Message-ID: <20101021143507.4BAB7480E93@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-10-21 16:35:07 +0200 (Thu, 21 Oct 2010)
+New Revision: 10361
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+reorder import following our convention
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-10-19 17:39:11 UTC (rev 10360)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-10-21 14:35:07 UTC (rev 10361)
+@@ -1,22 +1,20 @@
+ #! /usr/bin/env python
++import datetime
+ import os
+-import getopt
+ import re
+ import shutil
+ import string
+ import subprocess
+-import sys
+-import time
+-import traceback
+ from subprocess import Popen,PIPE,STDOUT
+-from utils import *
+-from configobj import ConfigObj
++import sys
+ from textwrap import dedent
+-import pdb
+ from threading import Thread,Lock
++import time
+ from time import sleep
+-import datetime
++import traceback
+ 
++from utils import get_condor_platform, get_config_value, get_plearndir, get_new_sid, set_config_value, truncate, 
++
+ try:
+     from random import shuffle
+ except ImportError:
+
+
+
+From nouiz at mail.berlios.de  Thu Oct 21 16:35:44 2010
+From: nouiz at mail.berlios.de (nouiz at mail.berlios.de)
+Date: Thu, 21 Oct 2010 16:35:44 +0200
+Subject: [Plearn-commits] r10362 - trunk/python_modules/plearn/parallel
+Message-ID: <20101021143544.50296480E93@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-10-21 16:35:44 +0200 (Thu, 21 Oct 2010)
+New Revision: 10362
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+small fix discovered by pyflakes.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-10-21 14:35:07 UTC (rev 10361)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-10-21 14:35:44 UTC (rev 10362)
+@@ -293,7 +293,7 @@
+             elif t.status==STATUS_FINISHED:
+                 finished+=1
+             elif t.status==STATUS_WAITING:
+-                waiting+=i
++                waiting+=1
+                 unfinished.append(t.id)
+             else:
+                 print "[DBI] jobs %i have an unknow status: %d",t.id
+@@ -414,12 +414,12 @@
+         # get the string representation
+         str_sched = get_config_value(self.log_file,'SCHEDULED_TIME')
+         # transform in seconds from the start of epoch
+-        sched_time = time.mktime(time.strptime(str_sched,ClusterLauncher.time_format))
++        sched_time = time.mktime(time.strptime(str_sched,self.time_format))
+ 
+         # get the string representation
+         str_launch = get_config_value(self.log_file,'LAUNCH_TIME')
+         # transform in seconds from the start of epoch
+-        launch_time = time.mktime(time.strptime(str_launch,ClusterLauncher.time_format))
++        launch_time = time.mktime(time.strptime(str_launch,self.time_format))
+ 
+         return launch_time - sched_time
+ 
+@@ -428,12 +428,12 @@
+         # get the string representation
+         str_launch = get_config_value(self.log_file,'LAUNCH_TIME')
+         # transform in seconds from the start of epoch
+-        launch_time = time.mktime(time.strptime(str_launch,ClusterLauncher.time_format))
++        launch_time = time.mktime(time.strptime(str_launch,self.time_format))
+ 
+         # get the string representation
+         str_finished = get_config_value(self.log_file,'FINISHED_TIME')
+         # transform in seconds from the start of epoch
+-        finished_time = time.mktime(time.strptime(str_finished,ClusterLauncher.time_format))
++        finished_time = time.mktime(time.strptime(str_finished,self.time_format))
+ 
+         return finished_time - launch_time
+ 
+
+
+
+From nouiz at mail.berlios.de  Thu Oct 21 16:45:59 2010
+From: nouiz at mail.berlios.de (nouiz at mail.berlios.de)
+Date: Thu, 21 Oct 2010 16:45:59 +0200
+Subject: [Plearn-commits] r10363 - trunk/python_modules/plearn/parallel
+Message-ID: <20101021144559.C6382480E93@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-10-21 16:45:59 +0200 (Thu, 21 Oct 2010)
+New Revision: 10363
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+fix syntax error.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-10-21 14:35:44 UTC (rev 10362)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-10-21 14:45:59 UTC (rev 10363)
+@@ -13,7 +13,7 @@
+ from time import sleep
+ import traceback
+ 
+-from utils import get_condor_platform, get_config_value, get_plearndir, get_new_sid, set_config_value, truncate, 
++from utils import get_condor_platform, get_config_value, get_plearndir, get_new_sid, set_config_value, truncate
+ 
+ try:
+     from random import shuffle
+
+
+
+From nouiz at mail.berlios.de  Thu Oct 21 19:02:47 2010
+From: nouiz at mail.berlios.de (nouiz at mail.berlios.de)
+Date: Thu, 21 Oct 2010 19:02:47 +0200
+Subject: [Plearn-commits] r10364 - in trunk: python_modules/plearn/parallel
+	scripts
+Message-ID: <20101021170247.447CA480EE2@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-10-21 19:02:46 +0200 (Thu, 21 Oct 2010)
+New Revision: 10364
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+Make dbidispatch --local=FILE_PATH to allows dynamically changing the number of threads.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-10-21 14:45:59 UTC (rev 10363)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-10-21 17:02:46 UTC (rev 10364)
+@@ -8,7 +8,7 @@
+ from subprocess import Popen,PIPE,STDOUT
+ import sys
+ from textwrap import dedent
+-from threading import Thread,Lock
++from threading import currentThread,Lock,Thread,Lock
+ import time
+ from time import sleep
+ import traceback
+@@ -94,6 +94,7 @@
+         self._function     = function
+         self._argsIterator = LockedIterator( iter( argsVector ) )
+         self._threadPool   = []
++        self.maxThreads_file = None
+         self.print_when_finish = print_when_finished
+         self.running = 0
+         self.init_len_list = len(argsVector)
+@@ -101,18 +102,72 @@
+ 
+         if maxThreads==-1:
+             nb_thread=len(argsVector)
++        elif isinstance(maxThreads,str):
++            self._lock_threadPool = Lock()
++            self.maxThreads_file = maxThreads
++            nb_thread = 0#Thread will be created when self.start() is called.
+         elif maxThreads<=0:
+             raise DBIError("[DBI] ERROR: you set %d concurrent jobs. Must be higher then 0!!"%(maxThreads))
+         else:
+             nb_thread=maxThreads
+         if nb_thread>len(argsVector):
+             nb_thread=len(argsVector)
+-        for i in range( nb_thread ):
+-            self._threadPool.append( Thread( target=self._tailRecurse ) )
+ 
++        self.update_nb_thread(nb_thread, False)
++
++    def parse_maxThreads_file( self ):
++        """ return the number of Thread to use give in a file        
++        """
++        f = open( self.maxThreads_file )
++        nb_thread = f.readlines()
++        f.close()
++        return int( nb_thread[0] )
++
++    def update_nb_thread(self, nb_thread, by_running_threads):
++        """ Update the thread pool to the good number of thread
++            Return False when the running Thread should stop.
++
++            :type nb_thread: int
++            :param nb_thread: The number of threads wanted
++            :type by_running_threads: bool
++            :param by_running_threads: Must be True when called from a 
++                                       Thread in the pool 
++        """
++        try:
++            self._lock_threadPool.acquire()
++            if nb_thread != len( self._threadPool ):
++                if nb_thread < len( self._threadPool ):
++                    if by_running_threads:
++                        #I don't remove the thread from the pool as this
++                        #seam to end a thread too early.
++                        #If we raise the number of thread after
++                        #we end up with too much thread in the pool
++                        #But next time we start the pool, we will 
++                        #resize it correctly.
++                        #self._threadPool.remove(currentThread())
++                        pass
++                    else:
++                        self._threadPool = self._threadPool[:nb_thread]
++                    return False
++                else:
++                    for i in range( nb_thread - len( self._threadPool ) ):
++                        self._threadPool.append( Thread( target=self._tailRecurse ) )
++                        if by_running_threads:
++                            time.sleep( self.sleep_time )
++                            self.running+=1
++                            self._threadPool[-1].start()
++            return True
++        finally:
++            self._lock_threadPool.release()
++
++
+     def _tailRecurse( self ):
+         for args in self._argsIterator:
+             self._function( args )
++            if self.maxThreads_file:
++                ret = self.update_nb_thread(self.parse_maxThreads_file(), True)
++                if not ret:
++                    break
+         self.running-=1
+         if self.print_when_finish:
+             if callable(self.print_when_finish):
+@@ -121,6 +176,10 @@
+                 print self.print_when_finish,"left running: %d/%d"%(self.running,self.init_len_list)
+ 
+     def start( self  ):
++        if self.maxThreads_file:
++        #update the number of thread
++            self.update_nb_thread(self.parse_maxThreads_file(), False)
++                    
+         for thread in self._threadPool:
+             # necessary to give other threads a chance to run
+             time.sleep( self.sleep_time )
+@@ -1881,7 +1940,14 @@
+         self.threads=[]
+         self.mt = None
+         self.started=0
+-        self.nb_proc=int(self.nb_proc)
++        try:
++            self.nb_proc=int(self.nb_proc)
++        except ValueError,e:
++            self.nb_proc_file = self.nb_proc
++            f = open(self.nb_proc_file)
++            self.nb_proc = int(f.readlines()[0])
++            f.close()
++
+         self.add_commands(commands)
+ 
+     def add_commands(self,commands):
+@@ -1934,7 +2000,7 @@
+ 
+         (output,error)=self.get_redirection(*self.get_file_redirection(task.id))
+ 
+-        self.started+=1
++        self.started+=1#Is this atomic?
+         print "[DBI,%d/%d,%s] %s"%(self.started,len(self.tasks),time.ctime(),c)
+         p = Popen(c, shell=True,stdout=output,stderr=error)
+         p.wait()
+@@ -1955,17 +2021,26 @@
+             print "[DBI] Test mode, we only print the command to be executed, we don't execute them"
+         if not self.file_redirect_stdout and self.nb_proc>1:
+             print "[DBI] WARNING: many process but all their stdout are redirected to the parent"
++        elif not self.file_redirect_stdout and self.nb_proc_file:
++            print "[DBI] WARNING: nb process dynamic with one thread and their stdout are redirected to the parent. Don't change to more then 1 thread!"
+         if not self.file_redirect_stderr and self.nb_proc>1:
+             print "[DBI] WARNING: many process but all their stderr are redirected to the parent"
++        elif not self.file_redirect_stderr and self.nb_proc_file:
++            print "[DBI] WARNING: nb process dynamic with one thread and their stderr are redirected to the parent. Don't change to more then 1 thread!"
+         print "[DBI] The Log file are under %s"%self.log_dir
+ 
+         # Execute pre-batch
+         self.exec_pre_batch()
+ 
+         # Execute all Tasks (including pre_tasks and post_tasks if any)
+-        self.mt=MultiThread(self.run_one_job,self.tasks,self.nb_proc,lambda :("[DBI,%s]"%time.ctime()))
++        nb_proc = self.nb_proc
++        if self.nb_proc_file:
++            nb_proc = self.nb_proc_file
++        self.mt=MultiThread(self.run_one_job,self.tasks,nb_proc,lambda :("[DBI,%s]"%time.ctime()))
+         self.mt.start()
+ 
++        #TODO: Need to wait before post_bach?
++
+         # Execute post-batchs
+         self.exec_post_batch()
+ 
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2010-10-21 14:45:59 UTC (rev 10363)
++++ trunk/scripts/dbidispatch	2010-10-21 17:02:46 UTC (rev 10364)
+@@ -102,6 +102,13 @@
+     --ssh=N is the same as --ssh --nb_proc=N
+     --condor=N  is the same as --condor --nb_proc=N
+     condor and bqtools default -1. Cluster default 32.  local and ssh default 1
++
++    --local=FILE_PATH is accepted. The file should contain only the number of
++    threads wanted. This allows dynamically changing the number of threads. 
++    The change in the number of threads happen before we start the threads or 
++    when a thread ends. We wait until threads finish to lower the number of
++    running threads.
++
+   The '--exp_dir=dir' specifies the name of the temporary directory
+     relative to LOGDIR, instead of one generated automatically based
+     upon the command line and the time.
+
+
+

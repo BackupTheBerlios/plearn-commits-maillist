@@ -1,0 +1,312 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8409 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8409%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200801242051.m0OKpJ5B022248%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001856.html">
+   <LINK REL="Next"  HREF="001858.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8409 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8409%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200801242051.m0OKpJ5B022248%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8409 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Thu Jan 24 21:51:19 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001856.html">[Plearn-commits] r8408 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="001858.html">[Plearn-commits] r8410 - trunk/python_modules/plearn/utilities
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1857">[ date ]</a>
+              <a href="thread.html#1857">[ thread ]</a>
+              <a href="subject.html#1857">[ subject ]</a>
+              <a href="author.html#1857">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-01-24 21:51:19 +0100 (Thu, 24 Jan 2008)
+New Revision: 8409
+
+Modified:
+   trunk/plearn_learners_experimental/DiscriminativeRBM.cc
+   trunk/plearn_learners_experimental/DiscriminativeRBM.h
+Log:
+Added the possibility to do Self-taught learning.
+
+
+Modified: trunk/plearn_learners_experimental/DiscriminativeRBM.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DiscriminativeRBM.cc	2008-01-24 17:13:19 UTC (rev 8408)
++++ trunk/plearn_learners_experimental/DiscriminativeRBM.cc	2008-01-24 20:51:19 UTC (rev 8409)
+@@ -67,7 +67,10 @@
+     n_classes( -1 ),
+     target_weights_L1_penalty_factor( 0. ),
+     target_weights_L2_penalty_factor( 0. ),
+-    do_not_use_discriminative_learning( false )
++    do_not_use_discriminative_learning( false ),
++    unlabeled_class_index_begin( 0 ),
++    n_classes_at_test_time( -1 )
++
+ {
+     random_gen = new PRandom();
+ }
+@@ -140,6 +143,18 @@
+                   OptionBase::buildoption,
+                   &quot;Indication that discriminative learning should not be used.\n&quot;);
+ 
++    declareOption(ol, &quot;unlabeled_class_index_begin&quot;, 
++                  &amp;DiscriminativeRBM::unlabeled_class_index_begin,
++                  OptionBase::buildoption,
++                  &quot;The smallest index for the classes of the unlabeled data.\n&quot;);
++
++    declareOption(ol, &quot;n_classes_at_test_time&quot;, 
++                  &amp;DiscriminativeRBM::n_classes_at_test_time,
++                  OptionBase::buildoption,
++                  &quot;The number of classes to discriminate from during test.\n&quot;
++                  &quot;The classes that will be discriminated are indexed\n&quot;
++                  &quot;from 0 to n_classes_at_test_time.\n&quot;);
++
+     declareOption(ol, &quot;classification_module&quot;,
+                   &amp;DiscriminativeRBM::classification_module,
+                   OptionBase::learntoption,
+@@ -193,9 +208,9 @@
+     build_classification_cost();
+ 
+     int current_index = 0;
+-    cost_names.append(&quot;NLL&quot;);
+-    nll_cost_index = current_index;
+-    current_index++;
++    //cost_names.append(&quot;NLL&quot;);
++    //nll_cost_index = current_index;
++    //current_index++;
+     
+     cost_names.append(&quot;class_error&quot;);
+     class_cost_index = current_index;
+@@ -329,6 +344,62 @@
+     joint_layer-&gt;sub_layers[1] = target_layer;
+     joint_layer-&gt;random_gen = random_gen;
+     joint_layer-&gt;build();
++
++    if( unlabeled_class_index_begin != 0 )
++    {
++        unlabeled_class_output.resize( n_classes - unlabeled_class_index_begin );
++        PP&lt;RBMMultinomialLayer&gt; sub_layer = new RBMMultinomialLayer();
++        sub_layer-&gt;bias = target_layer-&gt;bias.subVec(
++            unlabeled_class_index_begin,
++            n_classes - unlabeled_class_index_begin);
++        sub_layer-&gt;size = n_classes - unlabeled_class_index_begin;
++        sub_layer-&gt;random_gen = random_gen;
++        sub_layer-&gt;build();
++
++        PP&lt;RBMMatrixConnection&gt; sub_connection = new RBMMatrixConnection();
++        sub_connection-&gt;weights = last_to_target-&gt;weights.subMatColumns(
++            unlabeled_class_index_begin,
++            n_classes - unlabeled_class_index_begin);
++        sub_connection-&gt;up_size = hidden_layer-&gt;size;
++        sub_connection-&gt;down_size = n_classes - unlabeled_class_index_begin;
++        sub_connection-&gt;random_gen = random_gen;
++        sub_connection-&gt;build();
++
++        unlabeled_classification_module = new RBMClassificationModule();
++        unlabeled_classification_module-&gt;previous_to_last = connection;
++        unlabeled_classification_module-&gt;last_layer = hidden_layer;
++        unlabeled_classification_module-&gt;last_to_target = sub_connection;
++        unlabeled_classification_module-&gt;target_layer = sub_layer;
++        unlabeled_classification_module-&gt;random_gen = random_gen;
++        unlabeled_classification_module-&gt;build();
++    }
++
++    if( n_classes_at_test_time &gt; 0 &amp;&amp; n_classes_at_test_time != n_classes )
++    {
++        test_time_class_output.resize( n_classes_at_test_time ); 
++        PP&lt;RBMMultinomialLayer&gt; sub_layer = new RBMMultinomialLayer();
++        sub_layer-&gt;bias = target_layer-&gt;bias.subVec(
++            0, n_classes_at_test_time );
++        sub_layer-&gt;size = n_classes_at_test_time;
++        sub_layer-&gt;random_gen = random_gen;
++        sub_layer-&gt;build();
++
++        PP&lt;RBMMatrixConnection&gt; sub_connection = new RBMMatrixConnection();
++        sub_connection-&gt;weights = last_to_target-&gt;weights.subMatColumns(
++            0, n_classes_at_test_time );
++        sub_connection-&gt;up_size = hidden_layer-&gt;size;
++        sub_connection-&gt;down_size = n_classes_at_test_time;
++        sub_connection-&gt;random_gen = random_gen;
++        sub_connection-&gt;build();
++
++        test_time_classification_module = new RBMClassificationModule();
++        test_time_classification_module-&gt;previous_to_last = connection;
++        test_time_classification_module-&gt;last_layer = hidden_layer;
++        test_time_classification_module-&gt;last_to_target = sub_connection;
++        test_time_classification_module-&gt;target_layer = sub_layer;
++        test_time_classification_module-&gt;random_gen = random_gen;
++        test_time_classification_module-&gt;build();
++    }
+ }
+ 
+ ///////////
+@@ -358,6 +429,8 @@
+     deepCopyField(last_to_target_connection, copies);
+     deepCopyField(joint_connection, copies);
+     deepCopyField(target_layer, copies);
++    deepCopyField(unlabeled_classification_module, copies);
++    deepCopyField(test_time_classification_module, copies);
+     deepCopyField(target_one_hot, copies);
+     deepCopyField(disc_pos_down_val, copies);
+     deepCopyField(disc_pos_up_val, copies);
+@@ -373,6 +446,8 @@
+     deepCopyField(semi_sup_neg_up_val, copies);
+     deepCopyField(input_gradient, copies);
+     deepCopyField(class_output, copies);
++    deepCopyField(unlabeled_class_output, copies);
++    deepCopyField(test_time_class_output, copies);
+     deepCopyField(class_gradient, copies);
+ }
+ 
+@@ -382,7 +457,7 @@
+ ////////////////
+ int DiscriminativeRBM::outputsize() const
+ {
+-    return n_classes;
++    return n_classes_at_test_time &gt; 0 ? n_classes_at_test_time : n_classes;
+ }
+ 
+ ////////////
+@@ -562,8 +637,20 @@
+             // Positive phase
+ 
+             // Clamp visible units and sample from p(y|x)
+-            classification_module-&gt;fprop( input,
+-                                          class_output );
++            if( unlabeled_classification_module )
++            {
++                unlabeled_classification_module-&gt;fprop( input,
++                                                        unlabeled_class_output );
++                class_output.clear();
++                class_output.subVec( unlabeled_class_index_begin,
++                                     n_classes - unlabeled_class_index_begin )
++                    &lt;&lt; unlabeled_class_output;
++            }
++            else
++            {
++                classification_module-&gt;fprop( input,
++                                              class_output );
++            }
+             target_layer-&gt;setExpectation( class_output );
+             target_layer-&gt;generateSample();            
+             input_layer-&gt;sample &lt;&lt; input ;
+@@ -608,7 +695,7 @@
+                                                     nll_cost );
+ 
+             class_error =  ( argmax(class_output) == target_index ) ? 0: 1;  
+-            train_costs[nll_cost_index] = nll_cost;
++            //train_costs[nll_cost_index] = nll_cost;
+             train_costs[class_cost_index] = class_error;
+ 
+             classification_cost-&gt;bpropUpdate( class_output, target, nll_cost,
+@@ -664,7 +751,16 @@
+ {
+     // Compute the output from the input.
+     output.resize(0);
+-    classification_module-&gt;fprop( input, output );
++    if( test_time_classification_module )
++    {
++        test_time_classification_module-&gt;fprop( input,
++                                                output );
++    }
++    else
++    {
++        classification_module-&gt;fprop( input,
++                                      output );
++    }
+ }
+ 
+ 
+@@ -679,7 +775,7 @@
+     if( !is_missing(target[0]) )
+     {
+         //classification_cost-&gt;fprop( output, target, costs[nll_cost_index] );
+-        classification_cost-&gt;CostModule::fprop( output, target, costs[nll_cost_index] );
++        //classification_cost-&gt;CostModule::fprop( output, target, costs[nll_cost_index] );
+         costs[class_cost_index] =
+             (argmax(output) == (int) round(target[0]))? 0 : 1;
+     }
+
+Modified: trunk/plearn_learners_experimental/DiscriminativeRBM.h
+===================================================================
+--- trunk/plearn_learners_experimental/DiscriminativeRBM.h	2008-01-24 17:13:19 UTC (rev 8408)
++++ trunk/plearn_learners_experimental/DiscriminativeRBM.h	2008-01-24 20:51:19 UTC (rev 8409)
+@@ -106,6 +106,14 @@
+     //! Indication that discriminative learning should not be used
+     bool do_not_use_discriminative_learning;
+ 
++    //! The smallest index for the classes of the unlabeled data
++    int unlabeled_class_index_begin;
++
++    //! The number of classes to discriminate from during test.
++    //! The classes that will be discriminated are indexed 
++    //! from 0 to n_classes_at_test_time.
++    int n_classes_at_test_time;
++
+     //#####  Public Learnt Options  ###########################################
+     //! The module computing the probabilities of the different classes.
+     PP&lt;RBMClassificationModule&gt; classification_module;
+@@ -216,6 +224,12 @@
+     //! (pointer to classification_module-&gt;target_layer)
+     PP&lt;RBMMultinomialLayer&gt; target_layer;
+ 
++    //! Classification module for when unlabeled_class_index_begin != 0
++    PP&lt;RBMClassificationModule&gt; unlabeled_classification_module;
++
++    //! Classification module for when n_classes_at_test_time != n_classes
++    PP&lt;RBMClassificationModule&gt; test_time_classification_module;
++
+     //! Temporary variables for Contrastive Divergence
+     mutable Vec target_one_hot;
+ 
+@@ -237,6 +251,8 @@
+     //! Temporary variables for gradient descent
+     mutable Vec input_gradient;
+     mutable Vec class_output;
++    mutable Vec unlabeled_class_output;
++    mutable Vec test_time_class_output;
+     mutable Vec class_gradient;
+ 
+     //! Keeps the index of the NLL cost in train_costs
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001856.html">[Plearn-commits] r8408 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="001858.html">[Plearn-commits] r8410 - trunk/python_modules/plearn/utilities
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1857">[ date ]</a>
+              <a href="thread.html#1857">[ thread ]</a>
+              <a href="subject.html#1857">[ subject ]</a>
+              <a href="author.html#1857">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

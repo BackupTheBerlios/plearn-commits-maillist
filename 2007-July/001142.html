@@ -1,0 +1,152 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7694 - trunk/plearn_learners/generic
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7694%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200707041425.l64EPM0J028648%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001141.html">
+   <LINK REL="Next"  HREF="001143.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7694 - trunk/plearn_learners/generic</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7694%20-%20trunk/plearn_learners/generic&In-Reply-To=%3C200707041425.l64EPM0J028648%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7694 - trunk/plearn_learners/generic">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed Jul  4 16:25:22 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001141.html">[Plearn-commits] r7693 - trunk/python_modules/plearn/analysis
+</A></li>
+        <LI>Next message: <A HREF="001143.html">[Plearn-commits] r7695 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1142">[ date ]</a>
+              <a href="thread.html#1142">[ thread ]</a>
+              <a href="subject.html#1142">[ subject ]</a>
+              <a href="author.html#1142">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-07-04 16:25:22 +0200 (Wed, 04 Jul 2007)
+New Revision: 7694
+
+Modified:
+   trunk/plearn_learners/generic/AddCostToLearner.cc
+   trunk/plearn_learners/generic/AddCostToLearner.h
+Log:
+Added a build option that let us tell for witch target we want the confusion matrix
+
+
+Modified: trunk/plearn_learners/generic/AddCostToLearner.cc
+===================================================================
+--- trunk/plearn_learners/generic/AddCostToLearner.cc	2007-07-04 14:15:37 UTC (rev 7693)
++++ trunk/plearn_learners/generic/AddCostToLearner.cc	2007-07-04 14:25:22 UTC (rev 7694)
+@@ -93,7 +93,8 @@
+       rescale_target(0),
+       to_max(1),
+       to_min(0),
+-      n_classes(-1)
++      n_classes(-1),
++      confusion_matrix_target(0)
+ {}
+ 
+ ////////////////////
+@@ -132,7 +133,7 @@
+         &quot;   difference between the class values\n&quot;
+         &quot; - 'square_class_error': as class_error execpt that the output is the\n&quot;
+         &quot;   square of the difference between the class values\n&quot;
+-        &quot; - 'confusion_matrix': give the confusion matrix,\n&quot;
++        &quot; - 'confusion_matrix': give the confusion matrix of the target confusion_matrix_target,\n&quot;
+         &quot;   the row is the predicted class, the column is the targeted class\n&quot;
+         &quot; - 'lift_output': to compute the lift cost (for the positive class)\n&quot;
+         &quot; - 'opposite_lift_output': to compute the lift cost (for the negative) class\n&quot;
+@@ -170,6 +171,9 @@
+     declareOption(ol, &quot;n_classes&quot;, &amp;AddCostToLearner::n_classes, OptionBase::buildoption,
+         &quot;The number of classes. Only needed for the 'confusion_matrix' cost.&quot;);
+ 
++    declareOption(ol, &quot;confusion_matrix_target&quot;, &amp;AddCostToLearner::confusion_matrix_target, OptionBase::buildoption,
++                  &quot;The target number for witch we calculate the confusion matrix. Default to 0.&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -519,10 +523,31 @@
+             }
+             costs[ind_cost] = diff;
+         } else if (c == &quot;confusion_matrix&quot;) {
++
++#ifdef BOUNDCHECK
++            if (confusion_matrix_target &gt;= target_length)
++                PLERROR(&quot;In AddCostToLearner::computeCostsFromOutputs - confusion_matrix_target(%d) &quot;
++                        &quot;not in the range of target_length(%d)&quot;, confusion_matrix_target, target_length);            
++            if (sub_learner_output[confusion_matrix_target] &gt;= n_classes
++                || desired_target[confusion_matrix_target] &gt;= n_classes)
++                PLERROR(&quot;In AddCostToLearner::computeCostsFromOutputs - confusion_matrix sub_learner_output[i](%f) &quot;
++                        &quot;or desired_target[i](%d) higher or egual to n_classes (%d)&quot;, sub_learner_output[confusion_matrix_target],
++                        desired_target[confusion_matrix_target], n_classes);
++#endif
+             for(int local_ind = ind_cost ; local_ind &lt; (n_classes*n_classes+ind_cost); local_ind++){
+                 costs[local_ind] = 0;
+             }
+-            int local_ind = ind_cost + argmax(sub_learner_output) + int(round(desired_target[0]))*n_classes;
++            int output_length = sub_learner_output.length();
++            int local_ind = 0;
++            if (output_length == target_length) {
++                local_ind = ind_cost + int(round(sub_learner_output[confusion_matrix_target]))
++                    + int(round(desired_target[confusion_matrix_target]))*n_classes;
++            } else if (target_length == 1){
++                local_ind = ind_cost + argmax(sub_learner_output) + int(round(desired_target[confusion_matrix_target]))*n_classes;
++            } else {
++                PLERROR(&quot;In AddCostToLearner::computeCostsFromOutputs - Wrong &quot;
++                        &quot;output and/or target for the 'confusion_matrix' cost&quot;);
++            }
+             costs[local_ind] = 1;
+             ind_cost += n_classes*n_classes - 1;//less one as the loop add one
+         } else if (c == &quot;mse&quot;) {
+
+Modified: trunk/plearn_learners/generic/AddCostToLearner.h
+===================================================================
+--- trunk/plearn_learners/generic/AddCostToLearner.h	2007-07-04 14:15:37 UTC (rev 7693)
++++ trunk/plearn_learners/generic/AddCostToLearner.h	2007-07-04 14:25:22 UTC (rev 7694)
+@@ -122,6 +122,7 @@
+     real to_max;
+     real to_min;
+     int n_classes;
++    int confusion_matrix_target;
+ 
+     // ****************
+     // * Constructors *
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001141.html">[Plearn-commits] r7693 - trunk/python_modules/plearn/analysis
+</A></li>
+	<LI>Next message: <A HREF="001143.html">[Plearn-commits] r7695 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1142">[ date ]</a>
+              <a href="thread.html#1142">[ thread ]</a>
+              <a href="subject.html#1142">[ subject ]</a>
+              <a href="author.html#1142">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

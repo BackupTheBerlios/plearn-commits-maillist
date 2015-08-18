@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7982 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7982%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708102255.l7AMtxQh028610%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001429.html">
+   <LINK REL="Next"  HREF="001431.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7982 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7982%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708102255.l7AMtxQh028610%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7982 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Sat Aug 11 00:55:59 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001429.html">[Plearn-commits] r7981 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001431.html">[Plearn-commits] r7983 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1430">[ date ]</a>
+              <a href="thread.html#1430">[ thread ]</a>
+              <a href="subject.html#1430">[ subject ]</a>
+              <a href="author.html#1430">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-08-11 00:55:47 +0200 (Sat, 11 Aug 2007)
+New Revision: 7982
+
+Modified:
+   trunk/plearn_learners/online/BinarizeModule.cc
+   trunk/plearn_learners/online/BinarizeModule.h
+   trunk/plearn_learners/online/VBoundDBN2.cc
+Log:
+Fixed little problem in VBoundDBN2 and added options in BinarizeModule
+
+
+Modified: trunk/plearn_learners/online/BinarizeModule.cc
+===================================================================
+--- trunk/plearn_learners/online/BinarizeModule.cc	2007-08-10 11:23:29 UTC (rev 7981)
++++ trunk/plearn_learners/online/BinarizeModule.cc	2007-08-10 22:55:47 UTC (rev 7982)
+@@ -58,7 +58,7 @@
+ // BinarizeModule //
+ //////////////////
+ BinarizeModule::BinarizeModule()
+-    : stochastic(true)
++    : stochastic(true),copy_gradients(false),saturate_gradients(false)
+ {
+ }
+ 
+@@ -71,6 +71,14 @@
+                   OptionBase::buildoption,
+                   &quot;If true then sample the output bits stochastically, else use a hard threshold.\n&quot;);
+ 
++    declareOption(ol, &quot;copy_gradients&quot;, &amp;BinarizeModule::copy_gradients,
++                  OptionBase::buildoption,
++                  &quot;If true then simply copy the gradients through with no alteration.\n&quot;);
++
++    declareOption(ol, &quot;saturate_gradients&quot;, &amp;BinarizeModule::saturate_gradients,
++                  OptionBase::buildoption,
++                  &quot;If true then multiply output gradients by p(1-p) for input probability p.\n&quot;);
++
+     inherited::declareOptions(ol);
+ }
+ 
+@@ -98,20 +106,31 @@
+ {
+     PLASSERT( ports_value.length() == nPorts() &amp;&amp; ports_gradient.length() == nPorts());
+ 
++    Mat* input = ports_value[0];
+     Mat* output = ports_value[1];
+     Mat* input_gradient = ports_gradient[0];
+     Mat* output_gradient = ports_gradient[1];
+     
+     int mbs=output-&gt;length();
+-    input_gradient-&gt;resize(mbs,output-&gt;width());
+-    for (int t=0;t&lt;mbs;t++)
++    if (input_gradient)
+     {
+-        real* yt = (*output)[t];
+-        real* dyt = (*output_gradient)[t];
+-        real* dxt = (*input_gradient)[t];
+-        for (int i=0;i&lt;output-&gt;width();i++)
+-            if ((yt[i]-0.5)*dyt[i] &gt; 0)
+-                dxt[i] += dyt[i];
++        input_gradient-&gt;resize(mbs,output-&gt;width());
++        for (int t=0;t&lt;mbs;t++)
++        {
++            real* yt = (*output)[t];
++            real* dyt = (*output_gradient)[t];
++            real* dxt = (*input_gradient)[t];
++            real* xt = (*input)[t];
++            if (copy_gradients)
++                for (int i=0;i&lt;output-&gt;width();i++)
++                    dxt[i] += dyt[i];
++            else if (saturate_gradients)
++                for (int i=0;i&lt;output-&gt;width();i++)
++                    dxt[i] += dyt[i]*xt[i]*(1-xt[i]);
++            else for (int i=0;i&lt;output-&gt;width();i++)
++                if ((yt[i]-0.5)*dyt[i] &gt; 0)
++                    dxt[i] += dyt[i];
++        }
+     }
+ }
+ 
+
+Modified: trunk/plearn_learners/online/BinarizeModule.h
+===================================================================
+--- trunk/plearn_learners/online/BinarizeModule.h	2007-08-10 11:23:29 UTC (rev 7981)
++++ trunk/plearn_learners/online/BinarizeModule.h	2007-08-10 22:55:47 UTC (rev 7982)
+@@ -63,6 +63,12 @@
+     //! If true then sample the output bits stochastically, else use a hard threshold.
+     bool stochastic;
+ 
++    //! If true just pass the gradient straight through with no alteration
++    bool copy_gradients;
++
++    //! If true then multiply output gradients by p(1-p) for input probability p
++    bool saturate_gradients;
++
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+
+Modified: trunk/plearn_learners/online/VBoundDBN2.cc
+===================================================================
+--- trunk/plearn_learners/online/VBoundDBN2.cc	2007-08-10 11:23:29 UTC (rev 7981)
++++ trunk/plearn_learners/online/VBoundDBN2.cc	2007-08-10 22:55:47 UTC (rev 7982)
+@@ -267,6 +267,7 @@
+         *ph_given_v &lt;&lt; rbm1-&gt;hidden_layer-&gt;getExpectations();
+         *sampled_h &lt;&lt; rbm1-&gt;hidden_layer-&gt;samples;
+         rbm1-&gt;computeFreeEnergyOfVisible(*input,FE1v,false);
++        rbm1-&gt;computeFreeEnergyOfHidden(*sampled_h,FE1h);
+         rbm2-&gt;computeFreeEnergyOfVisible(*sampled_h,FE2h,false);
+         p2ph-&gt;resize(mbs,rbm2-&gt;hidden_layer-&gt;size);
+         *p2ph &lt;&lt; rbm2-&gt;hidden_layer-&gt;getExpectations();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001429.html">[Plearn-commits] r7981 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001431.html">[Plearn-commits] r7983 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1430">[ date ]</a>
+              <a href="thread.html#1430">[ thread ]</a>
+              <a href="subject.html#1430">[ subject ]</a>
+              <a href="author.html#1430">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

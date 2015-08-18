@@ -1,0 +1,178 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9069 - trunk/plearn/python
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9069%20-%20trunk/plearn/python&In-Reply-To=%3C200805272028.m4RKSsi6007383%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002516.html">
+   <LINK REL="Next"  HREF="002518.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9069 - trunk/plearn/python</H1>
+    <B>ducharme at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9069%20-%20trunk/plearn/python&In-Reply-To=%3C200805272028.m4RKSsi6007383%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9069 - trunk/plearn/python">ducharme at mail.berlios.de
+       </A><BR>
+    <I>Tue May 27 22:28:54 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002516.html">[Plearn-commits] r9068 - trunk/python_modules/plearn/pybridge
+</A></li>
+        <LI>Next message: <A HREF="002518.html">[Plearn-commits] r9070 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2517">[ date ]</a>
+              <a href="thread.html#2517">[ thread ]</a>
+              <a href="subject.html#2517">[ subject ]</a>
+              <a href="author.html#2517">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: ducharme
+Date: 2008-05-27 22:28:54 +0200 (Tue, 27 May 2008)
+New Revision: 9069
+
+Modified:
+   trunk/plearn/python/PythonObjectWrapper.cc
+   trunk/plearn/python/PythonObjectWrapper.h
+Log:
+Implementation des classes 'ConvertToPyObject' et 'ConvertFromPyObject' pour VMField.
+Pour que tout fonctionne, il ne reste plus qu'a ecrire/definir les operateurs '&lt;&lt;' et '&gt;&gt;' de VMField.
+
+
+Modified: trunk/plearn/python/PythonObjectWrapper.cc
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.cc	2008-05-27 20:24:52 UTC (rev 9068)
++++ trunk/plearn/python/PythonObjectWrapper.cc	2008-05-27 20:28:54 UTC (rev 9069)
+@@ -57,6 +57,7 @@
+ #include &lt;plearn/base/HelpSystem.h&gt;
+ #include &lt;plearn/var/VarArray.h&gt;
+ #include &lt;plearn/base/RealMapping.h&gt; // for RealRange
++#include &lt;plearn/vmat/VMField.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -341,6 +342,26 @@
+     return RealRange(leftbracket[0], low, high, rightbracket[0]);
+ }
+ 
++VMField ConvertFromPyObject&lt;VMField&gt;::convert(PyObject* pyobj, bool print_traceback)
++{
++    PLASSERT(pyobj);
++    PyObject* py_name = PyObject_GetAttrString(pyobj, &quot;name&quot;);
++    if (!py_name)
++        PLPythonConversionError(&quot;ConvertFromPyObject&lt;VMField&gt;: not a VMField (no 'name' attr.)&quot;,
++                                pyobj, print_traceback);
++    string name = ConvertFromPyObject&lt;string&gt;::convert(py_name, print_traceback);
++    Py_DECREF(py_name);
++
++    PyObject* py_fieldtype = PyObject_GetAttrString(pyobj, &quot;fieldtype&quot;);
++    if(!py_fieldtype) 
++        PLPythonConversionError(&quot;ConvertFromPyObject&lt;VMField&gt;: not a VMField (no 'fieldtype' attr.)&quot;,
++                                pyobj, print_traceback);
++    VMField::FieldType fieldtype = (VMField::FieldType)ConvertFromPyObject&lt;int&gt;::convert(py_fieldtype, print_traceback);
++    Py_DECREF(py_fieldtype);
++
++    return VMField(name, fieldtype);
++}
++
+ template&lt;&gt; int numpyType&lt;bool&gt;()               { return NPY_BOOL; }
+ template&lt;&gt; int numpyType&lt;signed char&gt;()        { return NPY_BYTE; }
+ template&lt;&gt; int numpyType&lt;unsigned char&gt;()      { return NPY_UBYTE; }
+@@ -830,6 +851,28 @@
+     return py_rr;
+ }
+ 
++PyObject* ConvertToPyObject&lt;VMField&gt;::newPyObject(const VMField&amp; vmf)
++{
++    string pycode = &quot;\nfrom plearn.pybridge.wrapped_plearn_object import VMField\n&quot;;
++    pycode += string(&quot;\nresult = VMField(name='&quot;) + vmf.name + &quot;', &quot; + &quot;fieldtype=&quot; + tostring(vmf.fieldtype) + &quot;)\n&quot;;
++
++    PyObject* env = PyDict_New();
++    if (0 != PyDict_SetItemString(env, &quot;__builtins__&quot;, PyEval_GetBuiltins()))
++        PLERROR(&quot;In ConvertToPyObject&lt;VMField&gt;::newPyObject : cannot insert builtins in env.&quot;);
++    PyObject* res = PyRun_String(pycode.c_str(), Py_file_input, env, env);
++    if (!res)
++    {
++        Py_DECREF(env);
++        if (PyErr_Occurred()) PyErr_Print();
++        PLERROR(&quot;In ConvertToPyObject&lt;VMField&gt;::newPyObject : cannot convert to a VMField.&quot;);
++    }
++    Py_DECREF(res);
++    PyObject* py_vmf = PythonObjectWrapper(env).as&lt;std::map&lt;string, PyObject*&gt; &gt;()[&quot;result&quot;];
++    Py_INCREF(py_vmf);
++    Py_DECREF(env);
++    return py_vmf;
++}
++
+ PStream&amp; operator&gt;&gt;(PStream&amp; in, PythonObjectWrapper&amp; v)
+ {
+     PLERROR(&quot;operator&gt;&gt;(PStream&amp;, PythonObjectWrapper&amp;) : &quot;
+
+Modified: trunk/plearn/python/PythonObjectWrapper.h
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.h	2008-05-27 20:24:52 UTC (rev 9068)
++++ trunk/plearn/python/PythonObjectWrapper.h	2008-05-27 20:28:54 UTC (rev 9069)
+@@ -84,6 +84,7 @@
+ class VMatrix;
+ class VarArray;
+ class RealRange;
++class VMField;
+ 
+ //! Used for error reporting.  If 'print_traceback' is true, a full
+ //! Python traceback is printed to stderr.  Otherwise, raise PLERROR.
+@@ -458,6 +459,12 @@
+     static RealRange convert(PyObject*, bool print_traceback);
+ };
+ 
++template &lt;&gt;
++struct ConvertFromPyObject&lt;VMField&gt;
++{
++    static VMField convert(PyObject*, bool print_traceback);
++};
++
+ /*****
+  * Equivalence of types C++ -&gt; numpy
+  */
+@@ -700,6 +707,9 @@
+ template &lt;&gt; struct ConvertToPyObject&lt;RealRange&gt;
+ { static PyObject* newPyObject(const RealRange&amp;); };
+ 
++template &lt;&gt; struct ConvertToPyObject&lt;VMField&gt;
++{ static PyObject* newPyObject(const VMField&amp;); };
++
+ struct PLPyClass
+ {
+     // holds info about a PLearn class
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002516.html">[Plearn-commits] r9068 - trunk/python_modules/plearn/pybridge
+</A></li>
+	<LI>Next message: <A HREF="002518.html">[Plearn-commits] r9070 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2517">[ date ]</a>
+              <a href="thread.html#2517">[ thread ]</a>
+              <a href="subject.html#2517">[ subject ]</a>
+              <a href="author.html#2517">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

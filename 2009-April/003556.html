@@ -1,0 +1,171 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10116 - in trunk: python_modules/plearn/parallel	scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10116%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200904141615.n3EGFVJi009008%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003555.html">
+   <LINK REL="Next"  HREF="003557.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10116 - in trunk: python_modules/plearn/parallel	scripts</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10116%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200904141615.n3EGFVJi009008%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10116 - in trunk: python_modules/plearn/parallel	scripts">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Apr 14 18:15:31 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003555.html">[Plearn-commits] r10115 - trunk/plearn/misc
+</A></li>
+        <LI>Next message: <A HREF="003557.html">[Plearn-commits] r10117 - trunk/python_modules/plearn/pytest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3556">[ date ]</a>
+              <a href="thread.html#3556">[ thread ]</a>
+              <a href="subject.html#3556">[ subject ]</a>
+              <a href="author.html#3556">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-04-14 18:15:30 +0200 (Tue, 14 Apr 2009)
+New Revision: 10116
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+implemented the --env and --set_special_env for bqtools
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2009-04-14 15:23:15 UTC (rev 10115)
++++ trunk/python_modules/plearn/parallel/dbi.py	2009-04-14 16:15:30 UTC (rev 10116)
+@@ -584,13 +584,20 @@
+         self.submit_options = &quot;&quot;
+         self.jobs_name = &quot;&quot;
+         self.m32G = False
++        self.set_special_env = True
++        self.env = &quot;&quot;
++        self.cpu = 0
++        DBIBase.__init__(self, commands, **args)
+         
+-        DBIBase.__init__(self, commands, **args)
+-
+         self.nb_proc = int(self.nb_proc)
+         self.micro = int(self.micro)
+         self.nano = int(self.nano)
++        self.cpu = int(self.cpu)
+ 
++        if self.set_special_env and self.cpu&gt;0:
++            self.env+=' OMP_NUM_THREADS=%d'%self.cpu
++        if self.env:
++            self.env='export '+self.env
+ ### We can't accept the symbols &quot;,&quot; as this cause trouble with bqtools
+         if self.log_dir.find(',')!=-1 or self.log_file.find(',')!=-1:
+             raise DBIError(&quot;[DBI] ERROR: The log file(%s) and the log dir(%s) should not have the symbol ','&quot;%(self.log_file,self.log_dir))
+@@ -646,9 +653,10 @@
+                 HOME=%s
+                 export HOME
+ 
++                %s
+                 cd ../../../../
+                 (%s '~~task~~')'''
+-                % (bq_cluster_home, bq_shell_cmd)
++                % (bq_cluster_home, self.env, bq_shell_cmd)
+                 ) )
+ 
+         if int(self.file_redirect_stdout):
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2009-04-14 15:23:15 UTC (rev 10115)
++++ trunk/scripts/dbidispatch	2009-04-14 16:15:30 UTC (rev 10116)
+@@ -16,6 +16,8 @@
+                                                  clusterid(condor only),
+                                                  processid(condor only))}+]
+                               [--raw=STRING[\nSTRING]]
++                              [*--[no_]set_special_env]
++                              [--env=VAR=VALUE[;VAR2=VALUE2]]
+     cluster, condor options  :[--32|--64|--3264] [--os=X]
+     bqtools options          :[--micro[=nb_batch]] [--[*no_]long]
+                               [--queue=X] [--nano=X] [--submit_options=X]
+@@ -26,9 +28,7 @@
+                               [--[*no_]getenv] [*--[no_]prefserver] 
+                               [--rank=RANK_EXPRESSION] 
+                               [--files=file1[,file2...]]
+-                              [--env=VAR=VALUE[;VAR2=VALUE2]]
+                               [*--[no_]abs_path] [--[*no_]pkdilly]
+-                              [*--[no_]set_special_env]
+                               [--universe={vanilla*, standard, grid, java,
+                                            scheduler, local, parallel, vm}]
+                               [--machine=HOSTNAME+] [--machines=regex+]
+@@ -113,6 +113,12 @@
+       - none    : remove all preceding pattern
+   The '--raw=STRING1[\nSTRING2...]' option append all STRINGX in the submit file.
+       if this option appread many time, they will be concatanated with a new line.
++  The '--[no_]set_special_env' option will set the varialbe OMP_NUM_THREADS, 
++    MKL_NUM_THREADS and GOTO_NUM_THREADS to the number of cpus allocated to job.
++  The '--env=VAR=VALUE' option will set in the environment of the executing
++    jobs the variable VAR with value VALUE. To pass many variable you can:
++      1) use one --env option and separ the pair by ';'(don't forget to quote)
++      2) you can pass many time the --env parameter.
+ 
+ cluster and condor options:
+   The '--3264', '--32' or '--64' specify the type of cpu for the execution node.
+@@ -186,12 +192,6 @@
+      dbidispatch '--req=regexp(&quot;computer0*&quot;, target.Machine)'
+   The '--[no_]nice' option set the nice_user option to condor. 
+     If nice, the job(s) will have the lowest possible priority.
+-  The '--env=VAR=VALUE' option will set in the environment of the executing
+-    jobs the variable VAR with value VALUE. To pass many variable you can:
+-      1) use one --env option and separ the pair by ';'(don't forget to quote)
+-      2) you can pass many time the --env parameter.
+-  The '--[no_]set_special_env' option will set the varialbe OMP_NUM_THREADS, 
+-    MKL_NUM_THREADS and GOTO_NUM_THREADS to the number of cpus allocated to job.
+   The '--[no_]abs_path' option will tell condor to change the path to the 
+     executable to the absolute path or not. Default True.
+   The '--[no_]pkdilly': will use the pkdilly tool to make condor more 
+@@ -395,7 +395,7 @@
+ elif launch_cmd==&quot;Bqtools&quot;:
+     valid_dbi_param +=[&quot;cpu&quot;, &quot;duree&quot;, &quot;long&quot;, &quot;mem&quot;, &quot;micro&quot;,
+                        &quot;nano&quot;, &quot;queue&quot;, &quot;raw&quot;, &quot;submit_options&quot;, &quot;jobs_name&quot;,
+-                       &quot;tasks_filename&quot; ]
++                       &quot;tasks_filename&quot;, &quot;set_special_env&quot;, &quot;env&quot; ]
+ 
+ if  launch_cmd == 'Condor' and gethostname().endswith(&quot;.iro.umontreal.ca&quot;):
+     #default value for pkdilly is true.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003555.html">[Plearn-commits] r10115 - trunk/plearn/misc
+</A></li>
+	<LI>Next message: <A HREF="003557.html">[Plearn-commits] r10117 - trunk/python_modules/plearn/pytest
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3556">[ date ]</a>
+              <a href="thread.html#3556">[ thread ]</a>
+              <a href="subject.html#3556">[ subject ]</a>
+              <a href="author.html#3556">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

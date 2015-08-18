@@ -1,0 +1,268 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7816 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7816%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200707220231.l6M2Vpds022961%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001263.html">
+   <LINK REL="Next"  HREF="001265.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7816 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7816%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200707220231.l6M2Vpds022961%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7816 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Sun Jul 22 04:31:51 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001263.html">[Plearn-commits] r7815 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001265.html">[Plearn-commits] r7817 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1264">[ date ]</a>
+              <a href="thread.html#1264">[ thread ]</a>
+              <a href="subject.html#1264">[ subject ]</a>
+              <a href="author.html#1264">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-07-22 04:31:51 +0200 (Sun, 22 Jul 2007)
+New Revision: 7816
+
+Modified:
+   trunk/plearn_learners/online/OnlineLearningModule.cc
+   trunk/plearn_learners/online/OnlineLearningModule.h
+   trunk/plearn_learners/online/RBMBinomialLayer.cc
+Log:
+Using simpler formular for NLL in RBMBinomial layer, and new fprop/bprop python-accessible methods for OnlineLearningModules
+
+
+Modified: trunk/plearn_learners/online/OnlineLearningModule.cc
+===================================================================
+--- trunk/plearn_learners/online/OnlineLearningModule.cc	2007-07-22 02:30:33 UTC (rev 7815)
++++ trunk/plearn_learners/online/OnlineLearningModule.cc	2007-07-22 02:31:51 UTC (rev 7816)
+@@ -42,6 +42,7 @@
+ 
+ 
+ #include &quot;OnlineLearningModule.h&quot;
++#include &lt;plearn/base/RemoteDeclareMethod.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -323,6 +324,106 @@
+     inherited::declareOptions(ol);
+ }
+ 
++////////////////////
++// declareMethods //
++////////////////////
++void OnlineLearningModule::declareMethods(RemoteMethodMap&amp; rmm)
++{
++    // Insert a backpointer to remote methods; note that this
++    // different than for declareOptions()
++    rmm.inherited(inherited::_getRemoteMethodMap_());
++
++    declareMethod(
++        rmm, &quot;getPorts&quot;, &amp;OnlineLearningModule::getPorts,
++        (BodyDoc(&quot;Return the list of port names of the module\n&quot;),
++         RetDoc (&quot;The list of port names&quot;)));
++
++    declareMethod(
++        rmm, &quot;forget&quot;, &amp;OnlineLearningModule::forget,
++        (BodyDoc(&quot;Reset the parameters to the state they would be before starting training.\n&quot;
++                 &quot;This may involve randomization using the random generator.\n&quot;)));
++
++    declareMethod(
++        rmm, &quot;namedFprop&quot;, &amp;OnlineLearningModule::namedFprop,
++        (BodyDoc(&quot;Perform the fprop computation on an OnlineLearningModule, which takes matrices\n&quot;
++                  &quot;in user-selected input ports and computes outputs in user-selected output-ports.\n&quot;
++                  &quot;The function actually computed by the module depends on the selected ports and\n&quot;
++                  &quot;on its internal state (options and parameters)\n&quot;),
++         ArgDoc (&quot;inputs&quot;, &quot;A dictionary of input matrices (one for each input port), indexed by the port names,\n&quot;),
++         ArgDoc (&quot;wanted_outputs&quot;, &quot;A list of wanted output port names,\n&quot;),
++         RetDoc (&quot;A dictionary of the input and output matrices (indexed by their name).\n&quot;)));
++
++    declareMethod(
++        rmm, &quot;namedBpropAccUpdate&quot;, &amp;OnlineLearningModule::namedBpropAccUpdate,
++        (BodyDoc(&quot;Perform the BpropAccUpdate computation on an OnlineLearningModule, which\n&quot;
++                 &quot;takes matrices in user-selected input ports, output ports, and output\n&quot;
++                 &quot;gradient ports and computes gradients for user-selected input ports.\n&quot;
++                 &quot;The function actually computed by the module depends on the selected ports\n&quot;
++                 &quot;and on its internal state (options and parameters)\n&quot;),
++         ArgDoc (&quot;values&quot;, &quot;A dictionary of named input and output matrices that was\n&quot;
++                 &quot;returned by namedFprop (one entry for each input and output port used).\n&quot;),
++         ArgDoc (&quot;gradients&quot;, &quot;A dictionary of named output (and possibly input) gradient\n&quot;
++                 &quot;matrices (the name indexing each matrix is the name of corresponding port).\n&quot;
++                 &quot;Output gradient matrices should be full, whereas input gradient matrices\n&quot;
++                 &quot;into which to accumulate should have lenght 0 and correct width.\n&quot;),
++         ArgDoc (&quot;additional_input_gradients&quot;, &quot;A list of wanted input port names,\n&quot;
++                 &quot;for which the gradient is desired (no accumulation)\n&quot;),
++         RetDoc (&quot;A dictionary of all the input and output gradient matrices (indexed\n&quot;
++                 &quot;by their port name), including those in the gradients argument\n&quot;
++                 &quot;and those named in the additional_input_gradiaents argument.\n&quot;)));
++
++}
++
++map&lt;string,Mat&gt; OnlineLearningModule::namedFprop(map&lt;string,Mat&gt;&amp; inputs, TVec&lt;string&gt; wanted_outputs)
++{
++    map&lt;string,Mat&gt; outputs;
++    TVec&lt;string&gt; port_names = getPorts();
++    TVec&lt;Mat*&gt; ports_value(nPorts());
++    map&lt;string,Mat&gt;::iterator it=inputs.begin();
++    for (;it!=inputs.end();++it)
++        ports_value[getPortIndex(it-&gt;first)]= &amp;it-&gt;second;
++    for (int i=0;i&lt;wanted_outputs.length();i++)
++        ports_value[getPortIndex(wanted_outputs[i])]= new Mat(0,0);
++    fprop(ports_value);
++    for (it=inputs.begin();it!=inputs.end();++it)
++        outputs[it-&gt;first]=it-&gt;second;
++    for (int i=0;i&lt;wanted_outputs.length();i++)
++        outputs[wanted_outputs[i]]= *ports_value[getPortIndex(wanted_outputs[i])];
++    return outputs;
++}
++
++map&lt;string,Mat&gt; OnlineLearningModule::namedBpropAccUpdate(map&lt;string,Mat&gt;&amp; values, 
++                                                          map&lt;string,Mat&gt;&amp; gradients, 
++                                                          TVec&lt;string&gt; additional_input_gradients)
++{
++    map&lt;string,Mat&gt; all_gradients;
++    TVec&lt;string&gt; port_names = getPorts();
++    TVec&lt;Mat*&gt; ports_value(nPorts());
++    TVec&lt;Mat*&gt; ports_gradient(nPorts());
++    map&lt;string,Mat&gt;::iterator it=values.begin();
++    for (;it!=values.end();++it)
++        ports_value[getPortIndex(it-&gt;first)]= &amp;it-&gt;second;
++    it=gradients.begin();
++    for (;it!=gradients.end();++it)
++        ports_gradient[getPortIndex(it-&gt;first)]= &amp;it-&gt;second;
++    for (int i=0;i&lt;additional_input_gradients.length();i++)
++    {
++        Mat port_value = values[additional_input_gradients[i]];
++        // the additional input gradients are to be initialized as zero matrices
++        Mat* port_gradient = new Mat(port_value.length(),port_value.width());
++        port_gradient-&gt;resize(0,port_value.width());
++        ports_gradient[getPortIndex(additional_input_gradients[i])]= port_gradient;
++    }
++    bpropAccUpdate(ports_value,ports_gradient);
++    for (it=gradients.begin();it!=gradients.end();++it)
++        all_gradients[it-&gt;first]=it-&gt;second;
++    for (int i=0;i&lt;additional_input_gradients.length();i++)
++        all_gradients[additional_input_gradients[i]]= 
++            *ports_gradient[getPortIndex(additional_input_gradients[i])];
++    return all_gradients;
++}
++
++
+ ////////////
+ // build_ //
+ ////////////
+
+Modified: trunk/plearn_learners/online/OnlineLearningModule.h
+===================================================================
+--- trunk/plearn_learners/online/OnlineLearningModule.h	2007-07-22 02:30:33 UTC (rev 7815)
++++ trunk/plearn_learners/online/OnlineLearningModule.h	2007-07-22 02:31:51 UTC (rev 7816)
+@@ -130,6 +130,11 @@
+     //! - crash otherwise
+     virtual void fprop(const TVec&lt;Mat*&gt;&amp; ports_value);
+ 
++    virtual map&lt;string,Mat&gt; namedFprop(map&lt;string,Mat&gt;&amp; inputs, TVec&lt;string&gt; wanted_outputs);
++    virtual map&lt;string,Mat&gt; namedBpropAccUpdate(map&lt;string,Mat&gt;&amp; values, 
++                                                map&lt;string,Mat&gt;&amp; gradients, 
++                                                TVec&lt;string&gt; additional_input_gradients);
++
+     //! SOON TO BE DEPRECATED, USE bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
+     //!                                           const TVec&lt;Mat*&gt;&amp; ports_gradient)
+     //! Adapt based on the output gradient: this method should only
+@@ -296,6 +301,9 @@
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+ 
++    //! Declare the methods that are remote-callable
++    static void declareMethods(RemoteMethodMap&amp; rmm);
++
+ protected:
+ 
+     //! Used to store the size of each port (may be used in sub-classes).
+
+Modified: trunk/plearn_learners/online/RBMBinomialLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMBinomialLayer.cc	2007-07-22 02:30:33 UTC (rev 7815)
++++ trunk/plearn_learners/online/RBMBinomialLayer.cc	2007-07-22 02:31:51 UTC (rev 7816)
+@@ -334,34 +334,20 @@
+         {
+             target_i = target[i];
+             activation_i = activation[i];
+-            if(!fast_exact_is_equal(target_i,0.0))
+-                // nll -= target[i] * pl_log(expectations[i]); 
+-                // but it is numerically unstable, so use instead
+-                // log (1/(1+exp(-x))) = -log(1+exp(-x)) = -softplus(-x)
+-                ret += target_i * tabulated_softplus(-activation_i);
+-            if(!fast_exact_is_equal(target_i,1.0))
+-                // ret -= (1-target_i) * pl_log(1-expectation_i);
+-                // log (1 - 1/(1+exp(-x))) = log(exp(-x)/(1+exp(-x)))
+-                //                         = log(1/(1+exp(x)))
+-                //                         = -log(1+exp(x)) = -softplus(x)
+-                ret += (1-target_i) * tabulated_softplus(activation_i);
++            ret += tabulated_softplus(activation_i) - target_i * activation_i;
++            // nll -= target * pl_log(expectation); 
++            // but it is numerically unstable, so use instead the following identity:
++            // nll = - target*log(sigmoid(act)) -(1-target)*log(1-sigmoid(act))
++            //     = target*softplus(-act) +(1-target)*(act+softplus(-act))
++            //     = act + softplus(-act) - target*act 
++            //     = softplus(act) - target*act
+         }
+     } else {
+         for( int i=0 ; i&lt;size ; i++ )
+         {
+             target_i = target[i];
+             activation_i = activation[i];
+-            if(!fast_exact_is_equal(target_i,0.0))
+-                // nll -= target[i] * pl_log(expectations[i]); 
+-                // but it is numerically unstable, so use instead
+-                // log (1/(1+exp(-x))) = -log(1+exp(-x)) = -softplus(-x)
+-                ret += target_i * softplus(-activation_i);
+-            if(!fast_exact_is_equal(target_i,1.0))
+-                // ret -= (1-target_i) * pl_log(1-expectation_i);
+-                // log (1 - 1/(1+exp(-x))) = log(exp(-x)/(1+exp(-x)))
+-                //                         = log(1/(1+exp(x)))
+-                //                         = -log(1+exp(x)) = -softplus(x)
+-                ret += (1-target_i) * softplus(activation_i);
++            ret += softplus(activation_i) - target_i * activation_i;
+         }
+     }
+     return ret;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001263.html">[Plearn-commits] r7815 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001265.html">[Plearn-commits] r7817 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1264">[ date ]</a>
+              <a href="thread.html#1264">[ thread ]</a>
+              <a href="subject.html#1264">[ subject ]</a>
+              <a href="author.html#1264">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

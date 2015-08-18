@@ -1,0 +1,244 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8061 - in trunk: python_modules/plearn/parallel	scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8061%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200709111437.l8BEbwHQ024794%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001508.html">
+   <LINK REL="Next"  HREF="001510.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8061 - in trunk: python_modules/plearn/parallel	scripts</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8061%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200709111437.l8BEbwHQ024794%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8061 - in trunk: python_modules/plearn/parallel	scripts">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Sep 11 16:37:58 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001508.html">[Plearn-commits] r8060 - in trunk: python_modules/plearn/parallel	python_modules/plearn/utilities scripts
+</A></li>
+        <LI>Next message: <A HREF="001510.html">[Plearn-commits] r8062 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1509">[ date ]</a>
+              <a href="thread.html#1509">[ thread ]</a>
+              <a href="subject.html#1509">[ subject ]</a>
+              <a href="author.html#1509">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2007-09-11 16:37:57 +0200 (Tue, 11 Sep 2007)
+New Revision: 8061
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/cdispatch
+Log:
+-Added the wait() function and modified run() to do not block after starting the jobs
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2007-09-10 19:35:32 UTC (rev 8060)
++++ trunk/python_modules/plearn/parallel/dbi.py	2007-09-11 14:37:57 UTC (rev 8061)
+@@ -180,6 +180,9 @@
+     def run(self):
+         pass
+ 
++    def wait(self):
++        print &quot;[DBI] WARNING the wait function was not overrided by the sub class!&quot;
++        
+ class Task:
+ 
+     def __init__(self, command, tmp_dir, log_dir, time_format, pre_tasks=[], post_tasks=[], dolog = True, gen_unique_id = True, args = {}):
+@@ -299,10 +302,11 @@
+     def __init__(self, commands, **args ):
+         self.duree=None
+         self.arch=None
+-        self.wait=None
++        self.cluster_wait=None
+         self.threads=[]
+         self.started=0
+         self.nb_proc=50
++        self.mt=None
+         DBIBase.__init__(self, commands, **args)
+         self.add_commands(commands)
+         self.nb_proc=int(self.nb_proc)
+@@ -330,7 +334,7 @@
+             command += &quot; --typecpu all&quot;
+         if self.duree:
+             command += &quot; --duree &quot;+self.duree
+-        if self.wait:
++        if self.cluster_wait:
+             command += &quot; --wait&quot;
+         command += &quot; --execute '&quot;+string.join(task.commands,';') + &quot;'&quot;
+         self.started+=1
+@@ -357,9 +361,8 @@
+             exec_pre_batch()
+ 
+         # Execute all Tasks (including pre_tasks and post_tasks if any)
+-        mt= MultiThread(self.run_one_job,self.tasks,self.nb_proc,&quot;[DBI,%s]&quot;%time.ctime())
+-        mt.start()
+-        mt.join()
++        self.mt=MultiThread(self.run_one_job,self.tasks,self.nb_proc,&quot;[DBI,%s]&quot;%time.ctime())
++        self.mt.start()
+ 
+         # Execute post-batchs
+         if len(self.post_batch)&gt;0:
+@@ -371,6 +374,12 @@
+         #TODO: delete all log files for the current batch
+         pass
+ 
++    def wait(self):
++        if self.mt:
++            self.mt.join()
++        else:
++            print &quot;[DBI] WARNING jobs not started!&quot;
++                
+ class DBIbqtools(DBIBase):
+ 
+     def __init__( self, commands, **args ):
+@@ -497,7 +506,9 @@
+         if len(self.post_batch)&gt;0:
+             exec_post_batch()
+ 
+-            
++    def wait(self):
++        print &quot;[DBI] WARNING cannot wait until all jobs are done for bqtools, use bqwatch or bqstatus&quot;
++                
+ class DBICondor(DBIBase):
+ 
+     def __init__( self, commands, **args ):
+@@ -723,9 +734,9 @@
+         if len(self.post_batch)&gt;0:
+             exec_post_batch()
+ 
+-
+-
+-
++    def wait(self):
++        print &quot;[DBI] WARNING no waiting for all job to finish implemented for condor, use 'condor_q' or 'condor_wait %s/condor.log'&quot;%(self.log_dir)
++                
+     def clean(self):
+         pass
+ 
+@@ -734,10 +745,9 @@
+     def __init__( self, commands, **args ):
+         self.nb_proc=1
+         DBIBase.__init__(self, commands, **args)
+-        if isinstance(self.nb_proc,basestring):
+-            self.nb_proc=int(self.nb_proc)
+         self.args=args
+         self.threads=[]
++        self.mt = None
+         self.started=0
+         self.nb_proc=int(self.nb_proc)
+         self.add_commands(commands)
+@@ -819,9 +829,8 @@
+             exec_pre_batch()
+ 
+         # Execute all Tasks (including pre_tasks and post_tasks if any)
+-        mt=MultiThread(self.run_one_job,self.tasks,self.nb_proc,&quot;[DBI,%s]&quot;%time.ctime())
+-        mt.start()
+-        mt.join()
++        self.mt=MultiThread(self.run_one_job,self.tasks,self.nb_proc,&quot;[DBI,%s]&quot;%time.ctime())
++        self.mt.start()
+         
+         # Execute post-batchs
+         if len(self.post_batch)&gt;0:
+@@ -832,6 +841,12 @@
+     def clean(self):
+         pass
+ 
++    def wait(self):
++        if self.mt:
++            self.mt.join()
++        else:
++            print &quot;[DBI] WARNING jobs not started!&quot;
++                
+ class SshHost:
+     def __init__(self, hostname):
+         self.hostname= hostname
+@@ -936,6 +951,9 @@
+         if len(self.pre_batch)&gt;0:
+             exec_pre_batch()
+ 
++        if self.test:
++            print &quot;[DBI] In testmode, we only print the command that would be executed.&quot;
++            
+         # Execute all Tasks (including pre_tasks and post_tasks if any)
+         print &quot;[DBI] tasks= &quot;, self.tasks
+         for task in self.tasks:
+@@ -949,10 +967,15 @@
+         #TODO: delete all log files for the current batch
+         pass
+ 
++    def wait(self):
++        #TODO
++        print &quot;[DBI] WARNING the wait function was not implement for the ssh backend!&quot;
+ 
+-
+ # creates an object of type ('DBI' + launch_system) if it exists
+ def DBI(commands, launch_system, **args):
++&quot;&quot;&quot;The Distributed Batch Interface is a collection of python classes
++that make it easy to execute commands in parallel using different
++systems like condor, bqtools on Mammoth, the cluster command or localy.&quot;&quot;&quot;
+     try:
+         jobs = eval('DBI'+launch_system+'(commands,**args)')
+     except NameError:
+
+Modified: trunk/scripts/cdispatch
+===================================================================
+--- trunk/scripts/cdispatch	2007-09-10 19:35:32 UTC (rev 8060)
++++ trunk/scripts/cdispatch	2007-09-11 14:37:57 UTC (rev 8061)
+@@ -144,7 +144,7 @@
+     elif argv == &quot;--32&quot;  or argv == &quot;--64&quot; or argv == &quot;--3264&quot;:
+         dbi_param[&quot;arch&quot;]=argv[2:]
+     elif argv == &quot;--wait&quot;:
+-        dbi_param[&quot;wait&quot;]=True
++        dbi_param[&quot;cluster_wait&quot;]=True
+     elif argv[0:6] == &quot;--req=&quot;:
+         dbi_param[&quot;requirements&quot;]=&quot;\&quot;%s\&quot;&quot;%argv[6:]
+     elif argv == &quot;--no_clean_up&quot;:
+@@ -257,6 +257,7 @@
+     SCRIPT.write(
+ &quot;&quot;&quot;)
+ jobs.run()
++jobs.wait()
+ # There is %d command in the script&quot;&quot;&quot;%(len(commands)))
+         
+     SCRIPT.close()
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001508.html">[Plearn-commits] r8060 - in trunk: python_modules/plearn/parallel	python_modules/plearn/utilities scripts
+</A></li>
+	<LI>Next message: <A HREF="001510.html">[Plearn-commits] r8062 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1509">[ date ]</a>
+              <a href="thread.html#1509">[ thread ]</a>
+              <a href="subject.html#1509">[ subject ]</a>
+              <a href="author.html#1509">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

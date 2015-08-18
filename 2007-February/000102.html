@@ -1,0 +1,608 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6653 - trunk/plearn/ker
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6653%20-%20trunk/plearn/ker&In-Reply-To=%3C200702131637.l1DGbriO029862%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000101.html">
+   <LINK REL="Next"  HREF="000103.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6653 - trunk/plearn/ker</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6653%20-%20trunk/plearn/ker&In-Reply-To=%3C200702131637.l1DGbriO029862%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6653 - trunk/plearn/ker">chapados at mail.berlios.de
+       </A><BR>
+    <I>Tue Feb 13 17:37:53 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000101.html">[Plearn-commits] r6652 - trunk/plearn/math
+</A></li>
+        <LI>Next message: <A HREF="000103.html">[Plearn-commits] r6654 - trunk/python_modules/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#102">[ date ]</a>
+              <a href="thread.html#102">[ thread ]</a>
+              <a href="subject.html#102">[ subject ]</a>
+              <a href="author.html#102">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2007-02-13 17:37:52 +0100 (Tue, 13 Feb 2007)
+New Revision: 6653
+
+Modified:
+   trunk/plearn/ker/IIDNoiseKernel.cc
+   trunk/plearn/ker/IIDNoiseKernel.h
+   trunk/plearn/ker/Kernel.cc
+   trunk/plearn/ker/Kernel.h
+   trunk/plearn/ker/RationalQuadraticARDKernel.cc
+   trunk/plearn/ker/RationalQuadraticARDKernel.h
+Log:
+More efficient derivatives (analytic) of the Gram matrix
+
+Modified: trunk/plearn/ker/IIDNoiseKernel.cc
+===================================================================
+--- trunk/plearn/ker/IIDNoiseKernel.cc	2007-02-13 16:37:10 UTC (rev 6652)
++++ trunk/plearn/ker/IIDNoiseKernel.cc	2007-02-13 16:37:52 UTC (rev 6653)
+@@ -36,6 +36,7 @@
+ 
+ /*! \file IIDNoiseKernel.cc */
+ 
++#include &lt;plearn/base/lexical_cast.h&gt;
+ #include &lt;plearn/math/TMat_maths.h&gt;
+ #include &quot;IIDNoiseKernel.h&quot;
+ 
+@@ -54,6 +55,18 @@
+     &quot;where delta_x,y is the Kronecker delta function, and sn2 is the exp of\n&quot;
+     &quot;twice the 'log_noise_sigma' option.\n&quot;
+     &quot;\n&quot;
++    &quot;In addition to comparing the complete x and y vectors, this kernel allows\n&quot;
++    &quot;adding a Kronecker delta when there is a match in only ONE DIMENSION.  This\n&quot;
++    &quot;may be generalized in the future to allow match according to a subset of\n&quot;
++    &quot;the input variables (but is not currently done for performance reasons).\n&quot;
++    &quot;With these terms, the kernel function takes the form:\n&quot;
++    &quot;\n&quot;
++    &quot;  k(x,y) = delta_x,y * sn2 + \\sum_i delta_x[kr(i)],y[kr(i)] * ks2[i]\n&quot;
++    &quot;\n&quot;
++    &quot;where kr(i) is the i-th element of 'kronecker_indexes' (representing an\n&quot;
++    &quot;index into the input vectors), and ks2[i] is the exp of twice the value of\n&quot;
++    &quot;the i-th element of the 'log_kronecker_sigma' option.\n&quot;
++    &quot;\n&quot;
+     &quot;Note that to make its operations more robust when used with unconstrained\n&quot;
+     &quot;optimization of hyperparameters, all hyperparameters of this kernel are\n&quot;
+     &quot;specified in the log-domain.\n&quot;
+@@ -70,10 +83,21 @@
+ void IIDNoiseKernel::declareOptions(OptionList&amp; ol)
+ {
+     declareOption(
+-        ol, &quot;log_noise_sigma&quot;,
+-        &amp;IIDNoiseKernel::m_log_noise_sigma,
++        ol, &quot;log_noise_sigma&quot;, &amp;IIDNoiseKernel::m_log_noise_sigma,
+         OptionBase::buildoption,
+         &quot;Log of the global noise variance.  Default value=0.0&quot;);
++
++    declareOption(
++        ol, &quot;kronecker_indexes&quot;, &amp;IIDNoiseKernel::m_kronecker_indexes,
++        OptionBase::buildoption,
++        &quot;Element index in the input vectors that should be subject to additional\n&quot;
++        &quot;Kronecker delta terms&quot;);
++
++    declareOption(
++        ol, &quot;log_kronecker_sigma&quot;, &amp;IIDNoiseKernel::m_log_kronecker_sigma,
++        OptionBase::buildoption,
++        &quot;Log of the noise variance terms for the Kronecker deltas associated\n&quot;
++        &quot;with kronecker_indexes&quot;);
+     
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+@@ -93,17 +117,37 @@
+ //#####  build_  ##############################################################
+ 
+ void IIDNoiseKernel::build_()
+-{ }
++{
++    if (m_kronecker_indexes.size() != m_log_kronecker_sigma.size())
++        PLERROR(&quot;IIDNoiseKernel::build_: size of 'kronecker_indexes' (%d) &quot;
++                &quot;does not match that of 'log_kronecker_sigma' (%d)&quot;,
++                m_kronecker_indexes.size(), m_log_kronecker_sigma.size());
++}
+ 
+ 
+ //#####  evaluate  ############################################################
+ 
+ real IIDNoiseKernel::evaluate(const Vec&amp; x1, const Vec&amp; x2) const
+ {
+-    if (fast_is_equal(powdistance(x1,x2,2), 0.0))
+-        return exp(2*m_log_noise_sigma);
+-    else
+-        return 0.0;
++    // if (fast_is_equal(powdistance(x1,x2,2), 0.0))
++    //     return exp(2*m_log_noise_sigma);
++    // else
++    //     return 0.0;
++
++    real value = 0.0;
++    if (x1 == x2)
++        value += exp(2*m_log_noise_sigma);
++
++    const int n = m_kronecker_indexes.size();
++    if (n &gt; 0) {
++        int*  cur_index = m_kronecker_indexes.data();
++        real* cur_sigma = m_log_kronecker_sigma.data();
++
++        for (int i=0 ; i&lt;n ; ++i, ++cur_index, ++cur_sigma)
++            if (fast_is_equal(x1[*cur_index], x2[*cur_index]))
++                value += exp(2 * *cur_sigma);
++    }
++    return value;
+ }
+ 
+ 
+@@ -112,6 +156,9 @@
+ void IIDNoiseKernel::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
++
++    deepCopyField(m_kronecker_indexes,   copies);
++    deepCopyField(m_log_kronecker_sigma, copies);
+ }
+ 
+ 
+@@ -121,6 +168,7 @@
+                                                  real epsilon) const
+ {
+     static const string LNS(&quot;log_noise_sigma&quot;);
++    static const string LKS(&quot;log_kronecker_sigma[&quot;);
+     if (kernel_param == LNS) {
+         if (!data)
+             PLERROR(&quot;Kernel::computeGramMatrixDerivative should be called only after &quot;
+@@ -137,10 +185,63 @@
+         for (int i=0 ; i&lt;W ; ++i)
+             KD(i,i) = deriv;
+     }
++    else if (string_begins_with(kernel_param, LKS) &amp;&amp;
++             kernel_param[kernel_param.size()-1] == ']')
++    {
++        int arg = tolong(kernel_param.substr(
++                             LKS.size(), kernel_param.size() - LKS.size() - 1));
++        PLASSERT( arg &lt; m_kronecker_indexes.size() );
++
++        computeGramMatrixDerivNV&lt;
++            IIDNoiseKernel, &amp;IIDNoiseKernel::derivKronecker&gt;(KD, this, arg);
++        
++        // int W = nExamples();
++        // KD.resize(W,W);
++        // real deriv = 2*exp(2*m_log_kronecker_sigma[arg]);
++        // int index  = m_kronecker_indexes[arg];
++        // 
++        // Vec row_i;
++        // Vec row_j;
++        // int m = KD.mod();
++        // real* KDi;                           // Start of row i
++        // real* KDji;                          // Start of column i
++        // for (int i=0 ; i&lt;W ; ++i) {
++        //     KDi = KD[i];
++        //     KDji = &amp;KD[0][i];
++        //     dataRow(i, row_i);
++        //     real row_i_index = row_i[index];
++        //     for (int j=0 ; j&lt;=i ; ++j, KDji += m) {
++        //         dataRow(j, row_j);
++        //         real KDij;
++        //         if (fast_is_equal(row_i_index, row_j[index]))
++        //             KDij = deriv;
++        //         else
++        //             KDij = 0.0;
++        // 
++        //         *KDi++ = KDij;
++        //         if (j &lt; i)
++        //             *KDji = KDij;
++        //     }
++        // }
++    }
+     else
+         inherited::computeGramMatrixDerivative(KD, kernel_param, epsilon);
+ }
+ 
++
++//#####  derivKronecker  ######################################################
++
++real IIDNoiseKernel::derivKronecker(const Vec&amp; row_i, const Vec&amp; row_j, real K,
++                                    int arg) const
++{
++    int index = m_kronecker_indexes[arg];
++    if (fast_is_equal(row_i[index], row_j[index]))
++        return 2*exp(2*m_log_kronecker_sigma[arg]);
++    else
++        return 0.0;
++}
++
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn/ker/IIDNoiseKernel.h
+===================================================================
+--- trunk/plearn/ker/IIDNoiseKernel.h	2007-02-13 16:37:10 UTC (rev 6652)
++++ trunk/plearn/ker/IIDNoiseKernel.h	2007-02-13 16:37:52 UTC (rev 6653)
+@@ -40,7 +40,7 @@
+ #ifndef IIDNoiseKernel_INC
+ #define IIDNoiseKernel_INC
+ 
+-#include &lt;plearn/ker/Kernel.h&gt;
++#include &lt;plearn/ker/MemoryCachedKernel.h&gt;
+ 
+ namespace PLearn {
+ 
+@@ -56,19 +56,39 @@
+  *  where delta_x,y is the Kronecker delta function, and sn2 is the exp of
+  *  twice the 'log_noise_sigma' option.
+  *
++ *  In addition to comparing the complete x and y vectors, this kernel allows
++ *  adding a Kronecker delta when there is a match in only ONE DIMENSION.  This
++ *  may be generalized in the future to allow match according to a subset of
++ *  the input variables (but is not currently done for performance reasons).
++ *  With these terms, the kernel function takes the form:
++ *
++ *    k(x,y) = delta_x,y * sn2 + \sum_i delta_x[kr(i)],y[kr(i)] * ks2[i]
++ *
++ *  where kr(i) is the i-th element of 'kronecker_indexes' (representing an
++ *  index into the input vectors), and ks2[i] is the exp of twice the value of
++ *  the i-th element of the 'log_kronecker_sigma' option.
++ *
+  *  Note that to make its operations more robust when used with unconstrained
+  *  optimization of hyperparameters, all hyperparameters of this kernel are
+  *  specified in the log-domain.
+  */
+-class IIDNoiseKernel : public Kernel
++class IIDNoiseKernel : public MemoryCachedKernel
+ {
+-    typedef Kernel inherited;
++    typedef MemoryCachedKernel inherited;
+ 
+ public:
+     //#####  Public Build Options  ############################################
+ 
+     //! Log of the global noise variance.  Default value=0.0
+     real m_log_noise_sigma;
++
++    //! Element index in the input vectors that should be subject to additional
++    //! Kronecker delta terms
++    TVec&lt;int&gt; m_kronecker_indexes;
++
++    //! Log of the noise variance terms for the Kronecker deltas associated
++    //! with kronecker_indexes
++    Vec m_log_kronecker_sigma;
+     
+ public:
+     //#####  Public Member Functions  #########################################
+@@ -102,6 +122,9 @@
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+ 
++    //! Derivative function with respect to kronecker_indexes[arg] hyperparameter
++    real derivKronecker(const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const;
++    
+ private:
+     //! This does the actual building.
+     void build_();
+
+Modified: trunk/plearn/ker/Kernel.cc
+===================================================================
+--- trunk/plearn/ker/Kernel.cc	2007-02-13 16:37:10 UTC (rev 6652)
++++ trunk/plearn/ker/Kernel.cc	2007-02-13 16:37:52 UTC (rev 6653)
+@@ -326,6 +326,10 @@
+         K &lt;&lt; gram_matrix;
+         return;
+     }
++    if (K.length() != data.length() || K.width() != data.length())
++        PLERROR(&quot;Kernel::computeGramMatrix: the argument matrix K should be\n&quot;
++                &quot;of size %d x %d (currently of size %d x %d)&quot;,
++                data.length(), data.length(), K.length(), K.width());
+     int l=data-&gt;length();
+     int m=K.mod();
+     PP&lt;ProgressBar&gt; pb;
+
+Modified: trunk/plearn/ker/Kernel.h
+===================================================================
+--- trunk/plearn/ker/Kernel.h	2007-02-13 16:37:10 UTC (rev 6652)
++++ trunk/plearn/ker/Kernel.h	2007-02-13 16:37:52 UTC (rev 6653)
+@@ -88,7 +88,7 @@
+ 
+     PLEARN_DECLARE_ABSTRACT_OBJECT(Kernel);
+ 
+-    //!  ** Subclasses must overload this method **
++    //!  ** Subclasses must override this method **
+     virtual real evaluate(const Vec&amp; x1, const Vec&amp; x2) const = 0; //!&lt;  returns K(x1,x2) 
+ 
+     //!  ** Subclasses may override these methods to provide efficient kernel matrix access **
+@@ -169,12 +169,12 @@
+     virtual void computeGramMatrixDerivative(Mat&amp; KD, const string&amp; kernel_param,
+                                              real epsilon=1e-6) const;
+     
+-    //!  ** Subclasses may overload these methods ** 
++    //!  ** Subclasses may override these methods ** 
+     //!  They provide a generic way to set and retrieve kernel parameters
+     virtual void setParameters(Vec paramvec); //!&lt;  default version produces an error
+     virtual Vec getParameters() const; //!&lt;  default version returns an empty Vec
+ 
+-    //!  ** Subclasses should NOT overload the following methods. The default versions are fine. **
++    //!  ** Subclasses should NOT override the following methods. The default versions are fine. **
+ 
+     void apply(VMat m1, VMat m2, Mat&amp; result) const; //!&lt;  result(i,j) = K(m1(i),m2(j))
+     Mat apply(VMat m1, VMat m2) const; //!&lt;  same as above, but returns the result mat instead
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.cc
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-02-13 16:37:10 UTC (rev 6652)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.cc	2007-02-13 16:37:52 UTC (rev 6653)
+@@ -51,11 +51,11 @@
+     &quot;Similar to C.E. Rasmussen's GPML code (see <A HREF="http://www.gaussianprocess.org">http://www.gaussianprocess.org</A>),\n&quot;
+     &quot;this kernel is specified as:\n&quot;
+     &quot;\n&quot;
+-    &quot;  k(x,y) = sf2 * [1 + (sum_i (x_i - y_i)^2 / w_i)/(2*alpha)]^(-alpha) + delta_x,y*sn2\n&quot;
++    &quot;  k(x,y) = sf2 * [1 + (sum_i (x_i - y_i)^2 / w_i)/(2*alpha)]^(-alpha) + k_iid(x,y)\n&quot;
+     &quot;\n&quot;
+-    &quot;where sf2 is the exp of twice the 'log_signal_sigma' option, sn2 is the\n&quot;
+-    &quot;exp of twice the 'log_noise_sigma' option (added only if x==y), and w_i\n&quot;
+-    &quot;is exp(2*log_global_sigma + 2*log_input_sigma[i]).\n&quot;
++    &quot;where sf2 is the exp of twice the 'log_signal_sigma' option, w_i is\n&quot;
++    &quot;exp(2*log_global_sigma + 2*log_input_sigma[i]), and k_iid(x,y) is the\n&quot;
++    &quot;result of IIDNoiseKernel kernel evaluation.\n&quot;
+     &quot;\n&quot;
+     &quot;Note that to make its operations more robust when used with unconstrained\n&quot;
+     &quot;optimizaiton of hyperparameters, all hyperparameters of this kernel are\n&quot;
+@@ -100,6 +100,14 @@
+ { }
+ 
+ 
++//#####  makeDeepCopyFromShallowCopy  #########################################
++
++void RationalQuadraticARDKernel::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++}
++
++
+ //#####  evaluate  ############################################################
+ 
+ real RationalQuadraticARDKernel::evaluate(const Vec&amp; x1, const Vec&amp; x2) const
+@@ -108,7 +116,7 @@
+     PLASSERT( !m_log_input_sigma.size() || x1.size() == m_log_input_sigma.size() );
+ 
+     if (x1.size() == 0)
+-        return exp(2*m_log_signal_sigma) + exp(2*m_log_noise_sigma);
++        return exp(2*m_log_signal_sigma) + inherited::evaluate(x1,x2);
+     
+     const real* px1 = x1.data();
+     const real* px2 = x2.data();
+@@ -136,21 +144,131 @@
+         }
+     }
+ 
+-    // We add a noise variance only if x and y are equal (within machine tolerance)
+-    real noise_cov = 0.0;
+-    if (is_equal(sum_sqdiff, 0))
+-        noise_cov = exp(2*m_log_noise_sigma);
++    // We add the noise covariance as well
++    real noise_cov = inherited::evaluate(x1,x2);
+     return sf2 * pow(1 + sum_wt / (2.*alpha), -alpha) + noise_cov;
+ }
+ 
+ 
+-//#####  makeDeepCopyFromShallowCopy  #########################################
++//#####  computeGramMatrix  ###################################################
+ 
+-void RationalQuadraticARDKernel::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++void RationalQuadraticARDKernel::computeGramMatrix(Mat K) const
+ {
+-    inherited::makeDeepCopyFromShallowCopy(copies);
++    computeGramMatrixNV(K, this);
+ }
+ 
++
++//#####  computeGramMatrixDerivative  #########################################
++
++void RationalQuadraticARDKernel::computeGramMatrixDerivative(
++    Mat&amp; KD, const string&amp; kernel_param, real epsilon) const
++{
++    static const string LSS(&quot;log_sigmal_sigma&quot;);
++    static const string LGS(&quot;log_global_sigma&quot;);
++    static const string LIS(&quot;log_input_sigma[&quot;);
++    static const string LAL(&quot;log_alpha&quot;);
++
++    if (kernel_param == LSS) {
++        computeGramMatrixDerivNV&lt;
++            RationalQuadraticARDKernel,
++            &amp;RationalQuadraticARDKernel::derivLogSignalSigma&gt;(KD, this, -1);
++    }
++    else if (kernel_param == LGS) {
++        computeGramMatrixDerivNV&lt;
++            RationalQuadraticARDKernel,
++            &amp;RationalQuadraticARDKernel::derivLogGlobalSigma&gt;(KD, this, -1);
++    }
++    else if (string_begins_with(kernel_param, LIS) &amp;&amp;
++             kernel_param[kernel_param.size()-1] == ']')
++    {
++        int arg = tolong(kernel_param.substr(
++                             LIS.size(), kernel_param.size() - LIS.size() - 1));
++        PLASSERT( arg &lt; m_log_input_sigma.size() );
++
++        computeGramMatrixDerivNV&lt;
++            RationalQuadraticARDKernel,
++            &amp;RationalQuadraticARDKernel::derivLogInputSigma&gt;(KD, this, arg);
++    }
++    else if (kernel_param == LAL) {
++        computeGramMatrixDerivNV&lt;
++            RationalQuadraticARDKernel,
++            &amp;RationalQuadraticARDKernel::derivLogAlpha&gt;(KD, this, -1);
++    }
++    else
++        inherited::computeGramMatrixDerivative(KD, kernel_param, epsilon);
++
++    // Compare against finite differences
++    // Mat KD1;
++    // Kernel::computeGramMatrixDerivative(KD1, kernel_param, epsilon);
++    // cerr &lt;&lt; &quot;Kernel hyperparameter: &quot; &lt;&lt; kernel_param &lt;&lt; endl;
++    // cerr &lt;&lt; &quot;Analytic derivative (1st row):&quot; &lt;&lt; endl
++    //      &lt;&lt; KD(0) &lt;&lt; endl
++    //      &lt;&lt; &quot;Finite differences:&quot; &lt;&lt; endl
++    //      &lt;&lt; KD1(0) &lt;&lt; endl;
++}
++
++
++//#####  derivLogSignalSigma  #################################################
++
++real RationalQuadraticARDKernel::derivLogSignalSigma(
++    const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const
++{
++    real noise = inherited::evaluate(row_i, row_j);
++    return 2*(K-noise);
++}
++
++
++//#####  derivLogGlobalSigma  #################################################
++
++real RationalQuadraticARDKernel::derivLogGlobalSigma(
++    const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const
++{
++    // The rational quadratic gives us:
++    //     K = exp(2*s)*k^(-alpha).
++    // Rederive the value of k
++    real alpha = exp(m_log_alpha);
++    real noise = inherited::evaluate(row_i, row_j);
++    K -= noise;
++    real k     = exp(- (pl_log(K) - 2*m_log_signal_sigma) / alpha);
++    real inner = - (k - 1) * alpha;
++    return -0.5 * (K / k) * inner;
++}
++
++
++//#####  derivLogInputSigma  ##################################################
++
++real RationalQuadraticARDKernel::derivLogInputSigma(
++    const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const
++{
++    // The rational quadratic gives us:
++    //     K = exp(2*s)*k^(-alpha).
++    // Rederive the value of k
++    real alpha   = exp(m_log_alpha);
++    real noise   = inherited::evaluate(row_i, row_j);
++    K -= noise;
++    real k       = exp(- (pl_log(K) - 2*m_log_signal_sigma) / alpha);
++    real diff    = row_i[arg] - row_j[arg];
++    real sq_diff = diff * diff;
++    return (K / k) * exp(-2 * (m_log_global_sigma + m_log_input_sigma[arg])) * sq_diff;
++}
++
++
++//#####  derivLogAlpha  #######################################################
++
++real RationalQuadraticARDKernel::derivLogAlpha(
++    const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const
++{
++    real alpha = exp(m_log_alpha);
++    real noise = inherited::evaluate(row_i, row_j);
++    K -= noise;
++    real k     = exp(- (pl_log(K) - 2*m_log_signal_sigma) / alpha);
++    real left  = - alpha * pl_log(k);
++    real num   = (k - 1) * 2 * alpha;
++    real denum = 2 * k;
++    return K * (left + num / denum);
++}
++
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn/ker/RationalQuadraticARDKernel.h
+===================================================================
+--- trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-02-13 16:37:10 UTC (rev 6652)
++++ trunk/plearn/ker/RationalQuadraticARDKernel.h	2007-02-13 16:37:52 UTC (rev 6653)
+@@ -54,11 +54,11 @@
+  *  Similar to C.E. Rasmussen's GPML code (see <A HREF="http://www.gaussianprocess.org">http://www.gaussianprocess.org</A>),
+  *  this kernel is specified as:
+  *
+- *    k(x,y) = sf2 * [1 + (sum_i (x_i - y_i)^2 / w_i)/(2*alpha)]^(-alpha) + delta_x,y*sn2
++ *    k(x,y) = sf2 * [1 + (sum_i (x_i - y_i)^2 / w_i)/(2*alpha)]^(-alpha) + k_iid(x,y)
+  *
+- *  where sf2 is the exp of twice the 'log_signal_sigma' option, sn2 is the
+- *  exp of twice the 'log_noise_sigma' option (added only if x==y), and w_i
+- *  is exp(2*log_global_sigma + 2*log_input_sigma[i]).
++ *  where sf2 is the exp of twice the 'log_signal_sigma' option, w_i is
++ *  exp(2*log_global_sigma + 2*log_input_sigma[i]), and k_iid(x,y) is the
++ *  result of IIDNoiseKernel kernel evaluation.
+  *
+  *  Note that to make its operations more robust when used with unconstrained
+  *  optimizaiton of hyperparameters, all hyperparameters of this kernel are
+@@ -87,7 +87,16 @@
+     //! Compute K(x1,x2).
+     virtual real evaluate(const Vec&amp; x1, const Vec&amp; x2) const;
+ 
++    //! Compute entire Gram matrix
++    virtual void computeGramMatrix(Mat K) const;
+ 
++    //! Compute the derivative of the Gram matrix with respect to one of the
++    //! kernel's parameters.  Analytic derivatives are implemented for this
++    //! kernel.
++    virtual void computeGramMatrixDerivative(Mat&amp; KD, const string&amp; kernel_param,
++                                             real epsilon=1e-6) const;
++    
++
+     //#####  PLearn::Object Protocol  #########################################
+ 
+     // Declares other standard object methods.
+@@ -103,6 +112,18 @@
+     //! Declares the class options.
+     static void declareOptions(OptionList&amp; ol);
+ 
++    //! Derivative function with respect to log_signal_sigma
++    real derivLogSignalSigma(const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const;
++
++    //! Derivative function with respect to log_global_sigma
++    real derivLogGlobalSigma(const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const;
++    
++    //! Derivative function with respect to log_input_sigma[arg]
++    real derivLogInputSigma(const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const;
++    
++    //! Derivative function with respect to log_alpha
++    real derivLogAlpha(const Vec&amp; row_i, const Vec&amp; row_j, real K, int arg) const;
++    
+ private:
+     //! This does the actual building.
+     void build_();
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000101.html">[Plearn-commits] r6652 - trunk/plearn/math
+</A></li>
+	<LI>Next message: <A HREF="000103.html">[Plearn-commits] r6654 - trunk/python_modules/plearn/math
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#102">[ date ]</a>
+              <a href="thread.html#102">[ thread ]</a>
+              <a href="subject.html#102">[ subject ]</a>
+              <a href="author.html#102">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

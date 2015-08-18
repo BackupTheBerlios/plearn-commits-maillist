@@ -1,0 +1,1149 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6926 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6926%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704201930.l3KJUNxC009199%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000374.html">
+   <LINK REL="Next"  HREF="000376.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6926 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6926%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704201930.l3KJUNxC009199%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6926 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Fri Apr 20 21:30:23 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000374.html">[Plearn-commits] r6925 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000376.html">[Plearn-commits] r6927 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#375">[ date ]</a>
+              <a href="thread.html#375">[ thread ]</a>
+              <a href="subject.html#375">[ subject ]</a>
+              <a href="author.html#375">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-04-20 21:30:22 +0200 (Fri, 20 Apr 2007)
+New Revision: 6926
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/RBMBinomialLayer.cc
+   trunk/plearn_learners/online/RBMBinomialLayer.h
+   trunk/plearn_learners/online/RBMConnection.cc
+   trunk/plearn_learners/online/RBMConnection.h
+   trunk/plearn_learners/online/RBMGaussianLayer.h
+   trunk/plearn_learners/online/RBMLayer.cc
+   trunk/plearn_learners/online/RBMLayer.h
+   trunk/plearn_learners/online/RBMMatrixConnection.cc
+   trunk/plearn_learners/online/RBMMatrixConnection.h
+   trunk/plearn_learners/online/RBMMixedConnection.h
+   trunk/plearn_learners/online/RBMMixedLayer.cc
+   trunk/plearn_learners/online/RBMMixedLayer.h
+   trunk/plearn_learners/online/RBMMultinomialLayer.h
+   trunk/plearn_learners/online/RBMTruncExpLayer.h
+Log:
+- More coherent interpretation of the nstages option in DeepBeliefNet
+- More work towards a mini-batch implementation of deep belief nets
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-04-19 19:10:14 UTC (rev 6925)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-04-20 19:30:22 UTC (rev 6926)
+@@ -661,16 +661,19 @@
+ 
+             for( ; stage&lt;end_stage ; stage++ )
+             {
+-                int sample_start = (stage * minibatch_size) % nsamples;
+-                if (batch_size &gt; 1) {
+-                    train_set-&gt;getExamples(sample_start, minibatch_size,
+-                            inputs, targets, weights);
+-                    greedyStep( inputs, targets, i );
+-                } else {
+-                    train_set-&gt;getExample(sample_start, input, target, weight);
+-                    greedyStep( input, target, i );
++                // Do a step every 'minibatch_size' examples.
++                if (stage % minibatch_size == 0) {
++                    int sample_start = stage % nsamples;
++                    if (batch_size &gt; 1) {
++                        train_set-&gt;getExamples(sample_start, minibatch_size,
++                                inputs, targets, weights);
++                        greedyStep( inputs, targets, i );
++                    } else {
++                        train_set-&gt;getExample(sample_start, input, target, weight);
++                        greedyStep( input, target, i );
++                    }
++
+                 }
+-
+                 if( pb )
+                     if( i == 0 )
+                         pb-&gt;update( stage + 1 );
+@@ -726,6 +729,8 @@
+         for(int train_index = 0 ; train_index &lt; nsamples ; train_index++)
+         {
+ 
++            PLASSERT_MSG(batch_size == 1, &quot;Not implemented for mini-batches&quot;);
++
+             train_set-&gt;getExample( train_index, input, target, weight );
+ 
+             down_layer-&gt;expectation &lt;&lt; input;
+@@ -774,31 +779,33 @@
+         bool update_stats = false;
+         for( ; stage&lt;nstages ; stage++ )
+         {
+-            int sample_start = (stage * minibatch_size) % nsamples;
+-            // Only update train statistics for the last 'epoch', i.e. last
+-            // 'nsamples' seen.
+-            update_stats = update_stats ||
+-                stage &gt;= (nstages - nsamples / minibatch_size);
++            // Update every 'minibatch_size' samples.
++            if (stage % minibatch_size == 0) {
++                int sample_start = stage % nsamples;
++                // Only update train statistics for the last 'epoch', i.e. last
++                // 'nsamples' seen.
++                update_stats = update_stats || stage &gt;= nstages - nsamples;
+ 
+-            if( !fast_exact_is_equal( grad_decrease_ct, 0. ) )
+-                setLearningRate( grad_learning_rate
+-                                 / (1. + grad_decrease_ct * (stage - init_stage) ) );
++                if( !fast_exact_is_equal( grad_decrease_ct, 0. ) )
++                    setLearningRate( grad_learning_rate
++                            / (1. + grad_decrease_ct * (stage - init_stage) ) );
+ 
+-            if (minibatch_size &gt; 1) {
+-                train_set-&gt;getExamples(sample_start, minibatch_size, inputs,
+-                        targets, weights);
+-                fineTuningStep(inputs, targets, train_costs_m);
+-            } else {
+-                train_set-&gt;getExample( sample_start, input, target, weight );
+-                fineTuningStep( input, target, train_costs );
++                if (minibatch_size &gt; 1) {
++                    train_set-&gt;getExamples(sample_start, minibatch_size, inputs,
++                            targets, weights);
++                    fineTuningStep(inputs, targets, train_costs_m);
++                } else {
++                    train_set-&gt;getExample( sample_start, input, target, weight );
++                    fineTuningStep( input, target, train_costs );
++                }
++                if (update_stats)
++                    if (minibatch_size &gt; 1)
++                        for (int k = 0; k &lt; minibatch_size; k++)
++                            train_stats-&gt;update(train_costs_m(k));
++                    else
++                        train_stats-&gt;update( train_costs );
++
+             }
+-            if (update_stats)
+-                if (minibatch_size &gt; 1)
+-                    for (int k = 0; k &lt; minibatch_size; k++)
+-                        train_stats-&gt;update(train_costs_m(k));
+-                else
+-                    train_stats-&gt;update( train_costs );
+-
+             if( pb )
+                 pb-&gt;update( stage - init_stage + 1 );
+         }
+@@ -881,7 +888,7 @@
+         {
+             /*
+             if (minibatch_size &gt; 1) {
+-                final_module-&gt;fprop( layers[ n_layers-1 ]-&gt;expectations,
++                final_module-&gt;fprop( layers[ n_layers-1 ]-&gt;getExpectations(),
+                         final_cost_inputs );
+                 final_cost-&gt;fprop( final_cost_inputs, targets,
+                         final_cost_values );
+@@ -890,7 +897,7 @@
+                         final_cost_gradients );
+ 
+                 final_module-&gt;bpropUpdate(
+-                        layers[ n_layers-1 ]-&gt;expectations,
++                        layers[ n_layers-1 ]-&gt;getExpectations(),
+                         final_cost_inputs,
+                         expectations_gradients[ n_layers-1 ],
+                         final_cost_gradients, true );
+@@ -914,10 +921,10 @@
+         {
+             /*
+             if (minibatch_size &gt; 1) {
+-                final_cost-&gt;fprop( layers[ n_layers-1 ]-&gt;expectations,
++                final_cost-&gt;fprop( layers[ n_layers-1 ]-&gt;getExpectations(),
+                         targets,
+                         final_cost_values );
+-                final_cost-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;expectations,
++                final_cost-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;getExpectations(),
+                         targets, final_cost_values.column(0),
+                         expectations_gradients[n_layers-1],
+                         true);
+@@ -1113,12 +1120,12 @@
+ {
+     PLASSERT( index &lt; n_layers );
+ 
+-    layers[0]-&gt;expectations &lt;&lt; inputs;
++    layers[0]-&gt;setExpectations(inputs);
+     for( int i=0 ; i&lt;=index ; i++ )
+     {
+-        connections[i]-&gt;setAsDownInputs( layers[i]-&gt;expectations );
+-        layers[i+1]-&gt;getAllActivations( connections[i] );
+-        layers[i+1]-&gt;computeExpectation(); // TODO Ensure it fills expectations
++        connections[i]-&gt;setAsDownInputs( layers[i]-&gt;getExpectations() );
++        layers[i+1]-&gt;getAllActivations( connections[i], 0, true );
++        layers[i+1]-&gt;computeExpectations();
+     }
+ 
+     // TODO: add another learning rate?
+@@ -1342,25 +1349,26 @@
+ {
+     final_cost_values.resize(0, 0);
+     // fprop
+-    layers[0]-&gt;expectations &lt;&lt; inputs;
++    layers[0]-&gt;getExpectations() &lt;&lt; inputs;
+     for( int i=0 ; i&lt;n_layers-2 ; i++ )
+     {
+-        connections[i]-&gt;setAsDownInputs( layers[i]-&gt;expectations );
+-        layers[i+1]-&gt;getAllActivations( connections[i] );
+-        layers[i+1]-&gt;computeExpectation(); // TODO Ensure it fills expectations
++        connections[i]-&gt;setAsDownInputs( layers[i]-&gt;getExpectations() );
++        layers[i+1]-&gt;getAllActivations( connections[i], 0, true );
++        layers[i+1]-&gt;computeExpectations();
+     }
+ 
+     if( final_cost )
+     {
+         connections[ n_layers-2 ]-&gt;setAsDownInputs(
+-            layers[ n_layers-2 ]-&gt;expectations );
++            layers[ n_layers-2 ]-&gt;getExpectations() );
+         // TODO Also ensure getAllActivations fills everything.
+-        layers[ n_layers-1 ]-&gt;getAllActivations( connections[ n_layers-2 ] );
+-        layers[ n_layers-1 ]-&gt;computeExpectation();
++        layers[ n_layers-1 ]-&gt;getAllActivations(connections[n_layers-2],
++                                                0, true);
++        layers[ n_layers-1 ]-&gt;computeExpectations();
+ 
+         if( final_module )
+         {
+-            final_module-&gt;fprop( layers[ n_layers-1 ]-&gt;expectations,
++            final_module-&gt;fprop( layers[ n_layers-1 ]-&gt;getExpectations(),
+                                  final_cost_inputs );
+             final_cost-&gt;fprop( final_cost_inputs, targets, final_cost_values );
+ 
+@@ -1368,18 +1376,18 @@
+             final_cost-&gt;bpropUpdate( final_cost_inputs, targets,
+                                      optimized_costs,
+                                      final_cost_gradients );
+-            final_module-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;expectations,
++            final_module-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;getExpectations(),
+                                        final_cost_inputs,
+                                        expectations_gradients[ n_layers-1 ],
+                                        final_cost_gradients );
+         }
+         else
+         {
+-            final_cost-&gt;fprop( layers[ n_layers-1 ]-&gt;expectations, targets,
++            final_cost-&gt;fprop( layers[ n_layers-1 ]-&gt;getExpectations(), targets,
+                                final_cost_values );
+ 
+             Mat optimized_costs = final_cost_values.column(0);
+-            final_cost-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;expectations,
++            final_cost-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;getExpectations(),
+                                      targets, optimized_costs,
+                                      expectations_gradients[ n_layers-1 ] );
+         }
+@@ -1390,13 +1398,13 @@
+                     final_cost_values(k, j);
+ 
+         layers[ n_layers-1 ]-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;activations,
+-                                           layers[ n_layers-1 ]-&gt;expectations,
++                                           layers[ n_layers-1 ]-&gt;getExpectations(),
+                                            activations_gradients[ n_layers-1 ],
+                                            expectations_gradients[ n_layers-1 ]
+                                          );
+ 
+         connections[ n_layers-2 ]-&gt;bpropUpdate(
+-            layers[ n_layers-2 ]-&gt;expectations,
++            layers[ n_layers-2 ]-&gt;getExpectations(),
+             layers[ n_layers-1 ]-&gt;activations,
+             expectations_gradients[ n_layers-2 ],
+             activations_gradients[ n_layers-1 ] );
+@@ -1440,11 +1448,11 @@
+     for( int i=n_layers-2 ; i&gt;0 ; i-- )
+     {
+         layers[i]-&gt;bpropUpdate( layers[i]-&gt;activations,
+-                                layers[i]-&gt;expectations,
++                                layers[i]-&gt;getExpectations(),
+                                 activations_gradients[i],
+                                 expectations_gradients[i] );
+ 
+-        connections[i-1]-&gt;bpropUpdate( layers[i-1]-&gt;expectations,
++        connections[i-1]-&gt;bpropUpdate( layers[i-1]-&gt;getExpectations(),
+                                        layers[i]-&gt;activations,
+                                        expectations_gradients[i-1],
+                                        activations_gradients[i] );
+@@ -1465,27 +1473,36 @@
+     // positive phase
+     if (!nofprop)
+     {
+-        if (mbatch)
+-            connection-&gt;setAsDownInputs( down_layer-&gt;expectations );
+-        else
++        if (mbatch) {
++            connection-&gt;setAsDownInputs( down_layer-&gt;getExpectations() );
++            up_layer-&gt;getAllActivations( connection, 0, true );
++            up_layer-&gt;computeExpectations();
++        } else {
+             connection-&gt;setAsDownInput( down_layer-&gt;expectation );
+-        up_layer-&gt;getAllActivations( connection );
+-        up_layer-&gt;computeExpectation();
++            up_layer-&gt;getAllActivations( connection );
++            up_layer-&gt;computeExpectation();
++        }
+     }
+ 
+     if (mbatch) {
+-        up_layer-&gt;generateSamples(minibatch_size);
++        up_layer-&gt;generateSamples();
+ 
+         // accumulate positive stats using the expectation
+         // we deep-copy because the value will change during negative phase
+         pos_down_vals.resize(minibatch_size, down_layer-&gt;size);
+         pos_up_vals.resize(minibatch_size, up_layer-&gt;size);
+ 
+-        pos_down_vals &lt;&lt; down_layer-&gt;expectations;
+-        pos_up_vals &lt;&lt; up_layer-&gt;expectations;
++        pos_down_vals &lt;&lt; down_layer-&gt;getExpectations();
++        pos_up_vals &lt;&lt; up_layer-&gt;getExpectations();
+ 
+         // down propagation, starting from a sample of up_layer
+         connection-&gt;setAsUpInputs( up_layer-&gt;samples );
++
++        down_layer-&gt;getAllActivations( connection, 0, true );
++
++        down_layer-&gt;generateSamples();
++        // negative phase
++        connection-&gt;setAsDownInputs( down_layer-&gt;samples );
+     } else {
+         up_layer-&gt;generateSample();
+ 
+@@ -1499,27 +1516,25 @@
+ 
+         // down propagation, starting from a sample of up_layer
+         connection-&gt;setAsUpInput( up_layer-&gt;sample );
+-    }
+ 
+-    down_layer-&gt;getAllActivations( connection );
+-    if (mbatch) {
+-        down_layer-&gt;generateSamples(minibatch_size);
+-        // negative phase
+-        connection-&gt;setAsDownInputs( down_layer-&gt;samples );
+-    } else {
++        down_layer-&gt;getAllActivations( connection );
++
+         down_layer-&gt;generateSample();
+         // negative phase
+         connection-&gt;setAsDownInput( down_layer-&gt;sample );
+     }
+ 
+-    up_layer-&gt;getAllActivations( connection );
+-    up_layer-&gt;computeExpectation();
++    up_layer-&gt;getAllActivations( connection, 0, mbatch );
++    if (mbatch)
++        up_layer-&gt;computeExpectations();
++    else
++        up_layer-&gt;computeExpectation();
+ 
+     if (mbatch) {
+         // accumulate negative stats
+         // no need to deep-copy because the values won't change before update
+         Mat neg_down_vals = down_layer-&gt;samples;
+-        Mat neg_up_vals = up_layer-&gt;expectations;
++        Mat neg_up_vals = up_layer-&gt;getExpectations();
+ 
+         // update
+         down_layer-&gt;update( pos_down_vals, neg_down_vals );
+
+Modified: trunk/plearn_learners/online/RBMBinomialLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMBinomialLayer.cc	2007-04-19 19:10:14 UTC (rev 6925)
++++ trunk/plearn_learners/online/RBMBinomialLayer.cc	2007-04-20 19:30:22 UTC (rev 6926)
+@@ -67,26 +67,9 @@
+     bias_neg_stats.resize( the_size );
+ }
+ 
+-/*
+-//! Uses &quot;rbmp&quot; to obtain the activations of unit &quot;i&quot; of this layer.
+-//! This activation vector is computed by the &quot;i+offset&quot;-th unit of &quot;rbmp&quot;
+-void RBMBinomialLayer::getUnitActivations( int i, PP&lt;RBMParameters&gt; rbmp,
+-                                           int offset )
+-{
+-    Vec activation = activations.subVec( i, 1 );
+-    rbmp-&gt;computeUnitActivations( i+offset, 1, activation );
+-    expectation_is_up_to_date = false;
+-}
+-
+-//! Uses &quot;rbmp&quot; to obtain the activations of all units in this layer.
+-//! Unit 0 of this layer corresponds to unit &quot;offset&quot; of &quot;rbmp&quot;.
+-void RBMBinomialLayer::getAllActivations( PP&lt;RBMParameters&gt; rbmp, int offset )
+-{
+-    rbmp-&gt;computeUnitActivations( offset, size, activations );
+-    expectation_is_up_to_date = false;
+-}
+-*/
+-
++////////////////////
++// generateSample //
++////////////////////
+ void RBMBinomialLayer::generateSample()
+ {
+     computeExpectation();
+@@ -95,6 +78,23 @@
+         sample[i] = random_gen-&gt;binomial_sample( expectation[i] );
+ }
+ 
++/////////////////////
++// generateSamples //
++/////////////////////
++void RBMBinomialLayer::generateSamples()
++{
++    computeExpectations();
++    int mbatch_size = expectations.length();
++    samples.resize(mbatch_size, size);
++
++    for (int k = 0; k &lt; mbatch_size; k++)
++        for (int i=0 ; i&lt;size ; i++)
++            samples(k, i) = random_gen-&gt;binomial_sample( expectations(k, i) );
++}
++
++////////////////////////
++// computeExpectation //
++////////////////////////
+ void RBMBinomialLayer::computeExpectation()
+ {
+     if( expectation_is_up_to_date )
+@@ -106,6 +106,26 @@
+     expectation_is_up_to_date = true;
+ }
+ 
++/////////////////////////
++// computeExpectations //
++/////////////////////////
++void RBMBinomialLayer::computeExpectations()
++{
++    if( expectations_are_up_to_date )
++        return;
++
++    int mbatch_size = activations.length();
++    expectations.resize(mbatch_size, size);
++    for (int k = 0; k &lt; mbatch_size; k++)
++        for (int i = 0 ; i &lt; size ; i++)
++            expectations(k, i) = sigmoid(-activations(k, i));
++
++    expectations_are_up_to_date = true;
++}
++
++///////////
++// fprop //
++///////////
+ void RBMBinomialLayer::fprop( const Vec&amp; input, Vec&amp; output ) const
+ {
+     PLASSERT( input.size() == input_size );
+
+Modified: trunk/plearn_learners/online/RBMBinomialLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMBinomialLayer.h	2007-04-19 19:10:14 UTC (rev 6925)
++++ trunk/plearn_learners/online/RBMBinomialLayer.h	2007-04-20 19:30:22 UTC (rev 6926)
+@@ -67,24 +67,18 @@
+     //! Constructor from the number of units
+     RBMBinomialLayer( int the_size, real the_learning_rate=0. );
+ 
+-
+-    // Your other public member functions go here
+-
+-    //! Uses &quot;rbmp&quot; to obtain the activations of unit &quot;i&quot; of this layer.
+-    //! This activation vector is computed by the &quot;i+offset&quot;-th unit of &quot;rbmp&quot;
+-//    virtual void getUnitActivations( int i, PP&lt;RBMParameters&gt; rbmp,
+-//                                     int offset=0 );
+-
+-    //! Uses &quot;rbmp&quot; to obtain the activations of all units in this layer.
+-    //! Unit 0 of this layer corresponds to unit &quot;offset&quot; of &quot;rbmp&quot;.
+-//    virtual void getAllActivations( PP&lt;RBMParameters&gt; rbmp, int offset=0 ) ;
+-
+     //! generate a sample, and update the sample field
+     virtual void generateSample() ;
+ 
+-    //! compute the expectation
++    //! Inherited.
++    virtual void generateSamples();
++
++    //! Compute expectation.
+     virtual void computeExpectation() ;
+ 
++    //! Compute mini-batch expectations.
++    virtual void computeExpectations();
++
+     //! forward propagation
+     virtual void fprop( const Vec&amp; input, Vec&amp; output ) const;
+ 
+
+Modified: trunk/plearn_learners/online/RBMConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMConnection.cc	2007-04-19 19:10:14 UTC (rev 6925)
++++ trunk/plearn_learners/online/RBMConnection.cc	2007-04-20 19:30:22 UTC (rev 6926)
+@@ -156,6 +156,7 @@
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+     deepCopyField(input_vec, copies);
++    PLASSERT_MSG(false, &quot;Not fully implemented&quot;);
+ }
+ 
+ /////////////////////
+@@ -184,6 +185,16 @@
+     going_up = false;
+ }
+ 
++///////////////////
++// setAsUpInputs //
++///////////////////
++void RBMConnection::setAsUpInputs( const Mat&amp; inputs ) const
++{
++    PLASSERT( inputs.width() == up_size );
++    inputs_mat = inputs;
++    going_up = false;
++}
++
+ ////////////////////
+ // setAsDownInput //
+ ////////////////////
+@@ -194,6 +205,16 @@
+     going_up = true;
+ }
+ 
++/////////////////////
++// setAsDownInputs //
++/////////////////////
++void RBMConnection::setAsDownInputs( const Mat&amp; inputs ) const
++{
++    PLASSERT( inputs.width() == down_size );
++    inputs_mat = inputs;
++    going_up = true;
++}
++
+ ////////////
+ // update //
+ ////////////
+
+Modified: trunk/plearn_learners/online/RBMConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMConnection.h	2007-04-19 19:10:14 UTC (rev 6925)
++++ trunk/plearn_learners/online/RBMConnection.h	2007-04-20 19:30:22 UTC (rev 6926)
+@@ -95,26 +95,25 @@
+     //! Sets the momentum
+     virtual void setMomentum( real the_momentum );
+ 
+-    //! Sets input_vec to input, and going_up to false.
+-    //! Note that no data copy is made, so input should not be modified
++    //! Sets 'input_vec' to 'input', and 'going_up' to false.
++    //! Note that no data copy is made, so 'input' should not be modified
+     //! afterwards.
+     virtual void setAsUpInput( const Vec&amp; input ) const;
+ 
+-    // TODO Implement, document, add to subclasses.
+-    virtual void setAsUpInputs( const Mat&amp; inputs ) const
+-    {
+-        PLASSERT( false );
+-    }
++    //! Set 'inputs_mat' to 'inputs', and 'going_up' to false.
++    //! Note that no data copy is made, so 'inputs' should not be modified
++    //! afterwards.
++    virtual void setAsUpInputs( const Mat&amp; inputs ) const;
+ 
+-    //! Sets input_vec to input, and going_up to true
+-    //! Note that no data copy is made, so input should not be modified
++    //! Sets 'input_vec' to 'input', and 'going_up' to true.
++    //! Note that no data copy is made, so 'input' should not be modified
+     //! afterwards.
+     virtual void setAsDownInput( const Vec&amp; input ) const;
+ 
+-    // TODO Implement, document, add to subclasses.
+-    virtual void setAsDownInputs( const Mat&amp; inputs ) const {
+-        PLASSERT( false );
+-    }
++    //! Set 'inputs_mat' to 'inputs', and 'going_up' to true.
++    //! Note that no data copy is made, so 'inputs' should not be modified
++    //! afterwards.
++    virtual void setAsDownInputs( const Mat&amp; inputs ) const;
+ 
+     //! Accumulates positive phase statistics to *_pos_stats
+     virtual void accumulatePosStats( const Vec&amp; down_values,
+@@ -154,6 +153,11 @@
+                                  const Vec&amp; activations,
+                                  bool accumulate=false ) const = 0;
+ 
++    //! Same as 'computeProduct' but for mini-batches.
++    virtual void computeProducts(int start, int length,
++                                 Mat&amp; activations,
++                                 bool accumulate=false ) const = 0;
++
+     //! given the input, compute the output (possibly resize it  appropriately)
+     virtual void fprop(const Vec&amp; input, Vec&amp; output) const;
+ 
+@@ -182,14 +186,18 @@
+ protected:
+     //#####  Not Options  #####################################################
+ 
+-    //! Points to current input vector
++    //! Pointer to current input vector.
+     mutable Vec input_vec;
+ 
++    //! Pointer to current inputs matrix.
++    mutable Mat inputs_mat;
++
+     //! Tells if input_vec comes from down (true) or up (false)
+     mutable bool going_up;
+ 
+     //! Number of examples accumulated in *_pos_stats
+     int pos_count;
++
+     //! Number of examples accumulated in *_neg_stats
+     int neg_count;
+ 
+
+Modified: trunk/plearn_learners/online/RBMGaussianLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMGaussianLayer.h	2007-04-19 19:10:14 UTC (rev 6925)
++++ trunk/plearn_learners/online/RBMGaussianLayer.h	2007-04-20 19:30:22 UTC (rev 6926)
+@@ -70,24 +70,15 @@
+     RBMGaussianLayer( int the_size, real the_learning_rate=0. );
+ 
+ 
+-    // Your other public member functions go here
+-/*
+-    //! Uses &quot;rbmp&quot; to obtain the activations of unit &quot;i&quot; of this layer.
+-    //! This activation vector is computed by the &quot;i+offset&quot;-th unit of &quot;rbmp&quot;
+-    virtual void getUnitActivations( int i, PP&lt;RBMParameters&gt; rbmp,
+-                                     int offset=0 );
+-
+-    //! Uses &quot;rbmp&quot; to obtain the activations of all units in this layer.
+-    //! Unit 0 of this layer corresponds to unit &quot;offset&quot; of &quot;rbmp&quot;.
+-    virtual void getAllActivations( PP&lt;RBMParameters&gt; rbmp, int offset=0 ) ;
+-*/
+-
+     //! compute a sample, and update the sample field
+     virtual void generateSample() ;
+ 
+     //! compute the expectation
+     virtual void computeExpectation() ;
+ 
++    //! Not implemented.
++    virtual void computeExpectations() { PLASSERT( false ); }
++
+     //! compute the standard deviation
+     virtual void computeStdDeviation() ;
+ 
+
+Modified: trunk/plearn_learners/online/RBMLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.cc	2007-04-19 19:10:14 UTC (rev 6925)
++++ trunk/plearn_learners/online/RBMLayer.cc	2007-04-20 19:30:22 UTC (rev 6926)
+@@ -56,6 +56,7 @@
+     momentum(0.),
+     size(-1),
+     expectation_is_up_to_date(false),
++    expectations_are_up_to_date(false),
+     pos_count(0),
+     neg_count(0)
+ {
+@@ -67,6 +68,7 @@
+     sample.clear();
+     expectation.clear();
+     expectation_is_up_to_date = false;
++    expectations_are_up_to_date = false;
+ }
+ 
+ void RBMLayer::clearStats()
+@@ -130,6 +132,7 @@
+     sample.resize( size );
+     expectation.resize( size );
+     expectation_is_up_to_date = false;
++    expectations_are_up_to_date = false;
+ 
+     bias.resize( size );
+     bias_pos_stats.resize( size );
+@@ -177,18 +180,41 @@
+     rbmc-&gt;computeProduct( i+offset, 1, act );
+     act[0] += bias[i];
+     expectation_is_up_to_date = false;
++    expectations_are_up_to_date = false;
+ }
+ 
+-void RBMLayer::getAllActivations( PP&lt;RBMConnection&gt; rbmc, int offset )
++///////////////////////
++// getAllActivations //
++///////////////////////
++void RBMLayer::getAllActivations( PP&lt;RBMConnection&gt; rbmc, int offset,
++                                  bool minibatch)
+ {
+-    rbmc-&gt;computeProduct( offset, size, activation );
+-    activation += bias;
++    if (minibatch) {
++        rbmc-&gt;computeProducts( offset, size, activations );
++        activations += bias;
++    } else {
++        rbmc-&gt;computeProduct( offset, size, activation );
++        activation += bias;
++    }
+     expectation_is_up_to_date = false;
++    expectations_are_up_to_date = false;
+ }
+ 
+-// unefficient
++
++/////////////////////
++// getExpectations //
++/////////////////////
++Mat&amp; RBMLayer::getExpectations() {
++    return this-&gt;expectations;
++}
++
++///////////
++// fprop //
++///////////
+ void RBMLayer::fprop( const Vec&amp; input, Vec&amp; output ) const
+ {
++    // Note: inefficient.
++
+     // Yes it's ugly, blame the const plague
+     RBMLayer* This = const_cast&lt;RBMLayer*&gt;(this);
+ 
+@@ -198,6 +224,7 @@
+     This-&gt;activation &lt;&lt; input;
+     This-&gt;activation += bias;
+     This-&gt;expectation_is_up_to_date = false;
++    This-&gt;expectations_are_up_to_date = false;
+ 
+     output &lt;&lt; This-&gt;expectation;
+ }
+@@ -227,18 +254,27 @@
+     PLERROR(&quot;In RBMLayer::bpropNLL(): not implemented&quot;);
+ }
+ 
++////////////////////////
++// accumulatePosStats //
++////////////////////////
+ void RBMLayer::accumulatePosStats( const Vec&amp; pos_values )
+ {
+     bias_pos_stats += pos_values;
+     pos_count++;
+ }
+ 
++////////////////////////
++// accumulateNegStats //
++////////////////////////
+ void RBMLayer::accumulateNegStats( const Vec&amp; neg_values )
+ {
+     bias_neg_stats += neg_values;
+     neg_count++;
+ }
+ 
++////////////
++// update //
++////////////
+ void RBMLayer::update()
+ {
+     // bias -= learning_rate * (bias_pos_stats/pos_count
+@@ -313,6 +349,15 @@
+     bias &lt;&lt; rbm_bias;
+ }
+ 
++/////////////////////
++// setExpectations //
++/////////////////////
++void RBMLayer::setExpectations(const Mat&amp; the_expectations)
++{
++    expectations.resize(the_expectations.length(), the_expectations.width());
++    expectations &lt;&lt; the_expectations;
++}
++
+ /////////////
+ // bpropCD //
+ /////////////
+
+Modified: trunk/plearn_learners/online/RBMLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMLayer.h	2007-04-19 19:10:14 UTC (rev 6925)
++++ trunk/plearn_learners/online/RBMLayer.h	2007-04-20 19:30:22 UTC (rev 6926)
+@@ -90,14 +90,15 @@
+ 
+     //! Contains the expected value of the random variable in this layer
+     Vec expectation;
+-    Mat expectations; // for mini-batch operations
+ 
+     //! flags that expectation was computed based on most recently computed
+     //! value of activation
+     bool expectation_is_up_to_date;
+ 
++    //! Indicate whether expectations were computed based on most recently
++    //! computed values of activations.
++    bool expectations_are_up_to_date;
+ 
+-
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+@@ -112,6 +113,12 @@
+     //! Sets the momentum
+     virtual void setMomentum( real the_momentum );
+ 
++    //! Copy the given expectations in the 'expectations' matrix.
++    void setExpectations(const Mat&amp; the_expectations);
++
++    //! Accessor to the 'expectations' matrix.
++    Mat&amp; getExpectations();
++
+     //! Uses &quot;rbmc&quot; to compute the activation of unit &quot;i&quot; of this layer.
+     //! This activation is computed by the &quot;i+offset&quot;-th unit of &quot;rbmc&quot;
+     virtual void getUnitActivation( int i, PP&lt;RBMConnection&gt; rbmc,
+@@ -119,19 +126,21 @@
+ 
+     //! Uses &quot;rbmc&quot; to obtain the activations of all units in this layer.
+     //! Unit 0 of this layer corresponds to unit &quot;offset&quot; of &quot;rbmc&quot;.
+-    virtual void getAllActivations( PP&lt;RBMConnection&gt; rbmc, int offset=0 );
++    virtual void getAllActivations( PP&lt;RBMConnection&gt; rbmc, int offset = 0,
++                                    bool minibatch = false);
+ 
+     //! generate a sample, and update the sample field
+     virtual void generateSample() = 0 ;
+ 
+-    //! Generate a given number of samples, stored in the 'samples' field.
+-    void generateSamples(int n_samples) {
+-        PLASSERT(false);
+-    }
++    //! Generate a mini-batch set of samples.
++    virtual void generateSamples() = 0;
+ 
+-    //! compute the expectation
++    //! Compute expectation.
+     virtual void computeExpectation() = 0 ;
+ 
++    //! Compute expectations (mini-batch).
++    virtual void computeExpectations() = 0 ;
++
+     //! Adds the bias to input, consider this as the activation, then compute
+     //! the expectation
+     virtual void fprop( const Vec&amp; input, Vec&amp; output ) const;
+@@ -236,6 +245,9 @@
+     //! Count of negative examples
+     int neg_count;
+ 
++    //! Expectations for mini-batch operations.
++    //! It is protected to encourage the use of accessors.
++    Mat expectations;
+ 
+ protected:
+     //#####  Protected Member Functions  ######################################
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-04-19 19:10:14 UTC (rev 6925)
++++ trunk/plearn_learners/online/RBMMatrixConnection.cc	2007-04-20 19:30:22 UTC (rev 6926)
+@@ -230,6 +230,9 @@
+     }
+ }
+ 
++////////////////
++// clearStats //
++////////////////
+ void RBMMatrixConnection::clearStats()
+ {
+     weights_pos_stats.clear();
+@@ -239,6 +242,9 @@
+     neg_count = 0;
+ }
+ 
++////////////////////
++// computeProduct //
++////////////////////
+ void RBMMatrixConnection::computeProduct( int start, int length,
+                                           const Vec&amp; activations,
+                                           bool accumulate ) const
+@@ -273,7 +279,46 @@
+     }
+ }
+ 
+-//! this version allows to obtain the input gradient as well
++/////////////////////
++// computeProducts //
++/////////////////////
++void RBMMatrixConnection::computeProducts(int start, int length,
++                                          Mat&amp; activations,
++                                          bool accumulate ) const
++{
++    activations.resize(inputs_mat.length(), length);
++    if( going_up )
++    {
++        PLASSERT( start+length &lt;= up_size );
++        // activations(k, i-start) += sum_j weights(i,j) inputs_mat(k, j)
++
++        if( accumulate )
++            productTransposeAcc(activations,
++                    inputs_mat,
++                    weights.subMatRows(start,length));
++        else
++            productTranspose(activations,
++                    inputs_mat,
++                    weights.subMatRows(start,length));
++    }
++    else
++    {
++        PLASSERT( start+length &lt;= down_size );
++        // activations(k, i-start) += sum_j weights(j,i) inputs_mat(k, j)
++        if( accumulate )
++            transposeProductAcc( activations,
++                                 weights.subMatColumns(start,length),
++                                 inputs_mat );
++        else
++            transposeProduct( activations,
++                              weights.subMatColumns(start,length),
++                              inputs_mat );
++    }
++}
++
++/////////////////
++// bpropUpdate //
++/////////////////
+ void RBMMatrixConnection::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+                                       Vec&amp; input_gradient,
+                                       const Vec&amp; output_gradient,
+
+Modified: trunk/plearn_learners/online/RBMMatrixConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMatrixConnection.h	2007-04-19 19:10:14 UTC (rev 6925)
++++ trunk/plearn_learners/online/RBMMatrixConnection.h	2007-04-20 19:30:22 UTC (rev 6926)
+@@ -109,6 +109,11 @@
+                                  const Vec&amp; activations,
+                                  bool accumulate=false ) const;
+ 
++    //! Same as 'computeProduct' but for mini-batches.
++    virtual void computeProducts(int start, int length,
++                                 Mat&amp; activations,
++                                 bool accumulate=false ) const;
++
+     //! Adapt based on the output gradient: this method should only
+     //! be called just after a corresponding fprop; it should be
+     //! called with the same arguments as fprop for the first two arguments
+
+Modified: trunk/plearn_learners/online/RBMMixedConnection.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedConnection.h	2007-04-19 19:10:14 UTC (rev 6925)
++++ trunk/plearn_learners/online/RBMMixedConnection.h	2007-04-20 19:30:22 UTC (rev 6926)
+@@ -83,6 +83,14 @@
+     virtual void setAsUpInput( const Vec&amp; input ) const;
+     virtual void setAsDownInput( const Vec&amp; input ) const;
+ 
++    virtual void setAsUpInputs( const Mat&amp; inputs ) const {
++        PLASSERT( false ); // Not implemented.
++    }
++
++    virtual void setAsDownInputs( const Mat&amp; input ) const {
++        PLASSERT( false ); // Not implemented.
++    }
++
+     //! Accumulates positive phase statistics to *_pos_stats
+     virtual void accumulatePosStats( const Vec&amp; down_values,
+                                      const Vec&amp; up_values );
+@@ -100,7 +108,6 @@
+                          const Vec&amp; pos_up_values,
+                          const Vec&amp; neg_down_values,
+                          const Vec&amp; neg_up_values );
+-
+     //! Clear all information accumulated during stats
+     virtual void clearStats();
+ 
+@@ -111,6 +118,14 @@
+                                  const Vec&amp; activations,
+                                  bool accumulate=false ) const;
+ 
++    //! Same as 'computeProduct' but for mini-batches.
++    virtual void computeProducts(int start, int length,
++                                 Mat&amp; activations,
++                                 bool accumulate=false ) const
++    {
++        PLASSERT( false ); // Not implemented.
++    }
++
+     //! Adapt based on the output gradient: this method should only
+     //! be called just after a corresponding fprop; it should be
+     //! called with the same arguments as fprop for the first two arguments
+
+Modified: trunk/plearn_learners/online/RBMMixedLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedLayer.cc	2007-04-19 19:10:14 UTC (rev 6925)
++++ trunk/plearn_learners/online/RBMMixedLayer.cc	2007-04-20 19:30:22 UTC (rev 6926)
+@@ -78,6 +78,9 @@
+ }
+ 
+ 
++///////////////////////
++// getUnitActivation //
++///////////////////////
+ void RBMMixedLayer::getUnitActivation( int i, PP&lt;RBMConnection&gt; rbmc,
+                                        int offset )
+ {
+@@ -87,14 +90,21 @@
+     sub_layers[j]-&gt;expectation_is_up_to_date = false;
+ }
+ 
+-void RBMMixedLayer::getAllActivations( PP&lt;RBMConnection&gt; rbmc, int offset )
++///////////////////////
++// getAllActivations //
++///////////////////////
++void RBMMixedLayer::getAllActivations( PP&lt;RBMConnection&gt; rbmc, int offset,
++                                       bool minibatch )
+ {
+-    inherited::getAllActivations( rbmc, offset );
++    inherited::getAllActivations( rbmc, offset, minibatch );
+     for( int i=0 ; i&lt;n_layers ; i++ )
+         sub_layers[i]-&gt;expectation_is_up_to_date = false;
+ }
+ 
+ 
++////////////////////
++// generateSample //
++////////////////////
+ void RBMMixedLayer::generateSample()
+ {
+     for( int i=0 ; i&lt;n_layers ; i++ )
+
+Modified: trunk/plearn_learners/online/RBMMixedLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMixedLayer.h	2007-04-19 19:10:14 UTC (rev 6925)
++++ trunk/plearn_learners/online/RBMMixedLayer.h	2007-04-20 19:30:22 UTC (rev 6926)
+@@ -84,14 +84,21 @@
+ 
+     //! Uses &quot;rbmc&quot; to obtain the activations of all units in this layer.
+     //! Unit 0 of this layer corresponds to unit &quot;offset&quot; of &quot;rbmc&quot;.
+-    virtual void getAllActivations( PP&lt;RBMConnection&gt; rbmc, int offset=0 );
++    virtual void getAllActivations( PP&lt;RBMConnection&gt; rbmc, int offset=0,
++                                    bool minibatch = false );
+ 
+     //! compute a sample, and update the sample field
+     virtual void generateSample() ;
+ 
++    //! Not implemented.
++    virtual void generateSamples() { PLASSERT( false ); }
++
+     //! compute the expectation
+     virtual void computeExpectation() ;
+ 
++    //! Not implemented.
++    virtual void computeExpectations() { PLASSERT( false ); }
++
+     //! forward propagation
+     virtual void fprop( const Vec&amp; input, Vec&amp; output ) const;
+ 
+
+Modified: trunk/plearn_learners/online/RBMMultinomialLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMMultinomialLayer.h	2007-04-19 19:10:14 UTC (rev 6925)
++++ trunk/plearn_learners/online/RBMMultinomialLayer.h	2007-04-20 19:30:22 UTC (rev 6926)
+@@ -69,23 +69,18 @@
+     RBMMultinomialLayer( int the_size, real the_learning_rate=0. );
+ 
+ 
+-    // Your other public member functions go here
+-/*
+-    //! Uses &quot;rbmp&quot; to obtain the activations of unit &quot;i&quot; of this layer.
+-    //! This activation vector is computed by the &quot;i+offset&quot;-th unit of &quot;rbmp&quot;
+-    virtual void getUnitActivations( int i, PP&lt;RBMParameters&gt; rbmp,
+-                                     int offset=0 );
+-
+-    //! Uses &quot;rbmp&quot; to obtain the activations of all units in this layer.
+-    //! Unit 0 of this layer corresponds to unit &quot;offset&quot; of &quot;rbmp&quot;.
+-    virtual void getAllActivations( PP&lt;RBMParameters&gt; rbmp, int offset=0 ) ;
+-*/
+     //! generate a sample, and update the sample field
+     virtual void generateSample() ;
+ 
++    //! Not implemented.
++    virtual void generateSamples() { PLASSERT( false ); }
++
+     //! compute the expectation
+     virtual void computeExpectation() ;
+ 
++    //! Not implemented.
++    virtual void computeExpectations() { PLASSERT( false ); }
++
+     //! forward propagation
+     virtual void fprop( const Vec&amp; input, Vec&amp; output ) const;
+ 
+
+Modified: trunk/plearn_learners/online/RBMTruncExpLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMTruncExpLayer.h	2007-04-19 19:10:14 UTC (rev 6925)
++++ trunk/plearn_learners/online/RBMTruncExpLayer.h	2007-04-20 19:30:22 UTC (rev 6926)
+@@ -69,24 +69,15 @@
+     RBMTruncExpLayer( int the_size, real the_learning_rate=0. );
+ 
+ 
+-    // Your other public member functions go here
+-/*
+-    //! Uses &quot;rbmp&quot; to obtain the activations of unit &quot;i&quot; of this layer.
+-    //! This activation vector is computed by the &quot;i+offset&quot;-th unit of &quot;rbmp&quot;
+-    virtual void getUnitActivations( int i, PP&lt;RBMParameters&gt; rbmp,
+-                                     int offset=0 );
+-
+-    //! Uses &quot;rbmp&quot; to obtain the activations of all units in this layer.
+-    //! Unit 0 of this layer corresponds to unit &quot;offset&quot; of &quot;rbmp&quot;.
+-    virtual void getAllActivations( PP&lt;RBMParameters&gt; rbmp, int offset=0 ) ;
+-*/
+-
+     //! generate a sample, and update the sample field
+     virtual void generateSample() ;
+ 
+     //! compute the expectation
+     virtual void computeExpectation() ;
+ 
++    //! Not implemented.
++    virtual void computeExpectations() { PLASSERT( false ); }
++
+     //! forward propagation
+     virtual void fprop( const Vec&amp; input, Vec&amp; output ) const;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000374.html">[Plearn-commits] r6925 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000376.html">[Plearn-commits] r6927 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#375">[ date ]</a>
+              <a href="thread.html#375">[ thread ]</a>
+              <a href="subject.html#375">[ subject ]</a>
+              <a href="author.html#375">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

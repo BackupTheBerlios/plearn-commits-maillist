@@ -1,0 +1,1269 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8602 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8602%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200802282216.m1SMGdVX027648%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002049.html">
+   <LINK REL="Next"  HREF="002051.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8602 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8602%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200802282216.m1SMGdVX027648%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8602 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Thu Feb 28 23:16:39 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002049.html">[Plearn-commits] r8601 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="002051.html">[Plearn-commits] r8603 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2050">[ date ]</a>
+              <a href="thread.html#2050">[ thread ]</a>
+              <a href="subject.html#2050">[ subject ]</a>
+              <a href="author.html#2050">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-02-28 23:16:38 +0100 (Thu, 28 Feb 2008)
+New Revision: 8602
+
+Added:
+   trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.cc
+   trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.h
+Log:
+Deep Network with distinct layers for bottom up and top down inference...
+
+
+Added: trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.cc
+===================================================================
+--- trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.cc	2008-02-28 22:14:04 UTC (rev 8601)
++++ trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.cc	2008-02-28 22:16:38 UTC (rev 8602)
+@@ -0,0 +1,896 @@
++// -*- C++ -*-
++
++// TopDownAsymetricDeepNetwork.cc
++//
++// Copyright (C) 2008 Hugo Larochelle
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Hugo Larochelle
++
++/*! \file TopDownAsymetricDeepNetwork.cc */
++
++
++#define PL_LOG_MODULE_NAME &quot;TopDownAsymetricDeepNetwork&quot;
++#include &lt;plearn/io/pl_log.h&gt;
++
++#include &quot;TopDownAsymetricDeepNetwork.h&quot;
++#include &lt;plearn/vmat/VMat_computeNearestNeighbors.h&gt;
++#include &lt;plearn/vmat/GetInputVMatrix.h&gt;
++#include &lt;plearn_learners/online/RBMMixedLayer.h&gt;
++#include &lt;plearn_learners/online/RBMMixedConnection.h&gt;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    TopDownAsymetricDeepNetwork,
++    &quot;Neural net, trained layer-wise in a greedy but focused fashion using autoassociators/RBMs and a supervised non-parametric gradient.&quot;,
++    &quot;It is highly inspired by the StackedFocusedAutoassociators class,\n&quot;
++    &quot;and can use use the same RBMLayer and RBMConnection components.\n&quot;
++    );
++
++TopDownAsymetricDeepNetwork::TopDownAsymetricDeepNetwork() :
++    cd_learning_rate( 0. ),
++    cd_decrease_ct( 0. ),
++    greedy_learning_rate( 0. ),
++    greedy_decrease_ct( 0. ),
++    fine_tuning_learning_rate( 0. ),
++    fine_tuning_decrease_ct( 0. ),
++    n_classes( -1 ),
++    output_weights_l1_penalty_factor(0),
++    output_weights_l2_penalty_factor(0),
++    n_layers( 0 ),
++    currently_trained_layer( 0 )
++{
++    // random_gen will be initialized in PLearner::build_()
++    random_gen = new PRandom();
++    nstages = 0;
++}
++
++void TopDownAsymetricDeepNetwork::declareOptions(OptionList&amp; ol)
++{
++    declareOption(ol, &quot;cd_learning_rate&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::cd_learning_rate,
++                  OptionBase::buildoption,
++                  &quot;The learning rate used during the RBM &quot;
++                  &quot;contrastive divergence training.\n&quot;);
++
++    declareOption(ol, &quot;cd_decrease_ct&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::cd_decrease_ct,
++                  OptionBase::buildoption,
++                  &quot;The decrease constant of the learning rate used during &quot;
++                  &quot;the RBMs contrastive\n&quot;
++                  &quot;divergence training. When a hidden layer has finished &quot;
++                  &quot;its training,\n&quot;
++                  &quot;the learning rate is reset to it's initial value.\n&quot;);
++
++    declareOption(ol, &quot;greedy_learning_rate&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::greedy_learning_rate,
++                  OptionBase::buildoption,
++                  &quot;The learning rate used during the autoassociator &quot;
++                  &quot;gradient descent training.\n&quot;);
++
++    declareOption(ol, &quot;greedy_decrease_ct&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::greedy_decrease_ct,
++                  OptionBase::buildoption,
++                  &quot;The decrease constant of the learning rate used during &quot;
++                  &quot;the autoassociator\n&quot;
++                  &quot;gradient descent training. When a hidden layer has finished &quot;
++                  &quot;its training,\n&quot;
++                  &quot;the learning rate is reset to it's initial value.\n&quot;);
++
++    declareOption(ol, &quot;fine_tuning_learning_rate&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::fine_tuning_learning_rate,
++                  OptionBase::buildoption,
++                  &quot;The learning rate used during the fine tuning &quot;
++                  &quot;gradient descent.\n&quot;);
++
++    declareOption(ol, &quot;fine_tuning_decrease_ct&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::fine_tuning_decrease_ct,
++                  OptionBase::buildoption,
++                  &quot;The decrease constant of the learning rate used during &quot;
++                  &quot;fine tuning\n&quot;
++                  &quot;gradient descent.\n&quot;);
++
++    declareOption(ol, &quot;training_schedule&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::training_schedule,
++                  OptionBase::buildoption,
++                  &quot;Number of examples to use during each phase &quot;
++                  &quot;of greedy pre-training.\n&quot;
++                  &quot;The number of fine-tunig steps is defined by nstages.\n&quot;
++        );
++
++    declareOption(ol, &quot;layers&quot;, &amp;TopDownAsymetricDeepNetwork::layers,
++                  OptionBase::buildoption,
++                  &quot;The layers of units in the network. The first element\n&quot;
++                  &quot;of this vector should be the input layer and the\n&quot;
++                  &quot;subsequent elements should be the hidden layers. The\n&quot;
++                  &quot;output layer should not be included in layers.\n&quot;
++                  &quot;These layers will be used only for bottom up inference.\n&quot;);
++
++    declareOption(ol, &quot;top_down_layers&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::top_down_layers,
++                  OptionBase::buildoption,
++                  &quot;The layers of units used for top down inference during\n&quot;
++                  &quot;greedy training of an RBM/autoencoder.&quot;);
++
++    declareOption(ol, &quot;connections&quot;, &amp;TopDownAsymetricDeepNetwork::connections,
++                  OptionBase::buildoption,
++                  &quot;The weights of the connections between the layers&quot;);
++
++    declareOption(ol, &quot;reconstruction_connections&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::reconstruction_connections,
++                  OptionBase::buildoption,
++                  &quot;The reconstruction weights of the autoassociators&quot;);
++
++    declareOption(ol, &quot;n_classes&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::n_classes,
++                  OptionBase::buildoption,
++                  &quot;Number of classes.&quot;);
++
++    declareOption(ol, &quot;greedy_stages&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::greedy_stages,
++                  OptionBase::learntoption,
++                  &quot;Number of training samples seen in the different greedy &quot;
++                  &quot;phases.\n&quot;
++        );
++
++    declareOption(ol, &quot;n_layers&quot;, &amp;TopDownAsymetricDeepNetwork::n_layers,
++                  OptionBase::learntoption,
++                  &quot;Number of layers&quot;
++        );
++
++    declareOption(ol, &quot;final_module&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::final_module,
++                  OptionBase::learntoption,
++                  &quot;Output layer of neural net&quot;
++        );
++
++    declareOption(ol, &quot;final_cost&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::final_cost,
++                  OptionBase::learntoption,
++                  &quot;Cost on output layer of neural net&quot;
++        );
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++void TopDownAsymetricDeepNetwork::build_()
++{
++    // ### This method should do the real building of the object,
++    // ### according to set 'options', in *any* situation.
++    // ### Typical situations include:
++    // ###  - Initial building of an object from a few user-specified options
++    // ###  - Building of a &quot;reloaded&quot; object: i.e. from the complete set of
++    // ###    all serialised options.
++    // ###  - Updating or &quot;re-building&quot; of an object after a few &quot;tuning&quot;
++    // ###    options have been modified.
++    // ### You should assume that the parent class' build_() has already been
++    // ### called.
++
++    MODULE_LOG &lt;&lt; &quot;build_() called&quot; &lt;&lt; endl;
++
++    if(inputsize_ &gt; 0 &amp;&amp; targetsize_ &gt; 0)
++    {
++        // Initialize some learnt variables
++        n_layers = layers.length();
++        
++        if( n_classes &lt;= 0 )
++            PLERROR(&quot;TopDownAsymetricDeepNetwork::build_() - \n&quot;
++                    &quot;n_classes should be &gt; 0.\n&quot;);
++
++        if( weightsize_ &gt; 0 )
++            PLERROR(&quot;TopDownAsymetricDeepNetwork::build_() - \n&quot;
++                    &quot;usage of weighted samples (weight size &gt; 0) is not\n&quot;
++                    &quot;implemented yet.\n&quot;);
++
++        if( training_schedule.length() != n_layers-1 )        
++            PLERROR(&quot;TopDownAsymetricDeepNetwork::build_() - \n&quot;
++                    &quot;training_schedule should have %d elements.\n&quot;,
++                    n_layers-1);
++        
++        if(greedy_stages.length() == 0)
++        {
++            greedy_stages.resize(n_layers-1);
++            greedy_stages.clear();
++        }
++
++        if(stage &gt; 0)
++            currently_trained_layer = n_layers;
++        else
++        {            
++            currently_trained_layer = n_layers-1;
++            while(currently_trained_layer&gt;1
++                  &amp;&amp; greedy_stages[currently_trained_layer-1] &lt;= 0)
++                currently_trained_layer--;
++        }
++
++        build_layers_and_connections();
++
++        if( !final_module || !final_cost )
++            build_output_layer_and_cost();
++    }
++}
++
++void TopDownAsymetricDeepNetwork::build_output_layer_and_cost()
++{
++    GradNNetLayerModule* gnl = new GradNNetLayerModule();
++    gnl-&gt;input_size = layers[n_layers-1]-&gt;size;
++    gnl-&gt;output_size = n_classes;
++    gnl-&gt;L1_penalty_factor = output_weights_l1_penalty_factor;
++    gnl-&gt;L2_penalty_factor = output_weights_l2_penalty_factor;
++    gnl-&gt;random_gen = random_gen;
++    gnl-&gt;build();
++
++    SoftmaxModule* sm = new SoftmaxModule();
++    sm-&gt;input_size = n_classes;
++    sm-&gt;random_gen = random_gen;
++    sm-&gt;build();
++
++    ModuleStackModule* msm = new ModuleStackModule();
++    msm-&gt;modules.resize(2);
++    msm-&gt;modules[0] = gnl;
++    msm-&gt;modules[1] = sm;
++    msm-&gt;random_gen = random_gen;
++    msm-&gt;build();
++    final_module = msm;
++
++    final_module-&gt;forget();
++
++    NLLCostModule* nll = new NLLCostModule();
++    nll-&gt;input_size = n_classes;
++    nll-&gt;random_gen = random_gen;
++    nll-&gt;build();
++    
++    ClassErrorCostModule* class_error = new ClassErrorCostModule();
++    class_error-&gt;input_size = n_classes;
++    class_error-&gt;random_gen = random_gen;
++    class_error-&gt;build();
++
++    CombiningCostsModule* comb_costs = new CombiningCostsModule();
++    comb_costs-&gt;cost_weights.resize(2);
++    comb_costs-&gt;cost_weights[0] = 1;
++    comb_costs-&gt;cost_weights[1] = 0;
++    comb_costs-&gt;sub_costs.resize(2);
++    comb_costs-&gt;sub_costs[0] = nll;
++    comb_costs-&gt;sub_costs[1] = class_error;
++    comb_costs-&gt;build();
++
++    final_cost = comb_costs;
++    final_cost-&gt;forget();
++}
++
++void TopDownAsymetricDeepNetwork::build_layers_and_connections()
++{
++    MODULE_LOG &lt;&lt; &quot;build_layers_and_connections() called&quot; &lt;&lt; endl;
++
++    if( connections.length() != n_layers-1 )
++        PLERROR(&quot;TopDownAsymetricDeepNetwork::build_layers_and_connections() - \n&quot;
++                &quot;there should be %d connections.\n&quot;,
++                n_layers-1);
++
++    if( !fast_exact_is_equal( greedy_learning_rate, 0 ) 
++        &amp;&amp; reconstruction_connections.length() != n_layers-1 )
++        PLERROR(&quot;TopDownAsymetricDeepNetwork::build_layers_and_connections() - \n&quot;
++                &quot;there should be %d reconstruction connections.\n&quot;,
++                n_layers-1);
++    
++    if(  !( reconstruction_connections.length() == 0
++            || reconstruction_connections.length() == n_layers-1 ) )
++        PLERROR(&quot;TopDownAsymetricDeepNetwork::build_layers_and_connections() - \n&quot;
++                &quot;there should be either 0 or %d reconstruction connections.\n&quot;,
++                n_layers-1);
++    
++    
++    if(top_down_layers.length() != n_layers 
++       &amp;&amp; top_down_layers.length() != 0)
++        PLERROR(&quot;TopDownAsymetricDeepNetwork::build_layers_and_connections() - \n&quot;
++                &quot;there should be either 0 of %d top_down_layers.\n&quot;,
++                n_layers);
++        
++    if(layers[0]-&gt;size != inputsize_)
++        PLERROR(&quot;TopDownAsymetricDeepNetwork::build_layers_and_connections() - \n&quot;
++                &quot;layers[0] should have a size of %d.\n&quot;,
++                inputsize_);
++    
++    if(top_down_layers[0]-&gt;size != inputsize_)
++        PLERROR(&quot;TopDownAsymetricDeepNetwork::build_layers_and_connections() - \n&quot;
++                &quot;top_down_layers[0] should have a size of %d.\n&quot;,
++                inputsize_);
++    
++
++    activations.resize( n_layers );
++    expectations.resize( n_layers );
++    activation_gradients.resize( n_layers );
++    expectation_gradients.resize( n_layers );
++
++    for( int i=0 ; i&lt;n_layers-1 ; i++ )
++    {
++        if( layers[i]-&gt;size != connections[i]-&gt;down_size )
++            PLERROR(&quot;TopDownAsymetricDeepNetwork::build_layers_and_connections() &quot;
++                    &quot;- \n&quot;
++                    &quot;connections[%i] should have a down_size of %d.\n&quot;,
++                    i, layers[i]-&gt;size);
++
++        if( top_down_layers[i]-&gt;size != connections[i]-&gt;down_size )
++            PLERROR(&quot;TopDownAsymetricDeepNetwork::build_layers_and_connections() &quot;
++                    &quot;- \n&quot;
++                    &quot;top_down_layers[%i] should have a size of %d.\n&quot;,
++                    i, connections[i]-&gt;down_size);
++
++        if( connections[i]-&gt;up_size != layers[i+1]-&gt;size )
++            PLERROR(&quot;TopDownAsymetricDeepNetwork::build_layers_and_connections() &quot;
++                    &quot;- \n&quot;
++                    &quot;connections[%i] should have a up_size of %d.\n&quot;,
++                    i, layers[i+1]-&gt;size);
++
++        if( connections[i]-&gt;up_size != top_down_layers[i+1]-&gt;size )
++            PLERROR(&quot;TopDownAsymetricDeepNetwork::build_layers_and_connections() &quot;
++                    &quot;- \n&quot;
++                    &quot;top_down_layers[%i] should have a up_size of %d.\n&quot;,
++                    i, connections[i]-&gt;up_size);
++
++        if( reconstruction_connections.length() != 0 )
++        {
++            if( layers[i+1]-&gt;size != reconstruction_connections[i]-&gt;down_size )
++                PLERROR(&quot;TopDownAsymetricDeepNetwork::build_layers_and_connections() &quot;
++                        &quot;- \n&quot;
++                        &quot;recontruction_connections[%i] should have a down_size of &quot;
++                            &quot;%d.\n&quot;,
++                        i, layers[i+1]-&gt;size);
++            
++            if( reconstruction_connections[i]-&gt;up_size != layers[i]-&gt;size )
++                PLERROR(&quot;TopDownAsymetricDeepNetwork::build_layers_and_connections() &quot;
++                        &quot;- \n&quot;
++                        &quot;recontruction_connections[%i] should have a up_size of &quot;
++                        &quot;%d.\n&quot;,
++                        i, layers[i]-&gt;size);
++        }
++        
++        if( !(layers[i]-&gt;random_gen) )
++        {
++            layers[i]-&gt;random_gen = random_gen;
++            layers[i]-&gt;forget();
++        }
++
++        if( !(top_down_layers[i]-&gt;random_gen) )
++        {
++            top_down_layers[i]-&gt;random_gen = random_gen;
++            top_down_layers[i]-&gt;forget();
++        }
++
++        if( !(connections[i]-&gt;random_gen) )
++        {
++            connections[i]-&gt;random_gen = random_gen;
++            connections[i]-&gt;forget();
++        }
++
++        if( reconstruction_connections.length() != 0
++            &amp;&amp; !(reconstruction_connections[i]-&gt;random_gen) )
++        {
++            reconstruction_connections[i]-&gt;random_gen = random_gen;
++            reconstruction_connections[i]-&gt;forget();
++        }        
++
++        activations[i].resize( layers[i]-&gt;size );
++        expectations[i].resize( layers[i]-&gt;size );
++        activation_gradients[i].resize( layers[i]-&gt;size );
++        expectation_gradients[i].resize( layers[i]-&gt;size );
++    }
++
++    if( !(layers[n_layers-1]-&gt;random_gen) )
++    {
++        layers[n_layers-1]-&gt;random_gen = random_gen;
++        layers[n_layers-1]-&gt;forget();
++    }
++    if( !(top_down_layers[n_layers-1]-&gt;random_gen) )
++    {
++        top_down_layers[n_layers-1]-&gt;random_gen = random_gen;
++        top_down_layers[n_layers-1]-&gt;forget();
++    }
++    activations[n_layers-1].resize( layers[n_layers-1]-&gt;size );
++    expectations[n_layers-1].resize( layers[n_layers-1]-&gt;size );
++    activation_gradients[n_layers-1].resize( layers[n_layers-1]-&gt;size );
++    expectation_gradients[n_layers-1].resize( layers[n_layers-1]-&gt;size );
++}
++
++// ### Nothing to add here, simply calls build_
++void TopDownAsymetricDeepNetwork::build()
++{
++    inherited::build();
++    build_();
++}
++
++
++void TopDownAsymetricDeepNetwork::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    // deepCopyField(, copies);
++
++    // Public options
++    deepCopyField(training_schedule, copies);
++    deepCopyField(layers, copies);
++    deepCopyField(top_down_layers, copies);
++    deepCopyField(connections, copies);
++    deepCopyField(reconstruction_connections, copies);
++
++    // Protected options
++    deepCopyField(activations, copies);
++    deepCopyField(expectations, copies);
++    deepCopyField(activation_gradients, copies);
++    deepCopyField(expectation_gradients, copies);
++    deepCopyField(reconstruction_activations, copies);
++    deepCopyField(reconstruction_activation_gradients, copies);
++    deepCopyField(reconstruction_expectation_gradients, copies);
++    deepCopyField(input_representation, copies);
++    deepCopyField(pos_down_val, copies);
++    deepCopyField(pos_up_val, copies);
++    deepCopyField(neg_down_val, copies);
++    deepCopyField(neg_up_val, copies);
++    deepCopyField(final_cost_input, copies);
++    deepCopyField(final_cost_value, copies);
++    deepCopyField(final_cost_gradient, copies);
++    deepCopyField(greedy_stages, copies);
++    deepCopyField(final_module, copies);
++    deepCopyField(final_cost, copies);
++}
++
++
++int TopDownAsymetricDeepNetwork::outputsize() const
++{
++//    if(currently_trained_layer &lt; n_layers)
++//        return layers[currently_trained_layer]-&gt;size;
++    return n_classes;
++}
++
++void TopDownAsymetricDeepNetwork::forget()
++{
++    inherited::forget();
++
++    for( int i=0 ; i&lt;n_layers ; i++ )
++        layers[i]-&gt;forget();
++    
++    for( int i=0 ; i&lt;n_layers ; i++ )
++        top_down_layers[i]-&gt;forget();
++    
++    for( int i=0 ; i&lt;n_layers-1 ; i++ )
++        connections[i]-&gt;forget();
++    
++    for( int i=0; i&lt;reconstruction_connections.length(); i++)
++        reconstruction_connections[i]-&gt;forget();
++
++    build_output_layer_and_cost();
++
++    stage = 0;
++    greedy_stages.clear();
++}
++
++void TopDownAsymetricDeepNetwork::train()
++{
++    MODULE_LOG &lt;&lt; &quot;train() called &quot; &lt;&lt; endl;
++    MODULE_LOG &lt;&lt; &quot;  training_schedule = &quot; &lt;&lt; training_schedule &lt;&lt; endl;
++
++    Vec input( inputsize() );
++    Vec target( targetsize() );
++    real weight; // unused
++
++    TVec&lt;string&gt; train_cost_names = getTrainCostNames() ;
++    Vec train_costs( train_cost_names.length() );
++    train_costs.fill(MISSING_VALUE) ;
++
++    int nsamples = train_set-&gt;length();
++    int sample;
++
++    PP&lt;ProgressBar&gt; pb;
++
++    // clear stats of previous epoch
++    train_stats-&gt;forget();
++
++    int init_stage;
++
++    /***** initial greedy training *****/
++    for( int i=0 ; i&lt;n_layers-1 ; i++ )
++    {
++        MODULE_LOG &lt;&lt; &quot;Training connection weights between layers &quot; &lt;&lt; i
++            &lt;&lt; &quot; and &quot; &lt;&lt; i+1 &lt;&lt; endl;
++
++        int end_stage = training_schedule[i];
++        int* this_stage = greedy_stages.subVec(i,1).data();
++        init_stage = *this_stage;
++
++        MODULE_LOG &lt;&lt; &quot;  stage = &quot; &lt;&lt; *this_stage &lt;&lt; endl;
++        MODULE_LOG &lt;&lt; &quot;  end_stage = &quot; &lt;&lt; end_stage &lt;&lt; endl;
++        MODULE_LOG &lt;&lt; &quot;  greedy_learning_rate = &quot; &lt;&lt; greedy_learning_rate &lt;&lt; endl;
++        MODULE_LOG &lt;&lt; &quot;  cd_learning_rate = &quot; &lt;&lt; cd_learning_rate &lt;&lt; endl;
++
++        if( report_progress &amp;&amp; *this_stage &lt; end_stage )
++            pb = new ProgressBar( &quot;Training layer &quot;+tostring(i)
++                                  +&quot; of &quot;+classname(),
++                                  end_stage - init_stage );
++
++        train_costs.fill(MISSING_VALUE);
++        reconstruction_activations.resize(layers[i]-&gt;size);
++        reconstruction_activation_gradients.resize(layers[i]-&gt;size);
++        reconstruction_expectation_gradients.resize(layers[i]-&gt;size);
++
++        input_representation.resize(layers[i]-&gt;size);
++        pos_down_val.resize(layers[i]-&gt;size);
++        pos_up_val.resize(layers[i+1]-&gt;size);
++        neg_down_val.resize(layers[i]-&gt;size);
++        neg_up_val.resize(layers[i+1]-&gt;size);
++
++        for( ; *this_stage&lt;end_stage ; (*this_stage)++ )
++        {
++            
++            sample = *this_stage % nsamples;
++            train_set-&gt;getExample(sample, input, target, weight);
++            greedyStep( input, target, i, train_costs, *this_stage);
++            train_stats-&gt;update( train_costs );
++
++            if( pb )
++                pb-&gt;update( *this_stage - init_stage + 1 );
++        }
++    }
++
++    /***** fine-tuning by gradient descent *****/
++    if( stage &lt; nstages )
++    {
++
++        MODULE_LOG &lt;&lt; &quot;Fine-tuning all parameters, by gradient descent&quot; &lt;&lt; endl;
++        MODULE_LOG &lt;&lt; &quot;  stage = &quot; &lt;&lt; stage &lt;&lt; endl;
++        MODULE_LOG &lt;&lt; &quot;  nstages = &quot; &lt;&lt; nstages &lt;&lt; endl;
++        MODULE_LOG &lt;&lt; &quot;  fine_tuning_learning_rate = &quot; &lt;&lt; 
++            fine_tuning_learning_rate &lt;&lt; endl;
++
++        init_stage = stage;
++        if( report_progress &amp;&amp; stage &lt; nstages )
++            pb = new ProgressBar( &quot;Fine-tuning parameters of all layers of &quot;
++                                  + classname(),
++                                  nstages - init_stage );
++
++        setLearningRate( fine_tuning_learning_rate );
++        train_costs.fill(MISSING_VALUE);
++
++        final_cost_input.resize(n_classes);
++        final_cost_value.resize(2); // Should be resized anyways
++        final_cost_gradient.resize(n_classes);
++        input_representation.resize(layers.last()-&gt;size);
++        for( ; stage&lt;nstages ; stage++ )
++        {
++            sample = stage % nsamples;
++            if( !fast_exact_is_equal( fine_tuning_decrease_ct, 0. ) )
++                setLearningRate( fine_tuning_learning_rate
++                                 / (1. + fine_tuning_decrease_ct * stage ) );
++
++            train_set-&gt;getExample( sample, input, target, weight );
++
++            fineTuningStep( input, target, train_costs);
++            train_stats-&gt;update( train_costs );
++
++            if( pb )
++                pb-&gt;update( stage - init_stage + 1 );
++        }
++    }
++    
++    train_stats-&gt;finalize();
++    MODULE_LOG &lt;&lt; &quot;  train costs = &quot; &lt;&lt; train_stats-&gt;getMean() &lt;&lt; endl;
++
++
++    // Update currently_trained_layer
++    if(stage &gt; 0)
++        currently_trained_layer = n_layers;
++    else
++    {            
++        currently_trained_layer = n_layers-1;
++        while(currently_trained_layer&gt;1 
++              &amp;&amp; greedy_stages[currently_trained_layer-1] &lt;= 0)
++            currently_trained_layer--;
++    }
++}
++
++void TopDownAsymetricDeepNetwork::greedyStep( 
++    const Vec&amp; input, const Vec&amp; target, int index, 
++    Vec train_costs, int this_stage)
++{
++    PLASSERT( index &lt; n_layers );
++    real lr;
++
++    // Get example representation
++    computeRepresentation(input, input_representation, 
++                          index);
++    // Autoassociator learning
++    if( !fast_exact_is_equal( greedy_learning_rate, 0 ) )
++    {
++        if( !fast_exact_is_equal( greedy_decrease_ct , 0 ) )
++            lr = greedy_learning_rate/(1 + greedy_decrease_ct 
++                                       * this_stage); 
++        else
++            lr = greedy_learning_rate;
++
++        top_down_layers[index]-&gt;setLearningRate( lr );
++        connections[index]-&gt;setLearningRate( lr );
++        reconstruction_connections[index]-&gt;setLearningRate( lr );
++        layers[index+1]-&gt;setLearningRate( lr );
++
++        connections[index]-&gt;fprop(input_representation,
++                              activations[index+1]);
++        layers[index+1]-&gt;fprop(activations[index+1], expectations[index+1]);
++
++        reconstruction_connections[ index ]-&gt;fprop( expectations[index+1],
++                                                    reconstruction_activations);
++        top_down_layers[ index ]-&gt;fprop( reconstruction_activations,
++                                top_down_layers[ index ]-&gt;expectation);
++        
++        top_down_layers[ index ]-&gt;activation &lt;&lt; reconstruction_activations;
++        top_down_layers[ index ]-&gt;setExpectationByRef(
++            top_down_layers[ index ]-&gt;expectation);
++        real rec_err = top_down_layers[ index ]-&gt;fpropNLL(
++            input_representation);
++        train_costs[index] = rec_err;
++        
++        top_down_layers[ index ]-&gt;bpropNLL(
++            input_representation, rec_err,
++            reconstruction_activation_gradients);
++    }
++
++    // RBM learning
++    if( !fast_exact_is_equal( cd_learning_rate, 0 ) )
++    {
++        connections[index]-&gt;setAsDownInput( input_representation );
++        layers[index+1]-&gt;getAllActivations( connections[index] );
++        layers[index+1]-&gt;computeExpectation();
++        layers[index+1]-&gt;generateSample();
++        
++        // accumulate positive stats using the expectation
++        // we deep-copy because the value will change during negative phase
++        pos_down_val = expectations[index];
++        pos_up_val &lt;&lt; layers[index+1]-&gt;expectation;
++        
++        // down propagation, starting from a sample of layers[index+1]
++        connections[index]-&gt;setAsUpInput( layers[index+1]-&gt;sample );
++        
++        top_down_layers[index]-&gt;getAllActivations( connections[index] );
++        top_down_layers[index]-&gt;computeExpectation();
++        top_down_layers[index]-&gt;generateSample();
++        
++        // negative phase
++        connections[index]-&gt;setAsDownInput( top_down_layers[index]-&gt;sample );
++        layers[index+1]-&gt;getAllActivations( connections[index] );
++        layers[index+1]-&gt;computeExpectation();
++        // accumulate negative stats
++        // no need to deep-copy because the values won't change before update
++        neg_down_val = top_down_layers[index]-&gt;sample;
++        neg_up_val = layers[index+1]-&gt;expectation;
++    }
++    
++    // Update hidden layer bias and weights
++
++    if( !fast_exact_is_equal( greedy_learning_rate, 0 ) )
++    {
++        top_down_layers[ index ]-&gt;update(reconstruction_activation_gradients);
++    
++        reconstruction_connections[ index ]-&gt;bpropUpdate( 
++            expectations[index+1],
++            reconstruction_activations, 
++            reconstruction_expectation_gradients, 
++            reconstruction_activation_gradients);
++
++        layers[ index+1 ]-&gt;bpropUpdate( 
++            activations[index+1],
++            expectations[index+1],
++            // reused
++            reconstruction_activation_gradients,
++            reconstruction_expectation_gradients);
++        
++        connections[ index ]-&gt;bpropUpdate( 
++            input_representation,
++            activations[index+1],
++            reconstruction_expectation_gradients, //reused
++            reconstruction_activation_gradients);
++    }
++     
++
++    // RBM updates
++    if( !fast_exact_is_equal( cd_learning_rate, 0 ) )
++    {
++        if( !fast_exact_is_equal( cd_decrease_ct , 0 ) )
++            lr = cd_learning_rate/(1 + cd_decrease_ct 
++                                       * this_stage); 
++        else
++            lr = cd_learning_rate;
++
++        top_down_layers[index]-&gt;setLearningRate( lr );
++        connections[index]-&gt;setLearningRate( lr );
++        layers[index+1]-&gt;setLearningRate( lr );
++
++        top_down_layers[index]-&gt;update( pos_down_val, neg_down_val );
++        connections[index]-&gt;update( pos_down_val, pos_up_val,
++                                    neg_down_val, neg_up_val );
++        layers[index+1]-&gt;update( pos_up_val, neg_up_val );
++    }
++}
++
++void TopDownAsymetricDeepNetwork::fineTuningStep( 
++    const Vec&amp; input, const Vec&amp; target,
++    Vec&amp; train_costs)
++{
++    // Get example representation
++    computeRepresentation(input, input_representation, 
++                          n_layers-1);
++
++    final_module-&gt;fprop( input_representation, final_cost_input );
++    final_cost-&gt;fprop( final_cost_input, target, final_cost_value );
++        
++    final_cost-&gt;bpropUpdate( final_cost_input, target,
++                             final_cost_value[0],
++                             final_cost_gradient );
++    final_module-&gt;bpropUpdate( input_representation,
++                               final_cost_input,
++                               expectation_gradients[ n_layers-1 ],
++                               final_cost_gradient );
++    train_costs.last() = final_cost_value[0];
++    for( int i=n_layers-1 ; i&gt;0 ; i-- )
++    {
++        layers[i]-&gt;bpropUpdate( activations[i],
++                                expectations[i],
++                                activation_gradients[i],
++                                expectation_gradients[i] );
++        
++        
++        connections[i-1]-&gt;bpropUpdate( expectations[i-1],
++                                       activations[i],
++                                       expectation_gradients[i-1],
++                                       activation_gradients[i] );
++    }        
++}
++
++void TopDownAsymetricDeepNetwork::computeRepresentation(
++    const Vec&amp; input,
++    Vec&amp; representation,
++    int layer) const
++{
++    if(layer == 0)
++    {
++        representation.resize(input.length());
++        expectations[0] &lt;&lt; input;
++        representation &lt;&lt; input;
++        return;
++    }
++
++    expectations[0] &lt;&lt; input;
++    for( int i=0 ; i&lt;layer; i++ )
++    {
++        connections[i]-&gt;fprop( expectations[i], activations[i+1] );
++        layers[i+1]-&gt;fprop(activations[i+1],expectations[i+1]);
++    }
++    representation.resize(expectations[layer].length());
++    representation &lt;&lt; expectations[layer];
++}
++
++void TopDownAsymetricDeepNetwork::computeOutput(
++    const Vec&amp; input, Vec&amp; output) const
++{
++    computeRepresentation(input,input_representation, 
++                          min(currently_trained_layer,n_layers-1));
++    final_module-&gt;fprop( input_representation, final_cost_input );
++    output[0] = argmax(final_cost_input);
++}
++
++void TopDownAsymetricDeepNetwork::computeCostsFromOutputs(
++    const Vec&amp; input, const Vec&amp; output,
++    const Vec&amp; target, Vec&amp; costs) const
++{
++
++    //Assumes that computeOutput has been called
++    costs.resize( getTestCostNames().length() );
++    costs.fill( MISSING_VALUE );
++
++    if( currently_trained_layer&lt;n_layers 
++        &amp;&amp; reconstruction_connections.length() != 0 )
++    {
++        reconstruction_connections[ currently_trained_layer-1 ]-&gt;fprop( 
++            expectations[currently_trained_layer],
++            reconstruction_activations);
++        top_down_layers[ currently_trained_layer-1 ]-&gt;fprop( 
++            reconstruction_activations,
++            top_down_layers[ currently_trained_layer-1 ]-&gt;expectation);
++        
++        top_down_layers[ currently_trained_layer-1 ]-&gt;activation &lt;&lt; 
++            reconstruction_activations;
++        top_down_layers[ currently_trained_layer-1 ]-&gt;setExpectationByRef( 
++            top_down_layers[ currently_trained_layer-1 ]-&gt;expectation);
++        costs[ currently_trained_layer-1 ]  = 
++            top_down_layers[ currently_trained_layer-1 ]-&gt;fpropNLL(
++                expectations[currently_trained_layer-1]);
++    }
++
++    if( ((int)round(output[0])) == ((int)round(target[0])) )
++        costs[n_layers-1] = 0;
++    else
++        costs[n_layers-1] = 1;
++}
++
++TVec&lt;string&gt; TopDownAsymetricDeepNetwork::getTestCostNames() const
++{
++    // Return the names of the costs computed by computeCostsFromOutputs
++    // (these may or may not be exactly the same as what's returned by
++    // getTrainCostNames).
++
++    TVec&lt;string&gt; cost_names(0);
++
++    for( int i=0; i&lt;layers.size()-1; i++)
++        cost_names.push_back(&quot;reconstruction_error_&quot; + tostring(i+1));
++        
++    cost_names.append( &quot;class_error&quot; );
++
++    return cost_names;
++}
++
++TVec&lt;string&gt; TopDownAsymetricDeepNetwork::getTrainCostNames() const
++{
++    TVec&lt;string&gt; cost_names = getTestCostNames();
++    cost_names.append( &quot;NLL&quot; );
++    return cost_names;    
++}
++
++//#####  Helper functions  ##################################################
++
++void TopDownAsymetricDeepNetwork::setLearningRate( real the_learning_rate )
++{
++    for( int i=0 ; i&lt;n_layers-1 ; i++ )
++    {
++        layers[i]-&gt;setLearningRate( the_learning_rate );
++        top_down_layers[i]-&gt;setLearningRate( the_learning_rate );
++        connections[i]-&gt;setLearningRate( the_learning_rate );
++    }
++    layers[n_layers-1]-&gt;setLearningRate( the_learning_rate );
++    top_down_layers[n_layers-1]-&gt;setLearningRate( the_learning_rate );
++
++    final_module-&gt;setLearningRate( the_learning_rate );
++    final_cost-&gt;setLearningRate( the_learning_rate );
++}
++
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.h
+===================================================================
+--- trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.h	2008-02-28 22:14:04 UTC (rev 8601)
++++ trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.h	2008-02-28 22:16:38 UTC (rev 8602)
+@@ -0,0 +1,289 @@
++// -*- C++ -*-
++
++// TopDownAsymetricDeepNetwork.h
++//
++// Copyright (C) 2008 Hugo Larochelle
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Hugo Larochelle
++
++/*! \file TopDownAsymetricDeepNetwork.h */
++
++
++#ifndef TopDownAsymetricDeepNetwork_INC
++#define TopDownAsymetricDeepNetwork_INC
++
++#include &lt;plearn/vmat/ClassSubsetVMatrix.h&gt;
++#include &lt;plearn_learners/generic/PLearner.h&gt;
++#include &lt;plearn_learners/online/GradNNetLayerModule.h&gt;
++#include &lt;plearn_learners/online/OnlineLearningModule.h&gt;
++#include &lt;plearn_learners/online/CostModule.h&gt;
++#include &lt;plearn_learners/online/ModuleStackModule.h&gt;
++#include &lt;plearn_learners/online/NLLCostModule.h&gt;
++#include &lt;plearn_learners/online/ClassErrorCostModule.h&gt;
++#include &lt;plearn_learners/online/CombiningCostsModule.h&gt;
++#include &lt;plearn_learners/online/RBMClassificationModule.h&gt;
++#include &lt;plearn_learners/online/RBMLayer.h&gt;
++#include &lt;plearn_learners/online/RBMMixedLayer.h&gt;
++#include &lt;plearn_learners/online/RBMConnection.h&gt;
++#include &lt;plearn_learners/online/SoftmaxModule.h&gt;
++#include &lt;plearn/misc/PTimer.h&gt;
++
++namespace PLearn {
++
++/**
++ * Neural net, trained layer-wise in a greedy but focused fashion 
++ * using autoassociators/RBMs and a supervised non-parametric gradient.
++ * It is highly inspired by the StackedAutoassociators class, 
++ * and can use use the same RBMLayer and RBMConnection components.
++ */
++class TopDownAsymetricDeepNetwork : public PLearner
++{
++    typedef PLearner inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! Contrastive divergence learning rate
++    real cd_learning_rate;
++    
++    //! Contrastive divergence decrease constant
++    real cd_decrease_ct;
++
++    //! The learning rate used during the autoassociator gradient descent training
++    real greedy_learning_rate;
++
++    //! The decrease constant of the learning rate used during the autoassociator
++    //! gradient descent training. When a hidden layer has finished its training,
++    //! the learning rate is reset to it's initial value.
++    real greedy_decrease_ct;
++
++    //! The learning rate used during the fine tuning gradient descent
++    real fine_tuning_learning_rate;
++
++    //! The decrease constant of the learning rate used during fine tuning
++    //! gradient descent
++    real fine_tuning_decrease_ct;
++
++    //! Number of examples to use during each phase of greedy pre-training.
++    //! The number of fine-tunig steps is defined by nstages.
++    TVec&lt;int&gt; training_schedule;
++
++    //! The layers of units in the network for bottom up inference
++    TVec&lt; PP&lt;RBMLayer&gt; &gt; layers;
++
++    //! The layers of units in the network for top down inference
++    TVec&lt; PP&lt;RBMLayer&gt; &gt; top_down_layers;
++
++    //! The weights of the connections between the layers
++    TVec&lt; PP&lt;RBMConnection&gt; &gt; connections;
++
++    //! The reconstruction weights of the autoassociators
++    TVec&lt; PP&lt;RBMConnection&gt; &gt; reconstruction_connections;
++
++    //! Number of classes
++    int n_classes;
++
++    //! Output weights l1_penalty_factor
++    real output_weights_l1_penalty_factor;
++
++    //! Output weights l2_penalty_factor
++    real output_weights_l2_penalty_factor;
++
++    //#####  Public Learnt Options  ###########################################
++
++    //! Number of layers
++    int n_layers;
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    TopDownAsymetricDeepNetwork();
++
++    //#####  PLearner Member Functions  #######################################
++
++    //! Returns the size of this learner's output, (which typically
++    //! may depend on its inputsize(), targetsize() and set options).
++    virtual int outputsize() const;
++
++    //! (Re-)initializes the PLearner in its fresh state (that state may depend
++    //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
++    //! a fresh learner!).
++    virtual void forget();
++
++    //! The role of the train method is to bring the learner up to
++    //! stage==nstages, updating the train_stats collector with training costs
++    //! measured on-line in the process.
++    virtual void train();
++
++    //! Computes the output from the input.
++    virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
++
++    //! Computes the costs from already computed output.
++    virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                         const Vec&amp; target, Vec&amp; costs) const;
++
++    //! Returns the names of the costs computed by computeCostsFromOutpus (and
++    //! thus the test method).
++    virtual TVec&lt;std::string&gt; getTestCostNames() const;
++
++    //! Returns the names of the objective costs that the train method computes
++    //! and  for which it updates the VecStatsCollector train_stats.
++    virtual TVec&lt;std::string&gt; getTrainCostNames() const;
++
++    void greedyStep( const Vec&amp; input, const Vec&amp; target, int index, 
++                     Vec train_costs, int stage);
++
++    void fineTuningStep( const Vec&amp; input, const Vec&amp; target,
++                         Vec&amp; train_costs);
++
++    void computeRepresentation( const Vec&amp; input, 
++                                Vec&amp; representation, int layer) const;
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    // ### If your class is not instantiatable (it has pure virtual methods)
++    // ### you should replace this by PLEARN_DECLARE_ABSTRACT_OBJECT_METHODS
++    PLEARN_DECLARE_OBJECT(TopDownAsymetricDeepNetwork);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++    //#####  Not Options  #####################################################
++
++    //! Stores the activations of the input and hidden layers
++    //! (at the input of the layers)
++    mutable TVec&lt;Vec&gt; activations;
++
++    //! Stores the expectations of the input and hidden layers
++    //! (at the output of the layers)
++    mutable TVec&lt;Vec&gt; expectations;
++
++    //! Stores the gradient of the cost wrt the activations of 
++    //! the input and hidden layers
++    //! (at the input of the layers)
++    mutable TVec&lt;Vec&gt; activation_gradients;
++
++    //! Stores the gradient of the cost wrt the expectations of 
++    //! the input and hidden layers
++    //! (at the output of the layers)
++    mutable TVec&lt;Vec&gt; expectation_gradients;
++
++    //! Reconstruction activations
++    mutable Vec reconstruction_activations;
++    
++    //! Reconstruction activation gradients
++    mutable Vec reconstruction_activation_gradients;
++
++    //! Reconstruction expectation gradients
++    mutable Vec reconstruction_expectation_gradients;
++
++    //! Example representation
++    mutable Vec input_representation;
++
++    //! Positive down statistic
++    Vec pos_down_val;
++    //! Positive up statistic
++    Vec pos_up_val;
++    //! Negative down statistic
++    Vec neg_down_val;
++    //! Negative up statistic
++    Vec neg_up_val;
++
++    //! Input of cost function
++    mutable Vec final_cost_input;
++    //! Cost value
++    mutable Vec final_cost_value;
++    //! Cost gradient on output layer
++    mutable Vec final_cost_gradient;
++
++    //! Stages of the different greedy phases
++    TVec&lt;int&gt; greedy_stages;
++
++    //! Currently trained layer (1 means the first hidden layer,
++    //! n_layers means the output layer)
++    int currently_trained_layer;
++
++    //! Output layer of neural net
++    PP&lt;OnlineLearningModule&gt; final_module;
++
++    //! Cost on output layer of neural net
++    PP&lt;CostModule&gt; final_cost;
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++
++    void build_layers_and_connections();
++
++    void build_output_layer_and_cost();
++
++    void setLearningRate( real the_learning_rate );
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here    
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(TopDownAsymetricDeepNetwork);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002049.html">[Plearn-commits] r8601 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="002051.html">[Plearn-commits] r8603 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2050">[ date ]</a>
+              <a href="thread.html#2050">[ thread ]</a>
+              <a href="subject.html#2050">[ subject ]</a>
+              <a href="author.html#2050">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

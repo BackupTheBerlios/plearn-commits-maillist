@@ -1,0 +1,152 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9052 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9052%20-%20trunk/plearn/vmat&In-Reply-To=%3C200805232057.m4NKvXW4028472%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002499.html">
+   <LINK REL="Next"  HREF="002501.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9052 - trunk/plearn/vmat</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9052%20-%20trunk/plearn/vmat&In-Reply-To=%3C200805232057.m4NKvXW4028472%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9052 - trunk/plearn/vmat">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Fri May 23 22:57:33 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002499.html">[Plearn-commits] r9051 - in trunk: plearn/base	plearn_learners/regressors
+</A></li>
+        <LI>Next message: <A HREF="002501.html">[Plearn-commits] r9053 - trunk/python_modules/plearn/plotting
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2500">[ date ]</a>
+              <a href="thread.html#2500">[ thread ]</a>
+              <a href="subject.html#2500">[ subject ]</a>
+              <a href="author.html#2500">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-05-23 22:57:32 +0200 (Fri, 23 May 2008)
+New Revision: 9052
+
+Modified:
+   trunk/plearn/vmat/ToBagSplitter.cc
+   trunk/plearn/vmat/ToBagSplitter.h
+Log:
+Can now provide the target to the underlying splitter
+
+Modified: trunk/plearn/vmat/ToBagSplitter.cc
+===================================================================
+--- trunk/plearn/vmat/ToBagSplitter.cc	2008-05-23 20:16:59 UTC (rev 9051)
++++ trunk/plearn/vmat/ToBagSplitter.cc	2008-05-23 20:57:32 UTC (rev 9052)
+@@ -54,6 +54,7 @@
+ ///////////////////
+ ToBagSplitter::ToBagSplitter():
+     expected_size_of_bag(10),
++    provide_target(false),
+     remove_bag(false)
+ {}
+ 
+@@ -81,6 +82,12 @@
+                   &amp;ToBagSplitter::remove_bag, OptionBase::buildoption,
+         &quot;If true, then the bag column will be removed from the data splits.&quot;);
+ 
++    declareOption(ol, &quot;provide_target&quot;,
++                  &amp;ToBagSplitter::provide_target, OptionBase::buildoption,
++        &quot;If true, then the target (without the bag info) of a bag will be\n&quot;
++        &quot;provided to the underlying splitter. This target is obtained from\n&quot;
++        &quot;the first sample in each bag.&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -132,7 +139,31 @@
+         }
+         // Resize to the minimum size needed.
+         bags_store.resize(num_bag, max_ninstances + 1, 0, true);
++        int bags_store_is = max_ninstances + 1;
++        int bags_store_ts = 0;
++        if (provide_target) {
++            if (dataset-&gt;targetsize() &lt;= 1)
++                PLWARNING(&quot;In ToBagSplitter::build_ - 'provide_target' is true,&quot;
++                        &quot; but the dataset does not seem to have any target &quot;
++                        &quot;besides the bag information: no target provided to &quot;
++                        &quot;the underlying splitter&quot;);
++            else {
++                bags_store_ts = dataset-&gt;targetsize() - 1;
++                bags_store.resize(bags_store.length(),
++                                  bags_store.width() + bags_store_ts,
++                                  0, true);
++                Vec input, target;
++                real weight;
++                for (int i = 0; i &lt; bags_store.length(); i++) {
++                    dataset-&gt;getExample(int(round(bags_store(i, 1))),
++                                        input, target, weight);
++                    bags_store(i).subVec(bags_store_is, bags_store_ts) &lt;&lt;
++                        target.subVec(0, bags_store_ts);
++                }
++            }
++        }
+         bags_index = VMat(bags_store);
++        bags_index-&gt;defineSizes(bags_store_is, bags_store_ts, 0);
+         //bags_index-&gt;savePMAT(&quot;HOME:tmp/bid.pmat&quot;);
+         // Provide this index to the sub_splitter.
+         sub_splitter-&gt;setDataSet(bags_index);
+
+Modified: trunk/plearn/vmat/ToBagSplitter.h
+===================================================================
+--- trunk/plearn/vmat/ToBagSplitter.h	2008-05-23 20:16:59 UTC (rev 9051)
++++ trunk/plearn/vmat/ToBagSplitter.h	2008-05-23 20:57:32 UTC (rev 9052)
+@@ -62,9 +62,6 @@
+     // * protected options *
+     // *********************
+ 
+-    // ### declare protected option fields (such as learnt parameters) here
+-    // ...
+-
+     // Fields below are not options.
+ 
+     //! Used to store the list of all bags, with the indices of the corresponding
+@@ -78,6 +75,7 @@
+     // ************************
+ 
+     int expected_size_of_bag;
++    bool provide_target;
+     bool remove_bag;
+     PP&lt;Splitter&gt; sub_splitter;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002499.html">[Plearn-commits] r9051 - in trunk: plearn/base	plearn_learners/regressors
+</A></li>
+	<LI>Next message: <A HREF="002501.html">[Plearn-commits] r9053 - trunk/python_modules/plearn/plotting
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2500">[ date ]</a>
+              <a href="thread.html#2500">[ thread ]</a>
+              <a href="subject.html#2500">[ subject ]</a>
+              <a href="author.html#2500">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

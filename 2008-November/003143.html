@@ -1,0 +1,237 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9703 - trunk/plearn_learners/classifiers
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9703%20-%20trunk/plearn_learners/classifiers&In-Reply-To=%3C200811201936.mAKJahhg008634%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003142.html">
+   <LINK REL="Next"  HREF="003144.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9703 - trunk/plearn_learners/classifiers</H1>
+    <B>plearner at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9703%20-%20trunk/plearn_learners/classifiers&In-Reply-To=%3C200811201936.mAKJahhg008634%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9703 - trunk/plearn_learners/classifiers">plearner at mail.berlios.de
+       </A><BR>
+    <I>Thu Nov 20 20:36:43 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003142.html">[Plearn-commits] r9702 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+        <LI>Next message: <A HREF="003144.html">[Plearn-commits] r9704 - trunk/plearn/ker/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3143">[ date ]</a>
+              <a href="thread.html#3143">[ thread ]</a>
+              <a href="subject.html#3143">[ subject ]</a>
+              <a href="author.html#3143">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: plearner
+Date: 2008-11-20 20:36:41 +0100 (Thu, 20 Nov 2008)
+New Revision: 9703
+
+Modified:
+   trunk/plearn_learners/classifiers/KNNClassifier.cc
+   trunk/plearn_learners/classifiers/KNNClassifier.h
+Log:
+Added multi_k option that allows computing costs for several values of k (without having to research the neighbours among all training points for each different value of k).
+
+
+
+Modified: trunk/plearn_learners/classifiers/KNNClassifier.cc
+===================================================================
+--- trunk/plearn_learners/classifiers/KNNClassifier.cc	2008-11-20 17:05:52 UTC (rev 9702)
++++ trunk/plearn_learners/classifiers/KNNClassifier.cc	2008-11-20 19:36:41 UTC (rev 9703)
+@@ -142,6 +142,25 @@
+         &quot;(default), and the 'use_knn_costs_as_weights' is false, the\n&quot;
+         &quot;rectangular kernel is used.&quot;);
+   
++    declareOption(
++        ol, &quot;multi_k&quot;, &amp;KNNClassifier::multi_k, OptionBase::buildoption,
++        &quot;This can be used if you wish to simultaneously compute the costs for\n&quot;
++        &quot;several values of k, efficiently, while doing neighbors search a\n&quot;
++        &quot;single time. Specify in increasing order, the values of k (number \n&quot;
++        &quot;the number of neighbors) you are interested in. This will result \n&quot;
++        &quot;in computing and making available extra costs in addition to \n&quot;
++        &quot;class_error and neglogprob. For each such specified k, \n&quot;
++        &quot;there will be a class_error_k and neglogprob_k.\n&quot;
++        &quot;Note that these will however only be computed correctly for values\n&quot;
++        &quot;of k that are less or equal to the global K determined by the other\n&quot;
++        &quot;options. So if you specify a multi_k list, you should probably set \n&quot;
++        &quot;kmin to the last and largest k of the list.\n&quot;
++        &quot;On a technical note, these costs will be computed correctly \n&quot;
++        &quot;only if the call to computeCostsFromOutputs follows the \n&quot;
++        &quot;computeOutput corresponding to the same input (this is usually\n&quot;
++        &quot;the case, and a warning is issued if it isn't).&quot;);
++
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -157,6 +176,10 @@
+     if (kmin &lt;= 0)
+         PLERROR(&quot;KNNClassifier::build_: the 'kmin' option must be strictly positive&quot;);
+ 
++    for(int k=0; k&lt;multi_k.length()-1; k++)
++        if(multi_k[k]&gt;multi_k[k+1])
++            PLERROR(&quot;values in option multi_k *must* be in increaisng order&quot;);
++
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+@@ -229,11 +252,23 @@
+     knn-&gt;computeOutputAndCosts(input, knn_targets, knn_output, knn_costs);
+     real* output_data = knn_output.data();
+   
++    int n_multi_k = multi_k.length();
++    if(n_multi_k&gt;0)
++    {
++        // First remember the input so we can verify computeCostsFromOutputs is called on the same
++        multi_k_input.resize(input.length());
++        multi_k_input &lt;&lt; input; 
++        // Then initialize the multi_k_output matrix.
++        multi_k_output.resize(n_multi_k, outputsize());
++        multi_k_output.fill(0);
++        // TODO: need to sort the knn output ?...
++    }
++
+     // Cumulate the class weights.  Compute the kernel if it's required.
+     class_weights.resize(nclasses);
+     class_weights.fill(0.0);
+     real total_weight = 0.0;
+-    for (int i=0, n=knn-&gt;num_neighbors ; i&lt;n ; ++i) {
++    for (int i=0, n=knn-&gt;num_neighbors, multi_pos=0 ; i&lt;n ; ++i) {
+         real w = -1.0;                           //!&lt; safety net
+         if (kernel) {
+             Vec cur_input(inputsize, output_data);
+@@ -252,6 +287,16 @@
+         PLASSERT( w &gt;= 0.0 );
+         class_weights[nn_class] += w;
+         total_weight += w;
++        if(multi_pos&lt;n_multi_k &amp;&amp; multi_k[multi_pos]==i+1) // we want to keep the output for k==i+1
++        {
++            if (total_weight &gt;= 1e-6)
++            {
++                Vec output_k = multi_k_output(multi_pos);
++                output_k &lt;&lt; class_weights;
++                output_k *= 1/total_weight;
++            }
++            ++multi_pos;
++        }
+     }
+ 
+     // If the total weight is too small, output zero probability for all classes
+@@ -271,17 +316,40 @@
+ void KNNClassifier::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output, 
+                                             const Vec&amp; target, Vec&amp; costs) const
+ {
+-    costs.resize(nTestCosts());
++    int n_multi_k = multi_k.length();
++    costs.resize(2*(1+n_multi_k));
++    int t = int(target[0]);
+     int sel_class = argmax(output);
+-    costs[0] = sel_class != int(target[0]);
+-    costs[1] = -pl_log(1e-10+output[int(target[0])]);
++    costs[0] = sel_class != t; 
++    costs[1] = -pl_log(1e-10+output[t]);
++
++    if(n_multi_k&gt;0 &amp;&amp; input!=multi_k_input)
++        PLWARNING(&quot;In computeCostsFromOutputs: input appears different from multi_k_input. &quot;
++                  &quot;This probably means that computeOutput was called on a different input &quot;
++                  &quot;before calling computeCostsFromOutputs. As a consequence, the extra costs &quot;
++                  &quot;requested through the multi_k option will be incorrect&quot;);
++        
++    for(int k=0; k&lt;n_multi_k; k++)
++    {
++        Vec output_k = multi_k_output(k);
++        int sel_class = argmax(output_k);
++        costs[2+2*k] = sel_class != t; 
++        costs[3+2*k] = -pl_log(1e-10+output_k[t]);
++    }
+ }
+ 
+ TVec&lt;string&gt; KNNClassifier::getTestCostNames() const
+ {
+-    static TVec&lt;string&gt; costs(2);
++    int n_multi_k = multi_k.length();
++    static TVec&lt;string&gt; costs(2*(1+n_multi_k));
+     costs[0] = &quot;class_error&quot;;
+     costs[1] = &quot;neglogprob&quot;;
++    for(int k=0; k&lt;n_multi_k; k++)
++    {
++        string kstr = tostring(multi_k[k]);
++        costs[2+2*k] = &quot;class_error_&quot;+kstr;
++        costs[3+2*k] = &quot;neglogprob_&quot;+kstr;
++    }
+     return costs;
+ }
+ 
+
+Modified: trunk/plearn_learners/classifiers/KNNClassifier.h
+===================================================================
+--- trunk/plearn_learners/classifiers/KNNClassifier.h	2008-11-20 17:05:52 UTC (rev 9702)
++++ trunk/plearn_learners/classifiers/KNNClassifier.h	2008-11-20 19:36:41 UTC (rev 9703)
+@@ -104,6 +104,17 @@
+ 
+     //! Internal use: temporary buffer for cumulating class weights
+     mutable Vec class_weights;
++
++    //! Internal use: this is used when a multi_k option is provided 
++    //! to temporarily store the outputs the classifier would give for 
++    //! all values of k given in multi_k.
++    //! These outputs are computed by the computeOutput method, for
++    //! consumption by the computeCostsFromOutputs method (whuch must be 
++    //! called right after). 
++    mutable Mat multi_k_output;
++
++    //! Internal use to remember the input used in computeOutput when using multi_k option.
++    mutable Vec multi_k_input;
+   
+ public:
+     //#####  Public Build Options  ############################################
+@@ -139,6 +150,11 @@
+     //! (default), and the 'use_knn_costs_as_weights' is false, the
+     //! rectangular kernel is used.
+     Ker kernel;
++    
++    //! This can be used if you wish to simultaneously compute the costs for several
++    //! values of k, efficiently, while doing neighbors search a single time.
++    //! (see corresponding declareOption in .cc for more detailed info).
++    TVec&lt;int&gt; multi_k;
+ 
+ public:
+     //#####  Object Methods  ##################################################
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003142.html">[Plearn-commits] r9702 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+	<LI>Next message: <A HREF="003144.html">[Plearn-commits] r9704 - trunk/plearn/ker/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3143">[ date ]</a>
+              <a href="thread.html#3143">[ thread ]</a>
+              <a href="subject.html#3143">[ subject ]</a>
+              <a href="author.html#3143">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

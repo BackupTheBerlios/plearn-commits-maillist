@@ -1,0 +1,657 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6698 - trunk/plearn/opt/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6698%20-%20trunk/plearn/opt/EXPERIMENTAL&In-Reply-To=%3C200702281529.l1SFTTvt022263%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000146.html">
+   <LINK REL="Next"  HREF="000148.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6698 - trunk/plearn/opt/EXPERIMENTAL</H1>
+    <B>manzagop at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6698%20-%20trunk/plearn/opt/EXPERIMENTAL&In-Reply-To=%3C200702281529.l1SFTTvt022263%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6698 - trunk/plearn/opt/EXPERIMENTAL">manzagop at mail.berlios.de
+       </A><BR>
+    <I>Wed Feb 28 16:29:29 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000146.html">[Plearn-commits] r6697 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000148.html">[Plearn-commits] r6699 - trunk/plearn/opt/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#147">[ date ]</a>
+              <a href="thread.html#147">[ thread ]</a>
+              <a href="subject.html#147">[ subject ]</a>
+              <a href="author.html#147">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: manzagop
+Date: 2007-02-28 16:29:28 +0100 (Wed, 28 Feb 2007)
+New Revision: 6698
+
+Added:
+   trunk/plearn/opt/EXPERIMENTAL/OnlineGramNaturalGradientOptimizer.cc
+   trunk/plearn/opt/EXPERIMENTAL/OnlineGramNaturalGradientOptimizer.h
+Log:
+Initial version of the code with bounding of the principal eigen values with the reg option.
+
+
+Added: trunk/plearn/opt/EXPERIMENTAL/OnlineGramNaturalGradientOptimizer.cc
+===================================================================
+--- trunk/plearn/opt/EXPERIMENTAL/OnlineGramNaturalGradientOptimizer.cc	2007-02-28 14:12:43 UTC (rev 6697)
++++ trunk/plearn/opt/EXPERIMENTAL/OnlineGramNaturalGradientOptimizer.cc	2007-02-28 15:29:28 UTC (rev 6698)
+@@ -0,0 +1,399 @@
++// -*- C++ -*-
++
++// OnlineGramNaturalGradientOptimizer.cc
++//
++// Copyright (C) 2007 Pierre-Antoine Manzagol
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pierre-Antoine Manzagol
++
++/*! \file OnlineGramNaturalGradientOptimizer.cc */
++
++
++#define PL_LOG_MODULE_NAME &quot;OnlineGramNaturalGradientOptimizer&quot;
++
++#include &quot;OnlineGramNaturalGradientOptimizer.h&quot;
++#include &lt;plearn/io/pl_log.h&gt;
++#include &lt;plearn/math/TMat_maths.h&gt;
++#include &lt;plearn/display/DisplayUtils.h&gt;
++#include &lt;plearn/var/SumOfVariable.h&gt;
++
++#include &lt;plearn/math/plapack.h&gt;
++
++
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    OnlineGramNaturalGradientOptimizer,
++    &quot;Optimization by Schraudolph's stochastic meta descent (SMD).&quot;, 
++    &quot;OnlineGramNaturalGradientOptimizer is \n&quot;
++    &quot;blabla \n&quot;
++    &quot;\n&quot;
++);
++
++OnlineGramNaturalGradientOptimizer::OnlineGramNaturalGradientOptimizer():
++    learning_rate(0.01),
++    gamma(1.0),
++    reg(1e-6),
++    opt_batch_size(1),
++    n_eigen(6)
++{}
++
++
++void OnlineGramNaturalGradientOptimizer::declareOptions(OptionList&amp; ol)
++{
++    declareOption(
++        ol, &quot;learning_rate&quot;, &amp;OnlineGramNaturalGradientOptimizer::learning_rate,
++        OptionBase::buildoption, 
++        &quot;Learning rate used in the natural gradient descent.\n&quot;);
++    declareOption(
++        ol, &quot;gamma&quot;, &amp;OnlineGramNaturalGradientOptimizer::gamma,
++        OptionBase::buildoption, 
++        &quot;Discount factor used in the update of the estimate of the gradient covariance.\n&quot;);
++    declareOption(
++        ol, &quot;reg&quot;, &amp;OnlineGramNaturalGradientOptimizer::reg,
++        OptionBase::buildoption, 
++        &quot;Regularizer used in computing the natural gradient, C^{-1} mu. Added to C^{-1} diagonal.\n&quot;);
++    declareOption(
++        ol, &quot;opt_batch_size&quot;, &amp;OnlineGramNaturalGradientOptimizer::opt_batch_size,
++        OptionBase::buildoption, 
++        &quot;Size of the optimizer's batches (examples before parameter and gradient covariance updates).\n&quot;);
++    declareOption(
++        ol, &quot;n_eigen&quot;, &amp;OnlineGramNaturalGradientOptimizer::n_eigen,
++        OptionBase::buildoption, 
++        &quot;The number of eigen vectors to model the gradient covariance matrix\n&quot;);
++
++    inherited::declareOptions(ol);
++}
++
++void OnlineGramNaturalGradientOptimizer::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{ 
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    deepCopyField(gradients, copies);
++    deepCopyField(mu, copies);
++    deepCopyField(gram, copies);
++    deepCopyField(U, copies);
++    deepCopyField(D, copies);
++    deepCopyField(cov_eigen_vec, copies);
++    deepCopyField(cov_eigen_val, copies);
++    deepCopyField(cov_norm_eigen_vec, copies);
++    deepCopyField(dot_prod, copies);
++    deepCopyField(scaled_dot_prod, copies);
++    deepCopyField(naturalg, copies);
++
++}
++
++void OnlineGramNaturalGradientOptimizer::build_()
++{
++    n_optimizeN_calls=0;
++    n_eigen_cur = 0;
++    n_eigen_old = 0;
++
++    total_variance = 0.0;
++    variance_percentage = 0.;
++
++    int n = params.nelems();
++
++    cout &lt;&lt; &quot;Number of parameters: &quot; &lt;&lt; n &lt;&lt; endl;
++
++    if (n &gt; 0) {
++        gradients.resize( opt_batch_size, n );
++        gradients.clear();
++        mu.resize(n);
++        mu.clear();
++        naturalg.resize(n);
++        naturalg.clear();
++        // other variables will have different lengths
++        // depending on the current number of eigen vectors
++    }
++}
++
++// 'stage' is to be interpreted as &quot;the number of examples to use
++// in batches of size 'batch_size' &quot;
++// Note that a batch could be spread over two epochs
++bool OnlineGramNaturalGradientOptimizer::optimizeN(VecStatsCollector&amp; stats_coll) 
++{
++    n_optimizeN_calls++;
++
++    if( nstages%opt_batch_size != 0 )   {
++        PLWARNING(&quot;OnlineGramNaturalGradientOptimizer::optimizeN(...) - nstages%opt_batch_size != 0&quot;);
++    }
++
++    int stage_max = stage + nstages; // the stage to reach
++
++    PP&lt;ProgressBar&gt; pb;
++    pb = new ProgressBar(&quot;Training &quot; + classname() + &quot; from stage &quot; 
++                + tostring(stage) + &quot; to &quot; + tostring(stage_max), (int)(stage_max-stage)/opt_batch_size );
++
++    int initial_stage = stage;
++    while( stage &lt; stage_max )    {
++
++        /*if( bi == 0 )
++            t0 = clock();*/
++
++        // Get the new gradient and append it
++        params.clearGradient();
++        proppath.clearGradient();
++        cost-&gt;gradient[0] = -1.0;
++        proppath.fbprop();
++        params.copyGradientTo( gradients(bi) );
++
++        // End of batch. Compute natural gradient and update parameters.
++        bi++;
++        if( bi == opt_batch_size )  {
++            //t1 = clock();
++
++            bi = 0;
++            gramEigenNaturalGradient();
++
++            //t2 = clock();
++
++            // set params += -learning_rate * params.gradient
++            naturalg *= learning_rate;
++            params.copyGradientFrom( naturalg );
++            params.updateAndClear();
++
++            //t3 = clock();
++
++            //cout &lt;&lt; double(t1-t0) &lt;&lt; &quot; &quot; &lt;&lt; double(t2-t1) &lt;&lt; &quot; &quot; &lt;&lt; double(t3-t2) &lt;&lt; endl;
++
++            if(pb)
++                pb-&gt;update((stage-initial_stage)/opt_batch_size);
++
++        }
++
++        stats_coll.update(cost-&gt;value);
++        stage++;
++    }
++
++    return false;
++}
++
++
++void OnlineGramNaturalGradientOptimizer::gramEigenNaturalGradient()
++{
++    // We don't have any eigen vectors yet
++    if( n_eigen_cur == 0 )  {
++
++        // The number of eigen vectors we will have after incorporating the new data
++        // (the gram matrix of gradients might have a rank smaller than n_eigen)
++        n_eigen_cur = min( gradients.length(), n_eigen);
++
++        // Compute the total variance - to do this, compute the trace of the covariance matrix
++        // could also use the trace of the gram matrix since we compute it, ie sum(diag(gram))
++/*        for( int i=0; i&lt;gradients.length(); i++)   {
++            Vec v = gradients(i);
++            total_variance += sumsquare(v);
++        }
++        total_variance /= gradients.length();*/
++
++        // Compute the gram matrix - TODO does this recognize gram is symetric? (and save the computations?)
++        gram.resize( gradients.length(), gradients.length() );
++        productTranspose(gram, gradients, gradients);
++        gram /= gradients.length();
++
++        // Extract eigenvectors/eigenvalues - destroys the content of gram, D and U are resized
++        // gram = U D U' (if we took all values)
++        eigenVecOfSymmMat(gram, n_eigen_cur, D, U);
++
++        // Percentage of the variance we keep is the sum of the kept eigenvalues divided
++        // by the total variance.
++        //variance_percentage = sum(D)/total_variance;
++
++	// The eigenvectors V of C are deduced from the eigenvectors U of G by the
++	// formula V = AUD^{-1/2} (D the eigenvalues of G).  The nonzero eigenvalues of
++	// C and D are the same.
++
++	// The true eigenvalues are norm_eigen_vec. However, we shall keep in memory
++	// the eigenvectors of C rescaled by the square root of their associated
++	// eigenvalues, so that C can be written VV' instead of VDV'. Thus, the &quot;new&quot; V
++	// is equal to VD^{1/2} = AU.
++        // We have row vectors so AU = (U'A')'
++
++        cov_eigen_vec.resize(n_eigen_cur, gradients.width() );
++        product( cov_eigen_vec, U, gradients );
++        cov_eigen_vec /= sqrt( gradients.length() );
++        cov_eigen_val.resize( D.length() );
++        cov_eigen_val &lt;&lt; D;
++
++        ofstream fd_eigval(&quot;eigen_vals.txt&quot;, ios_base::app);
++        fd_eigval &lt;&lt; cov_eigen_val &lt;&lt; endl;
++        fd_eigval.close();
++
++        cov_norm_eigen_vec.resize( n_eigen_cur, gradients.width() );
++        for( int i=0; i&lt;n_eigen_cur; i++)   {
++            Vec v = cov_norm_eigen_vec(i);
++            divide( cov_eigen_vec(i), sqrt(D[i]), v );
++        }
++
++    }
++
++    // We already have some eigen vectors, so it's an update
++    else    {
++
++        // The number of eigen vectors we will have after incorporating the new data
++        n_eigen_old = cov_eigen_vec.length();
++        n_eigen_cur = min( cov_eigen_vec.length() + gradients.length(), n_eigen);
++
++        // Update the total variance, by computing that of the covariance matrix
++        // total_variance = gamma*total_variance + (1-gamma)*sum(sum(A.^2))/n_new_vec
++        /*total_variance *= gamma;
++        for( int i=0; i&lt;gradients.length(); i++)   {
++            Vec v = gradients(i);
++            total_variance += (1.-gamma) * sumsquare(v) / gradients.length();
++        }*/
++
++        // Compute the gram matrix
++	// To find the equivalence between the covariance matrix and the Gram matrix,
++	// we need to have the covariance matrix under the form C = UU' + AA'. However,
++	// what we have is C = gamma UU' + (1-gamma)AA'/n_new_vec. Thus, we will
++	// rescale U and A using U = sqrt(gamma) U and A = sqrt((1 - gamma)/n_new_vec)
++	// A. Now, the Gram matrix is of the form [U'U U'A;A'U A'A] using the new U and
++	// A.
++
++        gram.resize( n_eigen_old + gradients.length(), n_eigen_old + gradients.length() );
++
++        Mat m = gram.subMat(0, 0, n_eigen_old, n_eigen_old);
++        m.clear();
++        addToDiagonal(m, gamma*D);
++
++        // Nicolas says &quot;use C_{n+1} = gamma C_n + gg'&quot; so no (1.-gamma)
++        m = gram.subMat(n_eigen_old, n_eigen_old, gradients.length(), gradients.length());
++        productTranspose(m, gradients, gradients);
++        //m *= (1.-gamma) / gradients.length();
++        m /= gradients.length();
++
++        m = gram.subMat(n_eigen_old, 0, gradients.length(), n_eigen_old );
++        productTranspose(m, gradients, cov_eigen_vec);
++        //m *= sqrt(gamma*(1.-gamma)/gradients.length());
++        m *= sqrt(gamma/gradients.length());
++
++        Mat m2 = gram.subMat( 0, n_eigen_old, n_eigen_old, gradients.length() );
++        transpose( m, m2 );
++
++        //G = (G + G')/2; % Solving numerical mistakes
++
++//cout &lt;&lt; &quot;--&quot; &lt;&lt; endl &lt;&lt; gram &lt;&lt; endl;
++
++        // Extract eigenvectors/eigenvalues - destroys the content of gram, D and U are resized
++        // gram = U D U' (if we took all values)
++        eigenVecOfSymmMat(gram, n_eigen_cur, D, U);
++
++        // Percentage of the variance we keep is the sum of the kept eigenvalues divided
++        // by the total variance.
++        //variance_percentage = sum(D)/total_variance;
++
++	// The new (rescaled) eigenvectors are of the form [U A]*V where V is the
++	// eigenvector of G. Rewriting V = [V1;V2], we have [U A]*V = UV1 + AV2.
++        // for us cov_eigen_vec = U1 eigen_vec + U2 gradients
++
++        swap = old_cov_eigen_vec;
++        old_cov_eigen_vec = cov_eigen_vec;
++        cov_eigen_vec = swap;
++
++        cov_eigen_vec.resize(n_eigen_cur, gradients.width());
++        product( cov_eigen_vec, U.subMatColumns(0, n_eigen_old), old_cov_eigen_vec );
++
++//  C = alpha A.B + beta C
++productScaleAcc(cov_eigen_vec, U.subMatColumns(n_eigen_old, gradients.length()), false, gradients, false,
++                   sqrt((1.-gamma)/gradients.length()), sqrt(gamma));
++
++        cov_eigen_val.resize( D.length() );
++        cov_eigen_val &lt;&lt; D;
++
++        cov_norm_eigen_vec.resize( n_eigen_cur, gradients.width() );
++        for( int i=0; i&lt;n_eigen_cur; i++)   {
++            Vec v = cov_norm_eigen_vec(i);
++            divide( cov_eigen_vec(i), sqrt(D[i]), v );
++        }
++
++    }
++
++    // ### Determine reg - Should be set automaticaly.
++    //reg = cov_eigen_val[n_eigen_cur-1];
++    for( int i=0; i&lt;n_eigen_cur; i++)   {
++        if( cov_eigen_val[i] &lt; reg )  {
++            PLWARNING(&quot;cov_eigen_val[i] &lt; reg. Setting to reg.&quot;);
++            cov_eigen_val[i] = reg;
++        }
++    }
++
++
++    // *** Compute C^{-1} mu, where mu is the mean of gradients ***
++
++    // Compute mu
++    columnMean( gradients, mu );
++
++
++/*    cout &lt;&lt; &quot;mu  &quot; &lt;&lt; mu &lt;&lt; endl;
++    cout &lt;&lt; &quot;norm(mu) &quot; &lt;&lt; norm(mu) &lt;&lt; endl;
++    cout &lt;&lt; &quot;cov_eigen_val &quot; &lt;&lt; cov_eigen_val &lt;&lt; endl;
++    cout &lt;&lt; &quot;cov_eigen_vec &quot; &lt;&lt; cov_eigen_vec &lt;&lt; endl;
++    cout &lt;&lt; &quot;cov_norm_eigen_vec &quot; &lt;&lt; cov_norm_eigen_vec &lt;&lt; endl;*/
++
++    // Compute the dot product with the eigenvectors
++    dot_prod.resize(n_eigen_cur);
++    product( dot_prod, cov_norm_eigen_vec, mu);
++
++//    cout &lt;&lt; &quot;dot_prod &quot; &lt;&lt; dot_prod &lt;&lt; endl;
++
++    // Rescale according to the eigenvectors. Since the regularization constant will
++    // be added to all the eigenvalues (and not only the ones we didn't keep), we
++    // have to remove it from the ones we kept.
++    scaled_dot_prod.resize(n_eigen_cur);
++
++    divide( dot_prod, cov_eigen_val, scaled_dot_prod);
++    scaled_dot_prod -= dot_prod/reg;
++
++    transposeProduct(naturalg, cov_norm_eigen_vec, scaled_dot_prod);
++
++    naturalg += mu / reg;
++
++
++}
++
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn/opt/EXPERIMENTAL/OnlineGramNaturalGradientOptimizer.h
+===================================================================
+--- trunk/plearn/opt/EXPERIMENTAL/OnlineGramNaturalGradientOptimizer.h	2007-02-28 14:12:43 UTC (rev 6697)
++++ trunk/plearn/opt/EXPERIMENTAL/OnlineGramNaturalGradientOptimizer.h	2007-02-28 15:29:28 UTC (rev 6698)
+@@ -0,0 +1,174 @@
++// -*- C++ -*-
++
++// OnlineGramNaturalGradientOptimizer.h
++//
++// Copyright (C) 2007 Pierre-Antoine Manzagol
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pierre-Antoine Manzagol
++
++/*! \file OnlineGramNaturalGradientOptimizer.h */
++
++
++#ifndef ONLINEGRAMNATURALGRADIENTOPTIMIZER_INC
++#define ONLINEGRAMNATURALGRADIENTOPTIMIZER_INC
++
++#include &lt;plearn/opt/Optimizer.h&gt;
++
++#include &lt;ctime&gt;
++
++namespace PLearn {
++using namespace std;
++
++/**
++ * Implements an online natural gradient, based on keeping an estimate
++ * of the gradients' covariance C through its main eigen vectors and values
++ * which are updated through those of the gram matrix. This is n_eigen^2
++ * instead of n_parameter^2.
++ *
++ * @todo 
++ * @deprecated 
++ */
++class OnlineGramNaturalGradientOptimizer : public Optimizer
++{
++    typedef Optimizer inherited;
++      
++public:
++    //#####  Public Build Options  ############################################
++
++    real learning_rate;
++    real gamma;
++    real reg;
++    int opt_batch_size;
++    int n_eigen;
++
++
++public:
++    //#####  Public Member Functions  #########################################    
++
++    OnlineGramNaturalGradientOptimizer();
++
++    void gramEigenNaturalGradient();
++
++    //#####  Optimizer Member Functions  #######################################
++
++    virtual bool optimizeN(VecStatsCollector&amp; stats_coll);
++
++    //#####  PLearn::Object Protocol  #########################################
++    PLEARN_DECLARE_OBJECT(OnlineGramNaturalGradientOptimizer);
++
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++    virtual void build()
++    {
++        inherited::build();
++        build_();
++    }
++
++protected:
++    //#####  Protected Options  ###############################################
++
++    // ### Declare protected option fields (such as learned parameters) here
++
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    // (PLEASE IMPLEMENT IN .cc)
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    // (PLEASE IMPLEMENT IN .cc)
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    int n_optimizeN_calls;
++
++    // The batch index
++    int bi;
++    int n_eigen_cur;
++    int n_eigen_old;
++
++    // Holds the gradients and their mean
++    Mat gradients;
++    Vec mu;
++
++    real total_variance, variance_percentage;
++
++    // the gram matrix - G = UDU' or in our case U'DU
++    Mat gram;
++    Mat U;
++    Vec D;
++
++    // The covariance matrix is C = VDV' (with the eigen vectors in V's columns)
++    // or in our case cov_eigen_vectors' diag(cov_eigen_values) cov_eigen_vectors
++    Mat cov_eigen_vec;
++    Mat old_cov_eigen_vec;
++    Mat swap;
++    Vec cov_eigen_val;
++
++    Mat cov_norm_eigen_vec;
++
++    // 
++    Vec dot_prod;
++    Vec scaled_dot_prod;
++
++    // The natural gradient, ie C^{-1} mu
++    Vec naturalg;
++
++    clock_t t0, t1, t2, t3;
++
++};
++
++DECLARE_OBJECT_PTR(OnlineGramNaturalGradientOptimizer);
++
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000146.html">[Plearn-commits] r6697 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000148.html">[Plearn-commits] r6699 - trunk/plearn/opt/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#147">[ date ]</a>
+              <a href="thread.html#147">[ thread ]</a>
+              <a href="subject.html#147">[ subject ]</a>
+              <a href="author.html#147">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

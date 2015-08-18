@@ -1,0 +1,256 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7092 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7092%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705142240.l4EMekwa019287%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000540.html">
+   <LINK REL="Next"  HREF="000542.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7092 - trunk/plearn_learners/online</H1>
+    <B>dumitruerhan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7092%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705142240.l4EMekwa019287%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7092 - trunk/plearn_learners/online">dumitruerhan at mail.berlios.de
+       </A><BR>
+    <I>Tue May 15 00:40:46 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000540.html">[Plearn-commits] r7091 - trunk/scripts
+</A></li>
+        <LI>Next message: <A HREF="000542.html">[Plearn-commits] r7093 - in	trunk/plearn_learners/online/test/DeepBeliefNet/.pytest:	PL_DBN_Mini-batch/expected_results/expdir-dbn-1-0	PL_DBN_Mini-batch/expected_results/expdir-dbn-1-0/Split0	PL_DBN_Mini-batch/expected_results/expdir-dbn-1-1	PL_DBN_Mini-batch/expected_results/expdir-dbn-1-1/Split0	PL_DBN_Mini-batch/expected_results/expdir-dbn-3-0	PL_DBN_Mini-batch/expected_results/expdir-dbn-3-0/Split0	PL_DBN_Mini-batch/expected_results/expdir-dbn-3-1	PL_DBN_Mini-batch/expected_results/expdir-dbn-3-1/Split0	PL_DBN_SimpleRBM/expected_results/expdir
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#541">[ date ]</a>
+              <a href="thread.html#541">[ thread ]</a>
+              <a href="subject.html#541">[ subject ]</a>
+              <a href="author.html#541">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: dumitruerhan
+Date: 2007-05-15 00:40:45 +0200 (Tue, 15 May 2007)
+New Revision: 7092
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+Log:
+added testing time calculation
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-14 19:52:44 UTC (rev 7091)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-05-14 22:40:45 UTC (rev 7092)
+@@ -77,9 +77,11 @@
+     class_cost_index( -1 ),
+     final_cost_index( -1 ),
+     reconstruction_cost_index( -1 ),
+-    cpu_time_cost_index ( -1 ),
+-    cumulative_time_cost_index ( -1 ),
+-    cumulative_training_time( 0 )
++    training_cpu_time_cost_index ( -1 ),
++    cumulative_training_time_cost_index ( -1 ),
++    cumulative_testing_time_cost_index ( -1 ),
++    cumulative_training_time( 0 ),
++    cumulative_testing_time( 0 )
+ {
+     random_gen = new PRandom();
+ }
+@@ -251,7 +253,11 @@
+                   OptionBase::learntoption | OptionBase::nosave,
+                   &quot;Cumulative training time since age=0, in seconds.\n&quot;);
+ 
++    declareOption(ol, &quot;cumulative_testing_time&quot;, &amp;DeepBeliefNet::cumulative_testing_time,
++                  OptionBase::learntoption | OptionBase::nosave,
++                  &quot;Cumulative testing time since age=0, in seconds.\n&quot;);
+ 
++
+     /*
+     declareOption(ol, &quot;n_final_costs&quot;, &amp;DeepBeliefNet::n_final_costs,
+                   OptionBase::learntoption,
+@@ -394,11 +400,15 @@
+ 
+ 
+     cost_names.append(&quot;cpu_time&quot;);
+-    cost_names.append(&quot;cumulative_cpu_time&quot;);
+-    cpu_time_cost_index = current_index;
++    cost_names.append(&quot;cumulative_train_time&quot;);
++    cost_names.append(&quot;cumulative_test_time&quot;);
++
++    training_cpu_time_cost_index = current_index;
+     current_index++;
+-    cumulative_time_cost_index = current_index;
++    cumulative_training_time_cost_index = current_index;
+     current_index++;
++    cumulative_testing_time_cost_index = current_index;
++    current_index++;
+ 
+     PLASSERT( current_index == cost_names.length() );
+ }
+@@ -690,7 +700,8 @@
+             if( partial_costs[i] )
+                 partial_costs[i]-&gt;forget();
+ 
+-    cumulative_training_time=0;
++    cumulative_training_time = 0;
++    cumulative_testing_time = 0;
+ }
+ 
+ ///////////
+@@ -946,8 +957,8 @@
+     if (verbosity &gt; 1)
+         cout &lt;&lt; &quot;The cumulative time spent in train() up until now is &quot; &lt;&lt; cumulative_training_time &lt;&lt; &quot; cpu seconds&quot; &lt;&lt; endl;
+ 
+-    train_costs_m.column(cpu_time_cost_index).fill(cpu_time);
+-    train_costs_m.column(cumulative_time_cost_index).fill(cumulative_training_time);
++    train_costs_m.column(training_cpu_time_cost_index).fill(cpu_time);
++    train_costs_m.column(cumulative_training_time_cost_index).fill(cumulative_training_time);
+     train_stats-&gt;update( train_costs_m );
+     train_stats-&gt;finalize();
+ 
+@@ -1963,6 +1974,7 @@
+ ///////////////////
+ void DeepBeliefNet::computeOutput(const Vec&amp; input, Vec&amp; output) const
+ {
++
+     // Compute the output from the input.
+     output.resize(0);
+ 
+@@ -2022,11 +2034,13 @@
+             reconstruction_costs[0] += rc;
+         }
+     }
++
+ }
+ 
+ void DeepBeliefNet::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
+                                            const Vec&amp; target, Vec&amp; costs) const
+ {
++
+     // Compute the costs from *already* computed output.
+     costs.resize( cost_names.length() );
+     costs.fill( MISSING_VALUE );
+@@ -2074,6 +2088,51 @@
+ 
+ }
+ 
++void DeepBeliefNet::test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats, VMat testoutputs, VMat testcosts) const
++{
++
++    //  Re-implementing simply because we want to measure the time it takes to
++    //  do the testing. The reset is there for two purposes:
++    //  1. to have fine-grained statistics at each call of test()
++    //  2. to be able to have a more meaningful cumulative_testing_time
++    //
++    //  BIG Nota Bene:
++    //  Get the statistics by E[testN.E[cumulative_test_time], where N is the
++    //  index of the last split that you're testing.
++    //  E[testN-1.E[cumulative_test_time] will basically be the cumulative test
++    //  time until (and including) the N-1th split! So it's a pretty
++    //  meaningless number (more or less).
++      
++    Profiler::reset(&quot;testing&quot;);
++    Profiler::start(&quot;testing&quot;);
++
++    inherited::test(testset, test_stats, testoutputs, testcosts);
++
++    Profiler::end(&quot;testing&quot;);
++
++    const Profiler::Stats&amp; stats = Profiler::getStats(&quot;testing&quot;);
++
++    real ticksPerSec = Profiler::ticksPerSecond();
++    real cpu_time = (stats.user_duration+stats.system_duration)/ticksPerSec;
++    cumulative_testing_time += cpu_time;
++
++    if (testcosts)
++        // if it is used (usually not) testcosts is a VMat that is of size
++        // nexamples x ncosts. The last column will have missing values.
++        // We just need to put a value in one of the rows of that column.
++        testcosts-&gt;put(0,cumulative_testing_time_cost_index,cumulative_testing_time);
++
++    if (test_stats) {
++        // Here we simply update the corresponding stat index
++        Vec test_time_stats(test_stats-&gt;length(), MISSING_VALUE);
++        test_time_stats[cumulative_testing_time_cost_index] =
++            cumulative_testing_time;
++        test_stats-&gt;update(test_time_stats);
++        test_stats-&gt;finalize();
++    }
++}
++
++
+ TVec&lt;string&gt; DeepBeliefNet::getTestCostNames() const
+ {
+     // Return the names of the costs computed by computeCostsFromOutputs
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2007-05-14 19:52:44 UTC (rev 7091)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2007-05-14 22:40:45 UTC (rev 7092)
+@@ -206,6 +206,10 @@
+     // (PLEASE IMPLEMENT IN .cc)
+     virtual void train();
+ 
++    //! Re-implementation of the PLearner test() for profiling purposes
++    virtual void test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
++                      VMat testoutputs=0, VMat testcosts=0) const;
++
+     //! Computes the output from the input.
+     // (PLEASE IMPLEMENT IN .cc)
+     virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
+@@ -367,14 +371,20 @@
+     int reconstruction_cost_index;
+ 
+     //! Index of the cpu time cost (per each call of train())
+-    int cpu_time_cost_index;
++    int training_cpu_time_cost_index;
+ 
+     //! The index of the cumulative training time cost 
+-    int cumulative_time_cost_index;
++    int cumulative_training_time_cost_index;
+ 
++    //! The index of the cumulative testing time cost
++    int cumulative_testing_time_cost_index;
++
+     //! Holds the total training (cpu)time
+     real cumulative_training_time;
+ 
++    //! Holds the total testing (cpu)time 
++    mutable real cumulative_testing_time;
++
+     //! Cumulative training schedule
+     TVec&lt;int&gt; cumulative_schedule;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000540.html">[Plearn-commits] r7091 - trunk/scripts
+</A></li>
+	<LI>Next message: <A HREF="000542.html">[Plearn-commits] r7093 - in	trunk/plearn_learners/online/test/DeepBeliefNet/.pytest:	PL_DBN_Mini-batch/expected_results/expdir-dbn-1-0	PL_DBN_Mini-batch/expected_results/expdir-dbn-1-0/Split0	PL_DBN_Mini-batch/expected_results/expdir-dbn-1-1	PL_DBN_Mini-batch/expected_results/expdir-dbn-1-1/Split0	PL_DBN_Mini-batch/expected_results/expdir-dbn-3-0	PL_DBN_Mini-batch/expected_results/expdir-dbn-3-0/Split0	PL_DBN_Mini-batch/expected_results/expdir-dbn-3-1	PL_DBN_Mini-batch/expected_results/expdir-dbn-3-1/Split0	PL_DBN_SimpleRBM/expected_results/expdir
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#541">[ date ]</a>
+              <a href="thread.html#541">[ thread ]</a>
+              <a href="subject.html#541">[ subject ]</a>
+              <a href="author.html#541">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,744 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8501 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8501%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200802131551.m1DFpW01014049%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001948.html">
+   <LINK REL="Next"  HREF="001950.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8501 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8501%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200802131551.m1DFpW01014049%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8501 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Wed Feb 13 16:51:32 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001948.html">[Plearn-commits] r8500 - trunk/plearn_learners_experimental
+</A></li>
+        <LI>Next message: <A HREF="001950.html">[Plearn-commits] r8502 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1949">[ date ]</a>
+              <a href="thread.html#1949">[ thread ]</a>
+              <a href="subject.html#1949">[ subject ]</a>
+              <a href="author.html#1949">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-02-13 16:51:31 +0100 (Wed, 13 Feb 2008)
+New Revision: 8501
+
+Modified:
+   trunk/plearn_learners_experimental/StackedSVDNet.cc
+   trunk/plearn_learners_experimental/StackedSVDNet.h
+Log:
+..
+
+
+Modified: trunk/plearn_learners_experimental/StackedSVDNet.cc
+===================================================================
+--- trunk/plearn_learners_experimental/StackedSVDNet.cc	2008-02-13 15:50:11 UTC (rev 8500)
++++ trunk/plearn_learners_experimental/StackedSVDNet.cc	2008-02-13 15:51:31 UTC (rev 8501)
+@@ -57,10 +57,9 @@
+     greedy_decrease_ct( 0. ),
+     fine_tuning_learning_rate( 0. ),
+     fine_tuning_decrease_ct( 0. ),
+-    batch_size(50),
++    minibatch_size(50),
+     global_output_layer(false),
+-    fill_in_null_diagonal(true),
+-    relative_min_improvement(1e-3),
++    fill_in_null_diagonal(false),
+     n_layers( 0 )
+ {
+     // random_gen will be initialized in PLearner::build_()
+@@ -96,11 +95,21 @@
+                   &quot;fine tuning\n&quot;
+                   &quot;gradient descent.\n&quot;);
+ 
+-    declareOption(ol, &quot;batch_size&quot;, 
+-                  &amp;StackedSVDNet::batch_size,
++    declareOption(ol, &quot;minibatch_size&quot;, 
++                  &amp;StackedSVDNet::minibatch_size,
+                   OptionBase::buildoption,
+                   &quot;Size of mini-batch for gradient descent&quot;);
+ 
++    declareOption(ol, &quot;training_schedule&quot;, &amp;StackedSVDNet::training_schedule,
++                  OptionBase::buildoption,
++                  &quot;Number of examples to use during each phase of learning:\n&quot;
++                  &quot;first the greedy phases, and then the fine-tuning phase.\n&quot;
++                  &quot;However, the learning will stop as soon as we reach nstages.\n&quot;
++                  &quot;For example for 2 hidden layers, with 1000 examples in each\n&quot;
++                  &quot;greedy phase, and 500 in the fine-tuning phase, this option\n&quot;
++                  &quot;should be [1000 1000 500], and nstages should be at least 2500.\n&quot;
++        );
++    
+     declareOption(ol, &quot;global_output_layer&quot;, 
+                   &amp;StackedSVDNet::global_output_layer,
+                   OptionBase::buildoption,
+@@ -115,12 +124,6 @@
+                   &quot;logistic auto-regression should be filled with the\n&quot;
+                   &quot;maximum absolute value of each corresponding row.\n&quot;);
+ 
+-    declareOption(ol, &quot;relative_min_improvement&quot;, 
+-                  &amp;StackedSVDNet::relative_min_improvement,
+-                  OptionBase::buildoption,
+-                  &quot;Minimum relative improvement convergence criteria \n&quot;
+-                  &quot;for the logistic auto-regression.&quot;);
+-
+     declareOption(ol, &quot;layers&quot;, &amp;StackedSVDNet::layers,
+                   OptionBase::buildoption,
+                   &quot;The layers of units in the network. The first element\n&quot;
+@@ -165,6 +168,22 @@
+         // Initialize some learnt variables
+         n_layers = layers.length();
+         
++        cumulative_schedule.resize( n_layers+1 );
++        cumulative_schedule[0] = 0;
++        for( int i=0 ; i&lt;n_layers ; i++ )
++        {
++            cumulative_schedule[i+1] = cumulative_schedule[i] +
++                training_schedule[i];
++        }
++
++        reconstruction_test_costs.resize( n_layers-1 );
++        reconstruction_test_costs.fill( MISSING_VALUE );
++
++        if( training_schedule.length() != n_layers )
++            PLERROR(&quot;StackedSVDNet::build_() - \n&quot;
++                    &quot;training_schedule should have %d elements.\n&quot;,
++                    n_layers-1);
++
+         if( weightsize_ &gt; 0 )
+             PLERROR(&quot;StackedSVDNet::build_() - \n&quot;
+                     &quot;usage of weighted samples (weight size &gt; 0) is not\n&quot;
+@@ -175,7 +194,7 @@
+                     &quot;layers[0] should have a size of %d.\n&quot;,
+                     inputsize_);
+ 
+-        reconstruction_costs.resize(batch_size,1);    
++        reconstruction_costs.resize(minibatch_size,1);    
+ 
+         activation_gradients.resize( n_layers );
+         expectation_gradients.resize( n_layers );
+@@ -192,18 +211,18 @@
+                 PLERROR(&quot;In StackedSVDNet::build()_: &quot;
+                     &quot;layers must have decreasing sizes from bottom to top.&quot;);
+                 
+-            activation_gradients[i].resize( batch_size, layers[i]-&gt;size );
+-            expectation_gradients[i].resize( batch_size, layers[i]-&gt;size );
++            activation_gradients[i].resize( minibatch_size, layers[i]-&gt;size );
++            expectation_gradients[i].resize( minibatch_size, layers[i]-&gt;size );
+         }
+ 
+         if( !final_cost )
+             PLERROR(&quot;StackedSVDNet::build_costs() - \n&quot;
+                     &quot;final_cost should be provided.\n&quot;);
+ 
+-        final_cost_inputs.resize( batch_size, final_cost-&gt;input_size );
++        final_cost_inputs.resize( minibatch_size, final_cost-&gt;input_size );
+         final_cost_value.resize( final_cost-&gt;output_size );
+-        final_cost_values.resize( batch_size, final_cost-&gt;output_size );
+-        final_cost_gradients.resize( batch_size, final_cost-&gt;input_size );
++        final_cost_values.resize( minibatch_size, final_cost-&gt;output_size );
++        final_cost_gradients.resize( minibatch_size, final_cost-&gt;input_size );
+         final_cost-&gt;setLearningRate( fine_tuning_learning_rate );
+ 
+         if( !(final_cost-&gt;random_gen) )
+@@ -227,12 +246,12 @@
+                         sum);
+ 
+             global_output_layer_input.resize(sum);
+-            global_output_layer_inputs.resize(batch_size,sum);
+-            global_output_layer_input_gradients.resize(batch_size,sum);
++            global_output_layer_inputs.resize(minibatch_size,sum);
++            global_output_layer_input_gradients.resize(minibatch_size,sum);
+             expectation_gradients[n_layers-1] = 
+                 global_output_layer_input_gradients.subMat(
+                     0, sum-layers[n_layers-1]-&gt;size, 
+-                    batch_size, layers[n_layers-1]-&gt;size);
++                    minibatch_size, layers[n_layers-1]-&gt;size);
+         }
+         else
+         {
+@@ -276,6 +295,7 @@
+ 
+     // deepCopyField(, copies);
+ 
++    deepCopyField(training_schedule, copies);
+     deepCopyField(layers, copies);
+     deepCopyField(final_module, copies);
+     deepCopyField(final_cost, copies);
+@@ -286,6 +306,7 @@
+     deepCopyField(reconstruction_layer, copies);
+     deepCopyField(reconstruction_targets, copies);
+     deepCopyField(reconstruction_costs, copies);
++    deepCopyField(reconstruction_test_costs, copies);
+     deepCopyField(reconstruction_activation_gradient, copies);
+     deepCopyField(reconstruction_activation_gradients, copies);
+     deepCopyField(reconstruction_input_gradients, copies);
+@@ -296,6 +317,7 @@
+     deepCopyField(final_cost_value, copies);
+     deepCopyField(final_cost_values, copies);
+     deepCopyField(final_cost_gradients, copies);
++    deepCopyField(cumulative_schedule, copies);
+     
+     //PLERROR(&quot;In StackedSVDNet::makeDeepCopyFromShallowCopy(): &quot;
+     //        &quot;not implemented yet.&quot;);
+@@ -304,6 +326,11 @@
+ 
+ int StackedSVDNet::outputsize() const
+ {
++    if( stage == 0 )
++        return layers[0]-&gt;size;
++    for( int i=1; i&lt;n_layers; i++ )
++        if( stage &lt;= cumulative_schedule[i] )
++            return layers[i-1]-&gt;size;
+     return final_module-&gt;output_size;
+ }
+ 
+@@ -327,11 +354,17 @@
+ {
+     MODULE_LOG &lt;&lt; &quot;train() called &quot; &lt;&lt; endl;
+ 
++    // Enforce value of cumulative_schedule because build_() might
++    // not be called if we change training_schedule inside a HyperLearner
++    for( int i=0 ; i&lt;n_layers ; i++ )
++        cumulative_schedule[i+1] = cumulative_schedule[i] +
++            training_schedule[i];
++
+     Vec input( inputsize() );
+     Vec target( targetsize() );
+-    real weight; // unused
+-    Mat inputs( batch_size, inputsize() );
+-    Mat targets( batch_size, targetsize() );
++    Mat inputs( minibatch_size, inputsize() );
++    Mat targets( minibatch_size, targetsize() );
++    Vec weights( minibatch_size );
+ 
+     TVec&lt;string&gt; train_cost_names = getTrainCostNames() ;
+     Vec train_costs( train_cost_names.length() );
+@@ -344,92 +377,46 @@
+ 
+     real lr = 0;
+     int init_stage;
++    int end_stage;
+ 
+     /***** initial greedy training *****/
+-    if(stage == 0)
++    connections.resize(n_layers-1);
++    rbm_connections.resize(n_layers-1);
++    TVec&lt; Vec &gt; biases(n_layers-1);
++    for( int i=0 ; i&lt;n_layers-1 ; i++ )
+     {
+-        connections.resize(n_layers-1);
+-        rbm_connections.resize(n_layers-1);
+-        TVec&lt; Vec &gt; biases(n_layers-1);
+-        for( int i=0 ; i&lt;n_layers-1 ; i++ )
+-        {
+-            MODULE_LOG &lt;&lt; &quot;Training connection weights between layers &quot; &lt;&lt; i
+-                       &lt;&lt; &quot; and &quot; &lt;&lt; i+1 &lt;&lt; endl;
+ 
+-            connections[i] = new RBMMatrixConnection();
+-            connections[i]-&gt;up_size = layers[i]-&gt;size;
+-            connections[i]-&gt;down_size = layers[i]-&gt;size;
+-            connections[i]-&gt;random_gen = random_gen;
+-            connections[i]-&gt;build();
+-            for(int j=0; j &lt; layers[i]-&gt;size; j++)
+-                connections[i]-&gt;weights(j,j) = 0;
++        end_stage = min(cumulative_schedule[i+1], nstages);
++        if( stage &gt;= end_stage )
++            continue;
+ 
+-            rbm_connections[i] = (RBMMatrixConnection *) connections[i];
++        MODULE_LOG &lt;&lt; &quot;Training connection weights between layers &quot; &lt;&lt; i
++                   &lt;&lt; &quot; and &quot; &lt;&lt; i+1 &lt;&lt; endl;
++        MODULE_LOG &lt;&lt; &quot;  stage = &quot; &lt;&lt; stage &lt;&lt; endl;
++        MODULE_LOG &lt;&lt; &quot;  end_stage = &quot; &lt;&lt; end_stage &lt;&lt; endl;
++        MODULE_LOG &lt;&lt; &quot;  greedy_learning_rate = &quot; 
++                   &lt;&lt; greedy_learning_rate &lt;&lt; endl;
+ 
+-            CopiesMap map;
+-            reconstruction_layer = layers[ i ]-&gt;deepCopy( map );
+-            reconstruction_targets.resize( batch_size, layers[ i ]-&gt;size );
+-            reconstruction_activation_gradient.resize( layers[ i ]-&gt;size );
+-            reconstruction_activation_gradients.resize( 
+-                batch_size, layers[ i ]-&gt;size );
+-            reconstruction_input_gradients.resize( 
+-                batch_size, layers[ i ]-&gt;size );
++        if( report_progress )
++            pb = new ProgressBar( &quot;Training layer &quot;+tostring(i)
++                                  +&quot; of &quot;+classname(),
++                                  end_stage - stage );
+ 
+-            lr = greedy_learning_rate;
+-            connections[i]-&gt;setLearningRate( lr );
+-            reconstruction_layer-&gt;setLearningRate( lr );
+ 
+-            real cost = 0;
+-            real last_cost = 0;
+-            int nupdates = 0;
+-            int nepochs = 0;
+-            while( nepochs &lt; 2 ||
+-                   (last_cost - cost) / last_cost &gt;= relative_min_improvement )
+-            {
+-                train_stats-&gt;forget();
+-                for(int sample = 0; 
+-                    sample &lt; train_set.length()/batch_size; 
+-                    sample++)
+-                {
+-                    if( !fast_exact_is_equal( greedy_decrease_ct , 0 ) )
+-                    {
+-                        lr = greedy_learning_rate/(1 + greedy_decrease_ct 
+-                                                   * nupdates);
+-                        connections[i]-&gt;setLearningRate( lr );
+-                        reconstruction_layer-&gt;setLearningRate( lr );                
+-                    }
+-                    
+-                    for(int j=0; j&lt;batch_size; j++)
+-                    {
+-                        train_set-&gt;getExample(sample*batch_size + j, 
+-                                              input, target, weight);
+-                        inputs(j) &lt;&lt; input;
+-                        targets(j) &lt;&lt; target;
+-                    }
+-                    greedyStep( inputs, targets, i, train_costs );
+-                    nupdates++;
+-                    train_stats-&gt;update( train_costs );
+-                }
+-                train_stats-&gt;finalize();
+-                nepochs++;
+-                last_cost = cost;
+-                cost = train_stats-&gt;getMean()[i];
+-                if(verbosity &gt; 2)
+-                    cout &lt;&lt; &quot;reconstruction error at iteration &quot; &lt;&lt; nepochs &lt;&lt; 
+-                        &quot;: &quot; &lt;&lt; 
+-                        cost &lt;&lt; &quot; or &quot; &lt;&lt; cost/layers[i]-&gt;size &lt;&lt; &quot; (rel)&quot; &lt;&lt; endl;
+-            }
+-
++        // Finalize training of last layer (if any)
++        if( i&gt;0 &amp;&amp; stage &lt; end_stage &amp;&amp; stage == cumulative_schedule[i] )
++        {
+             if(fill_in_null_diagonal)
+             {
+                 // Fill in the empty diagonal
+                 for(int j=0; j&lt;layers[i]-&gt;size; j++)
+                 {
+-                    connections[i]-&gt;weights(j,j) = maxabs(connections[i]-&gt;weights(j));
++                    connections[i-1]-&gt;weights(j,j) = 
++                        maxabs(connections[i-1]-&gt;weights(j));
+                 }
+             }
+             
+-            if(layers[i]-&gt;size != layers[i+1]-&gt;size)
++            if(layers[i-1]-&gt;size != layers[i]-&gt;size)
+             {
+                 Mat A,U,Vt;
+                 Vec S;
+@@ -438,85 +425,172 @@
+                 A.column( 0 ) &lt;&lt; reconstruction_layer-&gt;bias;
+                 A.subMat( 0, 1, reconstruction_layer-&gt;size, 
+                           reconstruction_layer-&gt;size ) &lt;&lt; 
+-                    connections[i]-&gt;weights;
++                    connections[i-1]-&gt;weights;
+                 SVD( A, U, S, Vt );
+-                connections[ i ]-&gt;up_size = layers[ i+1 ]-&gt;size;
+-                connections[ i ]-&gt;down_size = layers[ i ]-&gt;size;
+-                connections[ i ]-&gt;build();
+-                connections[ i ]-&gt;weights &lt;&lt; Vt.subMat( 
+-                    0, 1, layers[ i+1 ]-&gt;size, Vt.width()-1 );
+-                biases[ i ].resize( layers[i+1]-&gt;size );
+-                for(int j=0; j&lt;biases[ i ].length(); j++)
+-                    biases[ i ][ j ] = Vt(j,0);
+-
+-                for(int j=0; j&lt;connections[ i ]-&gt;up_size; j++)
++                connections[ i-1 ]-&gt;up_size = layers[ i ]-&gt;size;
++                connections[ i-1 ]-&gt;down_size = layers[ i-1 ]-&gt;size;
++                connections[ i-1 ]-&gt;build();
++                connections[ i-1 ]-&gt;weights &lt;&lt; Vt.subMat( 
++                    0, 1, layers[ i ]-&gt;size, Vt.width()-1 );
++                biases[ i-1 ].resize( layers[i]-&gt;size );
++                for(int j=0; j&lt;biases[ i-1 ].length(); j++)
++                    biases[ i-1 ][ j ] = Vt(j,0);
++                
++                for(int j=0; j&lt;connections[ i-1 ]-&gt;up_size; j++)
+                 {
+-                    connections[ i ]-&gt;weights( j ) *= S[ j ];
+-                    biases[ i ][ j ] *= S[ j ];
++                    connections[ i-1 ]-&gt;weights( j ) *= S[ j ];
++                    biases[ i-1 ][ j ] *= S[ j ];
+                 }
+             }
+             else
+             {
+-                biases[ i ].resize( layers[ i+1 ]-&gt;size );
+-                biases[ i ] &lt;&lt; reconstruction_layer-&gt;bias;
++                biases[ i-1 ].resize( layers[ i ]-&gt;size );
++                biases[ i-1 ] &lt;&lt; reconstruction_layer-&gt;bias;
+             }
++            layers[ i ]-&gt;bias &lt;&lt; biases[ i-1 ];
+         }
+-        stage++;
+-        for(int i=0; i&lt;biases.length(); i++)
++
++        // Create connections
++        if(stage == cumulative_schedule[i])
+         {
+-            layers[ i+1 ]-&gt;bias &lt;&lt; biases[ i ];
++            connections[i] = new RBMMatrixConnection();
++            connections[i]-&gt;up_size = layers[i]-&gt;size;
++            connections[i]-&gt;down_size = layers[i]-&gt;size;
++            connections[i]-&gt;random_gen = random_gen;
++            connections[i]-&gt;build();
++            for(int j=0; j &lt; layers[i]-&gt;size; j++)
++                connections[i]-&gt;weights(j,j) = 0;
++
++            rbm_connections[i] = (RBMMatrixConnection *) connections[i];
++
++            CopiesMap map;
++            reconstruction_layer = layers[ i ]-&gt;deepCopy( map );
++            reconstruction_targets.resize( minibatch_size, layers[ i ]-&gt;size );
++            reconstruction_activation_gradient.resize( layers[ i ]-&gt;size );
++            reconstruction_activation_gradients.resize( 
++                minibatch_size, layers[ i ]-&gt;size );
++            reconstruction_input_gradients.resize( 
++                minibatch_size, layers[ i ]-&gt;size );
++
++            lr = greedy_learning_rate;
++            connections[i]-&gt;setLearningRate( lr );
++            reconstruction_layer-&gt;setLearningRate( lr );
+         }
++
++        for( ; stage&lt;end_stage ; stage++)
++        {
++            train_stats-&gt;forget();
++            
++            if( !fast_exact_is_equal( greedy_decrease_ct , 0 ) )
++            {
++                lr = greedy_learning_rate/(1 + greedy_decrease_ct 
++                                           * (stage - cumulative_schedule[i]) );
++                connections[i]-&gt;setLearningRate( lr );
++                reconstruction_layer-&gt;setLearningRate( lr );                
++            }
++            
++            train_set-&gt;getExamples((stage*minibatch_size)%train_set-&gt;length(),
++                                   minibatch_size, inputs, targets, weights,
++                                   NULL, true);
++                                   
++            greedyStep( inputs, targets, i, train_costs );
++            train_stats-&gt;update( train_costs );
++
++            if( pb )
++                pb-&gt;update( stage - cumulative_schedule[i] + 1 );
++        }
++        train_stats-&gt;finalize();
+     }
+ 
+     /***** fine-tuning by gradient descent *****/
+-    if( stage &lt; nstages )
+-    {
+ 
+-        MODULE_LOG &lt;&lt; &quot;Fine-tuning all parameters, by gradient descent&quot; &lt;&lt; endl;
+-        MODULE_LOG &lt;&lt; &quot;  stage = &quot; &lt;&lt; stage &lt;&lt; endl;
+-        MODULE_LOG &lt;&lt; &quot;  nstages = &quot; &lt;&lt; nstages &lt;&lt; endl;
+-        MODULE_LOG &lt;&lt; &quot;  fine_tuning_learning_rate = &quot; &lt;&lt; 
+-            fine_tuning_learning_rate &lt;&lt; endl;
++    end_stage = min(cumulative_schedule[n_layers], nstages);
++    if( stage &gt;= end_stage )
++        return;
+ 
+-        init_stage = stage;
+-        if( report_progress &amp;&amp; stage &lt; nstages )
+-            pb = new ProgressBar( &quot;Fine-tuning parameters of all layers of &quot;
+-                                  + classname(),
+-                                  nstages - init_stage );
+-
+-        setLearningRate( fine_tuning_learning_rate );
+-        train_costs.fill(MISSING_VALUE);
+-
+-        for( ; stage&lt;nstages ; stage++ )
++    // Finalize training of last layer (if any)
++    if( n_layers&gt;1 &amp;&amp; stage &lt; end_stage &amp;&amp; stage == cumulative_schedule[n_layers-1] )
++    {
++        if(fill_in_null_diagonal)
+         {
+-            for( int sample = 0; 
+-                 sample&lt;train_set-&gt;length()/batch_size; 
+-                 sample++)
++            // Fill in the empty diagonal
++            for(int j=0; j&lt;layers[n_layers-1]-&gt;size; j++)
+             {
+-                if( !fast_exact_is_equal( fine_tuning_decrease_ct, 0. ) )
+-                    setLearningRate( fine_tuning_learning_rate
+-                                     / (1. + fine_tuning_decrease_ct * stage ) );
+-
+-                for(int j=0; j&lt;batch_size; j++)
+-                {
+-                    train_set-&gt;getExample(sample*batch_size + j, 
+-                                          input, target, weight);
+-                    inputs(j) &lt;&lt; input;
+-                    targets(j) &lt;&lt; target;
+-                }
+-                fineTuningStep( inputs, targets, train_costs );
+-                train_stats-&gt;update( train_costs );
+-                
+-                if( pb )
+-                    pb-&gt;update( stage - init_stage + 1 );
++                connections[n_layers-2]-&gt;weights(j,j) = 
++                    maxabs(connections[n_layers-2]-&gt;weights(j));
+             }
+-            if(verbosity &gt; 2)
+-                cout &lt;&lt; &quot;error at stage &quot; &lt;&lt; stage &lt;&lt; &quot;: &quot; &lt;&lt; 
+-                    train_stats-&gt;getMean() &lt;&lt; endl;
+-
+         }
++        
++        if(layers[n_layers-2]-&gt;size != layers[n_layers-1]-&gt;size)
++        {
++            Mat A,U,Vt;
++            Vec S;
++            A.resize( reconstruction_layer-&gt;size, 
++                      reconstruction_layer-&gt;size+1);
++            A.column( 0 ) &lt;&lt; reconstruction_layer-&gt;bias;
++            A.subMat( 0, 1, reconstruction_layer-&gt;size, 
++                      reconstruction_layer-&gt;size ) &lt;&lt; 
++                connections[n_layers-2]-&gt;weights;
++            SVD( A, U, S, Vt );
++            connections[ n_layers-2 ]-&gt;up_size = layers[ n_layers-1 ]-&gt;size;
++            connections[ n_layers-2 ]-&gt;down_size = layers[ n_layers-2 ]-&gt;size;
++            connections[ n_layers-2 ]-&gt;build();
++            connections[ n_layers-2 ]-&gt;weights &lt;&lt; Vt.subMat( 
++                0, 1, layers[ n_layers-1 ]-&gt;size, Vt.width()-1 );
++            biases[ n_layers-2 ].resize( layers[n_layers-1]-&gt;size );
++            for(int j=0; j&lt;biases[ n_layers-2 ].length(); j++)
++                biases[ n_layers-2 ][ j ] = Vt(j,0);
++            
++            for(int j=0; j&lt;connections[ n_layers-2 ]-&gt;up_size; j++)
++            {
++                connections[ n_layers-2 ]-&gt;weights( j ) *= S[ j ];
++                biases[ n_layers-2 ][ j ] *= S[ j ];
++            }
++        }
++        else
++        {
++            biases[ n_layers-2 ].resize( layers[ n_layers-1 ]-&gt;size );
++            biases[ n_layers-2 ] &lt;&lt; reconstruction_layer-&gt;bias;
++        }
++        layers[ n_layers-1 ]-&gt;bias &lt;&lt; biases[ n_layers-2 ];
+     }
++
++    MODULE_LOG &lt;&lt; &quot;Fine-tuning all parameters, by gradient descent&quot; &lt;&lt; endl;
++    MODULE_LOG &lt;&lt; &quot;  stage = &quot; &lt;&lt; stage &lt;&lt; endl;
++    MODULE_LOG &lt;&lt; &quot;  end_stage = &quot; &lt;&lt; end_stage &lt;&lt; endl;
++    MODULE_LOG &lt;&lt; &quot;  fine_tuning_learning_rate = &quot; 
++               &lt;&lt; fine_tuning_learning_rate &lt;&lt; endl;
+     
++    init_stage = stage;
++    if( report_progress &amp;&amp; stage &lt; end_stage )
++        pb = new ProgressBar( &quot;Fine-tuning parameters of all layers of &quot;
++                              + classname(),
++                              end_stage - init_stage );
++    
++    setLearningRate( fine_tuning_learning_rate );
++    train_costs.fill(MISSING_VALUE);
++    
++    for( ; stage&lt;end_stage ; stage++ )
++    {
++        if( !fast_exact_is_equal( fine_tuning_decrease_ct, 0. ) )
++            setLearningRate( fine_tuning_learning_rate
++                             / (1. + fine_tuning_decrease_ct * 
++                                (stage - cumulative_schedule[n_layers]) ) );
++            
++        train_set-&gt;getExamples((stage*minibatch_size)%train_set-&gt;length(),
++                               minibatch_size, inputs, targets, weights,
++                               NULL, true);
++        
++        fineTuningStep( inputs, targets, train_costs );
++        train_stats-&gt;update( train_costs );
++        
++        if( pb )
++            pb-&gt;update( stage - init_stage + 1 );
++    }
++
++    if(verbosity &gt; 2)
++        cout &lt;&lt; &quot;error at stage &quot; &lt;&lt; stage &lt;&lt; &quot;: &quot; &lt;&lt; 
++            train_stats-&gt;getMean() &lt;&lt; endl;
+     train_stats-&gt;finalize();
+ }
+ 
+@@ -540,7 +614,7 @@
+     
+     reconstruction_layer-&gt;fpropNLL( layers[ index ]-&gt;getExpectations(), 
+                                     reconstruction_costs);
+-    train_costs[index] = sum( reconstruction_costs )/batch_size;
++    train_costs[index] = sum( reconstruction_costs )/minibatch_size;
+ 
+     reconstruction_layer-&gt;bpropNLL( 
+         layers[ index ]-&gt;getExpectations(), reconstruction_costs,
+@@ -580,7 +654,7 @@
+         for(int i=0; i&lt;layers.length(); i++)
+         {
+             global_output_layer_inputs.subMat(0, offset, 
+-                                              batch_size, layers[i]-&gt;size)
++                                              minibatch_size, layers[i]-&gt;size)
+                 &lt;&lt; layers[i]-&gt;getExpectations();
+             offset += layers[i]-&gt;size;
+         }
+@@ -625,7 +699,7 @@
+             expectation_gradients[ i ] +=  
+                 global_output_layer_input_gradients.subMat(
+                     0, sum - layers[i]-&gt;size,
+-                    batch_size, layers[i]-&gt;size);
++                    minibatch_size, layers[i]-&gt;size);
+             sum -= layers[i]-&gt;size;
+         }
+                 
+@@ -648,9 +722,24 @@
+     layers[ 0 ]-&gt;expectation &lt;&lt;  input ;
+     layers[ 0 ]-&gt;expectation_is_up_to_date = true;
+     
++    if( stage == 0 )
++    {
++        output &lt;&lt; input;
++        return;
++    }
++
+     for( int i=0 ; i&lt;n_layers-1 ; i++ )
+     {
+         connections[ i ]-&gt;setAsDownInput( layers[i]-&gt;expectation );
++        if( stage &lt;= cumulative_schedule[i+1] )
++        {
++            reconstruction_layer-&gt;getAllActivations( rbm_connections[i], 0, false );
++            reconstruction_layer-&gt;computeExpectation();
++            reconstruction_test_costs[i] = 
++                reconstruction_layer-&gt;fpropNLL( layers[i]-&gt;expectation );
++            output &lt;&lt; reconstruction_layer-&gt;expectation;
++            return;
++        }
+         layers[ i+1 ]-&gt;getAllActivations( rbm_connections[i], 0, false );
+         layers[ i+1 ]-&gt;computeExpectation();
+     }
+@@ -680,8 +769,21 @@
+ 
+     costs.resize( getTestCostNames().length() );
+     costs.fill( MISSING_VALUE );
++
++    if( stage == 0 )
++        return;
++
++    for( int i=0 ; i&lt;n_layers-1 ; i++ )
++    {
++        if( stage &lt;= cumulative_schedule[i+1] )
++        {
++            costs[i] = reconstruction_test_costs[i];
++            return;
++        }
++    }
+     
+     final_cost-&gt;fprop( output, target, final_cost_value );
++    costs.subVec(0, reconstruction_test_costs.length()) &lt;&lt; reconstruction_test_costs;
+     costs.subVec(costs.length()-final_cost_value.length(),
+                  final_cost_value.length()) &lt;&lt;
+         final_cost_value;
+@@ -696,7 +798,7 @@
+     TVec&lt;string&gt; cost_names(0);
+ 
+     for( int i=0; i&lt;layers.size()-1; i++)
+-        cost_names.push_back(&quot;reconstruction_error_&quot; + tostring(i+1));
++        cost_names.push_back(&quot;layer&quot;+tostring(i)+&quot;.reconstruction_error&quot;);
+     
+     cost_names.append( final_cost-&gt;name() );
+ 
+
+Modified: trunk/plearn_learners_experimental/StackedSVDNet.h
+===================================================================
+--- trunk/plearn_learners_experimental/StackedSVDNet.h	2008-02-13 15:50:11 UTC (rev 8500)
++++ trunk/plearn_learners_experimental/StackedSVDNet.h	2008-02-13 15:51:31 UTC (rev 8501)
+@@ -76,7 +76,7 @@
+     real fine_tuning_decrease_ct;
+ 
+     //! Size of mini-batch for gradient descent
+-    int batch_size;
++    int minibatch_size;
+ 
+     //! Indication that the output layer (given by the final module)
+     //! should have as input all units of the network (including the input units)
+@@ -86,11 +86,16 @@
+     //! logistic auto-regression should be filled with the
+     //! maximum absolute value of each corresponding row.
+     bool fill_in_null_diagonal;
+-    
+-    //! Minimum relative improvement convergence criteria
+-    //! for the logistic auto-regression.
+-    real relative_min_improvement;
+-    
++        
++    //! Number of examples to use during each phase of learning:
++    //! first the greedy phases, and then the fine-tuning phase.
++    //! However, the learning will stop as soon as we reach nstages.
++    //! For example for 2 hidden layers, with 1000 examples in each
++    //! greedy phase, and 500 in the fine-tuning phase, this option
++    //! should be [1000 1000 500], and nstages should be at least 2500.
++    //! When online = true, this vector is ignored and should be empty.
++    TVec&lt;int&gt; training_schedule;
++
+     //! The layers of units in the network
+     TVec&lt; PP&lt;RBMLayer&gt; &gt; layers;
+ 
+@@ -198,6 +203,9 @@
+     //! Reconstruction costs
+     mutable Mat reconstruction_costs;
+ 
++    //! Reconstruction costs (when using computeOutput and computeCostsFromOutput)
++    mutable Vec reconstruction_test_costs;
++
+     //! Reconstruction activation gradient
+     mutable Vec reconstruction_activation_gradient;
+ 
+@@ -228,6 +236,10 @@
+     //! Stores the gradients of the cost at the inputs of final_cost
+     mutable Mat final_cost_gradients;
+ 
++    //! Cumulative training schedule
++    TVec&lt;int&gt; cumulative_schedule;
++
++
+ protected:
+     //#####  Protected Member Functions  ######################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001948.html">[Plearn-commits] r8500 - trunk/plearn_learners_experimental
+</A></li>
+	<LI>Next message: <A HREF="001950.html">[Plearn-commits] r8502 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1949">[ date ]</a>
+              <a href="thread.html#1949">[ thread ]</a>
+              <a href="subject.html#1949">[ subject ]</a>
+              <a href="author.html#1949">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

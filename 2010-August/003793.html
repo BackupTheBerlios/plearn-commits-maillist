@@ -1,0 +1,290 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10353 - in trunk: python_modules/plearn/parallel	scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2010-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10353%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C20100820224209.C2CAE480F0F%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003792.html">
+   <LINK REL="Next"  HREF="003794.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10353 - in trunk: python_modules/plearn/parallel	scripts</H1>
+    <B>lamblin at mail.berlios.de</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10353%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C20100820224209.C2CAE480F0F%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10353 - in trunk: python_modules/plearn/parallel	scripts">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Sat Aug 21 00:42:09 CEST 2010</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003792.html">[Plearn-commits] r10352 - trunk/scripts
+</A></li>
+        <LI>Next message: <A HREF="003794.html">[Plearn-commits] r10354 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3793">[ date ]</a>
+              <a href="thread.html#3793">[ thread ]</a>
+              <a href="subject.html#3793">[ subject ]</a>
+              <a href="author.html#3793">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2010-08-21 00:42:09 +0200 (Sat, 21 Aug 2010)
+New Revision: 10353
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+Experimental support for Sharcnet scripts (tested on angel)
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-08-16 20:02:20 UTC (rev 10352)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-08-20 22:42:09 UTC (rev 10353)
+@@ -983,6 +983,129 @@
+     def wait(self):
+         print &quot;[DBI] WARNING cannot wait until all jobs are done for SGE, use qstat&quot;
+ 
++
++
++###################
++# Sharcnet tools
++###################
++
++class DBISharcnet(DBIBase):
++    def __init__(self, commands, **args):
++        self.jobs_name = ''
++        self.queue = ''
++        self.duree = '7d'
++
++        #TODO:
++        # self.env
++        # self.set_special_env
++
++        DBIBase.__init__(self, commands, **args)
++
++        self.tmp_dir = os.path.abspath(self.tmp_dir)
++        self.log_dir = os.path.abspath(self.log_dir)
++        if not self.jobs_name:
++            self.jobs_name = 'dbi_'+self.unique_id[1:12]
++
++        self.tmp_dir = os.path.join(self.tmp_dir, os.path.split(self.log_dir)[1])
++        if not os.path.exists(self.tmp_dir):
++            os.makedirs(self.tmp_dir)
++        print &quot;[DBI] All temporary files will be in &quot;, self.tmp_dir
++        os.chdir(self.tmp_dir)
++
++        args['tmp_dir'] = self.tmp_dir
++        self.args = args
++        self.add_commands(commands)
++
++    def add_commands(self, commands):
++        if not isinstance(commands, list):
++            commands=[commands]
++
++        # create the information about the tasks
++        for command in commands:
++            id = len(self.tasks) + 1
++            self.tasks.append(Task(
++                command = command,
++                tmp_dir = self.tmp_dir,
++                log_dir = self.log_dir,
++                time_format = self.time_format,
++                pre_tasks = self.pre_tasks,
++                post_tasks = self.post_tasks,
++                dolog = self.dolog,
++                id = id,
++                gen_unique_id = False,
++                args = self.args))
++            id += 1
++
++    def run_one_job(self, task):
++        DBIBase.run(self)
++
++        remote_command = string.join(task.commands, '\n')
++        filename = os.path.join(self.tmp_dir, task.unique_id)
++        filename = os.path.abspath(filename)
++        f = open(filename, 'w')
++        f.write(remote_command)
++        f.write('\n')
++        f.close()
++        os.chmod(filename, 0750)
++        self.temp_files.append(filename)
++
++        command = 'sqsub'
++        (output_file, error_file)=self.get_file_redirection(task.id)
++        command += ' -o ' + output_file
++        command += ' -e ' + error_file
++        if self.cpu &gt; 0:
++            command += ' -n ' + str(self.cpu)
++        if self.mem &gt; 0:
++            command += ' --mpp=' + str(self.mem) + 'M' # The suffix is needed by sqsub
++        if self.duree:
++            command += ' -r ' + self.duree
++        if self.queue:
++            command += ' -q ' + self.queue
++        if self.jobs_name:
++            command += ' -j ' + self.jobs_name
++        if self.gpu:
++            # TODO: support several GPUs per job?
++            command += ' --gpp=1'
++
++        command += &quot; '&quot; + filename + &quot;'&quot;
++
++        if not self.test:
++            task.set_scheduled_time()
++
++            self.p = Popen(command, shell=True)
++            self.p.wait()
++            if self.p.returncode != 0:
++                raise DBIError(&quot;[DBI] ERROR: sqsub returned an error code of&quot;+str(self.p.returncode))
++        else:
++            print '[DBI] Test mode, to manually submit, execute &quot;'+command+'&quot;'
++
++
++    def run(self):
++        print &quot;[DBI] The log files are under %s&quot; % self.log_dir
++        if self.test:
++            &quot;[DBI] Test mode, we generated all files, but will not execute sqsub&quot;
++
++        pre_batch_command = ';'.join(self.pre_batch)
++        post_batch_command = ';'.join(self.post_batch)
++
++        # Execute pre-batch
++        self.exec_pre_batch()
++
++        for t in self.tasks:
++            self.run_one_job(t)
++
++        # Execute post-batch
++        self.exec_post_batch()
++
++    def clean(self):
++        return
++        for f in self.temp_files:
++            os.remove(f)
++
++    def wait(self):
++        print &quot;[DBI] WARNING cannot wait until all jobs are done on Sharcnet, use sqjobs or sqstat&quot;
++
++
+ # Transfor a string so that it is treated by Condor as a single argument
+ def condor_escape_argument(argstring):
+     # Double every single quote and double quote character,
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2010-08-16 20:02:20 UTC (rev 10352)
++++ trunk/scripts/dbidispatch	2010-08-20 22:42:09 UTC (rev 10353)
+@@ -17,7 +17,7 @@
+ &lt;common options&gt;:
+         [--help|-h]
+         [--[*no_]dbilog]
+-        [--condor[=N]|--bqtools[=N]|--cluster[=N]|--local[=N]|--ssh[=N]|--sge[=N]]
++        [--condor[=N]|--bqtools[=N]|--cluster[=N]|--local[=N]|--sge[=N]|--sharcnet|--ssh[=N]i]
+         [--[*no_]test]
+         [--[*no_]testdbi]
+         [--[*no_]nb_proc=N]
+@@ -33,14 +33,18 @@
+                                                  sh(condor only),
+                                                  clusterid(condor only),
+                                                  processid(condor only))}+]
+-    bqtools, cluster, condor, sge option:   [--cpu=nb_cpu_per_node]
+-                                            [--mem=N]
+-    bqtools, cluster, sge option:           [--duree=X]
+-    bqtools, condor, sge options:           [--env=VAR=VALUE[ VAR2=VALUE2]]  (must be quoted into the shell!)
+-                                            [*--[no_]set_special_env]
+-                                            [--raw=STRING[\nSTRING]]
++    bqtools, cluster, condor, sge, sharcnet options:
++                              [--cpu=nb_cpu_per_node]
++                              [--mem=N]
++    bqtools, cluster, sge, sharcnet option:
++                              [--duree=X]
++    bqtools, condor, sge options:
++                              [--env=VAR=VALUE[ VAR2=VALUE2]]  (must be quoted into the shell!)
++                              [*--[no_]set_special_env]
++                              [--raw=STRING[\nSTRING]]
+     cluster, condor options  :[--32|--64|--3264] [--os=X]
+-    bqtools, sge options:     [--queue=X] [--jobs_name=X]
++    bqtools, sge, sharcnet options:
++                              [--queue=X] [--jobs_name=X]
+     bqtools options          :[--micro[=nb_batch]] [--[*no_]long]
+                               [--nano=X] [--submit_options=X]
+                               [*--[no_]clean_up] [*--[no_]m32G]
+@@ -60,7 +64,8 @@
+                               [--[no_]local_log_file][--next_job_start_delay=N]
+                               [--fast] [--[no_]gpu] [--[no_]gpu_enabled]
+     sge options              :[--project=STRING]
+-        (Note: SGE support is experimental)
++    (Note: SGE support is experimental)
++    (Note: Sharcnet support is even more experimental)
+ 
+ An * after '[', '{' or ',' signals the default value.
+ An + tell that we can put one or more separeted by a comma
+@@ -317,6 +322,8 @@
+     launch_cmd = 'Bqtools'
+ elif search_file('cluster',PATH):
+     launch_cmd = 'Cluster'
++elif search_file('sqsub',PATH):
++    launch_cmd = 'Sharcnet'
+ elif search_file('qsub',PATH):
+     launch_cmd = 'Sge'
+ else:
+@@ -465,13 +472,17 @@
+     valid_dbi_param += [&quot;duree&quot;, &quot;jobs_name&quot;, &quot;queue&quot;, &quot;cpu&quot;, &quot;mem&quot;, &quot;env&quot;,
+                         &quot;raw&quot;, &quot;set_special_env&quot;,
+                         ]
++elif launch_cmd==&quot;Sharcnet&quot;:
++    valid_dbi_param += [&quot;cpu&quot;, &quot;mem&quot;, &quot;duree&quot;, &quot;queue&quot;, &quot;jobs_name&quot;, &quot;gpu&quot;] #&quot;env, &quot;set_special_env&quot;, &quot;raw&quot; ?
+ 
+-if dbi_param['gpu']:
+-    dbi_param['req']+=&quot;&amp;&amp;(Target.GPU=?=True)&quot;
+-    dbi_param['raw']+='\n+GPU=True'
+-elif dbi_param['gpu_enabled']:
+-    dbi_param['rank']+=&quot;&amp;&amp;(Target.GPU=?=True)&quot;
+-    dbi_param['raw']+='\n+GPU=True'
++# Only valid for condor
++if launch_cmd == 'Condor':
++    if dbi_param['gpu']:
++        dbi_param['req']+=&quot;&amp;&amp;(Target.GPU=?=True)&quot;
++        dbi_param['raw']+='\n+GPU=True'
++    elif dbi_param['gpu_enabled']:
++        dbi_param['rank']+=&quot;&amp;&amp;(Target.GPU=?=True)&quot;
++        dbi_param['raw']+='\n+GPU=True'
+ 
+ if  launch_cmd == 'Condor' and gethostname().endswith(&quot;.iro.umontreal.ca&quot;):
+     #default value for pkdilly is true.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003792.html">[Plearn-commits] r10352 - trunk/scripts
+</A></li>
+	<LI>Next message: <A HREF="003794.html">[Plearn-commits] r10354 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3793">[ date ]</a>
+              <a href="thread.html#3793">[ thread ]</a>
+              <a href="subject.html#3793">[ subject ]</a>
+              <a href="author.html#3793">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

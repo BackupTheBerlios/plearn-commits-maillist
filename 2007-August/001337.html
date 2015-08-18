@@ -1,0 +1,194 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7889 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7889%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708011753.l71Hr21N022103%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001336.html">
+   <LINK REL="Next"  HREF="001338.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7889 - trunk/plearn_learners/online</H1>
+    <B>louradou at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7889%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708011753.l71Hr21N022103%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7889 - trunk/plearn_learners/online">louradou at mail.berlios.de
+       </A><BR>
+    <I>Wed Aug  1 19:53:02 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001336.html">[Plearn-commits] r7888 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001338.html">[Plearn-commits] r7890 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1337">[ date ]</a>
+              <a href="thread.html#1337">[ thread ]</a>
+              <a href="subject.html#1337">[ subject ]</a>
+              <a href="author.html#1337">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: louradou
+Date: 2007-08-01 19:53:00 +0200 (Wed, 01 Aug 2007)
+New Revision: 7889
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+Log:
+contrastive divergence: corrected computation
+(= difference of free energies)
+
+
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-08-01 02:15:25 UTC (rev 7888)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-08-01 17:53:00 UTC (rev 7889)
+@@ -105,6 +105,7 @@
+ RBMModule::RBMModule():
+     cd_learning_rate(0),
+     grad_learning_rate(0),
++    tied_connection_weights(false),
+     compute_contrastive_divergence(false),
+     n_Gibbs_steps_CD(1),
+     min_n_Gibbs_steps(1),
+@@ -156,6 +157,10 @@
+         &quot;set to 0, the gradient of the contrastive divergence will not be\n&quot;
+         &quot;computed at all.&quot;);
+ 
++    declareOption(ol, &quot;tied_connection_weights&quot;, &amp;RBMModule::tied_connection_weights,
++                  OptionBase::buildoption,
++        &quot;Whether to keep fixed the connection weights during learning.&quot;);
++
+     declareOption(ol, &quot;compute_contrastive_divergence&quot;, &amp;RBMModule::compute_contrastive_divergence,
+                   OptionBase::buildoption,
+         &quot;Compute the constrastive divergence in an output port.&quot;);
+@@ -1136,15 +1141,12 @@
+             // compute contrastive divergence itself
+             for (int i=0;i&lt;mbs;i++)
+             {
+-                (*contrastive_divergence)(i,0) =
+-                    // positive phase energy
+-                    visible_layer-&gt;energy((*visible)(i))
+-                    - dot((*h)(i),(*h_act)(i))
+-                    // minus
+-                    -
+-                    // negative phase energy
+-                    (visible_layer-&gt;energy(visible_layer-&gt;samples(i))
+-                     - dot(hidden_expectations(i),hidden_layer-&gt;activations(i)));
++	    	real s = visible_layer-&gt;energy((*visible)(i)) - visible_layer-&gt;energy(visible_layer-&gt;samples(i));
++		Vec a = (*h_act)(i);
++		Vec b = hidden_layer-&gt;activations(i); 
++		for (int j=0;j&lt;hidden_layer-&gt;size;j++)
++		    s -= tabulated_softplus(a[j]) - tabulated_softplus(b[j]);
++		(*contrastive_divergence)(i,0) = s;
+             }
+         }
+         else
+@@ -1244,7 +1246,11 @@
+         // Note: we need to perform the following steps even if the gradient
+         // learning rate is equal to 0. This is because we must propagate the
+         // gradient to the visible layer, even though no update is required.
+-        setAllLearningRates(grad_learning_rate);
++	if (tied_connection_weights)
++           setLearningRatesOnlyForLayers(grad_learning_rate);
++	else
++           setAllLearningRates(grad_learning_rate);
++	
+         PLASSERT_MSG( hidden &amp;&amp; hidden_act , &quot;To compute gradients in bprop, the hidden_activations.state port must have been filled during fprop&quot;);
+         // Compute gradient w.r.t. activations of the hidden layer.
+         hidden_layer-&gt;bpropUpdate(
+@@ -1310,7 +1316,10 @@
+     if (cd_learning_rate &gt; 0 &amp;&amp; minimize_log_likelihood) {
+         PLASSERT( visible &amp;&amp; !visible-&gt;isEmpty() );
+         PLASSERT( hidden &amp;&amp; !hidden-&gt;isEmpty() );
+-        setAllLearningRates(cd_learning_rate);
++	if (tied_connection_weights)
++           setLearningRatesOnlyForLayers(cd_learning_rate);
++	else
++           setAllLearningRates(cd_learning_rate);
+ 
+         // positive phase
+         visible_layer-&gt;accumulatePosStats(*visible);
+@@ -1383,7 +1392,10 @@
+                            &lt;&lt; name &lt;&lt; &quot;'&quot; &lt;&lt; endl;
+         // Perform a step of contrastive divergence.
+         PLASSERT( visible &amp;&amp; !visible-&gt;isEmpty() );
+-        setAllLearningRates(cd_learning_rate);
++	if (tied_connection_weights)
++           setLearningRatesOnlyForLayers(cd_learning_rate);
++	else
++           setAllLearningRates(cd_learning_rate);
+         Mat* negative_phase_visible_samples =
+             computed_contrastive_divergence?ports_value[getPortIndex(&quot;negative_phase_visible_samples.state&quot;)]:0;
+         const Mat* negative_phase_hidden_expectations =
+@@ -1498,7 +1510,7 @@
+                     }
+                 }
+             }
+-            if (!standard_cd_grad) {
++            if (!standard_cd_grad &amp;&amp; !tied_connection_weights) {
+                 // Update connection manually.
+                 Mat&amp; weights = ((RBMMatrixConnection*)
+                                 get_pointer(connection))-&gt;weights;
+@@ -1575,7 +1587,10 @@
+     }
+ 
+     if (reconstruction_error_grad &amp;&amp; !reconstruction_error_grad-&gt;isEmpty()) {
+-        setAllLearningRates(grad_learning_rate);
++	if (tied_connection_weights)
++           setLearningRatesOnlyForLayers(grad_learning_rate);
++	else
++           setAllLearningRates(grad_learning_rate);
+         PLASSERT( reconstruction_connection != 0 );
+         // Perform gradient descent on Autoassociator reconstruction cost
+         Mat* visible_reconstruction = ports_value[getPortIndex(&quot;visible_reconstruction.state&quot;)];
+@@ -1765,6 +1780,16 @@
+         reconstruction_connection-&gt;setLearningRate(lr);
+ }
+ 
++void RBMModule::setLearningRatesOnlyForLayers(real lr)
++{
++    hidden_layer-&gt;setLearningRate(lr);
++    visible_layer-&gt;setLearningRate(lr);
++    connection-&gt;setLearningRate(0.);
++    if(reconstruction_connection)
++        reconstruction_connection-&gt;setLearningRate(0.);
++}
++
++
+ //////////////////////////////
+ // sampleHiddenGivenVisible //
+ //////////////////////////////
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001336.html">[Plearn-commits] r7888 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001338.html">[Plearn-commits] r7890 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1337">[ date ]</a>
+              <a href="thread.html#1337">[ thread ]</a>
+              <a href="subject.html#1337">[ subject ]</a>
+              <a href="author.html#1337">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

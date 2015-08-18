@@ -1,0 +1,960 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7872 - in trunk: plearn/base plearn/python	python_modules/plearn/pybridge python_modules/plearn/pyext
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7872%20-%20in%20trunk%3A%20plearn/base%20plearn/python%0A%09python_modules/plearn/pybridge%20python_modules/plearn/pyext&In-Reply-To=%3C200707302220.l6UMKCTe021046%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001319.html">
+   <LINK REL="Next"  HREF="001321.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7872 - in trunk: plearn/base plearn/python	python_modules/plearn/pybridge python_modules/plearn/pyext</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7872%20-%20in%20trunk%3A%20plearn/base%20plearn/python%0A%09python_modules/plearn/pybridge%20python_modules/plearn/pyext&In-Reply-To=%3C200707302220.l6UMKCTe021046%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7872 - in trunk: plearn/base plearn/python	python_modules/plearn/pybridge python_modules/plearn/pyext">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Tue Jul 31 00:20:12 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001319.html">[Plearn-commits] r7871 - trunk/plearn_learners/generic
+</A></li>
+        <LI>Next message: <A HREF="001321.html">[Plearn-commits] r7873 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1320">[ date ]</a>
+              <a href="thread.html#1320">[ thread ]</a>
+              <a href="subject.html#1320">[ subject ]</a>
+              <a href="author.html#1320">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2007-07-31 00:20:10 +0200 (Tue, 31 Jul 2007)
+New Revision: 7872
+
+Modified:
+   trunk/plearn/base/Object.cc
+   trunk/plearn/base/Option.h
+   trunk/plearn/python/PythonExtension.cc
+   trunk/plearn/python/PythonExtension.h
+   trunk/plearn/python/PythonObjectWrapper.cc
+   trunk/plearn/python/PythonObjectWrapper.h
+   trunk/python_modules/plearn/pybridge/wrapped_plearn_object.py
+   trunk/python_modules/plearn/pyext/__init__.py
+Log:
+- inject PLearn classes into python extension module
+- fix python refcounts for getOption (was leaking)
+
+
+
+Modified: trunk/plearn/base/Object.cc
+===================================================================
+--- trunk/plearn/base/Object.cc	2007-07-30 21:02:23 UTC (rev 7871)
++++ trunk/plearn/base/Object.cc	2007-07-30 22:20:10 UTC (rev 7872)
+@@ -692,8 +692,7 @@
+                                                  const TVec&lt;PythonObjectWrapper&gt;&amp; args) const
+                 {
+ 			checkNargs(args.size(), 0);
+-                        return PythonObjectWrapper(instance,
+-                                                   PythonObjectWrapper::transfer_ownership);
++                        return PythonObjectWrapper(instance);
+                 }
+ #endif //def PL_PYTHON_VERSION 
+ 
+@@ -744,7 +743,11 @@
+                   (BodyDoc(&quot;Returns the name of the class&quot;),
+                    RetDoc (&quot;Class name as string&quot;)));
+ 
++    declareMethod(rmm, &quot;usage&quot;, &amp;Object::usage,
++                  (BodyDoc(&quot;Returns the refcount of this PPointable&quot;),
++                   RetDoc (&quot;Number of references&quot;)));
+ 
++
+ #ifdef PL_PYTHON_VERSION 
+     declareMethod(rmm, &quot;setOptionFromPython&quot;, &amp;Object::setOptionFromPython,
+                   (BodyDoc(&quot;Change an option within the object from a PythonObjectWrapper&quot;),
+
+Modified: trunk/plearn/base/Option.h
+===================================================================
+--- trunk/plearn/base/Option.h	2007-07-30 21:02:23 UTC (rev 7871)
++++ trunk/plearn/base/Option.h	2007-07-30 22:20:10 UTC (rev 7872)
+@@ -126,18 +126,12 @@
+ #ifdef PL_PYTHON_VERSION 
+     virtual PythonObjectWrapper getAsPythonObject(Object* o) const 
+     { 
+-        return PythonObjectWrapper(ConvertToPyObject&lt;OptionType&gt;::
+-                                   newPyObject(*(OptionType*)getAsVoidPtr(o)),
+-                                   PythonObjectWrapper::transfer_ownership); 
+-        
++        return PythonObjectWrapper(*(OptionType*)getAsVoidPtr(o)); 
+     }
+ 
+     virtual PythonObjectWrapper getAsPythonObject(const Object* o) const 
+     { 
+-        return PythonObjectWrapper(ConvertToPyObject&lt;OptionType&gt;::
+-                                   newPyObject(*(OptionType*)getAsVoidPtr(o)),
+-                                   PythonObjectWrapper::transfer_ownership); 
+-
++        return PythonObjectWrapper(*(OptionType*)getAsVoidPtr(o)); 
+     }
+ 
+     virtual void setFromPythonObject(Object* o, const PythonObjectWrapper&amp; v) const
+
+Modified: trunk/plearn/python/PythonExtension.cc
+===================================================================
+--- trunk/plearn/python/PythonExtension.cc	2007-07-30 21:02:23 UTC (rev 7871)
++++ trunk/plearn/python/PythonExtension.cc	2007-07-30 22:20:10 UTC (rev 7872)
+@@ -32,8 +32,12 @@
+ // library, go to the PLearn Web site at www.plearn.org
+ 
+ #include &lt;plearn/python/PythonExtension.h&gt;
++#include &lt;plearn/python/PythonObjectWrapper.h&gt;
+ #include &lt;plearn/base/RemoteDeclareMethod.h&gt;
+ #include &lt;plearn/base/HelpSystem.h&gt;
++#include &lt;plearn/base/TypeFactory.h&gt;
++#include &lt;plearn/base/PMemPool.h&gt;
++#include &lt;plearn/base/stringutils.h&gt;
+ 
+ namespace PLearn {
+ 
+@@ -75,7 +79,6 @@
+ static PObjectPool&lt;PyMethodDef&gt; pyfuncs(50);
+ static TVec&lt;string&gt; funcs_help;
+ 
+-
+ void injectPLearnGlobalFunctions(PyObject* env)
+ {
+     const RemoteMethodMap::MethodMap&amp; global_funcs= 
+@@ -120,15 +123,272 @@
+ }
+ 
+ 
++void injectPLearnClasses(PyObject* injenv)
++{
++    PythonGlobalInterpreterLock gil;         // For thread-safety
++    PythonObjectWrapper::initializePython();
++
++    PyObject* module= 0;
++    if(PyModule_Check(injenv))
++        module= injenv;
++
++    // import python class for wrapping PLearn objects
++    string importcode= &quot;\nfrom plearn.pybridge.wrapped_plearn_object &quot;
++        &quot;import *\n&quot;;
++    PyObject* pyenv= PyDict_New();
++    PyDict_SetItemString(pyenv, &quot;__builtins__&quot;, PyEval_GetBuiltins());
++    PyObject* res= PyRun_String(importcode.c_str(), Py_file_input, pyenv, pyenv);
++    if(!res)
++    {
++       if(PyErr_Occurred()) PyErr_Print();
++       PLERROR(&quot;in injectPLearnClasses : cannot import plearn.pybridge.wrapped_plearn_object.&quot;);
++    }
++
++    Py_DECREF(res);
++    if (PyErr_Occurred()) 
++    {
++        Py_DECREF(pyenv);
++        PyErr_Print();
++        PLERROR(&quot;in injectPLearnClasses : error compiling &quot;
++                &quot;WrappedPLearnObject python code.&quot;);
++    }
++
++    string wrapper_name= &quot;WrappedPLearnObject&quot;;
++    // now find the class in the env.
++    typedef map&lt;string, PyObject*&gt; env_t;
++    env_t env= PythonObjectWrapper(
++        pyenv, PythonObjectWrapper::transfer_ownership).as&lt;env_t&gt;();
++    env_t::iterator clit= env.find(wrapper_name);
++    if(clit == env.end())
++        PLERROR(&quot;in injectPLearnClasses : &quot;
++                &quot;class %s not defined &quot;
++                &quot;in plearn.pybridge.wrapped_plearn_object&quot;,
++                wrapper_name.c_str());
++    PyObject* wrapper= clit-&gt;second;
++
++    //inject unref and newCPPObj methods
++    PyMethodDef* py_method= &amp;PythonObjectWrapper::m_unref_method_def;
++    py_method-&gt;ml_name  = &quot;_unref&quot;;
++    py_method-&gt;ml_meth  = PythonObjectWrapper::python_del;
++    py_method-&gt;ml_flags = METH_VARARGS;
++    py_method-&gt;ml_doc   = &quot;Injected unref function from PythonObjectWrapper; &quot;
++        &quot;DO NOT USE THIS FUNCTION! IT MAY DEALLOCATE THE PLEARN OBJECT!&quot;;
++    PyObject* py_funcobj= PyCFunction_NewEx(py_method, NULL, NULL);
++    PyObject* py_methobj= PyMethod_New(py_funcobj, NULL, wrapper);
++    Py_XDECREF(py_funcobj);
++    if(!py_funcobj || !py_methobj) 
++    {
++        Py_DECREF(pyenv);
++        Py_XDECREF(py_methobj);
++        PLERROR(&quot;in injectPLearnClasses : &quot;
++                &quot;can't inject method '%s' (i.e. __del__)&quot;, 
++                py_method-&gt;ml_name);
++    }
++    PyObject_SetAttrString(wrapper, py_method-&gt;ml_name, py_methobj);
++    Py_DECREF(py_methobj);
++
++    // inject 'newCPPObj' and 'refCPPObj' class methods
++    TVec&lt;PyMethodDef*&gt; classmethods(2);
++    classmethods[0]= &amp;PythonObjectWrapper::m_newCPPObj_method_def;
++    classmethods[0]-&gt;ml_name  = &quot;_newCPPObj&quot;;
++    classmethods[0]-&gt;ml_meth  = PythonObjectWrapper::newCPPObj;
++    classmethods[0]-&gt;ml_flags = METH_VARARGS;
++    classmethods[0]-&gt;ml_doc   = &quot;Injected new function from PythonObjectWrapper; &quot;
++        &quot;DO NOT USE THIS FUNCTION!&quot;;
++    classmethods[1]= &amp;PythonObjectWrapper::m_refCPPObj_method_def;
++    classmethods[1]-&gt;ml_name  = &quot;_refCPPObj&quot;;
++    classmethods[1]-&gt;ml_meth  = PythonObjectWrapper::refCPPObj;
++    classmethods[1]-&gt;ml_flags = METH_VARARGS;
++    classmethods[1]-&gt;ml_doc   = &quot;Injected new function from PythonObjectWrapper; &quot;
++        &quot;DO NOT USE THIS FUNCTION!&quot;;
++
++    for(TVec&lt;PyMethodDef*&gt;::iterator mit= classmethods.begin();
++        mit != classmethods.end(); ++mit)
++    {
++        py_method= *mit;
++        py_funcobj= PyCFunction_NewEx(py_method, NULL, NULL);
++        py_methobj= PyMethod_New(py_funcobj, NULL, wrapper);
++        Py_XDECREF(py_funcobj);
++        if(!py_funcobj || !py_methobj) 
++        {
++            Py_DECREF(pyenv);
++            Py_XDECREF(py_methobj);
++            PLERROR(&quot;in injectPLearnClasses : &quot;
++                    &quot;can't inject method '%s' (i.e. C++'s new)&quot;, 
++                    py_method-&gt;ml_name);
++        }
++        PyObject_SetAttrString(wrapper, py_method-&gt;ml_name, py_methobj);
++        Py_DECREF(py_methobj);
++        
++        string classmethodname= wrapper_name+&quot;.&quot;+py_method-&gt;ml_name;
++        res= PyRun_String((classmethodname
++                           +&quot;= classmethod(&quot;+classmethodname+&quot;.im_func)&quot;).c_str(), 
++                          Py_file_input, pyenv, pyenv);
++        Py_DECREF(res);
++        if (PyErr_Occurred()) 
++        {
++            Py_DECREF(pyenv);
++            PyErr_Print();
++            PLERROR(&quot;in injectPLearnClasses : error making &quot;
++                    &quot;newCPPObj a classmethod.&quot;);
++        }
++    }
++
++    if(0 != PyType_Ready(reinterpret_cast&lt;PyTypeObject*&gt;(wrapper)))
++        PLERROR(&quot;in injectPLearnClasses : &quot;
++                &quot;failed PyType_Ready on wrapper class.&quot;);
++
++    if(!PyCallable_Check(wrapper))
++        PLERROR(&quot;in injectPLearnClasses : &quot;
++                &quot;%s is not callable [not a class?]&quot;,
++                wrapper_name.c_str());
++
++    PyObject* the_pyclass= 0;
++    const TypeMap&amp; tp_map= TypeFactory::instance().getTypeMap();
++    for(TypeMap::const_iterator tit= tp_map.begin();
++        tit != tp_map.end(); ++tit)
++    {
++        if(!tit-&gt;second.constructor)
++            continue; //skip abstract classes
++
++        // create new python type deriving from WrappedPLearnObject
++        string classname= tit-&gt;first;
++        string pyclassname= classname;
++        search_replace(pyclassname, &quot; &quot;, &quot;_&quot;);
++        search_replace(pyclassname, &quot;&lt;&quot;, &quot;_&quot;);
++        search_replace(pyclassname, &quot;&gt;&quot;, &quot;_&quot;);
++        string derivcode= string(&quot;\nclass &quot;)
++            + pyclassname + &quot;(&quot; + wrapper_name + &quot;):\n&quot;
++            &quot;  \&quot;\&quot;\&quot; ... \&quot;\&quot;\&quot;\n&quot;
++            &quot;  def __new__(cls,*args,**kwargs):\n&quot;
++            &quot;    #print '** &quot;+pyclassname+&quot;.__new__',kwargs\n&quot;
++            &quot;    obj= object.__new__(cls,*args,**kwargs)\n&quot;
++            &quot;    if '_cptr' not in kwargs:\n&quot;
++            &quot;      obj._cptr= cls._newCPPObj('&quot;+classname+&quot;')\n&quot;
++            &quot;      cls._refCPPObj(obj)\n&quot;
++            &quot;    return obj\n&quot;;
++        PyObject* res= PyRun_String(derivcode.c_str(), 
++                                    Py_file_input, pyenv, pyenv);
++        Py_XDECREF(res);
++        env= PythonObjectWrapper(
++            pyenv, PythonObjectWrapper::transfer_ownership).as&lt;env_t&gt;();
++        clit= env.find(pyclassname);
++        if(clit == env.end())
++            PLERROR(&quot;in injectPLearnClasses : &quot;
++                    &quot;Cannot create new python class deriving from &quot;
++                    &quot;%s (%s).&quot;, 
++                    wrapper_name.c_str(),
++                    classname.c_str());
++
++        //set option names
++        OptionList&amp; options= tit-&gt;second.getoptionlist_method();
++        unsigned int nopts= options.size();
++        TVec&lt;string&gt; optionnames(nopts);
++        for(unsigned int i= 0; i &lt; nopts; ++i)
++            optionnames[i]= options[i]-&gt;optionname();
++
++        the_pyclass= clit-&gt;second;
++        if(-1==PyObject_SetAttrString(the_pyclass, &quot;_optionnames&quot;, 
++                                      PythonObjectWrapper(optionnames).getPyObject()))
++        {
++            Py_DECREF(pyenv);
++            if (PyErr_Occurred()) PyErr_Print();
++            PLERROR(&quot;in injectPLearnClasses : &quot;
++                    &quot;cannot set attr _optionnames for class %s&quot;,
++                    classname.c_str());
++        }
++
++        // inject all declared methods
++        const RemoteMethodMap* methods= &amp;tit-&gt;second.get_remote_methods();
++
++        PP&lt;PObjectPool&lt;PyMethodDef&gt; &gt; meth_def_pool= 
++            new PObjectPool&lt;PyMethodDef&gt;(methods-&gt;size()+1);
++
++        PythonObjectWrapper::m_pypl_classes.insert(
++            make_pair(classname, PLPyClass(the_pyclass, meth_def_pool)));
++        TVec&lt;string&gt;&amp; methods_help= 
++            PythonObjectWrapper::m_pypl_classes.find(classname)-&gt;second.methods_help;
++
++        while(methods)
++        {
++            for(RemoteMethodMap::MethodMap::const_iterator it= methods-&gt;begin();
++                it != methods-&gt;end(); ++it)
++            {
++                //get the RemoteTrampoline
++                PyObject* tramp= PyCObject_FromVoidPtr(it-&gt;second, NULL);
++            
++                // Create a Python Function Object
++                PyMethodDef* py_method= meth_def_pool-&gt;allocate();
++                py_method-&gt;ml_name  = const_cast&lt;char*&gt;(it-&gt;first.first.c_str());
++                py_method-&gt;ml_meth  = PythonObjectWrapper::trampoline;
++                py_method-&gt;ml_flags = METH_VARARGS;
++                methods_help.push_back(HelpSystem::helpOnMethod(classname,
++                                                                it-&gt;first.first.c_str(),
++                                                                it-&gt;first.second));
++                py_method-&gt;ml_doc   = const_cast&lt;char*&gt;(methods_help.last().c_str());
++    
++                PyObject* py_funcobj= PyCFunction_NewEx(py_method, tramp, module);
++
++                // create an unbound method from the function
++                PyObject* py_methobj= PyMethod_New(py_funcobj, NULL, the_pyclass);
++
++                Py_DECREF(tramp);
++                Py_XDECREF(py_funcobj);
++                if(!py_funcobj || !py_methobj) 
++                {
++                    Py_DECREF(pyenv);
++                    Py_XDECREF(py_methobj);
++                    PLERROR(&quot;in injectPLearnClasses : &quot;
++                            &quot;can't inject method '%s'&quot;, py_method-&gt;ml_name);
++                }
++
++                if(-1==PyObject_SetAttrString(the_pyclass, py_method-&gt;ml_name, py_methobj))
++                {
++                    Py_DECREF(py_methobj);
++                    if (PyErr_Occurred()) PyErr_Print();
++                    PLERROR(&quot;in injectPLearnClasses : &quot;
++                            &quot;cannot set attr %s for class %s&quot;,
++                            py_method-&gt;ml_name,
++                            classname.c_str());
++                }
++                Py_DECREF(py_methobj);
++            }
++            methods= methods-&gt;inheritedMethods();//get parent class methods
++        }
++        if(0 != PyType_Ready(reinterpret_cast&lt;PyTypeObject*&gt;(the_pyclass)))
++            PLERROR(&quot;in injectPLearnClasses : &quot;
++                    &quot;failed PyType_Ready on class %s.&quot;,classname.c_str());
++        if(module)
++            if(-1==PyObject_SetAttrString(module, 
++                                          const_cast&lt;char*&gt;(pyclassname.c_str()), 
++                                          the_pyclass))
++            {
++                if (PyErr_Occurred()) PyErr_Print();
++                PLERROR(&quot;in injectPLearnClasses : &quot;
++                        &quot;cannot inject class %s.&quot;,
++                        classname.c_str());
++            }
++    }
++}
++
+ // Init func for python module.
+ // init module, then inject global funcs
+ void initPythonExtensionModule(char* module_name)
+ {
+     PythonObjectWrapper::initializePython();
+     PyObject* plext= Py_InitModule(module_name, NULL);
+-    injectPLearnGlobalFunctions(plext);
++    setPythonModuleAndInject(plext);
+ }
+ 
++void setPythonModuleAndInject(PyObject* module)
++{
++    injectPLearnGlobalFunctions(module);
++    injectPLearnClasses(module);
++    the_PLearn_python_module= module;
++}
++
++PyObject* the_PLearn_python_module= 0;
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn/python/PythonExtension.h
+===================================================================
+--- trunk/plearn/python/PythonExtension.h	2007-07-30 21:02:23 UTC (rev 7871)
++++ trunk/plearn/python/PythonExtension.h	2007-07-30 22:20:10 UTC (rev 7872)
+@@ -39,14 +39,22 @@
+ namespace PLearn {
+ 
+ // Trampoline for global PLearn 'remote' functions
+-  PyObject* pythonGlobalFuncTramp(PyObject* self, PyObject* args);
++PyObject* pythonGlobalFuncTramp(PyObject* self, PyObject* args);
+ 
+ // inject all PLearn global functions into a python env.
+ void injectPLearnGlobalFunctions(PyObject* env);
+ 
++// inject all PLearn concrete classes
++void injectPLearnClasses(PyObject* env);
++
+ // Init func for python module.
+-  void initPythonExtensionModule(char* module_name);
++void initPythonExtensionModule(char* module_name);
+ 
++// inject funcs. and classes, set global module.
++void setPythonModuleAndInject(PyObject* module);
++
++extern PyObject* the_PLearn_python_module;
++
+ } // end of namespace PLearn
+ 
+ #endif
+
+Modified: trunk/plearn/python/PythonObjectWrapper.cc
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.cc	2007-07-30 21:02:23 UTC (rev 7871)
++++ trunk/plearn/python/PythonObjectWrapper.cc	2007-07-30 22:20:10 UTC (rev 7872)
+@@ -44,6 +44,7 @@
+ // Must include Python first...
+ #include &quot;PythonObjectWrapper.h&quot;
+ #include &quot;PythonEmbedder.h&quot;
++#include &quot;PythonExtension.h&quot;
+ 
+ // From C/C++ stdlib
+ #include &lt;stdio.h&gt;
+@@ -405,19 +406,43 @@
+                 &quot;deleting obj. for which no python class exists!&quot;);
+     --clit-&gt;second.nref;
+ 
+-    // TODO: avoid deleting class
+-    if(0 == clit-&gt;second.nref)
+-    {
+-        m_pypl_classes.erase(classname);//cleanup
+-    }
+-
++    //perr &lt;&lt; &quot;delete &quot; &lt;&lt; (void*)obj &lt;&lt; &quot; : &quot; &lt;&lt; (void*)m_wrapped_objects[obj] &lt;&lt; endl;
++    //perr &lt;&lt; &quot;bef.del o-&gt;usage()= &quot; &lt;&lt; obj-&gt;usage() &lt;&lt; endl;
+     obj-&gt;unref();//python no longer references this obj.
++    //perr &lt;&lt; &quot;aft.del o-&gt;usage()= &quot; &lt;&lt; obj-&gt;usage() &lt;&lt; endl;
+ 
+     m_wrapped_objects.erase(obj);
+ 
++    //printWrappedObjects();
++
+     return newPyObject();//None
+ }
+ 
++PyObject* PythonObjectWrapper::newCPPObj(PyObject* self, PyObject* args)
++{
++    TVec&lt;PyObject*&gt; args_tvec= 
++        PythonObjectWrapper(args).as&lt;TVec&lt;PyObject*&gt; &gt;();
++    Object* o= newObjectFromClassname(PyString_AsString(args_tvec[1]));
++    //perr &lt;&lt; &quot;new o-&gt;usage()= &quot; &lt;&lt; o-&gt;usage() &lt;&lt; endl;
++    return PyCObject_FromVoidPtr(o, 0);
++}
++
++PyObject* PythonObjectWrapper::refCPPObj(PyObject* self, PyObject* args)
++{
++    TVec&lt;PyObject*&gt; args_tvec= 
++        PythonObjectWrapper(args).as&lt;TVec&lt;PyObject*&gt; &gt;();
++    PyObject* pyo= args_tvec[1];
++    Object* o= PythonObjectWrapper(pyo);
++    o-&gt;ref();
++    //perr &lt;&lt; &quot;ref o-&gt;usage()= &quot; &lt;&lt; o-&gt;usage() &lt;&lt; endl;
++    PythonObjectWrapper::m_wrapped_objects[o]= pyo;
++    //perr &lt;&lt; &quot;refCPPObj: &quot; &lt;&lt; (void*)o &lt;&lt; &quot; : &quot; &lt;&lt; (void*)pyo &lt;&lt; endl;
++
++    //printWrappedObjects();
++
++    return newPyObject();//None
++}
++
+ //#####  newPyObject  #########################################################
+ 
+ //! Return None (increments refcount)
+@@ -435,16 +460,18 @@
+ //init.
+ bool PythonObjectWrapper::m_unref_injected= false;
+ PyMethodDef PythonObjectWrapper::m_unref_method_def;
++PyMethodDef PythonObjectWrapper::m_newCPPObj_method_def;
++PyMethodDef PythonObjectWrapper::m_refCPPObj_method_def;
+ 
+-
+ PyObject* ConvertToPyObject&lt;Object*&gt;::newPyObject(const Object* x)
+ {
++//     perr &lt;&lt; &quot;in ConvertToPyObject&lt;Object*&gt;::newPyObject : &quot;
++//          &lt;&lt; x-&gt;classname() &lt;&lt; ' ' &lt;&lt; (void*)x &lt;&lt; endl;
++
+     // void ptr becomes None
+-    if(!x)
+-        return PythonObjectWrapper::newPyObject();
++    if(!x) return PythonObjectWrapper::newPyObject();
+ 
+     PythonGlobalInterpreterLock gil;         // For thread-safety
+-
+     static PythonEmbedder embedder;
+     PythonObjectWrapper::initializePython();
+ 
+@@ -454,215 +481,51 @@
+     if(objit != PythonObjectWrapper::m_wrapped_objects.end())
+     {
+         PyObject* o= objit-&gt;second;
++
++//         perr &lt;&lt; &quot;NEW REF TO &quot; &lt;&lt; objit-&gt;first-&gt;classname() &lt;&lt; ' ' &lt;&lt; (void*)objit-&gt;first 
++//              &lt;&lt; ' ' &lt;&lt; objit-&gt;first-&gt;usage() &lt;&lt; &quot; : &quot; 
++//              &lt;&lt; (void*)objit-&gt;second &lt;&lt; ' ' &lt;&lt; objit-&gt;second-&gt;ob_refcnt &lt;&lt; endl;
++
++//        printWrappedObjects();
+         Py_INCREF(o);//new ref
+         return o;//return ptr to already created pyobj
+     }
+-
+-    // import python class for wrapping PLearn objects
+-    string importcode= &quot;\nfrom plearn.pybridge.wrapped_plearn_object &quot;
+-        &quot;import *\n&quot;;
+-    PyObject* pyenv= PyDict_New();
+-    PyDict_SetItemString(pyenv, &quot;__builtins__&quot;, PyEval_GetBuiltins());
+-    PyObject* res= PyRun_String(importcode.c_str(), Py_file_input, pyenv,
+-                                pyenv);
+-    Py_DECREF(res);
+-    if (PyErr_Occurred())
+-    {
+-        Py_DECREF(pyenv);
+-        PyErr_Print();
+-        PLERROR(&quot;in PythonObjectWrapper::newPyObject : error compiling &quot;
+-                &quot;WrappedPLearnObject python code.&quot;);
+-    }
+-
+-    string wrapper_name= &quot;WrappedPLearnObject&quot;;
+-    // now find the class in the env.
+-    typedef map&lt;string, PyObject*&gt; env_t;
+-    env_t env= PythonObjectWrapper(
+-        pyenv, PythonObjectWrapper::transfer_ownership).as&lt;env_t&gt;();
+-    env_t::iterator clit= env.find(wrapper_name);
+-    if(clit == env.end())
+-        PLERROR(&quot;in PythonObjectWrapper::newPyObject : &quot;
+-                &quot;class %s not defined &quot;
+-                &quot;in plearn.pybridge.wrapped_plearn_object&quot;,
+-                wrapper_name.c_str());
+-    PyObject* wrapper= clit-&gt;second;
+-
+-    //inject unref method if not already done
+-    // N.B. always injected into WrappedPLearnObject
+-    // even when using WrappedPLearnVMat
+-    if(!PythonObjectWrapper::m_unref_injected)
+-    {
+-        PyMethodDef* py_method= &amp;PythonObjectWrapper::m_unref_method_def;
+-        py_method-&gt;ml_name  = &quot;unref&quot;;
+-        py_method-&gt;ml_meth  = PythonObjectWrapper::python_del;
+-        py_method-&gt;ml_flags = METH_VARARGS;
+-        py_method-&gt;ml_doc   = &quot;Injected unref function from PythonObjectWrapper; &quot;
+-            &quot;DO NOT USE THIS FUNCTION! IT MAY DEALLOCATE THE PLEARN OBJECT!&quot;;
+-
+-        PyObject* py_funcobj= PyCFunction_NewEx(py_method, NULL, NULL);
+-        PyObject* py_methobj= PyMethod_New(py_funcobj, NULL, wrapper);
+-        Py_XDECREF(py_funcobj);
+-        if(!py_funcobj || !py_methobj)
+-        {
+-            Py_DECREF(pyenv);
+-            Py_XDECREF(py_methobj);
+-            PLERROR(&quot;in PythonObjectWrapper::newPyObject : &quot;
+-                    &quot;can't inject method '%s' (i.e. __del__)&quot;,
+-                    py_method-&gt;ml_name);
+-        }
+-        PyObject_SetAttrString(wrapper, py_method-&gt;ml_name, py_methobj);
+-        Py_DECREF(py_methobj);
+-        PythonObjectWrapper::m_unref_injected= true;
+-    }
+-
+-    //get wrapped for VMats if needed
+-    if(dynamic_cast&lt;const VMatrix*&gt;(x))
+-    {
+-        wrapper_name= &quot;WrappedPLearnVMat&quot;;
+-        clit= env.find(wrapper_name);
+-        if(clit == env.end())
+-            PLERROR(&quot;in PythonObjectWrapper::newPyObject : &quot;
+-                    &quot;class %s not defined &quot;
+-                    &quot;in plearn.pybridge.wrapped_plearn_object&quot;,
+-                    wrapper_name.c_str());
+-        wrapper= clit-&gt;second; // the actual wrapper class
+-    }
+-
+-    if(!PyCallable_Check(wrapper))
+-        PLERROR(&quot;in PythonObjectWrapper::newPyObject : &quot;
+-                &quot;%s is not callable [not a class?]&quot;,
+-                wrapper_name.c_str());
+-
+     // get ptr of object to wrap
+     PyObject* plobj= PyCObject_FromVoidPtr(const_cast&lt;Object*&gt;(x), NULL);
+ 
+     // try to find existing python class
+     string classname= x-&gt;classname();
+-    PythonObjectWrapper::pypl_classes_t::iterator clit2=
++    PythonObjectWrapper::pypl_classes_t::iterator clit= 
+         PythonObjectWrapper::m_pypl_classes.find(classname);
+-    PyObject* the_pyclass= 0;
+-    if(clit2 == PythonObjectWrapper::m_pypl_classes.end())
+-    {
+-        // create new python type deriving from WrappedPLearnObject
+-        string derivcode= string(&quot;\nclass &quot;)
+-            + classname + &quot;(&quot; + wrapper_name + &quot;):\n&quot;
+-            &quot;\tpass\n\n&quot;;
++    if(clit == PythonObjectWrapper::m_pypl_classes.end())
++        PLERROR(&quot;in ConvertToPyObject&lt;Object*&gt;::newPyObject : &quot;
++                &quot;cannot find python class %s&quot;,classname.c_str());
++    PyObject* the_pyclass= clit-&gt;second.pyclass;
+ 
+-        PyObject* res2= PyRun_String(derivcode.c_str(),
+-                                     Py_file_input, pyenv, pyenv);
+-        Py_XDECREF(res2);
+-        env= PythonObjectWrapper(
+-            pyenv, PythonObjectWrapper::transfer_ownership).as&lt;env_t&gt;();
+-        clit= env.find(classname);
+-        if(clit == env.end())
+-            PLERROR(&quot;in PythonObjectWrapper::newPyObject : &quot;
+-                    &quot;Cannot create new python class deriving from &quot;
+-                    &quot;%s (%s).&quot;,
+-                    wrapper_name.c_str(),
+-                    classname.c_str());
+-
+-        //set option names
+-        OptionList&amp; options= x-&gt;getOptionList();
+-        unsigned int nopts= options.size();
+-        TVec&lt;string&gt; optionnames(nopts);
+-        for(unsigned int i= 0; i &lt; nopts; ++i)
+-            optionnames[i]= options[i]-&gt;optionname();
+-
+-        the_pyclass= clit-&gt;second;
+-        if(-1==PyObject_SetAttrString(the_pyclass, &quot;_optionnames&quot;,
+-                                      PythonObjectWrapper(optionnames).getPyObject()))
+-        {
+-            Py_DECREF(pyenv);
+-            if (PyErr_Occurred())
+-                PyErr_Print();
+-            PLERROR(&quot;cannot set attr _optionnames&quot;);
+-        }
+-
+-        // inject all declared methods
+-        const RemoteMethodMap* methods= &amp;x-&gt;getRemoteMethodMap();
+-
+-        PP&lt;PObjectPool&lt;PyMethodDef&gt; &gt; meth_def_pool=
+-            new PObjectPool&lt;PyMethodDef&gt;(methods-&gt;size()+1);
+-
+-        PythonObjectWrapper::m_pypl_classes.insert(
+-            make_pair(classname, PLPyClass(the_pyclass, meth_def_pool)));
+-        TVec&lt;string&gt;&amp; methods_help=
+-            PythonObjectWrapper::m_pypl_classes.find(classname)-&gt;second.methods_help;
+-
+-        while(methods)
+-        {
+-            for(RemoteMethodMap::MethodMap::const_iterator it= methods-&gt;begin();
+-                it != methods-&gt;end(); ++it)
+-            {
+-                //get the RemoteTrampoline
+-                PyObject* tramp= PyCObject_FromVoidPtr(it-&gt;second, NULL);
+-
+-                // Create a Python Function Object
+-                PyMethodDef* py_method= meth_def_pool-&gt;allocate();
+-                py_method-&gt;ml_name  = const_cast&lt;char*&gt;(it-&gt;first.first.c_str());
+-                py_method-&gt;ml_meth  = PythonObjectWrapper::trampoline;
+-                py_method-&gt;ml_flags = METH_VARARGS;
+-                methods_help.push_back(HelpSystem::helpOnMethod(classname,
+-                                                                it-&gt;first.first.c_str(),
+-                                                                it-&gt;first.second));
+-                py_method-&gt;ml_doc   = const_cast&lt;char*&gt;(methods_help.last().c_str());
+-
+-                PyObject* py_funcobj= PyCFunction_NewEx(py_method, tramp, NULL);
+-
+-                // create an unbound method from the function
+-                PyObject* py_methobj= PyMethod_New(py_funcobj, NULL, the_pyclass);
+-
+-                Py_DECREF(tramp);
+-                Py_XDECREF(py_funcobj);
+-                if(!py_funcobj || !py_methobj)
+-                {
+-                    Py_DECREF(pyenv);
+-                    Py_DECREF(plobj);
+-                    Py_XDECREF(py_methobj);
+-                    PLERROR(&quot;in PythonObjectWrapper::newPyObject : &quot;
+-                            &quot;can't inject method '%s'&quot;, py_method-&gt;ml_name);
+-                }
+-
+-                PyObject_SetAttrString(the_pyclass, py_method-&gt;ml_name,
+-                                       py_methobj);
+-                Py_DECREF(py_methobj);
+-            }
+-            methods= methods-&gt;inheritedMethods();//get parent class methods
+-        }
+-    }
+-    else
+-    {
+-        the_pyclass= clit2-&gt;second.pyclass;
+-        ++clit2-&gt;second.nref;
+-    }
+-
+     //create the python object itself from the_pyclass
+-    PyObject* args= PyTuple_New(1);
+-    Py_INCREF(plobj);//keep it after it is 'stolen'
+-    PyTuple_SetItem(args, 0, plobj);
+-
++    PyObject* args= PyTuple_New(0);
+     PyObject* params= PyDict_New();
++    PyDict_SetItemString(params, &quot;_cptr&quot;, plobj);
++    Py_DECREF(plobj);
+     PyObject* the_obj= PyObject_Call(the_pyclass, args, params);
+     Py_DECREF(args);
+     Py_DECREF(params);
+     if(!the_obj)
+     {
+-        Py_DECREF(pyenv);
+-        Py_DECREF(plobj);
+         if (PyErr_Occurred()) PyErr_Print();
+         PLERROR(&quot;in PythonObjectWrapper::newPyObject : &quot;
+                 &quot;can't construct a WrappedPLearnObject.&quot;);
+     }
+ 
+-    //finalize
+-    Py_DECREF(pyenv);
+-    Py_DECREF(plobj);
+-
+     // augment refcount since python now 'points' to this obj.
+     x-&gt;ref();
+ 
+     PythonObjectWrapper::m_wrapped_objects[x]= the_obj;
+ 
++//    perr &lt;&lt; &quot;newPyObject: &quot; &lt;&lt; (void*)x &lt;&lt; &quot; : &quot; &lt;&lt; (void*)the_obj &lt;&lt; endl;
++
++//    printWrappedObjects();
++
+     return the_obj;
+ }
+ 
+@@ -775,6 +638,25 @@
+     return in;
+ }
+ 
++//! debug
++void printWrappedObjects()
++{
++    perr &lt;&lt; &quot;wrapped_objects= &quot; &lt;&lt; endl;
++    for(PythonObjectWrapper::wrapped_objects_t::iterator it= 
++            PythonObjectWrapper::m_wrapped_objects.begin();
++        it != PythonObjectWrapper::m_wrapped_objects.end(); ++it)
++        perr &lt;&lt; '\t' &lt;&lt; it-&gt;first-&gt;classname() &lt;&lt; ' ' &lt;&lt; (void*)it-&gt;first 
++             &lt;&lt; ' ' &lt;&lt; it-&gt;first-&gt;usage() &lt;&lt; &quot; : &quot; 
++             &lt;&lt; (void*)it-&gt;second &lt;&lt; ' ' &lt;&lt; it-&gt;second-&gt;ob_refcnt &lt;&lt; endl;
++}
++
++BEGIN_DECLARE_REMOTE_FUNCTIONS
++    declareFunction(&quot;printWrappedObjects&quot;, &amp;printWrappedObjects,
++                    (BodyDoc(&quot;Prints PLearn objects wrapped into python.\n&quot;)));
++END_DECLARE_REMOTE_FUNCTIONS
++
++
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn/python/PythonObjectWrapper.h
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.h	2007-07-30 21:02:23 UTC (rev 7871)
++++ trunk/plearn/python/PythonObjectWrapper.h	2007-07-30 22:20:10 UTC (rev 7872)
+@@ -823,7 +823,10 @@
+ 
+     static PyObject* python_del(PyObject* self, PyObject* args);
+ 
++    static PyObject* newCPPObj(PyObject* self, PyObject* args);
+ 
++    static PyObject* refCPPObj(PyObject* self, PyObject* args);
++
+     //#####  Low-Level PyObject Creation  #####################################
+ 
+     /**
+@@ -839,23 +842,24 @@
+      */
+     static void initializePython();
+ 
+-protected:
+-    //! Whether we own the PyObject or not
+-    OwnershipMode m_ownership;
+-    PyObject* m_object;
+-
+     //for the unique unref injected method
+     static bool m_unref_injected;
+     static PyMethodDef m_unref_method_def;
+-
++    static PyMethodDef m_newCPPObj_method_def;
++    static PyMethodDef m_refCPPObj_method_def;
+     typedef map&lt;const string, PLPyClass&gt; pypl_classes_t;
+     static pypl_classes_t m_pypl_classes;
+ 
++protected:
++    OwnershipMode m_ownership;               //!&lt; Whether we own the PyObject or not
++    PyObject* m_object;
++    
+     typedef map&lt;const Object*, PyObject*&gt; wrapped_objects_t;
+ 
+     static wrapped_objects_t m_wrapped_objects; //!&lt; for wrapped PLearn Objects
+ 
+     template&lt;class T&gt; friend class ConvertToPyObject;
++    friend void printWrappedObjects();
+ };
+ 
+ // Specialization for General T*.  Attempt to cast into Object*.  If that works
+@@ -1277,6 +1281,9 @@
+ PStream&amp; operator&gt;&gt;(PStream&amp; in, PythonObjectWrapper&amp; v);
+ DECLARE_TYPE_TRAITS(PythonObjectWrapper);
+ 
++//! for debug purposes
++void printWrappedObjects();
++
+ } // end of namespace PLearn
+ 
+ #endif
+
+Modified: trunk/python_modules/plearn/pybridge/wrapped_plearn_object.py
+===================================================================
+--- trunk/python_modules/plearn/pybridge/wrapped_plearn_object.py	2007-07-30 21:02:23 UTC (rev 7871)
++++ trunk/python_modules/plearn/pybridge/wrapped_plearn_object.py	2007-07-30 22:20:10 UTC (rev 7872)
+@@ -1,3 +1,5 @@
++## Automatically adapted for numpy.numarray Jun 13, 2007 by python_numarray_to_numpy (-xsm)
++
+ #
+ # Copyright (C) 2007 Xavier Saint-Mleux, ApSTAT Technologies inc.
+ #
+@@ -31,8 +33,26 @@
+ 
+ class WrappedPLearnObject(object):
+ 
+-    def __init__(self, cptr):
+-        self._cptr= cptr # ptr to c++ obj
++    def __init__(self, **kwargs):
++        #print 'WrappedPLearnObject.__init__',type(self),kwargs
++        if '_cptr' in kwargs:
++            self._cptr= kwargs['_cptr'] # ptr to c++ obj
++        elif hasattr(self,'_cptr'):
++            #print 'init-&gt;SETOPTIONS2',kwargs
++            self.setOptions(kwargs)
++            
++    def setOptions(self, kwargs):
++        #print 'SETOPTIONS',kwargs
++        call_build= True
++        for k in kwargs:
++            if k=='__call_build':
++                call_build= kwargs[k]
++            elif k=='_cptr':
++                pass
++            else:
++                self.__setattr__(k, kwargs[k])
++        if call_build:
++            self.build()
+     
+     def __setattr__(self, attr, val):
+         if attr != '_optionnames' and attr in self._optionnames:
+@@ -49,11 +69,16 @@
+                                    + repr(self))
+         
+     def __del__(self):
+-        return self.unref()
++        #from plearn import pyext
++        #print 'del',type(self),self._cptr
++        #pyext.printWrappedObjects()
++        self._unref()
++        #pyext.printWrappedObjects()
+ 
+     def __repr__(self):
+         return self.asString() #PLearn repr. for now
+ 
++#from numpy.numarray import *
+ from numarray import *
+ 
+ class WrappedPLearnVMat(WrappedPLearnObject):
+
+Modified: trunk/python_modules/plearn/pyext/__init__.py
+===================================================================
+--- trunk/python_modules/plearn/pyext/__init__.py	2007-07-30 21:02:23 UTC (rev 7871)
++++ trunk/python_modules/plearn/pyext/__init__.py	2007-07-30 22:20:10 UTC (rev 7872)
+@@ -31,6 +31,7 @@
+ #  library, go to the PLearn Web site at www.plearn.org
+ 
+ from plearn.pyext.plext import *
++from plearn.pyext import plext as pl
+ 
+ from plearn.pyplearn.plargs import *
+ import cgitb
+@@ -38,22 +39,6 @@
+ 
+ print versionString()
+ 
+-class pl:
+-    class __metaclass__(type):
+-        def __getattr__(cls, name):
+-            def newObj(**kwargs):
+-                call_build= True
+-                obj= newObjectFromClassname(name)
+-                for k in kwargs.keys():
+-                    if k=='__call_build':
+-                        call_build= kwargs[k]
+-                    else:
+-                        obj.__setattr__(k, kwargs[k])
+-                if call_build:
+-                    obj.build()
+-                return obj
+-            return newObj
+-
+ # Redefines function TMat to emulate pyplearn behaviour
+ def TMat( *args ):
+     &quot;&quot;&quot;Returns a list of lists, each inner list being a row of the TMat&quot;&quot;&quot;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001319.html">[Plearn-commits] r7871 - trunk/plearn_learners/generic
+</A></li>
+	<LI>Next message: <A HREF="001321.html">[Plearn-commits] r7873 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1320">[ date ]</a>
+              <a href="thread.html#1320">[ thread ]</a>
+              <a href="subject.html#1320">[ subject ]</a>
+              <a href="author.html#1320">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

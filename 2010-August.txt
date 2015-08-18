@@ -1,0 +1,481 @@
+From nouiz at mail.berlios.de  Thu Aug  5 16:45:33 2010
+From: nouiz at mail.berlios.de (nouiz at mail.berlios.de)
+Date: Thu,  5 Aug 2010 16:45:33 +0200
+Subject: [Plearn-commits] r10350 - trunk/scripts
+Message-ID: <20100805144533.CE9D0480EE4@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-08-05 16:45:33 +0200 (Thu, 05 Aug 2010)
+New Revision: 10350
+
+Modified:
+   trunk/scripts/dbidispatch
+Log:
+Added option --sort=random to dbidispatch. Default to --sort=generated
+
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2010-07-06 17:46:06 UTC (rev 10349)
++++ trunk/scripts/dbidispatch	2010-08-05 14:45:33 UTC (rev 10350)
+@@ -1,5 +1,5 @@
+ #!/usr/bin/env python
+-import sys,os,re,time,datetime
++import datetime,os,random,re,sys,time
+ from plearn.utilities.toolkit import search_file
+ from socket import gethostname
+ from subprocess import Popen,PIPE
+@@ -25,6 +25,8 @@
+         [*--[no_]exec_in_exp_dir]
+         [--only_n_first=N]
+         [--repeat_jobs=N]
++        [--[*no_]whitespace]
++        [--sort={generated*,random}]
+ 
+ <back-end parameter>:
+     all                      :[--tasks_filename={compact,explicit,nb0,nb1,
+@@ -126,8 +128,9 @@
+       - processid: (condor only)put the process id of the jobs. Idem as nb0
+       - none    : remove all preceding pattern
+   The '*--[no_]exec_in_exp_dir' option remove the executable from the log dir.
+-  The '--[no_*]whitespace' option allow to put white space inside {{}}. I put this as an option as I don't remember the reason why their was this restriction.
+-
++  The '--[*no_]whitespace' option allow to put white space inside {{}}. I put this as an option as I don't remember the reason why their was this restriction.
++  The '--sort={generated*,random}' option allow to change the default order of jobs.
++  
+ bqtools, cluster, condor and sge option:
+   The '--cpu=nb_cpu_per_node' option determine the number of cpu(cores) that 
+     will be reserved for each job.(default=1, -1 won't set it)
+@@ -304,7 +307,7 @@
+ dbi_param={"req":"True", "files":"", "rank":"True", "raw":"", "env":"",
+            "machine":[], "machines":[], "no_machine":[], "tasks_filename":[],
+            "restart":False,'whitespace':False,"fast":False,
+-           "gpu":False,"gpu_enabled":False}
++           "gpu":False,"gpu_enabled":False, "sort":"generated"}
+ dbi_param_orig = dbi_param.copy()
+ testmode=False
+ PATH=os.getenv('PATH')
+@@ -387,7 +390,7 @@
+                                 "--jobs_name", "--file", "--tasks_filename",
+                                 "--only_n_first", "--no_machine",
+                                 "--max_file_size", "--next_job_start_delay",
+-                                "--repeat_jobs", ]:
++                                "--repeat_jobs", "--sort",]:
+         sp = argv.split('=',1)
+         param=sp[0][2:]
+         val = sp[1]
+@@ -440,7 +443,7 @@
+ 
+ valid_dbi_param=["clean_up", "test", "dolog", "nb_proc", "exp_dir", "file",
+                  "tasks_filename", "exec_in_exp_dir", "repeat_jobs",
+-                 "whitespace",
++                 "whitespace", "sort",
+                  ]
+ if launch_cmd=="Cluster":
+     valid_dbi_param +=["cwait","force","arch","interruptible",
+@@ -623,6 +626,13 @@
+     choise_args=choise_args*n
+     del dbi_param["repeat_jobs"]
+ 
++if dbi_param['sort']=='random':
++    random.shuffle(commands)
++elif dbi_param['sort']=='generated':
++    pass
++else:
++    raise Exception("--sort option accept value random and generated only. got %s"%dbi_param['sort'])
++
+ if not dbi_param.has_key("next_job_start_delay") and launch_cmd=="Condor" and len(commands)>20:
+     #by default, if their is more then 20 jobs we make a start delay of 1 second between each jobs start.
+     dbi_param["next_job_start_delay"]=1
+
+
+
+From nouiz at mail.berlios.de  Fri Aug  6 21:25:24 2010
+From: nouiz at mail.berlios.de (nouiz at mail.berlios.de)
+Date: Fri,  6 Aug 2010 21:25:24 +0200
+Subject: [Plearn-commits] r10351 - trunk/python_modules/plearn/parallel
+Message-ID: <20100806192524.66E15480F0E@sheep.berlios.de>
+
+Author: nouiz
+Date: 2010-08-06 21:25:24 +0200 (Fri, 06 Aug 2010)
+New Revision: 10351
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+try to use the nb_proc parameter on colosse and fix a bug on condor backend.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-08-05 14:45:33 UTC (rev 10350)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-08-06 19:25:24 UTC (rev 10351)
+@@ -806,7 +806,7 @@
+ 
+         # Warn for not implemented features
+         if getattr(self, 'nb_proc', -1) != -1:
+-            print "[DBI] WARNING: DBISge does not support nb_proc != -1", self.nb_proc
++            print "[DBI] WARNING: DBISge need sge 6.2u4 or higher to work for nb_proc!=-1 to work. Colosse have 6.2u3", self.nb_proc
+ 
+     def add_commands(self,commands):
+         if not isinstance(commands, list):
+@@ -906,6 +906,13 @@
+                 ## Queue name
+                 #$ -q %(queue)s
+                 '''
++
++        if self.nb_proc>0:
++            submit_sh_template += '''
++                ## Maximum of concurrent jobs need sge 6.2u4 or more recent.
++                #$ -tc %s
++                '''%self.max_concurrent
++
+         env = self.env
+         if self.set_special_env and self.cpu>0:
+             if not env:
+@@ -1061,6 +1068,9 @@
+             os.mkdir(self.tmp_dir)
+         self.args = args
+ 
++        if self.env and self.env[0]=='"' and self.env[-1]=='"':
++            self.env = self.env[1:-1]
++
+         self.next_job_start_delay=int(self.next_job_start_delay)
+         self.add_commands(commands)
+ 
+
+
+
+From ducharme at mail.berlios.de  Mon Aug 16 22:02:20 2010
+From: ducharme at mail.berlios.de (ducharme at mail.berlios.de)
+Date: Mon, 16 Aug 2010 22:02:20 +0200
+Subject: [Plearn-commits] r10352 - trunk/scripts
+Message-ID: <20100816200220.57EDB480F60@sheep.berlios.de>
+
+Author: ducharme
+Date: 2010-08-16 22:02:20 +0200 (Mon, 16 Aug 2010)
+New Revision: 10352
+
+Modified:
+   trunk/scripts/perlgrep
+Log:
+
+
+Modified: trunk/scripts/perlgrep
+===================================================================
+--- trunk/scripts/perlgrep	2010-08-06 19:25:24 UTC (rev 10351)
++++ trunk/scripts/perlgrep	2010-08-16 20:02:20 UTC (rev 10352)
+@@ -104,7 +104,7 @@
+                 
+                 @flist = grep { -d $_ or /Makefile|makefile|pytest\.config|\.bat$|
+                                     \.c$|\.C$|\.cc$|\.cpp$|\.CC$|\.h$|\.hpp$|\.tex$
+-                                   |\.plearn$|\.pyplearn$|\.psave$|\.vmat$|\.py$|\.pymat$|\.r$
++                                   |\.plearn$|\.pyplearn$|\.psave$|\.vmat$|\.py$|\.pymat$|\.r$|\.R$
+                                    |\.txt$|^readme|^Readme|^README/x } @flist;
+                 process_list(@flist); 
+             }
+
+
+
+From lamblin at mail.berlios.de  Sat Aug 21 00:42:09 2010
+From: lamblin at mail.berlios.de (lamblin at mail.berlios.de)
+Date: Sat, 21 Aug 2010 00:42:09 +0200
+Subject: [Plearn-commits] r10353 - in trunk: python_modules/plearn/parallel
+	scripts
+Message-ID: <20100820224209.C2CAE480F0F@sheep.berlios.de>
+
+Author: lamblin
+Date: 2010-08-21 00:42:09 +0200 (Sat, 21 Aug 2010)
+New Revision: 10353
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+Experimental support for Sharcnet scripts (tested on angel)
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-08-16 20:02:20 UTC (rev 10352)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-08-20 22:42:09 UTC (rev 10353)
+@@ -983,6 +983,129 @@
+     def wait(self):
+         print "[DBI] WARNING cannot wait until all jobs are done for SGE, use qstat"
+ 
++
++
++###################
++# Sharcnet tools
++###################
++
++class DBISharcnet(DBIBase):
++    def __init__(self, commands, **args):
++        self.jobs_name = ''
++        self.queue = ''
++        self.duree = '7d'
++
++        #TODO:
++        # self.env
++        # self.set_special_env
++
++        DBIBase.__init__(self, commands, **args)
++
++        self.tmp_dir = os.path.abspath(self.tmp_dir)
++        self.log_dir = os.path.abspath(self.log_dir)
++        if not self.jobs_name:
++            self.jobs_name = 'dbi_'+self.unique_id[1:12]
++
++        self.tmp_dir = os.path.join(self.tmp_dir, os.path.split(self.log_dir)[1])
++        if not os.path.exists(self.tmp_dir):
++            os.makedirs(self.tmp_dir)
++        print "[DBI] All temporary files will be in ", self.tmp_dir
++        os.chdir(self.tmp_dir)
++
++        args['tmp_dir'] = self.tmp_dir
++        self.args = args
++        self.add_commands(commands)
++
++    def add_commands(self, commands):
++        if not isinstance(commands, list):
++            commands=[commands]
++
++        # create the information about the tasks
++        for command in commands:
++            id = len(self.tasks) + 1
++            self.tasks.append(Task(
++                command = command,
++                tmp_dir = self.tmp_dir,
++                log_dir = self.log_dir,
++                time_format = self.time_format,
++                pre_tasks = self.pre_tasks,
++                post_tasks = self.post_tasks,
++                dolog = self.dolog,
++                id = id,
++                gen_unique_id = False,
++                args = self.args))
++            id += 1
++
++    def run_one_job(self, task):
++        DBIBase.run(self)
++
++        remote_command = string.join(task.commands, '\n')
++        filename = os.path.join(self.tmp_dir, task.unique_id)
++        filename = os.path.abspath(filename)
++        f = open(filename, 'w')
++        f.write(remote_command)
++        f.write('\n')
++        f.close()
++        os.chmod(filename, 0750)
++        self.temp_files.append(filename)
++
++        command = 'sqsub'
++        (output_file, error_file)=self.get_file_redirection(task.id)
++        command += ' -o ' + output_file
++        command += ' -e ' + error_file
++        if self.cpu > 0:
++            command += ' -n ' + str(self.cpu)
++        if self.mem > 0:
++            command += ' --mpp=' + str(self.mem) + 'M' # The suffix is needed by sqsub
++        if self.duree:
++            command += ' -r ' + self.duree
++        if self.queue:
++            command += ' -q ' + self.queue
++        if self.jobs_name:
++            command += ' -j ' + self.jobs_name
++        if self.gpu:
++            # TODO: support several GPUs per job?
++            command += ' --gpp=1'
++
++        command += " '" + filename + "'"
++
++        if not self.test:
++            task.set_scheduled_time()
++
++            self.p = Popen(command, shell=True)
++            self.p.wait()
++            if self.p.returncode != 0:
++                raise DBIError("[DBI] ERROR: sqsub returned an error code of"+str(self.p.returncode))
++        else:
++            print '[DBI] Test mode, to manually submit, execute "'+command+'"'
++
++
++    def run(self):
++        print "[DBI] The log files are under %s" % self.log_dir
++        if self.test:
++            "[DBI] Test mode, we generated all files, but will not execute sqsub"
++
++        pre_batch_command = ';'.join(self.pre_batch)
++        post_batch_command = ';'.join(self.post_batch)
++
++        # Execute pre-batch
++        self.exec_pre_batch()
++
++        for t in self.tasks:
++            self.run_one_job(t)
++
++        # Execute post-batch
++        self.exec_post_batch()
++
++    def clean(self):
++        return
++        for f in self.temp_files:
++            os.remove(f)
++
++    def wait(self):
++        print "[DBI] WARNING cannot wait until all jobs are done on Sharcnet, use sqjobs or sqstat"
++
++
+ # Transfor a string so that it is treated by Condor as a single argument
+ def condor_escape_argument(argstring):
+     # Double every single quote and double quote character,
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2010-08-16 20:02:20 UTC (rev 10352)
++++ trunk/scripts/dbidispatch	2010-08-20 22:42:09 UTC (rev 10353)
+@@ -17,7 +17,7 @@
+ <common options>:
+         [--help|-h]
+         [--[*no_]dbilog]
+-        [--condor[=N]|--bqtools[=N]|--cluster[=N]|--local[=N]|--ssh[=N]|--sge[=N]]
++        [--condor[=N]|--bqtools[=N]|--cluster[=N]|--local[=N]|--sge[=N]|--sharcnet|--ssh[=N]i]
+         [--[*no_]test]
+         [--[*no_]testdbi]
+         [--[*no_]nb_proc=N]
+@@ -33,14 +33,18 @@
+                                                  sh(condor only),
+                                                  clusterid(condor only),
+                                                  processid(condor only))}+]
+-    bqtools, cluster, condor, sge option:   [--cpu=nb_cpu_per_node]
+-                                            [--mem=N]
+-    bqtools, cluster, sge option:           [--duree=X]
+-    bqtools, condor, sge options:           [--env=VAR=VALUE[ VAR2=VALUE2]]  (must be quoted into the shell!)
+-                                            [*--[no_]set_special_env]
+-                                            [--raw=STRING[\nSTRING]]
++    bqtools, cluster, condor, sge, sharcnet options:
++                              [--cpu=nb_cpu_per_node]
++                              [--mem=N]
++    bqtools, cluster, sge, sharcnet option:
++                              [--duree=X]
++    bqtools, condor, sge options:
++                              [--env=VAR=VALUE[ VAR2=VALUE2]]  (must be quoted into the shell!)
++                              [*--[no_]set_special_env]
++                              [--raw=STRING[\nSTRING]]
+     cluster, condor options  :[--32|--64|--3264] [--os=X]
+-    bqtools, sge options:     [--queue=X] [--jobs_name=X]
++    bqtools, sge, sharcnet options:
++                              [--queue=X] [--jobs_name=X]
+     bqtools options          :[--micro[=nb_batch]] [--[*no_]long]
+                               [--nano=X] [--submit_options=X]
+                               [*--[no_]clean_up] [*--[no_]m32G]
+@@ -60,7 +64,8 @@
+                               [--[no_]local_log_file][--next_job_start_delay=N]
+                               [--fast] [--[no_]gpu] [--[no_]gpu_enabled]
+     sge options              :[--project=STRING]
+-        (Note: SGE support is experimental)
++    (Note: SGE support is experimental)
++    (Note: Sharcnet support is even more experimental)
+ 
+ An * after '[', '{' or ',' signals the default value.
+ An + tell that we can put one or more separeted by a comma
+@@ -317,6 +322,8 @@
+     launch_cmd = 'Bqtools'
+ elif search_file('cluster',PATH):
+     launch_cmd = 'Cluster'
++elif search_file('sqsub',PATH):
++    launch_cmd = 'Sharcnet'
+ elif search_file('qsub',PATH):
+     launch_cmd = 'Sge'
+ else:
+@@ -465,13 +472,17 @@
+     valid_dbi_param += ["duree", "jobs_name", "queue", "cpu", "mem", "env",
+                         "raw", "set_special_env",
+                         ]
++elif launch_cmd=="Sharcnet":
++    valid_dbi_param += ["cpu", "mem", "duree", "queue", "jobs_name", "gpu"] #"env, "set_special_env", "raw" ?
+ 
+-if dbi_param['gpu']:
+-    dbi_param['req']+="&&(Target.GPU=?=True)"
+-    dbi_param['raw']+='\n+GPU=True'
+-elif dbi_param['gpu_enabled']:
+-    dbi_param['rank']+="&&(Target.GPU=?=True)"
+-    dbi_param['raw']+='\n+GPU=True'
++# Only valid for condor
++if launch_cmd == 'Condor':
++    if dbi_param['gpu']:
++        dbi_param['req']+="&&(Target.GPU=?=True)"
++        dbi_param['raw']+='\n+GPU=True'
++    elif dbi_param['gpu_enabled']:
++        dbi_param['rank']+="&&(Target.GPU=?=True)"
++        dbi_param['raw']+='\n+GPU=True'
+ 
+ if  launch_cmd == 'Condor' and gethostname().endswith(".iro.umontreal.ca"):
+     #default value for pkdilly is true.
+
+
+
+From lamblin at mail.berlios.de  Sat Aug 21 00:54:09 2010
+From: lamblin at mail.berlios.de (lamblin at mail.berlios.de)
+Date: Sat, 21 Aug 2010 00:54:09 +0200
+Subject: [Plearn-commits] r10354 - trunk/scripts
+Message-ID: <20100820225409.69FB5480F72@sheep.berlios.de>
+
+Author: lamblin
+Date: 2010-08-21 00:54:09 +0200 (Sat, 21 Aug 2010)
+New Revision: 10354
+
+Modified:
+   trunk/scripts/dbidispatch
+Log:
+Accept explicit '--sharcnet' parameter
+
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2010-08-20 22:42:09 UTC (rev 10353)
++++ trunk/scripts/dbidispatch	2010-08-20 22:54:09 UTC (rev 10354)
+@@ -349,7 +349,7 @@
+     elif argv == "--dbilog":
+         dbi_param["dolog"]=True
+     elif argv.split('=')[0] in ["--bqtools","--cluster","--local","--condor",
+-                                "--ssh", "--sge"]:
++                                "--ssh", "--sge", "--sharcnet"]:
+         launch_cmd = argv[2].upper()+argv.split('=')[0][3:]
+         if len(argv.split('='))>1:
+             dbi_param["nb_proc"]=argv.split('=')[1]
+
+
+
+From lamblin at mail.berlios.de  Sat Aug 21 00:58:15 2010
+From: lamblin at mail.berlios.de (lamblin at mail.berlios.de)
+Date: Sat, 21 Aug 2010 00:58:15 +0200
+Subject: [Plearn-commits] r10355 - trunk/python_modules/plearn/parallel
+Message-ID: <20100820225815.EF23A480F72@sheep.berlios.de>
+
+Author: lamblin
+Date: 2010-08-21 00:58:15 +0200 (Sat, 21 Aug 2010)
+New Revision: 10355
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+Enable specification of memory by non-int GB
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2010-08-20 22:54:09 UTC (rev 10354)
++++ trunk/python_modules/plearn/parallel/dbi.py	2010-08-20 22:58:15 UTC (rev 10355)
+@@ -194,7 +194,7 @@
+ #            if self.dolog or self.file_redirect_stdout or self.file_redirect_stderr:
+             os.mkdir(self.log_dir)
+         if self.mem[-1] in ['G', 'g']:
+-            self.mem = int(self.mem[:-1])*1024
++            self.mem = int(float(self.mem[:-1])*1024)
+         elif self.mem[-1] in ['M', 'm']:
+             self.mem = int(self.mem[:-1])
+         elif self.mem[-1] in ['K', 'k']:
+
+
+

@@ -1,0 +1,283 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6646 - trunk/plearn/math
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6646%20-%20trunk/plearn/math&In-Reply-To=%3C200702110018.l1B0Ivw2000626%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000094.html">
+   <LINK REL="Next"  HREF="000096.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6646 - trunk/plearn/math</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6646%20-%20trunk/plearn/math&In-Reply-To=%3C200702110018.l1B0Ivw2000626%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6646 - trunk/plearn/math">chapados at mail.berlios.de
+       </A><BR>
+    <I>Sun Feb 11 01:18:57 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000094.html">[Plearn-commits] r6645 -	trunk/plearn_learners/regressors/test/GaussianProcessRegressor/.pytest/PL_GaussianProcessRegressor_Hyperopt/expected_results
+</A></li>
+        <LI>Next message: <A HREF="000096.html">[Plearn-commits] r6647 - trunk/plearn/var
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#95">[ date ]</a>
+              <a href="thread.html#95">[ thread ]</a>
+              <a href="subject.html#95">[ subject ]</a>
+              <a href="author.html#95">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2007-02-11 01:18:56 +0100 (Sun, 11 Feb 2007)
+New Revision: 6646
+
+Modified:
+   trunk/plearn/math/lapack_proto.h
+   trunk/plearn/math/plapack.cc
+   trunk/plearn/math/plapack.h
+Log:
+Added lapack interface for cholesky decomposition and solving a linear system through the cholesky
+
+Modified: trunk/plearn/math/lapack_proto.h
+===================================================================
+--- trunk/plearn/math/lapack_proto.h	2007-02-09 23:10:19 UTC (rev 6645)
++++ trunk/plearn/math/lapack_proto.h	2007-02-11 00:18:56 UTC (rev 6646)
+@@ -77,6 +77,13 @@
+     void ssygvx_(int* ITYPE, char* JOBZ, char* RANGE, char* UPLO, int* N, float* A, int* LDA, float* B, int* LDB, float* VL, float* VU, int* IL, int* IU, float* ABSTOL, int* M, float* W, float* Z, int* LDZ, float* WORK, int* LWORK, int* IWORK, int* IFAIL, int* INFO);
+     void dsygvx_(int* ITYPE, char* JOBZ, char* RANGE, char* UPLO, int* N, double* A, int* LDA, double* B, int* LDB, double* VL, double* VU, int* IL, int* IU, double* ABSTOL, int* M, double* W, double* Z, int* LDZ, double* WORK, int* LWORK, int* IWORK, int* IFAIL, int* INFO);
+ 
++    // Cholesky Decomposition
++    void spotrf_(char* UPLO, int* N, float*  A, int* LDA, int* INFO);
++    void dpotrf_(char* UPLO, int* N, double* A, int* LDA, int* INFO);
++
++    // Solve linear system given Cholesky Decomposition
++    void spotrs_(char* UPLO, int* N, int* NRHS, float*  A, int* LDA, float*  B, int* LDB, int* INFO);
++    void dpotrs_(char* UPLO, int* N, int* NRHS, double* A, int* LDA, double* B, int* LDB, int* INFO);
+ }
+ 
+ } // end of namespace PLearn
+
+Modified: trunk/plearn/math/plapack.cc
+===================================================================
+--- trunk/plearn/math/plapack.cc	2007-02-09 23:10:19 UTC (rev 6645)
++++ trunk/plearn/math/plapack.cc	2007-02-11 00:18:56 UTC (rev 6646)
+@@ -417,7 +417,124 @@
+ }
+ 
+ 
++//#####  lapackCholeskyDecompositionInPlace  ##################################
+ 
++void lapackCholeskyDecompositionInPlace(Mat&amp; A, char uplo)
++{
++    if (A.width() == 0 || A.length() == 0)
++        return;
++    if (A.mod() != A.width())
++        PLERROR(&quot;lapackCholeskyDecompositionInPlace: matrix mod (%d) must equal &quot;
++                &quot;its width (%d)&quot;, A.mod(), A.width());
++    if (A.width() != A.length())
++        PLERROR(&quot;lapackCholeskyDecompositionInPlace: matrix width (%d) and height (%d) &quot;
++                &quot;must be equal&quot;, A.width(), A.length());
++
++    char lapack_uplo;
++    switch (uplo) {
++    case 'L':
++    case 'l':
++        lapack_uplo = 'U';
++        break;
++
++    case 'U':
++    case 'u':
++        lapack_uplo = 'L';
++        break;
++
++    default:
++        PLERROR(&quot;lapackCholeskyDecompositionInPlace: unrecognized character '%c' for &quot;
++                &quot;argument 'uplo'; valid characters are 'U' and 'L'&quot;, uplo);
++    }
++
++    real* data = A.data();
++    int N = A.width();
++    int INFO;
++
++    // call LAPACK
++    lapack_Xpotrf_(&amp;lapack_uplo, &amp;N, data, &amp;N, &amp;INFO);
++
++    if (INFO == 0)
++        return;                              // all successful
++    else if (INFO &lt; 0)
++        PLERROR(&quot;lapackCholeskyDecompositionInPlace: implementation error; argument %d &quot;
++                &quot;to xPOTRF had an illegal value&quot;, -INFO);
++    else
++        PLERROR(&quot;lapackCholeskyDecompositionInPlace: error in decomposition; &quot;
++                &quot;leading minor of order %d is not positive definite, &quot;
++                &quot;and the factorization could not be completed.&quot;, INFO);
++}
++
++
++//#####  lapackCholeskySolveInPlace  ##########################################
++
++void lapackCholeskySolveInPlace(Mat&amp; A, Mat&amp; B, bool B_is_column_major, char uplo)
++{
++    if (A.width() == 0 || A.length() == 0 || B.width() == 0 || B.length() == 0)
++        return;
++    if (A.mod() != A.width())
++        PLERROR(&quot;lapackCholeskySolveInPlace: matrix A mod (%d) must equal &quot;
++                &quot;its width (%d)&quot;, A.mod(), A.width());
++    if (B.mod() != B.width())
++        PLERROR(&quot;lapackCholeskySolveInPlace: matrix B mod (%d) must equal &quot;
++                &quot;its width (%d)&quot;, B.mod(), B.width());
++    if (A.width() != A.length())
++        PLERROR(&quot;lapackCholeskySolveInPlace: matrix width (%d) and height (%d) &quot;
++                &quot;must be equal&quot;, A.width(), A.length());
++    if ((! B_is_column_major &amp;&amp; B.length() != A.length()) ||
++        (  B_is_column_major &amp;&amp; B.width()  != A.length()) )
++        PLERROR(&quot;lapackCholeskySolveInPlace: matrix B length (%d) is &quot;
++                &quot;incompatible with the dimensions of A (%d)&quot;,
++                (B_is_column_major? B.width() : B.length()), A.length());
++
++    char lapack_uplo;
++    switch (uplo) {
++    case 'L':
++    case 'l':
++        lapack_uplo = 'U';
++        break;
++
++    case 'U':
++    case 'u':
++        lapack_uplo = 'L';
++        break;
++
++    default:
++        PLERROR(&quot;lapackCholeskySolveInPlace: unrecognized character '%c' for &quot;
++                &quot;argument 'uplo'; valid characters are 'U' and 'L'&quot;, uplo);
++    }
++
++    // If B is not column-major, transpose it
++    Mat lapack_B;
++    if (! B_is_column_major)
++        lapack_B = transpose(B);
++    else
++        lapack_B = B;
++
++    // Prepare for call to LAPACK
++    int N    = A.width();
++    int NRHS = lapack_B.length();   // Don't forget it's transposed for lapack
++    int LDA  = A.length();
++    int LDB  = lapack_B.width();
++    int INFO;
++    real* A_data = A.data();
++    real* B_data = lapack_B.data();
++
++    // Call LAPACK
++    lapack_Xpotrs_(&amp;lapack_uplo, &amp;N, &amp;NRHS, A_data, &amp;LDA, B_data, &amp;LDB, &amp;INFO);
++
++    if (INFO &lt; 0)
++        PLERROR(&quot;lapackCholeskySolvePlace: implementation error; argument %d &quot;
++                &quot;to xPOTRS had an illegal value&quot;, -INFO);
++    PLASSERT( INFO == 0 );
++
++    // If B was not originally column-major, transpose back result from LAPACK
++    if (! B_is_column_major)
++        transpose(lapack_B, B);
++}
++
++
++
+ Mat multivariate_normal(const Vec&amp; mu, const Mat&amp; A, int N)
+ {
+     Vec e_values;
+
+Modified: trunk/plearn/math/plapack.h
+===================================================================
+--- trunk/plearn/math/plapack.h	2007-02-09 23:10:19 UTC (rev 6645)
++++ trunk/plearn/math/plapack.h	2007-02-11 00:18:56 UTC (rev 6646)
+@@ -76,7 +76,19 @@
+ inline void lapack_Xsygvx_(int* ITYPE, char* JOBZ, char* RANGE, char* UPLO, int* N, float* A, int* LDA, float* B, int* LDB, float* VL, float* VU, int* IL, int* IU, float* ABSTOL, int* M, float* W, float* Z, int* LDZ, float* WORK, int* LWORK, int* IWORK, int* IFAIL, int* INFO)
+ { ssygvx_(ITYPE, JOBZ, RANGE, UPLO, N, A, LDA, B, LDB, VL, VU, IL, IU, ABSTOL, M, W, Z, LDZ, WORK, LWORK, IWORK, IFAIL, INFO); }
+ 
++inline void lapack_Xpotrf_(char* UPLO, int* N, float* A, int* LDA, int* INFO)
++{ spotrf_(UPLO, N, A, LDA, INFO); }
+ 
++inline void lapack_Xpotrf_(char* UPLO, int* N, double* A, int* LDA, int* INFO)
++{ dpotrf_(UPLO, N, A, LDA, INFO); }
++
++inline void lapack_Xpotrs_(char* UPLO, int* N, int* NRHS, float*  A, int* LDA, float*  B, int* LDB, int* INFO)
++{ spotrs_(UPLO, N, NRHS, A, LDA, B, LDB, INFO); }
++
++inline void lapack_Xpotrs_(char* UPLO, int* N, int* NRHS, double* A, int* LDA, double* B, int* LDB, int* INFO)
++{ dpotrs_(UPLO, N, NRHS, A, LDA, B, LDB, INFO); }
++
++
+ //!  Computes the eigenvalues and eigenvectors of a symmetric (NxN) matrix A.
+ //!  BEWARE: The content of A is destroyed by the call.
+ //!  NOTE: you may wish to use the simpler call eigenVecOfSymmMat
+@@ -619,6 +631,36 @@
+ Vec constrainedLinearRegression(const Mat&amp; Xt, const Vec&amp; Y, real lambda=0.);
+ 
+ 
++/**
++ *  Call LAPACK to perform in-place Cholesky Decomposition of a square
++ *  SYMMETRIC matrix A.  Note that the matrix mod must equal its width in the
++ *  current implementation.  The argument uplo is a single character, which is
++ *  either 'L' if the lower-triangle should be considered (and the returned
++ *  cholesky is L * L') or 'U' if the upper-triangle should be considered (and
++ *  the returned cholesky is U' * U).  [[Implementation note: in the call to
++ *  LAPACK, we swap those letters in order to reflect the row-ordering
++ *  differences between PLearn and LAPACK.]]
++ */
++void lapackCholeskyDecompositionInPlace(Mat&amp; A, char uplo='L');
++
++/**
++ *  Call LAPACK to solve in-place a linear system given its previously-computed
++ *  Cholesky decomposition.  The argument B contains the matrix of
++ *  right-hand-sides.  Since LAPACK is column-major, one can specify if 'B' is
++ *  ALREADY in column-major to avoid a transpose (which would otherwise be
++ *  performed automatically by this function).  The argument uplo is a single
++ *  character, which is either 'L' if the lower-triangle should be considered
++ *  (and the returned cholesky is L * L') or 'U' if the upper-triangle should
++ *  be considered (and the returned cholesky is U' * U).  [[Implementation
++ *  note: in the call to LAPACK, we swap those letters in order to reflect the
++ *  row-ordering differences between PLearn and LAPACK.]]
++ *
++ *  On return, B contains the solution matrix.  A is not modified and can be
++ *  reused in further calls to lapackCholeskySolveInPlace.
++ */
++void lapackCholeskySolveInPlace(Mat&amp; A, Mat&amp; B, bool B_is_column_major=false,
++                                char uplo='L');
++
+ //! Compute the generalization error estimator called Generalized Cross-Validation (Craven &amp; Wahba 1979),
+ //! and the corresponding ridge regression weights in
+ //!    min ||Y - X*W'||^2 + weight_decay ||W||^2.
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000094.html">[Plearn-commits] r6645 -	trunk/plearn_learners/regressors/test/GaussianProcessRegressor/.pytest/PL_GaussianProcessRegressor_Hyperopt/expected_results
+</A></li>
+	<LI>Next message: <A HREF="000096.html">[Plearn-commits] r6647 - trunk/plearn/var
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#95">[ date ]</a>
+              <a href="thread.html#95">[ thread ]</a>
+              <a href="subject.html#95">[ subject ]</a>
+              <a href="author.html#95">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

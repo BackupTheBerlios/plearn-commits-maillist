@@ -1,0 +1,173 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10175 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10175%20-%20trunk/plearn/vmat&In-Reply-To=%3C200905051525.n45FPGw6010441%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003614.html">
+   <LINK REL="Next"  HREF="003616.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10175 - trunk/plearn/vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10175%20-%20trunk/plearn/vmat&In-Reply-To=%3C200905051525.n45FPGw6010441%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10175 - trunk/plearn/vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue May  5 17:25:16 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003614.html">[Plearn-commits] r10174 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="003616.html">[Plearn-commits] r10176 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3615">[ date ]</a>
+              <a href="thread.html#3615">[ thread ]</a>
+              <a href="subject.html#3615">[ subject ]</a>
+              <a href="author.html#3615">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-05-05 17:25:15 +0200 (Tue, 05 May 2009)
+New Revision: 10175
+
+Modified:
+   trunk/plearn/vmat/ShiftAndRescaleVMatrix.cc
+   trunk/plearn/vmat/ShiftAndRescaleVMatrix.h
+Log:
+added the option ShiftAndRescaleVMatrix::fields that force restric the fields to be modified.
+
+
+Modified: trunk/plearn/vmat/ShiftAndRescaleVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/ShiftAndRescaleVMatrix.cc	2009-05-05 15:23:37 UTC (rev 10174)
++++ trunk/plearn/vmat/ShiftAndRescaleVMatrix.cc	2009-05-05 15:25:15 UTC (rev 10175)
+@@ -213,6 +213,11 @@
+                   &quot;If set to 1, no scaling will be performed (only a shift&quot;
+                   &quot; will be applied).&quot;);
+ 
++    declareOption(ol, &quot;fields&quot;, &amp;ShiftAndRescaleVMatrix::fields,
++                  OptionBase::buildoption,
++                  &quot;The fields to shift and rescale. Automatic must be true and&quot;
++                  &quot; if empty we use instead n_inputs.&quot;);
++
+     declareOption(ol, &quot;verbosity&quot;, &amp;ShiftAndRescaleVMatrix::verbosity,
+                   OptionBase::buildoption,
+                   &quot;Controls the amount of output.&quot;);
+@@ -234,16 +239,18 @@
+ void ShiftAndRescaleVMatrix::build_()
+ {
+     PLASSERT( n_inputs &gt;= 0 || n_inputs == -1 || n_inputs == -2 );
++    PLCHECK(fields.size()&lt;=0||automatic);
+     if( source )
+     {
+         if (automatic &amp;&amp; min_max.isEmpty())
+         {
+             if (n_inputs&lt;0)
+             {
++                PLCHECK( source-&gt;inputsize() &gt;= 0 );
+                 if (n_inputs == -1)
+                     n_inputs = source-&gt;inputsize();
+                 else if (n_inputs == -2) {
+-                    PLASSERT( source-&gt;targetsize() &gt;= 0 );
++                    PLCHECK( source-&gt;targetsize() &gt;= 0 );
+                     n_inputs = source-&gt;inputsize() + source-&gt;targetsize();
+                 } else
+                     PLERROR(&quot;In ShiftAndRescaleVMatrix::build_ - Wrong value &quot;
+@@ -274,6 +281,28 @@
+                 scale.resize(source-&gt;width());
+                 scale.subVec(n_inputs, scale.length()-n_inputs).fill(1);
+             }
++            
++            if(fields.size()&gt;0){
++                //we shift and scale only the fields
++                TVec&lt;int&gt; idx(fields.size());
++                for(int i=0;i&lt;fields.size();i++){
++                    idx[i]=source-&gt;getFieldIndex(fields[i]);
++                    if(idx[i]&gt;n_inputs)
++                        PLERROR(&quot;In ShiftAndRescaleVMatrix::build_() - The &quot;
++                                &quot;fields index must be lower or equal to n_inputs&quot;);
++                }
++                for(int i=0;i&lt;n_inputs;i++){
++                    bool found=false;
++                    for(int j=0;j&lt;idx.size();j++){
++                        if(i==idx[j])
++                            found=true;
++                    }
++                    if(!found){
++                        shift[i]=0;
++                        scale[i]=1;
++                    }
++                }
++            }
+             shift.resize(source-&gt;width());
+             shift.subVec(n_inputs, shift.length()-n_inputs).fill(0);
+         }
+@@ -289,12 +318,15 @@
+                             &quot;min_max[1]&quot;) ; 
+             if (n_inputs&lt;0)
+             {
+-                n_inputs = source-&gt;inputsize();
+-                if (n_inputs&lt;0)
+-                    PLERROR(&quot;ShiftAndRescaleVMatrix: either n_inputs should be&quot;
+-                            &quot; provided explicitly\n&quot;
+-                            &quot;or the source VMatrix should have a set value of&quot;
+-                            &quot; inputsize.\n&quot;);
++                PLCHECK(source-&gt;inputsize()&gt;=0);
++                if(n_inputs==-1)
++                    n_inputs = source-&gt;inputsize();
++                else if (n_inputs == -2) {
++                    PLCHECK( source-&gt;targetsize() &gt;= 0 );
++                    n_inputs = source-&gt;inputsize() + source-&gt;targetsize();
++                } else
++                    PLERROR(&quot;In ShiftAndRescaleVMatrix::build_ - Wrong value &quot;
++                            &quot;for 'n_inputs'&quot;);
+             }
+                 
+                 Vec min_col(n_inputs) , max_col(n_inputs) ; 
+
+Modified: trunk/plearn/vmat/ShiftAndRescaleVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/ShiftAndRescaleVMatrix.h	2009-05-05 15:23:37 UTC (rev 10174)
++++ trunk/plearn/vmat/ShiftAndRescaleVMatrix.h	2009-05-05 15:25:15 UTC (rev 10175)
+@@ -80,6 +80,7 @@
+     int n_inputs; // when automatic,
+     bool negate_shift;
+     bool no_scale;
++    TVec&lt;string&gt; fields;
+     int verbosity;
+ 
+     //! For all constructors, the original VMFields are copied upon construction
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003614.html">[Plearn-commits] r10174 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="003616.html">[Plearn-commits] r10176 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3615">[ date ]</a>
+              <a href="thread.html#3615">[ thread ]</a>
+              <a href="subject.html#3615">[ subject ]</a>
+              <a href="author.html#3615">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

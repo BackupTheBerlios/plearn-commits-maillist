@@ -1,0 +1,192 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7959 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7959%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708082004.l78K4sTk014624%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001406.html">
+   <LINK REL="Next"  HREF="001408.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7959 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7959%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708082004.l78K4sTk014624%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7959 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Wed Aug  8 22:04:54 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001406.html">[Plearn-commits] r7958 - trunk/plearn/var
+</A></li>
+        <LI>Next message: <A HREF="001408.html">[Plearn-commits] r7960 - trunk/scripts/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1407">[ date ]</a>
+              <a href="thread.html#1407">[ thread ]</a>
+              <a href="subject.html#1407">[ subject ]</a>
+              <a href="author.html#1407">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-08-08 22:04:51 +0200 (Wed, 08 Aug 2007)
+New Revision: 7959
+
+Modified:
+   trunk/plearn_learners/online/VBoundDBN2.cc
+   trunk/plearn_learners/online/VBoundDBN2.h
+Log:
+did most of the bprop
+
+
+Modified: trunk/plearn_learners/online/VBoundDBN2.cc
+===================================================================
+--- trunk/plearn_learners/online/VBoundDBN2.cc	2007-08-08 19:15:09 UTC (rev 7958)
++++ trunk/plearn_learners/online/VBoundDBN2.cc	2007-08-08 20:04:51 UTC (rev 7959)
+@@ -100,6 +100,7 @@
+     ports.append(&quot;sampled_h&quot;); // 3
+     ports.append(&quot;global_improvement&quot;); // 4
+     ports.append(&quot;ph_given_v&quot;); // 5
++    ports.append(&quot;p2ph&quot;); // 6
+ }
+ 
+ ///////////
+@@ -124,8 +125,56 @@
+     Mat* sampled_h_ = ports_value[3]; // a state if input is given
+     Mat* global_improvement_ = ports_value[4]; // a state if input is given
+     Mat* ph_given_v_ = ports_value[5]; // a state if input is given
++    Mat* p2ph_ = ports_value[6]; // same story
++    
++    PLASSERT( input &amp;&amp; sampled_h_ &amp;&amp; global_improvement_
++              &amp;&amp; ph_given_v_ &amp;&amp; p2ph_);
+ 
++    // do CD on rbm2
++    rbm2-&gt;setAllLearningRates(rbm2-&gt;cd_learning_rate);
++    rbm2-&gt;hidden_layer-&gt;setExpectations(*p2ph_);
++    rbm2-&gt;hidden_layer-&gt;generateSamples();
++    rbm2-&gt;computeHiddenActivations(rbm2-&gt;visible_layer-&gt;samples);
++    rbm2-&gt;visible_layer-&gt;update(*sampled_h_,rbm2-&gt;visible_layer-&gt;samples);
++    rbm2-&gt;connection-&gt;update(*sampled_h_,*p2ph_,
++                             rbm2-&gt;visible_layer-&gt;samples,
++                             rbm2-&gt;hidden_layer-&gt;getExpectations());
++    rbm2-&gt;hidden_layer-&gt;update(*p2ph_,rbm2-&gt;hidden_layer-&gt;getExpectations());
+ 
++    // for now do the ugly hack, for binomial + MatrixConnection case
++    PLASSERT(rbm1-&gt;visible_layer-&gt;classname()==&quot;RBMBinomialLayer&quot;);
++    PLASSERT(rbm1-&gt;hidden_layer-&gt;classname()==&quot;RBMBinomialLayer&quot;);
++    PLASSERT(rbm1-&gt;connection-&gt;classname() == &quot;RBMMatrixConnection&quot;);
++    Mat&amp; weights = ((RBMMatrixConnection*)
++                    get_pointer(rbm1-&gt;connection))-&gt;weights;
++    Vec&amp; hidden_bias = rbm1-&gt;hidden_layer-&gt;bias;    
++    Vec&amp; visible_bias = rbm1-&gt;hidden_layer-&gt;bias;    
++    static Mat delta_W;
++    static Vec delta_hb;
++    static Vec delta_vb;
++    static Mat delta_h;
++    deltaW.resize(rbm1-&gt;hidden_layer-&gt;size,rbm1-&gt;visible_layer-&gt;size);
++    delta_hb.resize(rbm1-&gt;hidden_layer-&gt;size);
++    delta_vb.resize(rbm1-&gt;visible_layer-&gt;size);
++    delta_h.resize(mbs,rbm1-&gt;hidden_layer-&gt;size);
++
++    // reconstruct the input
++    rbm1-&gt;computeVisibleActivations(*sampled_h_);
++    rbm1-&gt;visible_layer-&gt;computeExpectations();
++    Mat reconstructed_v = rbm1-&gt;visible_layer-&gt;getExpectations();
++
++    // compute RBM1 weight negative gradient
++    substract(*sampled_h_,*p2h_,delta_h);
++    multiply(delta_h, delta_h,global_improvement-&gt;toVec());
++    delta_h += *ph_given_v_;
++    productScaleAcc(deltaW, delta_h, true, *input, false, 1, 0);
++    productScaleAcc(deltaW, *sampled_h_, true, reconstructed_v, false, -1, 1);
++    // update the weights
++    multiplyAcc(weights, deltaW, rbm1-&gt;cd_learning_rate);
++
++    // do the biases now
++
++
+     // Ensure all required gradients have been computed.
+     checkProp(ports_gradient);
+ }
+@@ -173,6 +222,7 @@
+     Mat* sampled_h_ = ports_value[3]; // a state if input is given
+     Mat* global_improvement_ = ports_value[4]; // a state if input is given
+     Mat* ph_given_v_ = ports_value[5]; // a state if input is given
++    Mat* p2ph_ = ports_value[6]; // same story
+ 
+     // fprop has two modes:
+     //  1) input is given (presumably for learning, or measuring bound or nll)
+@@ -189,6 +239,7 @@
+         Mat* sampled_h = sampled_h_?sampled_h_:&amp;sampled_h_state;
+         Mat* global_improvement = global_improvement_?global_improvement_:&amp;global_improvement_state;
+         Mat* ph_given_v = ph_given_v_?ph_given_v_:&amp;ph_given_v_state;
++        Mat* p2ph = p2ph_?p2ph_:&amp;p2ph_state;
+         sampled_h-&gt;resize(mbs,rbm1-&gt;hidden_layer-&gt;size);
+         global_improvement-&gt;resize(mbs,1);
+         ph_given_v-&gt;resize(mbs,rbm1-&gt;hidden_layer-&gt;size);
+@@ -199,9 +250,10 @@
+         *ph_given_v &lt;&lt; rbm1-&gt;hidden_layer-&gt;getExpectations();
+         *sampled_h &lt;&lt; rbm1-&gt;hidden_layer-&gt;samples;
+         rbm1-&gt;visible_layer-&gt;fpropNLL(*sampled_h,neglogphsample_given_v);
+-        rbm1-&gt;computeFreeEnergyOfVisible(*input,FE1v);
++        rbm1-&gt;computeFreeEnergyOfVisible(*input,FE1v,false);
+         rbm1-&gt;computeFreeEnergyOfHidden(*sampled_h,FE1h);
+-        rbm2-&gt;computeFreeEnergyOfVisible(*sampled_h,FE2h);
++        rbm2-&gt;computeFreeEnergyOfVisible(*sampled_h,FE2h,false);
++        *p2ph &lt;&lt; rbm2-&gt;hidden_layer-&gt;getExpectations();
+         substract(FE1h,FE2h,*global_improvement);
+ 
+         if (bound) // actually minus the bound, to be in same units as nll, only computed exactly during test
+@@ -284,6 +336,7 @@
+     deepCopyField(sampled_h_state, copies);
+     deepCopyField(global_improvement_state, copies);
+     deepCopyField(ph_given_v_state, copies);
++    deepCopyField(p2ph_state, copies);
+     deepCopyField(neglogphsample_given_v, copies);
+     deepCopyField(all_h, copies);
+     deepCopyField(all_h, copies);
+
+Modified: trunk/plearn_learners/online/VBoundDBN2.h
+===================================================================
+--- trunk/plearn_learners/online/VBoundDBN2.h	2007-08-08 19:15:09 UTC (rev 7958)
++++ trunk/plearn_learners/online/VBoundDBN2.h	2007-08-08 20:04:51 UTC (rev 7959)
+@@ -285,6 +285,7 @@
+     Mat sampled_h_state;
+     Mat global_improvement_state;
+     Mat ph_given_v_state;
++    Mat p2ph_state;
+     Mat neglogphsample_given_v;
+     Mat all_h; // for computing exact likelihood
+     Mat neglogP2h;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001406.html">[Plearn-commits] r7958 - trunk/plearn/var
+</A></li>
+	<LI>Next message: <A HREF="001408.html">[Plearn-commits] r7960 - trunk/scripts/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1407">[ date ]</a>
+              <a href="thread.html#1407">[ thread ]</a>
+              <a href="subject.html#1407">[ subject ]</a>
+              <a href="author.html#1407">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

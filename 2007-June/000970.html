@@ -1,0 +1,158 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7521 - in trunk/python_modules/plearn: io	learners/autolr
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7521%20-%20in%20trunk/python_modules/plearn%3A%20io%0A%09learners/autolr&In-Reply-To=%3C200706041758.l54HwoCK024648%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000969.html">
+   <LINK REL="Next"  HREF="000971.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7521 - in trunk/python_modules/plearn: io	learners/autolr</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7521%20-%20in%20trunk/python_modules/plearn%3A%20io%0A%09learners/autolr&In-Reply-To=%3C200706041758.l54HwoCK024648%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7521 - in trunk/python_modules/plearn: io	learners/autolr">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Mon Jun  4 19:58:50 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000969.html">[Plearn-commits] r7520 - in trunk/plearn: io math
+</A></li>
+        <LI>Next message: <A HREF="000971.html">[Plearn-commits] r7522 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#970">[ date ]</a>
+              <a href="thread.html#970">[ thread ]</a>
+              <a href="subject.html#970">[ subject ]</a>
+              <a href="author.html#970">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-06-04 19:58:49 +0200 (Mon, 04 Jun 2007)
+New Revision: 7521
+
+Modified:
+   trunk/python_modules/plearn/io/serialize.py
+   trunk/python_modules/plearn/learners/autolr/__init__.py
+Log:
+Proper handling of 64-bit ints (long)
+
+
+Modified: trunk/python_modules/plearn/io/serialize.py
+===================================================================
+--- trunk/python_modules/plearn/io/serialize.py	2007-06-04 17:56:26 UTC (rev 7520)
++++ trunk/python_modules/plearn/io/serialize.py	2007-06-04 17:58:49 UTC (rev 7521)
+@@ -232,9 +232,9 @@
+         elif c==&quot;\x06&quot;: # unsigned short big endian
+             return struct.unpack('&gt;H',self.read(2))[0]
+         
+-        elif c==&quot;\x07&quot;: # int little endian
++        elif c==&quot;\x07&quot;: # 32 bit int little endian
+             return struct.unpack('&lt;i',self.read(4))[0]
+-        elif c==&quot;\x08&quot;: # int big endian
++        elif c==&quot;\x08&quot;: # 32 bit int big endian
+             return struct.unpack('&gt;i',self.read(4))[0]
+         elif c==&quot;\x0B&quot;: # unsigned int little endian
+             return struct.unpack('&lt;I',self.read(4))[0]
+@@ -255,10 +255,15 @@
+             self.unread(c)
+             return self.binread_sequence()
+ 
+-        elif c==&quot;\x16&quot;: # DEPRECATED binary pair format (for backward compatibility)
+-            self.unread(c)
+-            return self.binread_pair()
++        elif c==&quot;\x16&quot;: # 64 bit int little endian
++            return struct.unpack('&lt;q',self.read(8))[0]
++        elif c==&quot;\x17&quot;: # 64 bit int big endian
++            return struct.unpack('&gt;q',self.read(8))[0]
+ 
++        #elif c==&quot;\x16&quot;: # DEPRECATED binary pair format (for backward compatibility)
++        #    self.unread(c)
++        #    return self.binread_pair()
++
+         elif c=='&quot;': # string
+             self.unread(c)
+             return self.read_string()
+
+Modified: trunk/python_modules/plearn/learners/autolr/__init__.py
+===================================================================
+--- trunk/python_modules/plearn/learners/autolr/__init__.py	2007-06-04 17:56:26 UTC (rev 7520)
++++ trunk/python_modules/plearn/learners/autolr/__init__.py	2007-06-04 17:58:49 UTC (rev 7521)
+@@ -9,7 +9,7 @@
+ def deepcopy(plearnobject):
+     # actually not a deep-copy, only copy options
+     if plearn.bridgemode.useserver:
+-        o = newObject(plearnobject.getObject())
++        o = serv.new(plearnobject.getObject())
+     else:
+         o = newObject(str(plearnobject))
+     if o==None:
+@@ -110,6 +110,8 @@
+             results[i,1+s] = learning_rates[i][s]
+         for j in range(0,n_tests):
+             ts = pl.VecStatsCollector()
++            if plearn.bridgemode.useserver:
++                ts=serv.new(ts)
+             learner.test(testsets[j],ts,0,0)
+             if logfile:
+                 print &gt;&gt;logfile, &quot;At stage &quot;,learner.stage,&quot; test&quot; + str(j+1),&quot;: &quot;,
+@@ -175,6 +177,8 @@
+         learner.nstages = int(nstages+initial_stage)
+         learner.train()
+         ts = pl.VecStatsCollector()
++        if plearn.bridgemode.useserver:
++            ts=serv.new(ts)
+         learner.test(testset,ts,0,0)
+         err=ts.getStat(&quot;E[&quot;+str(cost_to_select_best)+&quot;]&quot;)
+         if logfile:
+@@ -279,6 +283,8 @@
+         schedules[:,0]=stages
+         schedules[:,1]=learning_rates[:,0]
+         optimized_group=0 # no choice, there is only one group
++        if len(lr_options)!=1:
++            lr_options=[lr_options[0]]
+     n_train = len(stages)
+     n_schedules = len(lr_options)
+     assert n_schedules==learning_rates.shape[1]
+@@ -323,6 +329,8 @@
+                 print &gt;&gt;logfile, &quot;candidate &quot;,active,&quot;:&quot;,
+             for j in range(0,n_tests):
+                 ts = pl.VecStatsCollector()
++                if plearn.bridgemode.useserver:
++                    ts=serv.new(ts)
+                 candidate.test(testsets[j],ts,0,0)
+                 if logfile:
+                     print &gt;&gt;logfile, &quot; test&quot; + str(j+1),&quot;: &quot;,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000969.html">[Plearn-commits] r7520 - in trunk/plearn: io math
+</A></li>
+	<LI>Next message: <A HREF="000971.html">[Plearn-commits] r7522 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#970">[ date ]</a>
+              <a href="thread.html#970">[ thread ]</a>
+              <a href="subject.html#970">[ subject ]</a>
+              <a href="author.html#970">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

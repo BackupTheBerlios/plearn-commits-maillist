@@ -1,0 +1,587 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8979 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8979%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200805111300.m4BD0kr9022732%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002426.html">
+   <LINK REL="Next"  HREF="002428.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8979 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8979%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200805111300.m4BD0kr9022732%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8979 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Sun May 11 15:00:46 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002426.html">[Plearn-commits] r8978 - trunk/python_modules/plearn/learners
+</A></li>
+        <LI>Next message: <A HREF="002428.html">[Plearn-commits] r8980 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2427">[ date ]</a>
+              <a href="thread.html#2427">[ thread ]</a>
+              <a href="subject.html#2427">[ subject ]</a>
+              <a href="author.html#2427">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-05-11 15:00:44 +0200 (Sun, 11 May 2008)
+New Revision: 8979
+
+Modified:
+   trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc
+   trunk/plearn_learners_experimental/PseudolikelihoodRBM.h
+Log:
+Added PCD, MF-CD and (denoising) autoencoder learning.
+
+
+Modified: trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc
+===================================================================
+--- trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc	2008-05-10 19:30:04 UTC (rev 8978)
++++ trunk/plearn_learners_experimental/PseudolikelihoodRBM.cc	2008-05-11 13:00:44 UTC (rev 8979)
+@@ -61,6 +61,10 @@
+     cd_learning_rate( 0. ),
+     cd_decrease_ct( 0. ),
+     cd_n_gibbs( 1 ),
++    persistent_cd_weight( 0. ),
++    use_mean_field_cd( false ),
++    denoising_learning_rate( 0. ),
++    denoising_decrease_ct( 0. ),
+     n_classes( -1 ),
+     compute_input_space_nll( false ),
+     pseudolikelihood_context_size ( 0 ),
+@@ -72,7 +76,8 @@
+     cumulative_training_time( 0 ),
+     //cumulative_testing_time( 0 ),
+     log_Z( MISSING_VALUE ),
+-    Z_is_up_to_date( false )
++    Z_is_up_to_date( false ),
++    persistent_gibbs_chain_is_started( false )
+ {
+     random_gen = new PRandom();
+ }
+@@ -103,6 +108,34 @@
+                   OptionBase::buildoption,
+                   &quot;Number of negative phase gibbs sampling steps.\n&quot;);
+ 
++    declareOption(ol, &quot;persistent_cd_weight&quot;, 
++                  &amp;PseudolikelihoodRBM::persistent_cd_weight,
++                  OptionBase::buildoption,
++                  &quot;Weight of Persistent Contrastive Divergence, i.e. &quot;
++                  &quot;weight of the prolonged gibbs chain.\n&quot;);
++
++    declareOption(ol, &quot;use_mean_field_cd&quot;, &amp;PseudolikelihoodRBM::use_mean_field_cd,
++                  OptionBase::buildoption,
++                  &quot;Indication that a mean-field version of Contrastive &quot;
++                  &quot;Divergence (MF-CD) should be used.\n&quot;);
++
++    declareOption(ol, &quot;denoising_learning_rate&quot;, 
++                  &amp;PseudolikelihoodRBM::denoising_learning_rate,
++                  OptionBase::buildoption,
++                  &quot;The learning rate used for denoising autoencoder learning.\n&quot;);
++
++    declareOption(ol, &quot;denoising_decrease_ct&quot;, 
++                  &amp;PseudolikelihoodRBM::denoising_decrease_ct,
++                  OptionBase::buildoption,
++                  &quot;The decrease constant of the denoising autoencoder &quot;
++                  &quot;learning rate.\n&quot;);
++
++    declareOption(ol, &quot;fraction_of_masked_inputs&quot;, 
++                  &amp;PseudolikelihoodRBM::fraction_of_masked_inputs,
++                  OptionBase::buildoption,
++                  &quot;Fraction of input components set to 0 for denoising &quot;
++                  &quot;autoencoder learning.\n&quot;);
++
+     declareOption(ol, &quot;n_classes&quot;, &amp;PseudolikelihoodRBM::n_classes,
+                   OptionBase::buildoption,
+                   &quot;Number of classes in the training set (for supervised learning).\n&quot;
+@@ -156,6 +189,12 @@
+                   OptionBase::learntoption,
+                   &quot;Indication that the normalisation constant Z is up to date.\n&quot;);
+ 
++    declareOption(ol, &quot;persistent_gibbs_chain_is_started&quot;, 
++                  &amp;PseudolikelihoodRBM::persistent_gibbs_chain_is_started,
++                  OptionBase::learntoption,
++                  &quot;Indication that the prolonged gibbs chain for &quot;
++                  &quot;Persistent Consistent Divergence is started.\n&quot;);
++
+ //    declareOption(ol, &quot;target_weights_L1_penalty_factor&quot;, 
+ //                  &amp;PseudolikelihoodRBM::target_weights_L1_penalty_factor,
+ //                  OptionBase::buildoption,
+@@ -270,6 +309,38 @@
+     hidden_activation_neg_i_gradient.resize( hidden_layer-&gt;size );
+     connection_gradient.resize( connection-&gt;up_size, connection-&gt;down_size );
+ 
++    // Generalized pseudolikelihood option
++    context_indices.resize( input_layer-&gt;size - 1);
++    if( pseudolikelihood_context_size &gt; 0 )
++    {
++        context_indices_per_i.resize( input_layer-&gt;size, 
++                                      pseudolikelihood_context_size );
++
++        int n_conf = ipow(2, pseudolikelihood_context_size);
++        nums_act.resize( 2 * n_conf );
++        gnums_act.resize( 2 * n_conf );
++        context_probs.resize( 2 * n_conf );
++        hidden_activations_context.resize( 2*n_conf, hidden_layer-&gt;size );
++        hidden_activations_context_k_gradient.resize( hidden_layer-&gt;size );
++    }
++
++    // CD option
++    pos_hidden.resize( hidden_layer-&gt;size );
++    pers_cd_input.resize( input_layer-&gt;size );
++    pers_cd_hidden.resize( hidden_layer-&gt;size );
++
++    // Denoising autoencoder options
++    transpose_connection = new RBMMatrixTransposeConnection;
++    transpose_connection-&gt;rbm_matrix_connection = connection;
++    transpose_connection-&gt;build();
++    reconstruction_activation_gradient.resize(input_layer-&gt;size);
++    hidden_layer_expectation_gradient.resize(hidden_layer-&gt;size);
++    hidden_layer_activation_gradient.resize(hidden_layer-&gt;size);
++    masked_autoencoder_input.resize(input_layer-&gt;size);
++    autoencoder_input_indices.resize(input_layer-&gt;size);
++    for(int i=0; i&lt;input_layer-&gt;size; i++)
++        autoencoder_input_indices[i] = i;
++
+     if( inputsize_ &gt;= 0 )
+         PLASSERT( input_layer-&gt;size == inputsize() );
+ 
+@@ -320,6 +391,7 @@
+     deepCopyField(hidden_layer, copies);
+     deepCopyField(connection, copies);
+     deepCopyField(cost_names, copies);
++    deepCopyField(transpose_connection, copies);
+ 
+     deepCopyField(target_one_hot, copies);
+     deepCopyField(input_gradient, copies);
+@@ -345,6 +417,13 @@
+     deepCopyField(pos_hidden, copies);
+     deepCopyField(neg_input, copies);
+     deepCopyField(neg_hidden, copies);
++    deepCopyField(reconstruction_activation_gradient, copies);
++    deepCopyField(hidden_layer_expectation_gradient, copies);
++    deepCopyField(hidden_layer_activation_gradient, copies);
++    deepCopyField(masked_autoencoder_input, copies);
++    deepCopyField(autoencoder_input_indices, copies);
++    deepCopyField(pers_cd_input, copies);
++    deepCopyField(pers_cd_hidden, copies);
+ }
+ 
+ 
+@@ -370,6 +449,8 @@
+     cumulative_training_time = 0;
+     //cumulative_testing_time = 0;
+     Z_is_up_to_date = false;
++
++    persistent_gibbs_chain_is_started = false;
+ }
+ 
+ ///////////
+@@ -561,9 +642,6 @@
+                 else
+                 {
+                     // Generate contexts
+-                    context_indices.resize( input_layer-&gt;size - 1);
+-                    context_indices_per_i.resize( input_layer-&gt;size, 
+-                                                  pseudolikelihood_context_size );
+                     for( int i=0; i&lt;context_indices.length(); i++)
+                         context_indices[i] = i;
+                     int tmp,k;
+@@ -590,11 +668,11 @@
+                         (RBMMatrixConnection *) connection );
+ 
+                     int n_conf = ipow(2, pseudolikelihood_context_size);
+-                    nums_act.resize( 2 * n_conf );
+-                    gnums_act.resize( 2 * n_conf );
+-                    context_probs.resize( 2 * n_conf );
+-                    hidden_activations_context.resize( 2*n_conf, hidden_layer-&gt;size );
+-                    hidden_activations_context_k_gradient.resize( hidden_layer-&gt;size );
++                    //nums_act.resize( 2 * n_conf );
++                    //gnums_act.resize( 2 * n_conf );
++                    //context_probs.resize( 2 * n_conf );
++                    //hidden_activations_context.resize( 2*n_conf, hidden_layer-&gt;size );
++                    //hidden_activations_context_k_gradient.resize( hidden_layer-&gt;size );
+                     real* nums_data;
+                     real* gnums_data;
+                     real* cp_data;
+@@ -828,46 +906,187 @@
+             // CD learning
+             if( !fast_is_equal(cd_learning_rate, 0.) )
+             {
+-                if( cd_decrease_ct != 0 )
+-                    lr = cd_learning_rate / (1.0 + stage * cd_decrease_ct );
+-                else
+-                    lr = cd_learning_rate;
+ 
+-                setLearningRate(lr);
++                if( !fast_is_equal(persistent_cd_weight, 1.) )
++                {
++                    if( cd_decrease_ct != 0 )
++                        lr = cd_learning_rate / (1.0 + stage * cd_decrease_ct );
++                    else
++                        lr = cd_learning_rate;
++                    
++                    lr *= (1-persistent_cd_weight);
+ 
+-                // Positive phase
+-                pos_input = input;
+-                connection-&gt;setAsDownInput( input );
+-                hidden_layer-&gt;getAllActivations( 
+-                    (RBMMatrixConnection*) connection );
+-                hidden_layer-&gt;computeExpectation();
+-                pos_hidden.resize( hidden_layer-&gt;size );
+-                pos_hidden &lt;&lt; hidden_layer-&gt;expectation;
++                    setLearningRate(lr);
+ 
+-                // Negative phase
+-                for(int i=0; i&lt;cd_n_gibbs; i++)
+-                {
+-                    hidden_layer-&gt;generateSample();
+-                    connection-&gt;setAsUpInput( hidden_layer-&gt;sample );
+-                    input_layer-&gt;getAllActivations( 
+-                        (RBMMatrixConnection*) connection );
+-                    input_layer-&gt;computeExpectation();
+-                    input_layer-&gt;generateSample();
+-                    connection-&gt;setAsDownInput( input_layer-&gt;sample );
++                    // Positive phase
++                    pos_input = input;
++                    connection-&gt;setAsDownInput( input );
+                     hidden_layer-&gt;getAllActivations( 
+                         (RBMMatrixConnection*) connection );
+                     hidden_layer-&gt;computeExpectation();
++                    //pos_hidden.resize( hidden_layer-&gt;size );
++                    pos_hidden &lt;&lt; hidden_layer-&gt;expectation;
++                    
++                    // Negative phase
++                    for(int i=0; i&lt;cd_n_gibbs; i++)
++                    {
++                        if( use_mean_field_cd )
++                        {
++                            connection-&gt;setAsUpInput( hidden_layer-&gt;expectation );
++                        }
++                        else
++                        {
++                            hidden_layer-&gt;generateSample();
++                            connection-&gt;setAsUpInput( hidden_layer-&gt;sample );
++                        }
++                        input_layer-&gt;getAllActivations( 
++                            (RBMMatrixConnection*) connection );
++                        input_layer-&gt;computeExpectation();
++                        if( use_mean_field_cd )
++                        {
++                            connection-&gt;setAsDownInput( input_layer-&gt;expectation );
++                        }
++                        else
++                        {
++                            input_layer-&gt;generateSample();
++                            connection-&gt;setAsDownInput( input_layer-&gt;sample );
++                        }
++                        hidden_layer-&gt;getAllActivations( 
++                            (RBMMatrixConnection*) connection );
++                        hidden_layer-&gt;computeExpectation();
++                    }
++                    
++                    if( use_mean_field_cd )
++                        neg_input = input_layer-&gt;expectation;
++                    else
++                        neg_input = input_layer-&gt;sample;
++                    neg_hidden = hidden_layer-&gt;expectation;
++                    
++                    input_layer-&gt;update(pos_input,neg_input);
++                    hidden_layer-&gt;update(pos_hidden,neg_hidden);
++                    connection-&gt;update(pos_input,pos_hidden,
++                                       neg_input,neg_hidden);
+                 }
++
++                if( !fast_is_equal(persistent_cd_weight, 0.) )
++                {
++                    if( use_mean_field_cd )
++                        PLERROR(&quot;In PseudolikelihoodRBM::train(): Persistent &quot;
++                            &quot;Contrastive Divergence was not implemented for &quot;
++                            &quot;MF-CD&quot;);
++
++                    if( cd_decrease_ct != 0 )
++                        lr = cd_learning_rate / (1.0 + stage * cd_decrease_ct );
++                    else
++                        lr = cd_learning_rate;
++                    
++                    lr *= persistent_cd_weight;
++
++                    if( !persistent_gibbs_chain_is_started )
++                    {  
++                        // Start gibbs chain
++                        connection-&gt;setAsDownInput( input );
++                        hidden_layer-&gt;getAllActivations( 
++                            (RBMMatrixConnection*) connection );
++                        hidden_layer-&gt;computeExpectation();
++                        hidden_layer-&gt;generateSample();
++                        pers_cd_hidden &lt;&lt; hidden_layer-&gt;sample;
++                        persistent_gibbs_chain_is_started = true;
++                    }
++
++                    if( fast_is_equal(persistent_cd_weight, 1.) )
++                    {
++                        // Hidden positive sample was not computed previously
++                        connection-&gt;setAsDownInput( input );
++                        hidden_layer-&gt;getAllActivations( 
++                            (RBMMatrixConnection*) connection );
++                        hidden_layer-&gt;computeExpectation();
++                        pos_hidden &lt;&lt; hidden_layer-&gt;expectation;
++                    }
++
++                    // Prolonged Gibbs chain
++                    for(int i=0; i&lt;cd_n_gibbs; i++)
++                    {
++                        connection-&gt;setAsUpInput( pers_cd_hidden );
++                        input_layer-&gt;getAllActivations( 
++                            (RBMMatrixConnection*) connection );
++                        input_layer-&gt;computeExpectation();
++                        input_layer-&gt;generateSample();
++                        connection-&gt;setAsDownInput( input_layer-&gt;sample );
++                        hidden_layer-&gt;getAllActivations( 
++                            (RBMMatrixConnection*) connection );
++                        hidden_layer-&gt;computeExpectation();
++                        hidden_layer-&gt;generateSample();
++                    }
++
++                    pers_cd_input &lt;&lt; input_layer-&gt;sample;
++                    pers_cd_hidden &lt;&lt; hidden_layer-&gt;sample;
++
++                    input_layer-&gt;update(input, pers_cd_input);
++                    hidden_layer-&gt;update(pos_hidden,hidden_layer-&gt;expectation);
++                    connection-&gt;update(input,pos_hidden,
++                                       pers_cd_input,hidden_layer-&gt;expectation);
++                }
++            }
++        
++            if( !fast_is_equal(denoising_learning_rate, 0.) )
++            {
++                if( denoising_decrease_ct != 0 )
++                    lr = denoising_learning_rate / 
++                        (1.0 + stage * denoising_decrease_ct );
++                else
++                    lr = denoising_learning_rate;
++
++                setLearningRate(lr);
++                // I'm here
++                if( fraction_of_masked_inputs &gt; 0 )
++                    random_gen-&gt;shuffleElements(autoencoder_input_indices);
+                 
+-                neg_input = input_layer-&gt;sample;
+-                neg_hidden = hidden_layer-&gt;expectation;
++                masked_autoencoder_input &lt;&lt; input;
++                if( fraction_of_masked_inputs &gt; 0 )
++                {
++                    for( int j=0 ; 
++                         j &lt; round(fraction_of_masked_inputs*input_layer-&gt;size) ; 
++                         j++)
++                        masked_autoencoder_input[ autoencoder_input_indices[j] ] = 0; 
++                }
+ 
+-                input_layer-&gt;update(pos_input,neg_input);
+-                hidden_layer-&gt;update(pos_hidden,neg_hidden);
+-                connection-&gt;update(pos_input,pos_hidden,
+-                                   neg_input,neg_hidden);
++                // Somehow, doesn't compile without the fancy casts...
++                ((RBMMatrixConnection *)connection)-&gt;RBMConnection::fprop( masked_autoencoder_input, 
++                                   hidden_layer-&gt;activation );
++
++                hidden_layer-&gt;fprop( hidden_layer-&gt;activation,
++                                     hidden_layer-&gt;expectation );
++                
++                transpose_connection-&gt;fprop( hidden_layer-&gt;expectation,
++                                             input_layer-&gt;activation );
++                input_layer-&gt;fprop( input_layer-&gt;activation,
++                                    input_layer-&gt;expectation );
++                input_layer-&gt;setExpectation( input_layer-&gt;expectation );
++
++                real cost = input_layer-&gt;fpropNLL(input);
++                
++                input_layer-&gt;bpropNLL(input, cost, 
++                                      reconstruction_activation_gradient);
++                input_layer-&gt;update( reconstruction_activation_gradient );
++
++                transpose_connection-&gt;bpropUpdate( 
++                    hidden_layer-&gt;expectation,
++                    input_layer-&gt;activation,
++                    hidden_layer_expectation_gradient,
++                    reconstruction_activation_gradient );
++
++                hidden_layer-&gt;bpropUpdate( hidden_layer-&gt;activation,
++                                           hidden_layer-&gt;expectation,
++                                           hidden_layer_activation_gradient,
++                                           hidden_layer_expectation_gradient );
++                
++                connection-&gt;bpropUpdate( masked_autoencoder_input, 
++                                         hidden_layer-&gt;activation,
++                                         reconstruction_activation_gradient, // is not used afterwards...
++                                         hidden_layer_activation_gradient );
+             }
+-            
++
+         }
+         train_stats-&gt;update( train_costs );
+         
+@@ -884,28 +1103,28 @@
+     train_costs[cumulative_training_time_cost_index] = cumulative_training_time;
+     train_stats-&gt;update( train_costs );
+ 
+-//    // Sums to 1 test
+-//    compute_Z();
+-//    conf.resize( input_layer-&gt;size );
+-//    Vec output,costs;
+-//    output.resize(outputsize());
+-//    costs.resize(getTestCostNames().length());
+-//    target.resize( targetsize() );
+-//    real sums = 0;
+-//    int input_n_conf = input_layer-&gt;getConfigurationCount();
+-//    for(int i=0; i&lt;input_n_conf; i++)
+-//    {
+-//        input_layer-&gt;getConfiguration(i,conf);
+-//        computeOutput(conf,output);
+-//        computeCostsFromOutputs( conf, output, target, costs );
+-//        //if( i==0 )
+-//        //    sums = -costs[nll_cost_index];
+-//        //else
+-//        //    sums = logadd( sums, -costs[nll_cost_index] );
+-//        sums += safeexp( -costs[nll_cost_index] );
+-//    }        
+-//    cout &lt;&lt; &quot;sums: &quot; &lt;&lt; //safeexp(sums) &lt;&lt; endl;
+-//        sums &lt;&lt; endl;
++    // Sums to 1 test
++    //compute_Z();
++    //conf.resize( input_layer-&gt;size );
++    //Vec output,costs;
++    //output.resize(outputsize());
++    //costs.resize(getTestCostNames().length());
++    //target.resize( targetsize() );
++    //real sums = 0;
++    //int input_n_conf = input_layer-&gt;getConfigurationCount();
++    //for(int i=0; i&lt;input_n_conf; i++)
++    //{
++    //    input_layer-&gt;getConfiguration(i,conf);
++    //    computeOutput(conf,output);
++    //    computeCostsFromOutputs( conf, output, target, costs );
++    //    //if( i==0 )
++    //    //    sums = -costs[nll_cost_index];
++    //    //else
++    //    //    sums = logadd( sums, -costs[nll_cost_index] );
++    //    sums += safeexp( -costs[nll_cost_index] );
++    //}        
++    //cout &lt;&lt; &quot;sums: &quot; &lt;&lt; //safeexp(sums) &lt;&lt; endl;
++    //    sums &lt;&lt; endl;
+     train_stats-&gt;finalize();
+ }
+ 
+
+Modified: trunk/plearn_learners_experimental/PseudolikelihoodRBM.h
+===================================================================
+--- trunk/plearn_learners_experimental/PseudolikelihoodRBM.h	2008-05-10 19:30:04 UTC (rev 8978)
++++ trunk/plearn_learners_experimental/PseudolikelihoodRBM.h	2008-05-11 13:00:44 UTC (rev 8979)
+@@ -45,6 +45,7 @@
+ #include &lt;plearn_learners/online/CrossEntropyCostModule.h&gt;
+ #include &lt;plearn_learners/online/NLLCostModule.h&gt;
+ #include &lt;plearn_learners/online/RBMClassificationModule.h&gt;
++#include &lt;plearn_learners/online/RBMMatrixTransposeConnection.h&gt;
+ #include &lt;plearn_learners/online/RBMMultitaskClassificationModule.h&gt;
+ #include &lt;plearn_learners/online/RBMLayer.h&gt;
+ #include &lt;plearn_learners/online/RBMMixedLayer.h&gt;
+@@ -80,6 +81,23 @@
+     //! Number of negative phase gibbs sampling steps
+     int cd_n_gibbs;
+ 
++    //! Weight of Persistent Contrastive Divergence, i.e. weight of the
++    //! prolonged gibbs chain
++    real persistent_cd_weight;
++
++    //! Indication that a mean-field version of Contrastive Divergence
++    //! (MF-CD) should be used.
++    bool use_mean_field_cd;
++
++    //! The learning rate used for denoising autoencoder learning
++    real denoising_learning_rate;
++
++    //! The decrease constant of the denoising autoencoder learning rate
++    real denoising_decrease_ct;
++
++    //! Fraction of input components set to 0 for denoising autoencoder learning
++    real fraction_of_masked_inputs;
++
+     //! Number of classes in the training set (for supervised learning)
+     int n_classes;
+ 
+@@ -111,6 +129,8 @@
+     //! The computed cost names
+     TVec&lt;string&gt; cost_names;
+ 
++    PP&lt;RBMMatrixTransposeConnection&gt; transpose_connection;
++
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+@@ -232,6 +252,13 @@
+     mutable Vec pos_hidden;
+     mutable Vec neg_input;
+     mutable Vec neg_hidden;
++    mutable Vec reconstruction_activation_gradient;
++    mutable Vec hidden_layer_expectation_gradient;
++    mutable Vec hidden_layer_activation_gradient;
++    mutable Vec masked_autoencoder_input;
++    mutable TVec&lt;int&gt; autoencoder_input_indices;
++    mutable Vec pers_cd_input;
++    mutable Vec pers_cd_hidden;
+ 
+     //! Keeps the index of the NLL cost in train_costs
+     int nll_cost_index;
+@@ -251,9 +278,13 @@
+     //! Normalisation constant (on log scale)
+     mutable real log_Z;
+ 
+-    // Indication that the normalisation constant Z is up to date
++    //! Indication that the normalisation constant Z is up to date
+     mutable bool Z_is_up_to_date;
+ 
++    //! Indication that the prolonged gibbs chain for 
++    //! Persistent Consistent Divergence is started
++    mutable bool persistent_gibbs_chain_is_started;
++
+ protected:
+     //#####  Protected Member Functions  ######################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002426.html">[Plearn-commits] r8978 - trunk/python_modules/plearn/learners
+</A></li>
+	<LI>Next message: <A HREF="002428.html">[Plearn-commits] r8980 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2427">[ date ]</a>
+              <a href="thread.html#2427">[ thread ]</a>
+              <a href="subject.html#2427">[ subject ]</a>
+              <a href="author.html#2427">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

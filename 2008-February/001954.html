@@ -1,0 +1,281 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8506 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8506%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200802131618.m1DGIWcc017182%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001953.html">
+   <LINK REL="Next"  HREF="001955.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8506 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8506%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200802131618.m1DGIWcc017182%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8506 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Wed Feb 13 17:18:32 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001953.html">[Plearn-commits] r8505 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001955.html">[Plearn-commits] r8507 - trunk/python_modules/plearn/utilities
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1954">[ date ]</a>
+              <a href="thread.html#1954">[ thread ]</a>
+              <a href="subject.html#1954">[ subject ]</a>
+              <a href="author.html#1954">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-02-13 17:18:31 +0100 (Wed, 13 Feb 2008)
+New Revision: 8506
+
+Modified:
+   trunk/plearn_learners_experimental/ManifoldKNNDistribution.cc
+   trunk/plearn_learners_experimental/ManifoldKNNDistribution.h
+Log:
+Debugging...
+
+
+Modified: trunk/plearn_learners_experimental/ManifoldKNNDistribution.cc
+===================================================================
+--- trunk/plearn_learners_experimental/ManifoldKNNDistribution.cc	2008-02-13 16:06:08 UTC (rev 8505)
++++ trunk/plearn_learners_experimental/ManifoldKNNDistribution.cc	2008-02-13 16:18:31 UTC (rev 8506)
+@@ -56,7 +56,8 @@
+ ManifoldKNNDistribution::ManifoldKNNDistribution()
+     : manifold_dimensionality(5),
+       min_sigma_square(1e-5),
+-      center_around_manifold_neighbors(false)
++      center_around_manifold_neighbors(false),
++      use_gaussian_distribution(false)
+ {}
+ 
+ ////////////////////
+@@ -95,6 +96,20 @@
+                   &quot;not around the test point.&quot;
+                   );
+ 
++    declareOption(ol, &quot;use_gaussian_distribution&quot;, 
++                  &amp;ManifoldKNNDistribution::use_gaussian_distribution,
++                  OptionBase::buildoption,
++                  &quot;Indication that a Gaussian distribution should be used as the\n&quot;
++                  &quot;knn_manifold nearest neighbors distribution, instead of the\n&quot;
++                  &quot;uniform in the ellipsoid.&quot;
++                  );
++
++    declareOption(ol, &quot;density_learner&quot;, 
++                  &amp;ManifoldKNNDistribution::density_learner,
++                  OptionBase::buildoption,
++                  &quot;Generic density learner for knn_manifold nearest neighbors.&quot;
++                  );
++
+     // Now call the parent class' declareOptions().
+     inherited::declareOptions(ol);
+ }
+@@ -145,7 +160,18 @@
+     {
+         knn_manifold-&gt;setTrainingSet(train_set,true);
+         knn_density-&gt;setTrainingSet(train_set,true);
++        
++        knn_manifold-&gt;train();
++        knn_density-&gt;train();
+     }
++
++    if(use_gaussian_distribution &amp;&amp; !center_around_manifold_neighbors)
++    {
++        PLWARNING(&quot;In ManifoldKNNDistribution::build_(): when using &quot;
++                  &quot;use_gaussian_distribution=true, center_around_manifold_neighbors&quot;
++                  &quot;must be true too. Setting center_around_manifold_neighbors=true...&quot;);
++        center_around_manifold_neighbors = true;
++    }
+ }
+ 
+ /////////
+@@ -184,38 +210,79 @@
+ /////////////////
+ real ManifoldKNNDistribution::log_density(const Vec&amp; y) const
+ {
+-    computeLocalPrincipalComponents(y,eig_values,eig_vectors);
+ 
+-    // Find volume of ellipsoid defined by eig_values, eig_vectors and
+-    // min_sigma_square that covers all the nearest_neighbors found by knn_density
+-    knn_density-&gt;computeOutput(y,nearest_neighbors_density_vec);
+-    nearest_neighbors_density = 
+-        nearest_neighbors_density_vec.toMat(knn_density-&gt;num_neighbors,inputsize_);
+-    nearest_neighbors_density -= y;
+-    real max = -1;
+-    real scaled_projection;
+-    for(int i=0; i&lt;nearest_neighbors_density.length(); i++)
++    real ret = 0;
++    if(density_learner)
+     {
+-        scaled_projection = 0;
+-        product(eig_vectors_projection,eig_vectors,nearest_neighbors_density(i));
++        knn_manifold-&gt;computeOutput(y,nearest_neighbors_manifold_vec);
++        nearest_neighbors_manifold = 
++            nearest_neighbors_manifold_vec.toMat(
++                knn_manifold-&gt;num_neighbors,inputsize_);
++        density_learner_train_set = VMat( nearest_neighbors_manifold );
++        density_learner_train_set-&gt;defineSizes(inputsize_,0);
++        density_learner-&gt;setTrainingSet(density_learner_train_set,true);
++        density_learner-&gt;train();
++        density_learner-&gt;log_density(y);
++        ret = density_learner-&gt;log_density(y) + 
++            pl_log((real)knn_manifold-&gt;num_neighbors)-pl_log((real)n_examples);
++    }
++    else if(use_gaussian_distribution)
++    {
++        computeLocalPrincipalComponents(y,eig_values,eig_vectors);
++        if(!center_around_manifold_neighbors)
++            columnMean(nearest_neighbors_manifold,neighbors_mean);
++
++        // Compute log-normalization constant
++        ret = - inputsize_ *0.5 *Log2Pi;
++        for(int i=0; i&lt;manifold_dimensionality; i++)
++            ret -= 0.5 * pl_log(eig_values[i]+min_sigma_square);
++        ret -= (inputsize_-manifold_dimensionality)*0.5*pl_log(min_sigma_square);
++        substract(y,neighbors_mean,test_minus_mean);
++        product(eig_vectors_projection,eig_vectors,test_minus_mean);
+         for(int j=0; j&lt;eig_values.length(); j++)
+-            scaled_projection += mypow(eig_vectors_projection[j],2) * 
++            ret -= mypow(eig_vectors_projection[j],2) * 
+                 (1/(eig_values[j]+min_sigma_square) 
+                  - 1/min_sigma_square) ;
+-        scaled_projection += pownorm(nearest_neighbors_density(i),2)
++        ret -= pownorm(test_minus_mean,2)
+             /min_sigma_square;
+-        if(max &lt; scaled_projection)
+-            max = scaled_projection;
++        ret += pl_log((real)knn_manifold-&gt;num_neighbors)-pl_log((real)n_examples);
+     }
++    else
++    {
++        computeLocalPrincipalComponents(y,eig_values,eig_vectors);
+ 
+-    // Compute log-volume of the ellipsoid: pi
+-    real log_vol = 0.5 * inputsize_ * pl_log(scaled_projection);
+-    for(int i=0; i&lt;manifold_dimensionality; i++)
+-        log_vol += 0.5 * pl_log(eig_values[i]+min_sigma_square);
+-    log_vol += (inputsize_-manifold_dimensionality)*0.5*pl_log(min_sigma_square);
+-    log_vol += 0.5*inputsize_*pl_log(Pi) - pl_gammln(0.5*inputsize_+1);
+-    
+-    return pl_log((real)knn_density-&gt;num_neighbors)-pl_log((real)n_examples)-log_vol;
++        // Find volume of ellipsoid defined by eig_values, eig_vectors and
++        // min_sigma_square that covers all the nearest_neighbors found by knn_density
++        knn_density-&gt;computeOutput(y,nearest_neighbors_density_vec);
++        nearest_neighbors_density = 
++            nearest_neighbors_density_vec.toMat(knn_density-&gt;num_neighbors,inputsize_);
++        nearest_neighbors_density -= y;
++        real max = -1;
++        real scaled_projection=0;
++        for(int i=0; i&lt;nearest_neighbors_density.length(); i++)
++        {
++            scaled_projection = 0;
++            product(eig_vectors_projection,eig_vectors,nearest_neighbors_density(i));
++            for(int j=0; j&lt;eig_values.length(); j++)
++                scaled_projection += mypow(eig_vectors_projection[j],2) * 
++                    (1/(eig_values[j]+min_sigma_square) 
++                     - 1/min_sigma_square) ;
++            scaled_projection += pownorm(nearest_neighbors_density(i),2)
++                /min_sigma_square;
++            if(max &lt; scaled_projection)
++                max = scaled_projection;
++        }
++        
++        // Compute log-volume of the ellipsoid: pi
++        real log_vol = 0.5 * inputsize_ * pl_log(scaled_projection);
++        for(int i=0; i&lt;manifold_dimensionality; i++)
++            log_vol += 0.5 * pl_log(eig_values[i]+min_sigma_square);
++        log_vol += (inputsize_-manifold_dimensionality)*0.5*pl_log(min_sigma_square);
++        log_vol += 0.5*inputsize_*pl_log(Pi) - pl_gammln(0.5*inputsize_+1);
++        
++        ret = pl_log((real)knn_density-&gt;num_neighbors)-pl_log((real)n_examples)-log_vol;
++    }
++    return ret;
+ }
+ 
+ /////////////////////////////////
+@@ -227,6 +294,7 @@
+ 
+     deepCopyField(knn_manifold, copies);
+     deepCopyField(knn_density, copies);
++    deepCopyField(density_learner, copies);
+     deepCopyField(nearest_neighbors_manifold, copies);
+     deepCopyField(nearest_neighbors_manifold_vec, copies);
+     deepCopyField(nearest_neighbors_density, copies);
+@@ -238,6 +306,8 @@
+     deepCopyField(S, copies);
+     deepCopyField(eig_vectors_projection, copies);
+     deepCopyField(neighbors_mean,copies);
++    deepCopyField(test_minus_mean,copies);
++    deepCopyField(density_learner_train_set,copies);
+ }
+ 
+ ////////////////////
+
+Modified: trunk/plearn_learners_experimental/ManifoldKNNDistribution.h
+===================================================================
+--- trunk/plearn_learners_experimental/ManifoldKNNDistribution.h	2008-02-13 16:06:08 UTC (rev 8505)
++++ trunk/plearn_learners_experimental/ManifoldKNNDistribution.h	2008-02-13 16:18:31 UTC (rev 8506)
+@@ -78,6 +78,14 @@
+     //! not around the test point.
+     bool center_around_manifold_neighbors;
+ 
++    //! Indication that a Gaussian distribution should be used as the
++    //! knn_manifold nearest neighbors distribution, instead of the
++    //! uniform in the ellipsoid.
++    bool use_gaussian_distribution;
++
++    //! Generic density learner for knn_density nearest neighbors
++    PP&lt;PDistribution&gt; density_learner;
++
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+@@ -158,7 +166,12 @@
+     mutable Vec eig_vectors_projection;
+     //! Mean vector of neighbors
+     mutable Vec neighbors_mean;
++    //! Difference between test point and neighbors_mean;
++    mutable Vec test_minus_mean;
+ 
++    //! The density learner training set
++    mutable VMat density_learner_train_set;
++
+ protected:
+     //#####  Protected Member Functions  ######################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001953.html">[Plearn-commits] r8505 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001955.html">[Plearn-commits] r8507 - trunk/python_modules/plearn/utilities
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1954">[ date ]</a>
+              <a href="thread.html#1954">[ thread ]</a>
+              <a href="subject.html#1954">[ subject ]</a>
+              <a href="author.html#1954">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

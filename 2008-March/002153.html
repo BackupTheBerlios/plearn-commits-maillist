@@ -1,0 +1,198 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8705 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8705%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200803200034.m2K0YcJ1020297%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002152.html">
+   <LINK REL="Next"  HREF="002154.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8705 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8705%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200803200034.m2K0YcJ1020297%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8705 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Thu Mar 20 01:34:38 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002152.html">[Plearn-commits] r8704 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="002154.html">[Plearn-commits] r8706 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2153">[ date ]</a>
+              <a href="thread.html#2153">[ thread ]</a>
+              <a href="subject.html#2153">[ subject ]</a>
+              <a href="author.html#2153">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2008-03-20 01:34:37 +0100 (Thu, 20 Mar 2008)
+New Revision: 8705
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/ScaleGradientModule.cc
+   trunk/plearn_learners/online/ScaleGradientModule.h
+Log:
+Support of stochastic (non-minibatch) fprop and bpropUpdate
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2008-03-19 17:23:28 UTC (rev 8704)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2008-03-20 00:34:37 UTC (rev 8705)
+@@ -2461,15 +2461,15 @@
+     if( i_output_layer&gt;=n_layers-2 &amp;&amp; (!use_classification_cost &amp;&amp; !final_module))
+     {
+         //! We haven't computed the expectations of the top layer
+-	if(i_output_layer==n_layers-1)
+-	{
++        if(i_output_layer==n_layers-1)
++        {
+             connections[ n_layers-2 ]-&gt;setAsDownInput(layers[ n_layers-2 ]-&gt;expectation );
+             layers[ n_layers-1 ]-&gt;getAllActivations( connections[ n_layers-2 ] );
+             layers[ n_layers-1 ]-&gt;computeExpectation();
+         }
+         output.resize(outputsize());
+         output &lt;&lt; layers[ i_output_layer ]-&gt;expectation;
+-    }	    
++    }
+ 
+     if( use_classification_cost )
+         classification_module-&gt;fprop( layers[ n_layers-2 ]-&gt;expectation,
+
+Modified: trunk/plearn_learners/online/ScaleGradientModule.cc
+===================================================================
+--- trunk/plearn_learners/online/ScaleGradientModule.cc	2008-03-19 17:23:28 UTC (rev 8704)
++++ trunk/plearn_learners/online/ScaleGradientModule.cc	2008-03-20 00:34:37 UTC (rev 8705)
+@@ -104,6 +104,12 @@
+     outputs &lt;&lt; inputs;
+ }
+ 
++void ScaleGradientModule::fprop(const Vec&amp; input, Vec&amp; output) const
++{
++    output.resize(input.size());
++    output &lt;&lt; input;
++}
++
+ /////////////////
+ // bpropUpdate //
+ /////////////////
+@@ -112,11 +118,12 @@
+                                       const Mat&amp; output_gradients,
+                                       bool accumulate)
+ {
+-    input_gradients.resize(output_gradients.length(),
+-                           output_gradients.width());
+-
+     if (accumulate)
+     {
++        PLASSERT_MSG( input_gradients.length() == output_gradients.length()
++                      &amp;&amp; input_gradients.width() == output_gradients.width(),
++                      &quot;Cannot accumulate into input_gradients and resize it&quot; );
++
+         if (scale == 0)
+             return;
+         else // input_gradients += scale * output_gradients
+@@ -124,6 +131,9 @@
+     }
+     else
+     {
++        input_gradients.resize(output_gradients.length(),
++                               output_gradients.width());
++
+         if (scale == 0)
+             input_gradients.clear();
+         else // input_gradients = scale * output_gradients
+@@ -131,6 +141,30 @@
+     }
+ }
+ 
++void ScaleGradientModule::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                                      Vec&amp; input_gradient,
++                                      const Vec&amp; output_gradient,
++                                      bool accumulate)
++{
++    if (accumulate)
++    {
++        PLASSERT_MSG( input_gradient.size() == output_gradient.size(),
++                      &quot;Cannot accumulate into input_gradient and resize it&quot; );
++        if (scale == 0)
++            return;
++        else // input_gradient += scale * output_gradients
++            multiplyAcc(input_gradient, output_gradient, scale);
++    }
++    else
++    {
++        input_gradient.resize(output_gradient.size());
++        if (scale == 0)
++            input_gradient.clear();
++        else // input_gradient = scale * output_gradients
++            multiply(output_gradient, scale, input_gradient);
++    }
++}
++
+ void ScaleGradientModule::setLearningRate(real the_learning_rate)
+ {
+     // pass;
+
+Modified: trunk/plearn_learners/online/ScaleGradientModule.h
+===================================================================
+--- trunk/plearn_learners/online/ScaleGradientModule.h	2008-03-19 17:23:28 UTC (rev 8704)
++++ trunk/plearn_learners/online/ScaleGradientModule.h	2008-03-20 00:34:37 UTC (rev 8705)
+@@ -67,14 +67,19 @@
+     // Your other public member functions go here
+ 
+     //! Given a batch of inputs, compute the outputs
+-    //! SOON TO BE DEPRECATED, USE fprop(const TVec&lt;Mat*&gt;&amp; ports_value)
+     virtual void fprop(const Mat&amp; inputs, Mat&amp; outputs);
++    virtual void fprop(const Vec&amp; input, Vec&amp; output) const;
+ 
+     virtual void bpropUpdate(const Mat&amp; inputs, const Mat&amp; outputs,
+                              Mat&amp; input_gradients,
+                              const Mat&amp; output_gradients,
+                              bool accumulate=false);
+ 
++    virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; output,
++                             Vec&amp; input_gradient,
++                             const Vec&amp; output_gradient,
++                             bool accumulate=false);
++
+     //! Reset the parameters to the state they would be BEFORE starting
+     //! training.  Note that this method is necessarily called from
+     //! build().
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002152.html">[Plearn-commits] r8704 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="002154.html">[Plearn-commits] r8706 - trunk/python_modules/plearn/learners
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2153">[ date ]</a>
+              <a href="thread.html#2153">[ thread ]</a>
+              <a href="subject.html#2153">[ subject ]</a>
+              <a href="author.html#2153">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

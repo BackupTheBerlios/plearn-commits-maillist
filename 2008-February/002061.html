@@ -1,0 +1,563 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8613 - in trunk/plearn: base db io vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8613%20-%20in%20trunk/plearn%3A%20base%20db%20io%20vmat&In-Reply-To=%3C200802292135.m1TLZQv8030189%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002060.html">
+   <LINK REL="Next"  HREF="002062.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8613 - in trunk/plearn: base db io vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8613%20-%20in%20trunk/plearn%3A%20base%20db%20io%20vmat&In-Reply-To=%3C200802292135.m1TLZQv8030189%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8613 - in trunk/plearn: base db io vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri Feb 29 22:35:26 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002060.html">[Plearn-commits] r8612 - trunk/plearn/math
+</A></li>
+        <LI>Next message: <A HREF="002062.html">[Plearn-commits] r8614 - trunk/plearn/base
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2061">[ date ]</a>
+              <a href="thread.html#2061">[ thread ]</a>
+              <a href="subject.html#2061">[ subject ]</a>
+              <a href="author.html#2061">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-02-29 22:35:25 +0100 (Fri, 29 Feb 2008)
+New Revision: 8613
+
+Modified:
+   trunk/plearn/base/HelpSystem.cc
+   trunk/plearn/base/Object.cc
+   trunk/plearn/db/getDataSet.cc
+   trunk/plearn/io/PyPLearnScript.cc
+   trunk/plearn/io/fileutils.cc
+   trunk/plearn/io/fileutils.h
+   trunk/plearn/vmat/VVMatrix.cc
+Log:
+big modif to get the $INCLUDE{} macro preprocessing set the mtime valid in VMatrix.
+
+
+
+Modified: trunk/plearn/base/HelpSystem.cc
+===================================================================
+--- trunk/plearn/base/HelpSystem.cc	2008-02-29 21:00:53 UTC (rev 8612)
++++ trunk/plearn/base/HelpSystem.cc	2008-02-29 21:35:25 UTC (rev 8613)
+@@ -873,7 +873,8 @@
+     map&lt;string, string&gt; dic;
+     dic[&quot;PAGE_TITLE&quot;]= title;
+     PStream stm= openString(the_prologue, PStream::raw_ascii);
+-    return readAndMacroProcess(stm, dic, false);
++    time_t latest = 0;
++    return readAndMacroProcess(stm, dic, latest, false);
+ }
+ 
+ string HelpSystem::helpEpilogueHTML()
+
+Modified: trunk/plearn/base/Object.cc
+===================================================================
+--- trunk/plearn/base/Object.cc	2008-02-29 21:00:53 UTC (rev 8612)
++++ trunk/plearn/base/Object.cc	2008-02-29 21:35:25 UTC (rev 8613)
+@@ -827,7 +827,8 @@
+ 
+ Object* macroLoadObject(const PPath &amp;filename, map&lt;string, string&gt;&amp; vars)
+ {
+-    string script = readFileAndMacroProcess(filename, vars);
++    time_t date = 0;
++    string script = readFileAndMacroProcess(filename, vars, date);
+     PStream sin = openString(script,PStream::plearn_ascii);
+     Object* o = readObject(sin);
+     o-&gt;build();
+
+Modified: trunk/plearn/db/getDataSet.cc
+===================================================================
+--- trunk/plearn/db/getDataSet.cc	2008-02-29 21:00:53 UTC (rev 8612)
++++ trunk/plearn/db/getDataSet.cc	2008-02-29 21:35:25 UTC (rev 8613)
+@@ -105,7 +105,9 @@
+         //            &quot;use a standard .vmat or .pymat script&quot;); } 
+         else if (ext == &quot;vmat&quot; || ext == &quot;txtmat&quot;) {
+             use_params = true;
+-            const string code = readFileAndMacroProcess(dataset, params);
++            time_t date = 0;
++            const string code = readFileAndMacroProcess(dataset, params, date);
++
+             if (removeblanks(code)[0] == '&lt;') {
+                 // Old XML-like format.
+                 PLDEPRECATED(&quot;In getDataSet - File %s is using the old XML-like VMat format, &quot; 
+@@ -118,6 +120,7 @@
+                     PLERROR(&quot;In getDataSet - Object described in %s is not a VMatrix subclass&quot;,
+                             dataset.absolute().c_str());
+             }
++            vm-&gt;updateMtime(date);
+         } else if (ext == &quot;pymat&quot; || ext == &quot;py&quot;) {
+             use_params = true;
+             if (ext == &quot;py&quot;)
+
+Modified: trunk/plearn/io/PyPLearnScript.cc
+===================================================================
+--- trunk/plearn/io/PyPLearnScript.cc	2008-02-29 21:00:53 UTC (rev 8612)
++++ trunk/plearn/io/PyPLearnScript.cc	2008-02-29 21:35:25 UTC (rev 8613)
+@@ -48,6 +48,7 @@
+ #include &lt;plearn/io/fileutils.h&gt;
+ #include &lt;plearn/base/stringutils.h&gt;
+ #include &lt;plearn/base/pl_repository_revision.h&gt;
++#include &lt;plearn/vmat/VMatrix.h&gt;
+ 
+ 
+ namespace PLearn {
+@@ -304,7 +305,8 @@
+     else
+     {
+         PStream is     = openString( plearn_script, PStream::raw_ascii );
+-        plearn_script  = readAndMacroProcess( is, vars );
++        time_t latest = 0 ;
++        plearn_script  = readAndMacroProcess( is, vars, latest );
+     }
+ }
+ 
+@@ -327,6 +329,7 @@
+     
+     const string extension = extract_extension(filepath);
+     string script;
++    time_t date = 0;
+ 
+     PP&lt;PyPLearnScript&gt; pyplearn_script;
+     PStream in;
+@@ -363,8 +366,7 @@
+                 vars[name_val.first] = name_val.second;
+             }
+         }
+-
+-        script = readFileAndMacroProcess(filepath, vars);
++        script = readFileAndMacroProcess(filepath, vars, date);
+         in = openString( script, PStream::plearn_ascii );
+     }
+     else if(extension==&quot;.psave&quot;) // do not perform plearn macro expansion
+@@ -375,7 +377,9 @@
+         PLERROR(&quot;In smartLoadObject: unsupported file extension. Must be one of .pyplearn .pymat .plearn .vmat .psave&quot;);
+ 
+     Object* o = readObject(in);
+-    
++    if(extension==&quot;.vmat&quot;)
++        ((VMatrix*)o)-&gt;updateMtime(date);
++
+     if ( pyplearn_script.isNotNull() )
+         pyplearn_script-&gt;close();
+ 
+
+Modified: trunk/plearn/io/fileutils.cc
+===================================================================
+--- trunk/plearn/io/fileutils.cc	2008-02-29 21:00:53 UTC (rev 8612)
++++ trunk/plearn/io/fileutils.cc	2008-02-29 21:35:25 UTC (rev 8613)
+@@ -628,7 +628,7 @@
+ // readFileAndMacroProcess //
+ /////////////////////////////
+ string readFileAndMacroProcess(const PPath&amp; filepath, map&lt;string, string&gt;&amp; variables,
+-                               bool change_dir)
++                               time_t&amp; latest, bool change_dir)
+ {
+     // pout &lt;&lt; &quot;Processing file: &quot; &lt;&lt; filepath.absolute() &lt;&lt; endl;
+     // Save old variables (to allow recursive calls)
+@@ -658,12 +658,14 @@
+         file = file.basename();
+     }
+ 
++    latest=max(latest,mtime(file.absolute()));
++
+     // Add the new file and date variables
+     addFileAndDateVariables(file, variables);
+ 
+     // Perform actual parsing and macro processing...
+     PStream in = openFile(file, PStream::plearn_ascii, &quot;r&quot;);
+-    string text = readAndMacroProcess(in, variables);
++    string text = readAndMacroProcess(in, variables, latest);
+ 
+     // Restore previous variables
+     if (added)
+@@ -691,7 +693,8 @@
+ /////////////////////////
+ // readAndMacroProcess //
+ /////////////////////////
+-string readAndMacroProcess(PStream&amp; in, map&lt;string, string&gt;&amp; variables, bool skip_comments)
++string readAndMacroProcess(PStream&amp; in, map&lt;string, string&gt;&amp; variables, 
++                           time_t&amp; latest, bool skip_comments)
+ {
+     string text; // the processed text to return
+     bool inside_a_quoted_string=false; // inside a quoted string we don't skip characters following a #
+@@ -724,13 +727,13 @@
+                 in.smartReadUntilNext(&quot;}&quot;, varname, true);
+                 // Maybe there are macros to process to obtain the real name of the variable.
+                 PStream varname_stream = openString(varname, PStream::raw_ascii);
+-                varname = readAndMacroProcess(varname_stream, variables);
++                varname = readAndMacroProcess(varname_stream, variables, latest);
+                 varname = removeblanks(varname);
+                 map&lt;string, string&gt;::const_iterator it = variables.find(varname);
+                 if(it==variables.end())
+                     PLERROR(&quot;Macro variable ${%s} undefined&quot;, varname.c_str());
+                 PStream varin = openString(it-&gt;second, PStream::raw_ascii);
+-                text += readAndMacroProcess(varin, variables);
++                text += readAndMacroProcess(varin, variables, latest);
+             }
+             break;
+ 
+@@ -747,7 +750,7 @@
+                 if (!syntax_ok)
+                     PLERROR(&quot;$CHAR syntax is: $CHAR{expr}&quot;);
+                 PStream expr_stream = openString(expr, PStream::raw_ascii);
+-                char ch = (char) toint(readAndMacroProcess(expr_stream, variables));
++                char ch = (char) toint(readAndMacroProcess(expr_stream, variables, latest));
+                 text += ch;
+             }
+             break;
+@@ -801,8 +804,8 @@
+                         PLERROR(&quot;$DIVIDE syntax is: $DIVIDE{expr1}{expr2}&quot;);
+                     PStream expr1_stream = openString(expr1, PStream::raw_ascii);
+                     PStream expr2_stream = openString(expr2, PStream::raw_ascii);
+-                    string expr1_eval = readAndMacroProcess(expr1_stream, variables);
+-                    string expr2_eval = readAndMacroProcess(expr2_stream, variables);
++                    string expr1_eval = readAndMacroProcess(expr1_stream, variables, latest);
++                    string expr2_eval = readAndMacroProcess(expr2_stream, variables, latest);
+                     real e1, e2;
+                     if (!pl_isnumber(expr1_eval, &amp;e1) || !pl_isnumber(expr2_eval, &amp;e2)) {
+                         PLERROR(&quot;In $DIVIDE{expr1}{expr2}, either 'expr1' or 'expr2' is not a number&quot;);
+@@ -834,7 +837,7 @@
+                     if (!syntax_ok)
+                         PLERROR(&quot;$ECHO syntax is: $ECHO{expr}&quot;);
+                     PStream expr_stream = openString(expr, PStream::raw_ascii);
+-                    pout &lt;&lt; readAndMacroProcess(expr_stream, variables) &lt;&lt; endl;
++                    pout &lt;&lt; readAndMacroProcess(expr_stream, variables, latest) &lt;&lt; endl;
+                 }
+                 break;
+ 
+@@ -851,10 +854,10 @@
+                     if (!syntax_ok)
+                         PLERROR(&quot;$EVALUATE syntax is: $EVALUATE{varname}&quot;);
+                     PStream expr_stream = openString(expr, PStream::raw_ascii);
+-                    string varname = readAndMacroProcess(expr_stream, variables);
++                    string varname = readAndMacroProcess(expr_stream, variables, latest);
+                     string to_evaluate = variables[varname];
+                     PStream to_evaluate_stream = openString(to_evaluate, PStream::raw_ascii);
+-                    string evaluated = readAndMacroProcess(to_evaluate_stream, variables);
++                    string evaluated = readAndMacroProcess(to_evaluate_stream, variables, latest);
+                     variables[varname] = evaluated;
+                 }
+                 break;
+@@ -875,7 +878,7 @@
+                 if (!syntax_ok)
+                     PLERROR(&quot;$GETENV syntax is: $GETENV{expr}&quot;);
+                 PStream expr_stream = openString(expr, PStream::raw_ascii);
+-                string var_name = readAndMacroProcess(expr_stream, variables);
++                string var_name = readAndMacroProcess(expr_stream, variables, latest);
+                 const char* var = PR_GetEnv(var_name.c_str());
+ 
+                 if (!var)
+@@ -918,7 +921,7 @@
+                         PLERROR(&quot;$IF syntax is: $IF{cond}{expr_cond_true}{expr_cond_false}&quot;);
+ 
+                     PStream cond_stream = openString(cond, PStream::raw_ascii);
+-                    string evaluate_cond = readAndMacroProcess(cond_stream, variables);
++                    string evaluate_cond = readAndMacroProcess(cond_stream, variables, latest);
+                     if (evaluate_cond == &quot;1&quot; ) {
+                         expr_evaluated = expr_cond_true;
+                     } else if (evaluate_cond == &quot;0&quot;) {
+@@ -927,7 +930,7 @@
+                         PLERROR(&quot;$IF condition should be 0 or 1, but is %s&quot;, evaluate_cond.c_str());
+                     }
+                     PStream expr_stream = openString(expr_evaluated, PStream::raw_ascii);
+-                    text += readAndMacroProcess(expr_stream, variables);
++                    text += readAndMacroProcess(expr_stream, variables, latest);
+                 }
+                 break;
+ 
+@@ -949,11 +952,12 @@
+                         else
+                             PLERROR(&quot;$INCLUDE must be followed immediately by a { or &lt;&quot;);
+                         PStream pathin = openString(raw_includefilepath, PStream::raw_ascii);
+-                        raw_includefilepath = readAndMacroProcess(pathin,variables);
++                        raw_includefilepath = readAndMacroProcess(pathin, variables, latest);
+                         raw_includefilepath = removeblanks(raw_includefilepath);
++                        PPath p = PPath(raw_includefilepath);
+                         // Read file with appropriate variable definitions.
+                         text += readFileAndMacroProcess
+-                            (PPath(raw_includefilepath), variables, true);
++                            (p, variables, latest);
+                     }
+                     break;
+ 
+@@ -970,7 +974,7 @@
+                         if (!syntax_ok)
+                             PLERROR(&quot;$INT syntax is: $INT{expr}&quot;);
+                         PStream expr_stream = openString(expr, PStream::raw_ascii);
+-                        string expr_eval = readAndMacroProcess(expr_stream, variables);
++                        string expr_eval = readAndMacroProcess(expr_stream, variables, latest);
+                         real e;
+                         if (!pl_isnumber(expr_eval, &amp;e)) {
+                             PLERROR(&quot;In $INT{expr}, 'expr' is not a number&quot;);
+@@ -1001,7 +1005,7 @@
+                         if (!syntax_ok)
+                             PLERROR(&quot;$ISDEFINED syntax is: $ISDEFINED{expr}&quot;);
+                         PStream expr_stream = openString(expr, PStream::raw_ascii);
+-                        string expr_eval = readAndMacroProcess(expr_stream, variables);
++                        string expr_eval = readAndMacroProcess(expr_stream, variables, latest);
+                         map&lt;string, string&gt;::const_iterator it = variables.find(expr_eval);
+                         if(it==variables.end()) {
+                             // The variable is not defined.
+@@ -1033,8 +1037,8 @@
+                             PLERROR(&quot;$ISEQUAL syntax is: $ISEQUAL{expr1}{expr2}&quot;);
+                         PStream expr1_stream = openString(expr1, PStream::raw_ascii);
+                         PStream expr2_stream = openString(expr2, PStream::raw_ascii);
+-                        string expr1_eval = readAndMacroProcess(expr1_stream, variables);
+-                        string expr2_eval = readAndMacroProcess(expr2_stream, variables);
++                        string expr1_eval = readAndMacroProcess(expr1_stream, variables, latest);
++                        string expr2_eval = readAndMacroProcess(expr2_stream, variables, latest);
+                         if (expr1_eval == expr2_eval) {
+                             text += &quot;1&quot;;
+                         } else {
+@@ -1064,8 +1068,8 @@
+                             PLERROR(&quot;$ISHIGHER syntax is: $ISHIGHER{expr1}{expr2}&quot;);
+                         PStream expr1_stream = openString(expr1, PStream::raw_ascii);
+                         PStream expr2_stream = openString(expr2, PStream::raw_ascii);
+-                        string expr1_eval = readAndMacroProcess(expr1_stream, variables);
+-                        string expr2_eval = readAndMacroProcess(expr2_stream, variables);
++                        string expr1_eval = readAndMacroProcess(expr1_stream, variables, latest);
++                        string expr2_eval = readAndMacroProcess(expr2_stream, variables, latest);
+                         real e1, e2;
+                         if (!pl_isnumber(expr1_eval, &amp;e1) || !pl_isnumber(expr2_eval, &amp;e2)) {
+                             PLERROR(&quot;In $ISHIGHER{expr1}{expr2}, either 'expr1' or 'expr2' is not a number&quot;);
+@@ -1107,8 +1111,8 @@
+                     PLERROR(&quot;$MINUS syntax is: $MINUS{expr1}{expr2}&quot;);
+                 PStream expr1_stream = openString(expr1, PStream::raw_ascii);
+                 PStream expr2_stream = openString(expr2, PStream::raw_ascii);
+-                string expr1_eval = readAndMacroProcess(expr1_stream, variables);
+-                string expr2_eval = readAndMacroProcess(expr2_stream, variables);
++                string expr1_eval = readAndMacroProcess(expr1_stream, variables, latest);
++                string expr2_eval = readAndMacroProcess(expr2_stream, variables, latest);
+                 real e1, e2;
+                 if (!pl_isnumber(expr1_eval, &amp;e1) || !pl_isnumber(expr2_eval, &amp;e2)) {
+                     PLERROR(&quot;In $MINUS{expr1}{expr2}, either 'expr1' or 'expr2' is not a number&quot;);
+@@ -1140,8 +1144,8 @@
+                     PLERROR(&quot;$OR syntax is: $OR{expr1}{expr2}&quot;);
+                 PStream expr1_stream = openString(expr1, PStream::raw_ascii);
+                 PStream expr2_stream = openString(expr2, PStream::raw_ascii);
+-                string expr1_eval = readAndMacroProcess(expr1_stream, variables);
+-                string expr2_eval = readAndMacroProcess(expr2_stream, variables);
++                string expr1_eval = readAndMacroProcess(expr1_stream, variables, latest);
++                string expr2_eval = readAndMacroProcess(expr2_stream, variables, latest);
+                 real e1, e2;
+                 if (!pl_isnumber(expr1_eval, &amp;e1) || !pl_isnumber(expr2_eval, &amp;e2)) {
+                     PLERROR(&quot;In $OR{expr1}{expr2}, either 'expr1' or 'expr2' is not a number&quot;);
+@@ -1176,8 +1180,8 @@
+                     PLERROR(&quot;$PLUS syntax is: $PLUS{expr1}{expr2}&quot;);
+                 PStream expr1_stream = openString(expr1, PStream::raw_ascii);
+                 PStream expr2_stream = openString(expr2, PStream::raw_ascii);
+-                string expr1_eval = readAndMacroProcess(expr1_stream, variables);
+-                string expr2_eval = readAndMacroProcess(expr2_stream, variables);
++                string expr1_eval = readAndMacroProcess(expr1_stream, variables, latest);
++                string expr2_eval = readAndMacroProcess(expr2_stream, variables, latest);
+                 real e1, e2;
+                 if (!pl_isnumber(expr1_eval, &amp;e1) || !pl_isnumber(expr2_eval, &amp;e2)) {
+                     PLERROR(&quot;In $PLUS{expr1}{expr2}, either 'expr1' or 'expr2' is not a number&quot;);
+@@ -1230,21 +1234,21 @@
+                 if (!syntax_ok)
+                     PLERROR(&quot;$SWITCH syntax is: $SWITCH{expr}{comp1}{val1}{comp2}{val2}...{valdef}&quot;);
+                 PStream expr_stream = openString(expr, PStream::raw_ascii);
+-                string expr_eval =  readAndMacroProcess(expr_stream, variables);
++                string expr_eval =  readAndMacroProcess(expr_stream, variables, latest);
+                 bool not_done = true;
+                 for (size_t i = 0; i &lt; comp.size() &amp;&amp; not_done; i++) {
+                     PStream comp_stream = openString(comp[i], PStream::raw_ascii);
+-                    string comp_eval = readAndMacroProcess(comp_stream, variables);
++                    string comp_eval = readAndMacroProcess(comp_stream, variables, latest);
+                     if (expr_eval == comp_eval) {
+                         not_done = false;
+                         PStream val_stream = openString(val[i], PStream::raw_ascii);
+-                        text += readAndMacroProcess(val_stream, variables);
++                        text += readAndMacroProcess(val_stream, variables, latest);
+                     }
+                 }
+                 if (not_done) {
+                     // Default value needed.
+                     PStream val_stream = openString(valdef, PStream::raw_ascii);
+-                    text += readAndMacroProcess(val_stream, variables);
++                    text += readAndMacroProcess(val_stream, variables, latest);
+                 }
+             }
+             break;
+@@ -1272,8 +1276,8 @@
+                     PLERROR(&quot;$TIMES syntax is: $TIMES{expr1}{expr2}&quot;);
+                 PStream expr1_stream = openString(expr1, PStream::raw_ascii);
+                 PStream expr2_stream = openString(expr2, PStream::raw_ascii);
+-                string expr1_eval = readAndMacroProcess(expr1_stream, variables);
+-                string expr2_eval = readAndMacroProcess(expr2_stream, variables);
++                string expr1_eval = readAndMacroProcess(expr1_stream, variables, latest);
++                string expr2_eval = readAndMacroProcess(expr2_stream, variables, latest);
+                 real e1, e2;
+                 if (!pl_isnumber(expr1_eval, &amp;e1) || !pl_isnumber(expr2_eval, &amp;e2)) {
+                     PLERROR(&quot;In $TIMES{expr1}{expr2}, either 'expr1' or 'expr2' is not a number&quot;);
+@@ -1295,7 +1299,7 @@
+                 if (!syntax_ok)
+                     PLERROR(&quot;$UNDEFINE syntax is: $UNDEFINE{expr}&quot;);
+                 PStream expr_stream = openString(expr, PStream::raw_ascii);
+-                string varname = readAndMacroProcess(expr_stream, variables);
++                string varname = readAndMacroProcess(expr_stream, variables, latest);
+                 while (variables.count(varname) &gt; 0) {
+                     // This loop is probably not necessary, but just in case...
+                     variables.erase(varname);
+
+Modified: trunk/plearn/io/fileutils.h
+===================================================================
+--- trunk/plearn/io/fileutils.h	2008-02-29 21:00:53 UTC (rev 8612)
++++ trunk/plearn/io/fileutils.h	2008-02-29 21:35:25 UTC (rev 8613)
+@@ -203,9 +203,9 @@
+ //! Also every $DEFINE{varname=... } in the text will add a new varname
+ //! entry in the map (the DEFINE macro will be discarded).
+ //! Also every $INCLUDE{filepath} will be replaced in place by the text of
+-//! the file it includes
++//! the file it includes and set latest, to max(latest,mtime(filepath))
+ string readAndMacroProcess(PStream&amp; in, map&lt;string, string&gt;&amp; variables, 
+-                           bool skip_comments= true);
++                           time_t&amp; latest, bool skip_comments= true);
+ 
+ /*! Given a filename, generates the standard PLearn variables FILEPATH,
+   DIRPATH, FILENAME, FILEBASE, FILEEXT, DATE, TIME and DATETIME and
+@@ -235,12 +235,27 @@
+ */
+ string readFileAndMacroProcess(const PPath&amp; filepath,
+                                map&lt;string, string&gt;&amp; variables,
+-                               bool change_dir = false);
++                               time_t&amp; latest, bool change_dir = false);
+ 
++inline string readFileAndMacroProcess(const PPath&amp; filepath,
++                               map&lt;string, string&gt;&amp; variables,
++                               bool change_dir = false)
++{
++    time_t latest = 0;
++    return readFileAndMacroProcess(filepath, variables, latest, change_dir);
++}
++
++inline string readFileAndMacroProcess(const PPath&amp; filepath, time_t&amp; latest)
++{
++    map&lt;string, string&gt; variables;
++    return readFileAndMacroProcess(filepath, variables, latest);
++}
++
+ inline string readFileAndMacroProcess(const PPath&amp; filepath)
+ {
+     map&lt;string, string&gt; variables;
+-    return readFileAndMacroProcess(filepath, variables);
++    time_t latest = 0;
++    return readFileAndMacroProcess(filepath, variables, latest);
+ }
+ 
+ //! Increase by one the number of references to a file.
+
+Modified: trunk/plearn/vmat/VVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/VVMatrix.cc	2008-02-29 21:00:53 UTC (rev 8612)
++++ trunk/plearn/vmat/VVMatrix.cc	2008-02-29 21:35:25 UTC (rev 8613)
+@@ -142,12 +142,12 @@
+ 
+ time_t VVMatrix::getDateOfVMat(const string&amp; filename)
+ {
+-    string in=readFileAndMacroProcess(filename);
++    time_t latest = 0;
++    string in=readFileAndMacroProcess(filename, latest);
+     size_t idx_source = in.find(&quot;&lt;SOURCES&gt;&quot;);
+     size_t cidx_source;
++    latest=max(getDateOfCode(filename),latest);
+ 
+-    time_t latest = getDateOfCode(filename),tmp;
+-
+     if(idx_source!=string::npos)
+     {
+         idx_source += strlen(&quot;&lt;SOURCES&gt;&quot;);     // skip beyond
+@@ -167,11 +167,9 @@
+                     // also check for date of possible IntVecFile
+                     if(vecstr[1][0]!=slash_char)
+                         vecstr[1]=extract_directory(filename)+vecstr[1];
+-                    if((tmp=mtime(vecstr[1])) &gt; latest)
+-                        latest=tmp;
++                    latest=max(mtime(vecstr[1]),latest);
+                 }
+-                if((tmp=getDataSetDate(vecstr[0])) &gt; latest)
+-                    latest=tmp;
++                latest=max(getDataSetDate(vecstr[0]),latest);
+             }
+     }
+     return latest;
+@@ -344,7 +342,8 @@
+ 
+ VMat VVMatrix::createPreproVMat(const string &amp; filename)
+ {
+-    string in=readFileAndMacroProcess(filename);
++    time_t date_of_code = 0;
++    string in=readFileAndMacroProcess(filename,date_of_code);
+     size_t idx_source     = in.find(&quot;&lt;SOURCES&gt;&quot;);
+     size_t idx_prefilter  = in.find(&quot;&lt;PREFILTER&gt;&quot;);
+     size_t idx_postfilter = in.find(&quot;&lt;POSTFILTER&gt;&quot;);
+@@ -367,7 +366,7 @@
+ 
+     PPath meta_data_dir = remove_trailing_slash(filename)+&quot;.metadata&quot;;
+     force_mkdir(meta_data_dir);
+-    time_t date_of_code = getDateOfVMat(filename);
++    date_of_code=max(date_of_code,getDateOfVMat(filename));
+ 
+     // remove pollution : all stuff that has possibly been interrupted during computation
+     rm ( meta_data_dir / &quot;incomplete.*&quot; );
+@@ -612,8 +611,8 @@
+     if (the_filename != &quot;&quot;) {
+         setMetaDataDir( PPath(the_filename+&quot;.metadata&quot;).absolute() );
+         force_mkdir( getMetaDataDir() );
+-
+-        code = readFileAndMacroProcess(the_filename);
++        time_t latest=0;
++        code = readFileAndMacroProcess(the_filename,latest);
+         if(removeblanks(code)[0]=='&lt;') // old xml-like format
+             the_mat = createPreproVMat(the_filename);
+         else  // New standard PLearn object description format
+@@ -625,6 +624,7 @@
+         }
+ 
+         updateMtime(the_mat-&gt;getMtime());
++        updateMtime(latest);
+         length_ = the_mat.length();
+         width_ = the_mat.width();
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002060.html">[Plearn-commits] r8612 - trunk/plearn/math
+</A></li>
+	<LI>Next message: <A HREF="002062.html">[Plearn-commits] r8614 - trunk/plearn/base
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2061">[ date ]</a>
+              <a href="thread.html#2061">[ thread ]</a>
+              <a href="subject.html#2061">[ subject ]</a>
+              <a href="author.html#2061">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

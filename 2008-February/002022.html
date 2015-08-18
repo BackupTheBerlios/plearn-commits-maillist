@@ -1,0 +1,167 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8574 - trunk/plearn/math
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8574%20-%20trunk/plearn/math&In-Reply-To=%3C200802252238.m1PMcOgb015023%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002021.html">
+   <LINK REL="Next"  HREF="002023.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8574 - trunk/plearn/math</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8574%20-%20trunk/plearn/math&In-Reply-To=%3C200802252238.m1PMcOgb015023%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8574 - trunk/plearn/math">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Feb 25 23:38:24 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002021.html">[Plearn-commits] r8573 - trunk/plearn/var
+</A></li>
+        <LI>Next message: <A HREF="002023.html">[Plearn-commits] r8575 - trunk/plearn/misc
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2022">[ date ]</a>
+              <a href="thread.html#2022">[ thread ]</a>
+              <a href="subject.html#2022">[ subject ]</a>
+              <a href="author.html#2022">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-02-25 23:38:23 +0100 (Mon, 25 Feb 2008)
+New Revision: 8574
+
+Modified:
+   trunk/plearn/math/pl_erf.cc
+   trunk/plearn/math/pl_erf.h
+Log:
+Added function fast_gauss_01_quantile() that use precalculated data in a table.
+
+
+Modified: trunk/plearn/math/pl_erf.cc
+===================================================================
+--- trunk/plearn/math/pl_erf.cc	2008-02-25 21:48:01 UTC (rev 8573)
++++ trunk/plearn/math/pl_erf.cc	2008-02-25 22:38:23 UTC (rev 8574)
+@@ -34,6 +34,7 @@
+ // library, go to the PLearn Web site at www.plearn.org
+ 
+ #include &lt;plearn/base/general.h&gt;
++#include &lt;plearn/math/pl_erf.h&gt;
+ // #include &lt;iostream&gt;
+ #include &lt;cmath&gt;
+ 
+@@ -172,6 +173,12 @@
+ // i.e. approximately gauss_01_quantile(gauss_01_cum(x)) ~=~ x
+ // (the inverse is computed with a binary search, the bisection method)
+ real gauss_01_quantile(real q) {
++#ifdef BOUNDCHECK
++    if(q&lt;0||q&gt;1)
++        PLERROR(&quot;gauss_01_quantile(q=%f) - q is less then 0 or more then 1&quot;,q);
++    PLASSERT(!is_missing(q));
++#endif
++
+     // first find a reasonable interval (a,b) s.t. cum(a)&lt;q&lt;cum(b)
+     real a=-2;
+     real b=2;
+@@ -232,6 +239,38 @@
+ }
+ 
+ 
++float gaussQuantiletable[GAUSSQUANTILETABLESIZE];
++
++PLGaussQuantileInitializer::PLGaussQuantileInitializer()
++{
++    //! Fill the table
++    real scaling = 1./(GAUSSQUANTILETABLESIZE-1);
++    for(int i=0; i&lt;GAUSSQUANTILETABLESIZE; i++)
++        gaussQuantiletable[i] = (float) gauss_01_quantile(i*scaling);
++}
++
++PLGaussQuantileInitializer::~PLGaussQuantileInitializer() {}
++
++PLGaussQuantileInitializer pl_gauss_quantile_initializer;
++
++real fast_gauss_01_quantile(real q)
++{
++#ifdef BOUNDCHECK
++    if(q&lt;0||q&gt;1)
++        PLERROR(&quot;fast_gauss_01_quantile(q=%f) - &quot;
++                &quot;q is less then 0 or more then 1&quot;,q);
++    PLASSERT(!is_missing(q));
++#endif
++
++    if(q&gt;GAUSSQUANTILETABLESIZE*0.001&amp;&amp;q&lt;GAUSSQUANTILETABLESIZE*0.999)
++    {
++        int i;
++        DOUBLE_TO_INT( double(q*((GAUSSQUANTILETABLESIZE-1))), i);
++        return real(gaussQuantiletable[i]);
++    }
++    else
++        return gauss_01_quantile(q);
++}
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn/math/pl_erf.h
+===================================================================
+--- trunk/plearn/math/pl_erf.h	2008-02-25 21:48:01 UTC (rev 8573)
++++ trunk/plearn/math/pl_erf.h	2008-02-25 22:38:23 UTC (rev 8574)
+@@ -96,7 +96,24 @@
+ // the number of observations.
+ real p_value(real mu, real vn);
+ 
++#define GAUSSQUANTILETABLESIZE 10000
+ 
++class PLGaussQuantileInitializer
++{
++public:
++    PLGaussQuantileInitializer();
++    ~PLGaussQuantileInitializer();
++};
++
++extern float gaussQuantiletable[GAUSSQUANTILETABLESIZE];
++extern PLGaussQuantileInitializer pl_gauss_quantile_initializer;
++
++//! Use precomputed value in a table of size GAUSSQUANTILETABLESIZE.
++//! If value is in the first or last 1/1000 we return
++//! the result of the non-fast version as the quality is too low.
++real fast_gauss_01_quantile(real x);
++
++
+ } // end of namespace PLearn
+ 
+ #endif
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002021.html">[Plearn-commits] r8573 - trunk/plearn/var
+</A></li>
+	<LI>Next message: <A HREF="002023.html">[Plearn-commits] r8575 - trunk/plearn/misc
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2022">[ date ]</a>
+              <a href="thread.html#2022">[ thread ]</a>
+              <a href="subject.html#2022">[ subject ]</a>
+              <a href="author.html#2022">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,136 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9612 - trunk/python_modules/plearn/learners
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9612%20-%20trunk/python_modules/plearn/learners&In-Reply-To=%3C200810241524.m9OFORuf030449%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003051.html">
+   <LINK REL="Next"  HREF="003053.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9612 - trunk/python_modules/plearn/learners</H1>
+    <B>louradou at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9612%20-%20trunk/python_modules/plearn/learners&In-Reply-To=%3C200810241524.m9OFORuf030449%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9612 - trunk/python_modules/plearn/learners">louradou at mail.berlios.de
+       </A><BR>
+    <I>Fri Oct 24 17:24:27 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003051.html">[Plearn-commits] r9611 - in	trunk/plearn_learners/meta/test/AdaBoost/.pytest:	PL_AdaBoost_base/expected_results/expdir	PL_AdaBoost_base/expected_results/expdir/Split0	PL_AdaBoost_conf_rated_adaboost/expected_results/expdir	PL_AdaBoost_conf_rated_adaboost/expected_results/expdir/Split0	PL_AdaBoost_pseudo_loss_adaboost/expected_results/expdir	PL_AdaBoost_pseudo_loss_adaboost/expected_results/expdir/Split0
+</A></li>
+        <LI>Next message: <A HREF="003053.html">[Plearn-commits] r9613 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3052">[ date ]</a>
+              <a href="thread.html#3052">[ thread ]</a>
+              <a href="subject.html#3052">[ subject ]</a>
+              <a href="author.html#3052">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: louradou
+Date: 2008-10-24 17:24:27 +0200 (Fri, 24 Oct 2008)
+New Revision: 9612
+
+Modified:
+   trunk/python_modules/plearn/learners/SVM.py
+Log:
+added new type of output ('softvotes', recommended to try 'onevsone' multiclass_strategy)
+fixed OverFlowError in softmax with python
+
+
+
+Modified: trunk/python_modules/plearn/learners/SVM.py
+===================================================================
+--- trunk/python_modules/plearn/learners/SVM.py	2008-10-23 20:56:55 UTC (rev 9611)
++++ trunk/python_modules/plearn/learners/SVM.py	2008-10-24 15:24:27 UTC (rev 9612)
+@@ -620,7 +620,8 @@
+                         may depend the predictions).
+                         - 'onehot' is a simple onehot of the prediction.
+                         - 'votes' is the vote counts (one-against-one strategy for multi-class).
+-                        - 'dist' is the usual output for a SVM (distance to the boundary). For one-vs-one, it is the sum of distances (not recommended).
++                        - 'dist' is the usual output for a SVM (distance to the boundary). For one-vs-one, it is the sum of distances.
++                        - 'softvotes' is the same as 'dist' with a softmax of the output after (does not change the decision, except if you process bags of outputs).
+                         - 'proba' is the posterior emperical probability (using sigmoids of SVM standard outputs).
+                         Note: with the one-vs-all strategy, 'votes' and 'onehot' give the same outputs.
+                                      
+@@ -1276,6 +1277,14 @@
+                         if onevsone_dict[cl1cl2] &gt; 0:
+                             output[cl1cl2[0]] += onevsone_dict[cl1cl2]
+                     outputs.append( output )
++            elif self.outputs_type == 'softvotes':
++                for x in samples:
++                    output = [0]*nclasses
++                    onevsone_dict = model.predict_values(x)
++                    for cl1cl2 in onevsone_dict:
++                        if onevsone_dict[cl1cl2] &gt; 0:
++                            output[cl1cl2[0]] += softvalue( onevsone_dict[cl1cl2] )
++                    outputs.append( output )
+             else:
+                 raise ValueError, &quot;Unknown value %s for option 'outputs_type'&quot; % self.outputs_type
+         elif self.multiclass_strategy == 'onevsall':
+@@ -1304,6 +1313,13 @@
+                         onevsall_dict = model[c].predict_values(x)
+                         output[c] = onevsall_dict[(1,-1)]
+                     outputs.append( output )
++            elif self.outputs_type == 'softvotes':
++                for x in samples:
++                    output = [0]*nclasses
++                    for c in range(nclasses):
++                        onevsall_dict = model[c].predict_values(x)
++                        output[c] = softvalue( onevsall_dict[(1,-1)] )
++                    outputs.append( output )
+             else:
+                 raise ValueError, &quot;Unknown value %s for option 'outputs_type'&quot; % self.outputs_type
+         else:
+@@ -1710,10 +1726,17 @@
+ def softmax(output):
+     &quot;&quot;&quot; Softmax function
+     &quot;&quot;&quot;
+-    expterms = [ math.exp(o) for o in output ]
++    try:
++        expterms = [ math.exp(o) for o in output ]
++    except OverflowError:
++        MAX= max(output)
++        expterms = [ int(o==MAX) for o in output ]
+     S = sum(expterms)
+     return [ e/S for e in expterms ]
+ 
++def softvalue(value):
++    return softmax([ value, - value ])[0]
++
+ &quot;&quot;&quot;&quot;&quot;&quot;
+ 
+ &quot;&quot;&quot; Below:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003051.html">[Plearn-commits] r9611 - in	trunk/plearn_learners/meta/test/AdaBoost/.pytest:	PL_AdaBoost_base/expected_results/expdir	PL_AdaBoost_base/expected_results/expdir/Split0	PL_AdaBoost_conf_rated_adaboost/expected_results/expdir	PL_AdaBoost_conf_rated_adaboost/expected_results/expdir/Split0	PL_AdaBoost_pseudo_loss_adaboost/expected_results/expdir	PL_AdaBoost_pseudo_loss_adaboost/expected_results/expdir/Split0
+</A></li>
+	<LI>Next message: <A HREF="003053.html">[Plearn-commits] r9613 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3052">[ date ]</a>
+              <a href="thread.html#3052">[ thread ]</a>
+              <a href="subject.html#3052">[ subject ]</a>
+              <a href="author.html#3052">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

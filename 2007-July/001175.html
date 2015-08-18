@@ -1,0 +1,314 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7727 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7727%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200707092318.l69NIXin010495%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001174.html">
+   <LINK REL="Next"  HREF="001176.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7727 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7727%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200707092318.l69NIXin010495%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7727 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Tue Jul 10 01:18:33 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001174.html">[Plearn-commits] r7726 - trunk/python_modules/plearn/learners/autolr
+</A></li>
+        <LI>Next message: <A HREF="001176.html">[Plearn-commits] r7728 - trunk/plearn/io
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1175">[ date ]</a>
+              <a href="thread.html#1175">[ thread ]</a>
+              <a href="subject.html#1175">[ subject ]</a>
+              <a href="author.html#1175">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-07-10 01:18:32 +0200 (Tue, 10 Jul 2007)
+New Revision: 7727
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+Log:
+Fixes to the sampling code in fprop of RBMModule
+
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-07-09 23:18:05 UTC (rev 7726)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-07-09 23:18:32 UTC (rev 7727)
+@@ -662,7 +662,8 @@
+         // When an input is provided, that would restart the chain for
+         // unconditional sampling, from that example.
+         Gibbs_step = 0;
+-        visible_layer-&gt;setExpectations(*visible);
++        visible_layer-&gt;samples.resize(visible-&gt;length(),visible-&gt;width());
++        visible_layer-&gt;samples &lt;&lt; *visible;
+     }
+ 
+     // COMPUTE ENERGY
+@@ -802,6 +803,77 @@
+         found_a_valid_configuration = true;
+     }
+ 
++    // COMPUTE AUTOASSOCIATOR RECONSTRUCTION ERROR
++    if ( visible &amp;&amp; !visible-&gt;isEmpty() &amp;&amp;
++         ( ( visible_reconstruction &amp;&amp; visible_reconstruction-&gt;isEmpty() ) ||
++           ( visible_reconstruction_activations &amp;&amp;
++             visible_reconstruction_activations-&gt;isEmpty() ) ||
++           ( reconstruction_error &amp;&amp; reconstruction_error-&gt;isEmpty() ) ) )
++    {
++        // Autoassociator reconstruction cost
++        PLASSERT( ports_value.length() == nPorts() );
++        if(!hidden_expectations_are_computed)
++        {
++            computePositivePhaseHiddenActivations(*visible);
++            hidden_layer-&gt;computeExpectations();
++            hidden_expectations_are_computed=true;
++        }
++
++        // Don't need to verify if they are asked in a port, this was done previously
++
++        computeVisibleActivations(hidden_layer-&gt;getExpectations(), true);
++        if(visible_reconstruction_activations)
++        {
++            PLASSERT( visible_reconstruction_activations-&gt;isEmpty() );
++            const Mat&amp; to_store = visible_layer-&gt;activations;
++            visible_reconstruction_activations-&gt;resize(to_store.length(),
++                                                       to_store.width());
++            *visible_reconstruction_activations &lt;&lt; to_store;
++        }
++        if (visible_reconstruction || reconstruction_error)
++        {
++            visible_layer-&gt;computeExpectations();
++            if(visible_reconstruction)
++            {
++                PLASSERT( visible_reconstruction-&gt;isEmpty() );
++                const Mat&amp; to_store = visible_layer-&gt;getExpectations();
++                visible_reconstruction-&gt;resize(to_store.length(),
++                                               to_store.width());
++                *visible_reconstruction &lt;&lt; to_store;
++            }
++            if(reconstruction_error)
++            {
++                PLASSERT( reconstruction_error-&gt;isEmpty() );
++                reconstruction_error-&gt;resize(visible-&gt;length(),1);
++                visible_layer-&gt;fpropNLL(*visible,
++                                        *reconstruction_error);
++            }
++        }
++        found_a_valid_configuration = true;
++    }
++    // COMPUTE VISIBLE GIVEN HIDDEN
++    else if ( visible_reconstruction &amp;&amp; visible_reconstruction-&gt;isEmpty()
++         &amp;&amp; hidden &amp;&amp; !hidden-&gt;isEmpty())
++    {
++        // Don't need to verify if they are asked in a port, this was done previously
++        computeVisibleActivations(*hidden,true);
++        if(visible_reconstruction_activations)
++        {
++            PLASSERT( visible_reconstruction_activations-&gt;isEmpty() );
++            const Mat&amp; to_store = visible_layer-&gt;activations;
++            visible_reconstruction_activations-&gt;resize(to_store.length(),
++                                                       to_store.width());
++            *visible_reconstruction_activations &lt;&lt; to_store;
++        }
++        visible_layer-&gt;computeExpectations();
++        PLASSERT( visible_reconstruction-&gt;isEmpty() );
++        const Mat&amp; to_store = visible_layer-&gt;getExpectations();
++        visible_reconstruction-&gt;resize(to_store.length(),
++                                       to_store.width());
++        *visible_reconstruction &lt;&lt; to_store;
++        found_a_valid_configuration = true;
++    }
++
+     // SAMPLING
+     if ((visible_sample &amp;&amp; visible_sample-&gt;isEmpty())               // is asked to sample visible units (discrete)
+         || (visible_expectation &amp;&amp; visible_expectation-&gt;isEmpty())  //              &quot;                   (continous)
+@@ -816,15 +888,10 @@
+         else if (visible_sample &amp;&amp; !visible_sample-&gt;isEmpty()) // if an input is provided, sample hidden conditionally
+         {
+             sampleHiddenGivenVisible(*visible_sample);
++            hidden_activations_are_computed = false;
+             Gibbs_step=0;
+             //cout &lt;&lt; &quot;sampling hidden from visible&quot; &lt;&lt; endl;
+         }
+-        else if (visible &amp;&amp; !visible-&gt;isEmpty()) // if an input is provided, sample hidden conditionally
+-        {
+-	    sampleHiddenGivenVisible(*visible);
+-            Gibbs_step=0;
+-            //cout &lt;&lt; &quot;sampling hidden from visible&quot; &lt;&lt; endl;
+-        }
+         else if (visible_expectation &amp;&amp; !visible_expectation-&gt;isEmpty())
+         {
+              PLERROR(&quot;In RBMModule::fprop visible_expectation can only be an output port (use visible as input port&quot;);
+@@ -833,6 +900,17 @@
+         {
+             // the visible_layer-&gt;expectations contain the &quot;state&quot; from which we
+             // start or continue the chain
++            if (visible_layer-&gt;samples.isEmpty())
++            {
++                if (visible &amp;&amp; !visible-&gt;isEmpty())
++                    visible_layer-&gt;samples &lt;&lt; *visible;
++                else if (!visible_layer-&gt;getExpectations().isEmpty())
++                    visible_layer-&gt;samples &lt;&lt; visible_layer-&gt;getExpectations();
++                else if (!hidden_layer-&gt;samples.isEmpty())
++                    sampleVisibleGivenHidden(hidden_layer-&gt;samples);    
++                else if (!hidden_layer-&gt;getExpectations().isEmpty())
++                    sampleVisibleGivenHidden(hidden_layer-&gt;getExpectations());    
++            }
+             int min_n = max(Gibbs_step+n_Gibbs_steps_per_generated_sample,
+                             min_n_Gibbs_steps);
+             //cout &lt;&lt; &quot;Gibbs sampling &quot; &lt;&lt; Gibbs_step+1;
+@@ -841,7 +919,8 @@
+                 sampleHiddenGivenVisible(visible_layer-&gt;samples);
+                 sampleVisibleGivenHidden(hidden_layer-&gt;samples);
+             }
+-              //cout &lt;&lt; &quot; -&gt; &quot; &lt;&lt; Gibbs_step &lt;&lt; endl;
++            hidden_activations_are_computed = false;
++            //cout &lt;&lt; &quot; -&gt; &quot; &lt;&lt; Gibbs_step &lt;&lt; endl;
+         }
+ 
+         if ( hidden &amp;&amp; hidden-&gt;isEmpty())   // fill hidden.state with expectations
+@@ -869,6 +948,18 @@
+                                         to_store.width());
+             *visible_expectation &lt;&lt; to_store;
+         }
++        if (hidden &amp;&amp; hidden-&gt;isEmpty())
++        {
++            hidden-&gt;resize(hidden_layer-&gt;samples.length(),
++                           hidden_layer-&gt;samples.width());
++            *hidden &lt;&lt; hidden_layer-&gt;samples;
++        }
++        if (hidden_act &amp;&amp; hidden_act-&gt;isEmpty())
++        {
++            hidden_act-&gt;resize(hidden_layer-&gt;samples.length(),
++                               hidden_layer-&gt;samples.width());
++            *hidden_act &lt;&lt; hidden_layer-&gt;getExpectations();
++        }
+         found_a_valid_configuration = true;
+     }// END SAMPLING
+ 
+@@ -923,6 +1014,7 @@
+                 sampleVisibleGivenHidden(hidden_layer-&gt;samples);
+                 // compute corresponding hidden expectations.
+                 computeHiddenActivations(visible_layer-&gt;samples);
++                hidden_activations_are_computed = false;
+                 hidden_layer-&gt;computeExpectations();
+             }
+             PLASSERT(negative_phase_visible_samples);
+@@ -969,77 +1061,6 @@
+     }
+ 
+ 
+-    // COMPUTE AUTOASSOCIATOR RECONSTRUCTION ERROR
+-    if ( visible &amp;&amp; !visible-&gt;isEmpty() &amp;&amp;
+-         ( ( visible_reconstruction &amp;&amp; visible_reconstruction-&gt;isEmpty() ) ||
+-           ( visible_reconstruction_activations &amp;&amp;
+-             visible_reconstruction_activations-&gt;isEmpty() ) ||
+-           ( reconstruction_error &amp;&amp; reconstruction_error-&gt;isEmpty() ) ) )
+-    {
+-        // Autoassociator reconstruction cost
+-        PLASSERT( ports_value.length() == nPorts() );
+-        computePositivePhaseHiddenActivations(*visible);
+-        if(!hidden_expectations_are_computed)
+-        {
+-            hidden_layer-&gt;computeExpectations();
+-            hidden_expectations_are_computed=true;
+-        }
+-
+-        // Don't need to verify if they are asked in a port, this was done previously
+-
+-        computeVisibleActivations(hidden_layer-&gt;getExpectations(), true);
+-        if(visible_reconstruction_activations)
+-        {
+-            PLASSERT( visible_reconstruction_activations-&gt;isEmpty() );
+-            const Mat&amp; to_store = visible_layer-&gt;activations;
+-            visible_reconstruction_activations-&gt;resize(to_store.length(),
+-                                                       to_store.width());
+-            *visible_reconstruction_activations &lt;&lt; to_store;
+-        }
+-        if (visible_reconstruction || reconstruction_error)
+-        {
+-            visible_layer-&gt;computeExpectations();
+-            if(visible_reconstruction)
+-            {
+-                PLASSERT( visible_reconstruction-&gt;isEmpty() );
+-                const Mat&amp; to_store = visible_layer-&gt;getExpectations();
+-                visible_reconstruction-&gt;resize(to_store.length(),
+-                                               to_store.width());
+-                *visible_reconstruction &lt;&lt; to_store;
+-            }
+-            if(reconstruction_error)
+-            {
+-                PLASSERT( reconstruction_error-&gt;isEmpty() );
+-                reconstruction_error-&gt;resize(visible-&gt;length(),1);
+-                visible_layer-&gt;fpropNLL(*visible,
+-                                        *reconstruction_error);
+-            }
+-        }
+-        found_a_valid_configuration = true;
+-    }
+-    // COMPUTE VISIBLE GIVEN HIDDEN
+-    else if ( visible_reconstruction &amp;&amp; visible_reconstruction-&gt;isEmpty()
+-         &amp;&amp; hidden &amp;&amp; !hidden-&gt;isEmpty())
+-    {
+-        // Don't need to verify if they are asked in a port, this was done previously
+-        computeVisibleActivations(*hidden,true);
+-        if(visible_reconstruction_activations)
+-        {
+-            PLASSERT( visible_reconstruction_activations-&gt;isEmpty() );
+-            const Mat&amp; to_store = visible_layer-&gt;activations;
+-            visible_reconstruction_activations-&gt;resize(to_store.length(),
+-                                                       to_store.width());
+-            *visible_reconstruction_activations &lt;&lt; to_store;
+-        }
+-        visible_layer-&gt;computeExpectations();
+-        PLASSERT( visible_reconstruction-&gt;isEmpty() );
+-        const Mat&amp; to_store = visible_layer-&gt;getExpectations();
+-        visible_reconstruction-&gt;resize(to_store.length(),
+-                                       to_store.width());
+-        *visible_reconstruction &lt;&lt; to_store;
+-        found_a_valid_configuration = true;
+-    }
+-
+     // Reset some class fields to ensure they are not reused by mistake.
+     hidden_act = NULL;
+     hidden_bias = NULL;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001174.html">[Plearn-commits] r7726 - trunk/python_modules/plearn/learners/autolr
+</A></li>
+	<LI>Next message: <A HREF="001176.html">[Plearn-commits] r7728 - trunk/plearn/io
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1175">[ date ]</a>
+              <a href="thread.html#1175">[ thread ]</a>
+              <a href="subject.html#1175">[ subject ]</a>
+              <a href="author.html#1175">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

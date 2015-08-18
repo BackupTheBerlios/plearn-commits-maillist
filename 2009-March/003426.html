@@ -1,0 +1,161 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9986 - trunk/plearn/python
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9986%20-%20trunk/plearn/python&In-Reply-To=%3C200903051822.n25IM20c028176%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003425.html">
+   <LINK REL="Next"  HREF="003427.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9986 - trunk/plearn/python</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9986%20-%20trunk/plearn/python&In-Reply-To=%3C200903051822.n25IM20c028176%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9986 - trunk/plearn/python">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Thu Mar  5 19:22:02 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003425.html">[Plearn-commits] r9985 - trunk/python_modules/plearn/pymake
+</A></li>
+        <LI>Next message: <A HREF="003427.html">[Plearn-commits] r9987 - trunk/python_modules/plearn/pybridge
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3426">[ date ]</a>
+              <a href="thread.html#3426">[ thread ]</a>
+              <a href="subject.html#3426">[ subject ]</a>
+              <a href="author.html#3426">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2009-03-05 19:22:01 +0100 (Thu, 05 Mar 2009)
+New Revision: 9986
+
+Modified:
+   trunk/plearn/python/PythonExtension.cc
+   trunk/plearn/python/PythonExtension.h
+   trunk/plearn/python/PythonObjectWrapper.cc
+Log:
+- added python exception PLearnError for PLERRORs
+
+
+
+Modified: trunk/plearn/python/PythonExtension.cc
+===================================================================
+--- trunk/plearn/python/PythonExtension.cc	2009-03-05 15:17:12 UTC (rev 9985)
++++ trunk/plearn/python/PythonExtension.cc	2009-03-05 18:22:01 UTC (rev 9986)
+@@ -396,6 +396,30 @@
+     }
+ }
+ 
++PyObject* the_PLearn_python_exception= 0;
++void injectPLearnException(PyObject* module)
++{
++    PyObject* res= PyRun_String(&quot;class PLearnError(Exception):\n\tpass\n&quot;, 
++                                Py_file_input, 
++                                PyModule_GetDict(module), 
++                                PyModule_GetDict(module));
++    if(!res)
++    {
++        if(PyErr_Occurred()) PyErr_Print();
++        PLERROR(&quot;in injectPLearnException : cannot create PLearnException class.&quot;);
++    }
++    Py_DECREF(res);
++
++    the_PLearn_python_exception= PyObject_GetAttrString(module, &quot;PLearnError&quot;);
++    if(!the_PLearn_python_exception)
++    {
++        if(PyErr_Occurred()) PyErr_Print();
++        PLERROR(&quot;in injectPLearnException : cannot retrieve PLearnException class.&quot;);
++    }
++    //keep ref. to PLearnError forever.
++}
++
++
+ void createWrappedObjectsSet(PyObject* module)
+ {
+     /* can't set logging before this gets called
+@@ -461,7 +485,7 @@
+ // init module, then inject global funcs
+ void initPythonExtensionModule(char const * module_name)
+ {
+-    /* can't set logging before this gets called
++    /* // can't set logging before this gets called
+     perr &lt;&lt; &quot;[pid=&quot; &lt;&lt; getPid() &lt;&lt; &quot;] &quot;
+          &lt;&lt; &quot;initPythonExtensionModule name=&quot; &lt;&lt; module_name &lt;&lt; endl;
+     */
+@@ -472,12 +496,13 @@
+ 
+ void setPythonModuleAndInject(PyObject* module)
+ {
+-    /* can't set logging before this gets called
++    /* //can't set logging before this gets called
+     perr &lt;&lt; &quot;[pid=&quot; &lt;&lt; getPid() &lt;&lt; &quot;] &quot;
+          &lt;&lt; &quot;setPythonModuleAndInject for module: &quot; &lt;&lt; PythonObjectWrapper(module) &lt;&lt; &quot;\tat &quot; &lt;&lt; (void*)module &lt;&lt; endl;
+     */
+     injectPLearnGlobalFunctions(module);
+     injectPLearnClasses(module);
++    injectPLearnException(module);
+     createWrappedObjectsSet(module);
+     the_PLearn_python_module= module;   
+ }
+
+Modified: trunk/plearn/python/PythonExtension.h
+===================================================================
+--- trunk/plearn/python/PythonExtension.h	2009-03-05 15:17:12 UTC (rev 9985)
++++ trunk/plearn/python/PythonExtension.h	2009-03-05 18:22:01 UTC (rev 9986)
+@@ -59,6 +59,7 @@
+ 
+ 
+ extern PyObject* the_PLearn_python_module;
++extern PyObject* the_PLearn_python_exception;
+ 
+ } // end of namespace PLearn
+ 
+
+Modified: trunk/plearn/python/PythonObjectWrapper.cc
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.cc	2009-03-05 15:17:12 UTC (rev 9985)
++++ trunk/plearn/python/PythonObjectWrapper.cc	2009-03-05 18:22:01 UTC (rev 9986)
+@@ -551,7 +551,7 @@
+     }
+     catch(const PLearnError&amp; e)
+     {
+-        PyErr_SetString(PyExc_Exception, e.message().c_str());
++        PyErr_SetString(the_PLearn_python_exception, e.message().c_str());
+         return 0;
+     }
+     catch(const std::exception&amp; e)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003425.html">[Plearn-commits] r9985 - trunk/python_modules/plearn/pymake
+</A></li>
+	<LI>Next message: <A HREF="003427.html">[Plearn-commits] r9987 - trunk/python_modules/plearn/pybridge
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3426">[ date ]</a>
+              <a href="thread.html#3426">[ thread ]</a>
+              <a href="subject.html#3426">[ subject ]</a>
+              <a href="author.html#3426">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

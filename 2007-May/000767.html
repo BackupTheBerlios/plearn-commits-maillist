@@ -1,0 +1,478 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7318 -	trunk/plearn_learners/distributions/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7318%20-%0A%09trunk/plearn_learners/distributions/EXPERIMENTAL&In-Reply-To=%3C200705242024.l4OKOYvK005799%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000766.html">
+   <LINK REL="Next"  HREF="000768.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7318 -	trunk/plearn_learners/distributions/EXPERIMENTAL</H1>
+    <B>plearner at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7318%20-%0A%09trunk/plearn_learners/distributions/EXPERIMENTAL&In-Reply-To=%3C200705242024.l4OKOYvK005799%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7318 -	trunk/plearn_learners/distributions/EXPERIMENTAL">plearner at mail.berlios.de
+       </A><BR>
+    <I>Thu May 24 22:24:34 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000766.html">[Plearn-commits] r7317 - trunk/python_modules/plearn/var
+</A></li>
+        <LI>Next message: <A HREF="000768.html">[Plearn-commits] r7319 - trunk/examples/Demo/Tasks/2d_density/Models
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#767">[ date ]</a>
+              <a href="thread.html#767">[ thread ]</a>
+              <a href="subject.html#767">[ subject ]</a>
+              <a href="author.html#767">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: plearner
+Date: 2007-05-24 22:24:34 +0200 (Thu, 24 May 2007)
+New Revision: 7318
+
+Modified:
+   trunk/plearn_learners/distributions/EXPERIMENTAL/LocallyMagnifiedDistribution.cc
+   trunk/plearn_learners/distributions/EXPERIMENTAL/LocallyMagnifiedDistribution.h
+Log:
+New improved version of LocallyMagnifiedDistribution
+
+
+Modified: trunk/plearn_learners/distributions/EXPERIMENTAL/LocallyMagnifiedDistribution.cc
+===================================================================
+--- trunk/plearn_learners/distributions/EXPERIMENTAL/LocallyMagnifiedDistribution.cc	2007-05-24 20:23:11 UTC (rev 7317)
++++ trunk/plearn_learners/distributions/EXPERIMENTAL/LocallyMagnifiedDistribution.cc	2007-05-24 20:24:34 UTC (rev 7318)
+@@ -46,6 +46,7 @@
+ #include &lt;plearn/vmat/MemoryVMatrix.h&gt;
+ #include &lt;plearn_learners/nearest_neighbors/ExhaustiveNearestNeighbors.h&gt;
+ #include &lt;plearn/base/tostring.h&gt;
++#include &lt;plearn_learners/distributions/GaussianDistribution.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -55,16 +56,17 @@
+ //////////////////
+ LocallyMagnifiedDistribution::LocallyMagnifiedDistribution()
+     :mode(0),
+-     nneighbors(-1),
+-     use_rank_weighting(false),
+-     width_neighbor(0),
++     computation_neighbors(-1),
++     kernel_adapt_width_mode(' '),
++     fix_localdistr_center(true),
++     width_neighbors(1.0),
+      width_factor(1.0),
+      width_optionname(&quot;sigma&quot;)
+ {
+ }
+ 
+ PLEARN_IMPLEMENT_OBJECT(LocallyMagnifiedDistribution,
+-                        &quot;Density estimation by fitting a local model (localdistr) to a view of the training samples, magnified locally around the test point.&quot;,
++                        &quot;Density estimation by fitting a local model (specified by localdistr) to a view of the training samples, magnified locally around the test point.&quot;,
+                         &quot;&quot;
+     );
+ 
+@@ -82,34 +84,46 @@
+     declareOption(ol, &quot;mode&quot;, &amp;LocallyMagnifiedDistribution::mode, OptionBase::buildoption,
+                   &quot;Output computation mode&quot;);
+ 
+-    declareOption(ol, &quot;nneighbors&quot;, &amp;LocallyMagnifiedDistribution::nneighbors, OptionBase::buildoption,
++    declareOption(ol, &quot;computation_neighbors&quot;, &amp;LocallyMagnifiedDistribution::computation_neighbors, OptionBase::buildoption,
++                  &quot;This indicates to how many neighbors we should restrict ourselves for the computations.\n&quot;
++                  &quot;(it's equivalent to giving all other data points a weight of 0)\n&quot;
+                   &quot;If &lt;=0 we use all training points (with an appropriate weight).\n&quot;
+-                  &quot;If &gt;0 we consider only that many neighbors of the test point;\n&quot;
+-                  &quot;(it's equivalent to giving all other data points a weight of 0)\n&quot;);
++                  &quot;If &gt;1 we consider only that many neighbors of the test point;\n&quot;
++                  &quot;If between 0 and 1, it's considered a coefficient by which to multiply\n&quot;
++                  &quot;the square root of the numbder of training points, to yield the actual \n&quot;
++                  &quot;number of computation neighbors used&quot;);
+ 
+-    declareOption(ol, &quot;use_rank_weighting&quot;, &amp;LocallyMagnifiedDistribution::use_rank_weighting, OptionBase::buildoption,
+-                  &quot;If true, then we ignore the weighting_kernel, and ascribe weight 1/k to the neighbors\n&quot;
+-                  &quot;where k is the index of the neighbor from 1 to nneighbors&quot;);
+-
+     declareOption(ol, &quot;weighting_kernel&quot;, &amp;LocallyMagnifiedDistribution::weighting_kernel, OptionBase::buildoption,
+                   &quot;The magnifying kernel that will be used to locally weigh the samples.\n&quot;
+-                  &quot;If it is left null, and use_rank_weighting is false, then all \n&quot;
+-                  &quot;nneighbors will receive a weight of 1\n&quot;);
++                  &quot;If it is left null then all computation_neighbors will receive a weight of 1\n&quot;);
+ 
+-    declareOption(ol, &quot;width_neighbor&quot;, &amp;LocallyMagnifiedDistribution::width_neighbor, OptionBase::buildoption,
+-                  &quot;If width_neighbor&gt;0, kernel width is set to be the distance to the \n&quot;
+-                  &quot;width_neighbor'th neighbor times the width_factor (Euclidean distance neighbors for now)\n&quot;
+-                  &quot;If width_neighbor==0, kernel is left as specified upon construction&quot;);
++    declareOption(ol, &quot;kernel_adapt_width_mode&quot;, &amp;LocallyMagnifiedDistribution::kernel_adapt_width_mode, OptionBase::buildoption,
++                  &quot;This controls how we adapt the width of the kernel to the local neighborhood of the test point.\n&quot;
++                  &quot;' ' means leave width unchanged\n&quot;
++                  &quot;'A' means set the width to width_factor times the average distance to the neighbors determined by width_neighborss.\n&quot; 
++                  &quot;'M' means set the width to width_faactor times the maximum distance to the neighbors determined by width_neighborss.\n&quot;);
+ 
++    declareOption(ol, &quot;width_neighbors&quot;, &amp;LocallyMagnifiedDistribution::width_neighbors, OptionBase::buildoption,
++                  &quot;width_neighbors tells how many neighbors to consider to determine the kernel width.\n&quot;
++                  &quot;(see kernel_adapt_width_mode) \n&quot;
++                  &quot;If width_neighbors&gt;1 we consider that many neighbors.\n&quot;
++                  &quot;If width_neighbors&gt;=0 and &lt;=1 it's considered a coefficient by which to multiply\n&quot;
++                  &quot;the square root of the numbder of training points, to yield the actual \n&quot;
++                  &quot;number of neighbors used&quot;);
++
+     declareOption(ol, &quot;width_factor&quot;, &amp;LocallyMagnifiedDistribution::width_factor, OptionBase::buildoption,
+-                  &quot;Only used if width_neighbor&gt;0 (see width_neighbor)&quot;);
++                  &quot;Only used if width_neighbors&gt;0 (see width_neighbors)&quot;);
+ 
+     declareOption(ol, &quot;width_optionname&quot;, &amp;LocallyMagnifiedDistribution::width_optionname, OptionBase::buildoption,
+-                  &quot;Only used if width_neighbor&gt;0. The name of the option in the weighting kernel that should be used to set or modifiy its width&quot;);
++                  &quot;Only used if kernel_adapt_width_mode!=' '. The name of the option in the weighting kernel that should be used to set or modifiy its width&quot;);
+ 
+     declareOption(ol, &quot;localdistr&quot;, &amp;LocallyMagnifiedDistribution::localdistr, OptionBase::buildoption,
+-                  &quot;The distribution that will be trained with local weights obtained from the magnifying kernel&quot;);
++                  &quot;The kind of distribution that will be trained with local weights obtained from the magnifying kernel.\n&quot;
++                  &quot;If left unspecified (null), it will be set to GaussianDistribution by default.&quot;);
+ 
++    declareOption(ol, &quot;fix_localdistr_center&quot;, &amp;LocallyMagnifiedDistribution::fix_localdistr_center, OptionBase::buildoption,
++                  &quot;If true, and localdistr is GaussianDistribution, then the mu of the localdistr will be forced to be the given test point.&quot;);
++
+     declareOption(ol, &quot;train_set&quot;, &amp;LocallyMagnifiedDistribution::train_set, OptionBase::learntoption,
+                   &quot;We need to store the training set, as this learner is memory-based...&quot;);
+ 
+@@ -143,32 +157,16 @@
+     // ###  - Updating or &quot;re-building&quot; of an object after a few &quot;tuning&quot; options have been modified.
+     // ### You should assume that the parent class' build_() has already been called.
+ 
+-    int actual_nneighbors = max(nneighbors, width_neighbor);
+-    if(train_set.isNotNull())
+-        actual_nneighbors = min(actual_nneighbors, train_set.length());
+-
+-    if(actual_nneighbors&gt;0)
+-    {
+-        NN = new ExhaustiveNearestNeighbors(); // for now use Exhaustive search and default Euclidean distance
+-        NN-&gt;num_neighbors = actual_nneighbors;
+-        NN-&gt;copy_input = false;
+-        NN-&gt;copy_target = false;
+-        NN-&gt;copy_weight = false;
+-        NN-&gt;copy_index = true;
+-        NN-&gt;build();
+-        NN_outputs.resize(actual_nneighbors);
+-        NN_costs.resize(actual_nneighbors);
+-        if(train_set.isNotNull())
+-        {
+-            NN-&gt;setTrainingSet(train_set);
+-            NN-&gt;train();
+-        }
+-    }
+-
+-
+     // ### If the distribution is conditional, you should finish build_() by:
+     // PDistribution::finishConditionalBuild();
+ 
++    if(localdistr.isNull())
++    {
++        GaussianDistribution* distr = new GaussianDistribution();
++        distr-&gt;ignore_weights_below = 1e-6;
++        distr-&gt;build();
++        localdistr = distr;
++    }
+ }
+ 
+ /////////////////
+@@ -184,27 +182,36 @@
+ 
+     PLASSERT(targetsize()==0);
+ 
+-    int actual_nneighbors = max(nneighbors, width_neighbor);
+-    if(actual_nneighbors&gt;l)
+-        actual_nneighbors = l;
++    int comp_n = getActualNComputationNeighbors();
++    int width_n = getActualNWidthNeighbors();
+ 
+-    if(actual_nneighbors&gt;0)
++    if(comp_n&gt;0 || width_n&gt;0)
+         NN-&gt;computeOutputAndCosts(y, emptyvec, NN_outputs, NN_costs);
+ 
+-    if(width_neighbor&gt;0 &amp;&amp; weighting_kernel.isNotNull()) // adapt weighting kernel width
++    if(kernel_adapt_width_mode!=' ')
+     {
+-        // Find distance d to width_neighbor neighbour
+-        real d = NN_costs[width_neighbor-1];
+-        // Now set new kernel width:
+-        real newwidth = d*width_factor;
+-        weighting_kernel-&gt;setOption(width_optionname,tostring(newwidth));
++        real new_width = 0;
++        if(kernel_adapt_width_mode=='M')
++        {
++            new_width = width_factor*NN_costs[width_n];
++        }
++        else if(kernel_adapt_width_mode=='A')
++        {
++            for(int k=0; k&lt;width_n; k++)
++                new_width += NN_costs[k];
++            new_width *= width_factor/width_n;
++        }
++        else
++            PLERROR(&quot;Invalid kernel_adapt_width_mode&quot;);
++
++        weighting_kernel-&gt;setOption(width_optionname,tostring(new_width));
+         weighting_kernel-&gt;build(); // rebuild to adapt to width change
+     }
+ 
+     double weightsum = 0;
+ 
+     VMat local_trainset;
+-    if(nneighbors&gt;0) // we'll use only the neighbors
++    if(comp_n&gt;0) // we'll use only the neighbors
+     {
+         int n = NN_outputs.length();
+         Mat neighbors(n, w+1);
+@@ -216,9 +223,7 @@
+             Vec neighbors_input = neighbors_row.subVec(0,w);
+             train_set-&gt;getRow(int(NN_outputs[k]),neighbors_row);
+             real weight = 1.;
+-            if(use_rank_weighting)
+-                weight = 1./(1+k); 
+-            else if(weighting_kernel.isNotNull())
++            if(weighting_kernel.isNotNull())
+                 weight = weighting_kernel(y,neighbors_input);
+             weightsum += weight;
+             neighbors_k[w] *= weight;
+@@ -234,9 +239,7 @@
+         {
+             train_set-&gt;getRow(i,trainsample);
+             real weight = 1.;
+-            if(use_rank_weighting)
+-                PLERROR(&quot;use_rank_weighting=true, but nneigbors&lt;=0. rank weighting requires specifying a number of neighbors (as it's this that will give the ranking&quot;);
+-            else if(weighting_kernel.isNotNull())
++            if(weighting_kernel.isNotNull())
+                 weight = weighting_kernel(y,input);
+             if(ws==1)
+                 weight *= trainsample[w];
+@@ -252,60 +255,10 @@
+         local_trainset-&gt;defineSizes(w,0,1);        
+     }
+ 
++    double log_local_p = trainLocalDistrAndEvaluateLogDensity(local_trainset, y);
++
+     // perr &lt;&lt; &quot;local_trainset =&quot; &lt;&lt; endl &lt;&lt; local_trainset-&gt;toMat() &lt;&lt; endl;
+ 
+-
+-#if 0
+-// OLD CODE
+-    if(use_rank_weighting)  // use only the neighbors with rank weighting
+-    {
+-        Mat neighbors(actual_nneighbors, w+1);
+-        for(int k=0; k&lt;actual_nneighbors; k++)
+-        {
+-            train_set-&gt;getSubRow(int(NN_outputs[k]),0,neighbors(k).subVec(0,w));
+-            real weight = 1./(1+k); 
+-            neighbors(k,w) = weight;
+-            weightsum += weight;
+-        }
+-        local_trainset = new MemoryVMatrix(neighbors);
+-        local_trainset-&gt;defineSizes(w,0,1); 
+-    }
+-    else if(weighting_kernel.isNotNull()) // build a weighted local_trainset
+-    {
+-        for(int i=0; i&lt;l; i++)
+-        {
+-            train_set-&gt;getRow(i,trainsample);
+-            real weight = weighting_kernel(y,input);
+-            if(ws==1)
+-                weight *= trainsample[w];
+-            weights[i] = weight;
+-            weightsum += weight;
+-        }
+-
+-        VMat weight_column(columnmatrix(weights));
+-
+-        if(ws==0) // append weight column
+-            local_trainset = hconcat(train_set, weight_column);
+-        else // replace last column by weight column
+-            local_trainset = hconcat(train_set.subMatColumns(0,inputsize()), weight_column);
+-        local_trainset-&gt;defineSizes(w,0,1);        
+-    }
+-    else // no weighting kernel, we just use the neighbors
+-    {
+-        Mat neighbors_input(actual_nneighbors, w);
+-        for(int k=0; k&lt;actual_nneighbors; k++)
+-            train_set-&gt;getSubRow(int(NN_outputs[k]),0,neighbors_input(k));
+-        local_trainset = new MemoryVMatrix(neighbors_input);
+-        local_trainset-&gt;defineSizes(w,0,0);
+-    }
+-#endif
+-
+-
+-    localdistr-&gt;forget();
+-    localdistr-&gt;setTrainingSet(local_trainset);
+-    localdistr-&gt;train();
+-    double log_local_p = localdistr-&gt;log_density(y);
+-
+     switch(mode)
+     {
+     case 0:
+@@ -317,14 +270,29 @@
+     case 3:
+         return pl_log((double)weightsum);
+     case 4:
+-        return log_local_p+pl_log((double)actual_nneighbors)-pl_log((double)l);
++        return log_local_p+pl_log((double)width_n)-pl_log((double)l);
+     default:
+         PLERROR(&quot;Invalid mode %d&quot;, mode);
+         return 0; 
+     }
++}
+ 
++double LocallyMagnifiedDistribution::trainLocalDistrAndEvaluateLogDensity(VMat local_trainset, Vec y) const
++{
++    if(fix_localdistr_center)
++    {
++        GaussianDistribution* distr = dynamic_cast&lt;GaussianDistribution*&gt;((PDistribution*)localdistr);
++        if(distr!=0)
++            distr-&gt;given_mu = y;
++    }
++    localdistr-&gt;forget();
++    localdistr-&gt;setTrainingSet(local_trainset);
++    localdistr-&gt;train();
++    double log_local_p = localdistr-&gt;log_density(y);
++    return log_local_p;
+ }
+ 
++
+ /////////////////////////////////
+ // makeDeepCopyFromShallowCopy //
+ /////////////////////////////////
+@@ -342,26 +310,55 @@
+     deepCopyField(NN, copies);
+ }
+ 
++int LocallyMagnifiedDistribution::getActualNComputationNeighbors() const
++{
++    if(computation_neighbors&lt;=0)
++        return 0;
++    else if(computation_neighbors&gt;1)
++        return int(computation_neighbors);
++    else
++        return int(computation_neighbors*sqrt(train_set-&gt;length()));
++}
+ 
++int LocallyMagnifiedDistribution::getActualNWidthNeighbors() const
++{
++    if(width_neighbors&lt;0)
++        return 0;
++    else if(width_neighbors&gt;1)
++        return int(width_neighbors);
++    return int(width_neighbors*sqrt(train_set-&gt;length()));
++}
++
++
+ // ### Remove this method, if your distribution does not implement it.
+ ///////////
+ // train //
+ ///////////
+ void LocallyMagnifiedDistribution::train()
+ {
+-    int actual_nneighbors = max(nneighbors, width_neighbor);
+-    if(actual_nneighbors&gt;0) // train nearest neighbor searcher
+-    {
++    int comp_n = getActualNComputationNeighbors();
++    int width_n = getActualNWidthNeighbors();
++    int actual_nneighbors = max(comp_n, width_n);
++
++    if(train_set.isNotNull())
+         actual_nneighbors = min(actual_nneighbors, train_set.length());
+-        if(NN-&gt;num_neighbors!=actual_nneighbors)
++
++    if(actual_nneighbors&gt;0)
++    {
++        NN = new ExhaustiveNearestNeighbors(); // for now use Exhaustive search and default Euclidean distance
++        NN-&gt;num_neighbors = actual_nneighbors;
++        NN-&gt;copy_input = false;
++        NN-&gt;copy_target = false;
++        NN-&gt;copy_weight = false;
++        NN-&gt;copy_index = true;
++        NN-&gt;build();
++        NN_outputs.resize(actual_nneighbors);
++        NN_costs.resize(actual_nneighbors);
++        if(train_set.isNotNull())
+         {
+-            NN-&gt;num_neighbors = actual_nneighbors;
+-            NN-&gt;build();
+-            NN_outputs.resize(actual_nneighbors);
+-            NN_costs.resize(actual_nneighbors);
++            NN-&gt;setTrainingSet(train_set);
++            NN-&gt;train();
+         }
+-        NN-&gt;setTrainingSet(train_set);
+-        NN-&gt;train();
+     }
+ }
+ 
+
+Modified: trunk/plearn_learners/distributions/EXPERIMENTAL/LocallyMagnifiedDistribution.h
+===================================================================
+--- trunk/plearn_learners/distributions/EXPERIMENTAL/LocallyMagnifiedDistribution.h	2007-05-24 20:23:11 UTC (rev 7317)
++++ trunk/plearn_learners/distributions/EXPERIMENTAL/LocallyMagnifiedDistribution.h	2007-05-24 20:24:34 UTC (rev 7318)
+@@ -78,16 +78,16 @@
+     // * public build options *
+     // ************************
+     int mode;
+-    int nneighbors;
++    real computation_neighbors;
+ 
+-    bool use_rank_weighting;
+-    //! The kernel that will be used to locally weigh the samples
+     Ker weighting_kernel;
++    char kernel_adapt_width_mode;
+ 
+     //! The distribution that will be trained with local weights
+-    PP&lt;PDistribution&gt; localdistr;
++    mutable PP&lt;PDistribution&gt; localdistr;
++    bool fix_localdistr_center;
+ 
+-    int width_neighbor;
++    real width_neighbors;
+     real width_factor;
+     string width_optionname;
+ 
+@@ -114,6 +114,10 @@
+     // ### Please implement in .cc.
+     static void declareOptions(OptionList&amp; ol);
+ 
++    int getActualNComputationNeighbors() const;
++    int getActualNWidthNeighbors() const;
++    double trainLocalDistrAndEvaluateLogDensity(VMat local_trainset, Vec y) const;
++
+ public:
+ 
+     // ************************
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000766.html">[Plearn-commits] r7317 - trunk/python_modules/plearn/var
+</A></li>
+	<LI>Next message: <A HREF="000768.html">[Plearn-commits] r7319 - trunk/examples/Demo/Tasks/2d_density/Models
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#767">[ date ]</a>
+              <a href="thread.html#767">[ thread ]</a>
+              <a href="subject.html#767">[ subject ]</a>
+              <a href="author.html#767">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

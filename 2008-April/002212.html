@@ -1,0 +1,151 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8764 - in trunk: python_modules/plearn/parallel	scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8764%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200804072049.m37KnLV3017597%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002211.html">
+   <LINK REL="Next"  HREF="002213.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8764 - in trunk: python_modules/plearn/parallel	scripts</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8764%20-%20in%20trunk%3A%20python_modules/plearn/parallel%0A%09scripts&In-Reply-To=%3C200804072049.m37KnLV3017597%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8764 - in trunk: python_modules/plearn/parallel	scripts">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Apr  7 22:49:21 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002211.html">[Plearn-commits] r8763 - trunk/python_modules/plearn/pymake
+</A></li>
+        <LI>Next message: <A HREF="002213.html">[Plearn-commits] r8765 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2212">[ date ]</a>
+              <a href="thread.html#2212">[ thread ]</a>
+              <a href="subject.html#2212">[ subject ]</a>
+              <a href="author.html#2212">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-04-07 22:49:20 +0200 (Mon, 07 Apr 2008)
+New Revision: 8764
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+   trunk/scripts/dbidispatch
+Log:
+all stuff that is for lisa are done in dbidispatch only.
+added an option for DBICondor.copy_local_source_file that default to false
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2008-04-04 18:28:08 UTC (rev 8763)
++++ trunk/python_modules/plearn/parallel/dbi.py	2008-04-07 20:49:20 UTC (rev 8764)
+@@ -660,13 +660,10 @@
+ class DBICondor(DBIBase):
+ 
+     def __init__( self, commands, **args ):
+-        from socket import gethostname
+-        if (not os.path.abspath(os.path.curdir).startswith(&quot;/home/fringant2/&quot;)) and gethostname().endswith(&quot;.iro.umontreal.ca&quot;):
+-            raise Exception(&quot;You must be in a subfolder of /home/fringant2/&quot;)
+-
+         self.getenv = False
+         self.nice = False
+         self.req = ''
++        self.copy_local_source_file = False
+         DBIBase.__init__(self, commands, **args)
+         if not os.path.exists(self.log_dir):
+             os.mkdir(self.log_dir) # condor log are always generated
+@@ -827,6 +824,15 @@
+                 if mtimed&gt;mtimel:
+                     print '[DBI] WARNING: We overwrite the file &quot;'+launch_file+'&quot; with a new version. Update it to your need!'
+                     overwrite_launch_file=True
++        source_file=os.getenv(&quot;CONDOR_LOCAL_SOURCE&quot;)
++        
++        if self.copy_local_source_file:
++            source_file_dest = os.path.join(self.log_dir,
++                                            os.path.basename(source_file))
++            shutil.copy( source_file, source_file_dest)
++            self.temp_files.append(source_file_dest)
++            os.chmod(source_file_dest, 0755)   
++            source_file=source_file_dest
+ 
+         if not os.path.exists(launch_file) or overwrite_launch_file:
+             self.temp_files.append(launch_file)
+@@ -835,8 +841,8 @@
+                 #!/bin/sh
+                 PROGRAM=$1
+                 shift\n'''))
+-            if os.getenv(&quot;CONDOR_LOCAL_SOURCE&quot;):
+-                launch_dat.write('source ' + os.getenv(&quot;CONDOR_LOCAL_SOURCE&quot;) + '\n')
++            if source_file:
++                launch_dat.write('source ' + source_file_dest + '\n')
+             launch_dat.write(dedent('''\
+                     echo &quot;Executing on &quot; `hostname` 1&gt;&amp;2
+                     echo &quot;HOSTNAME: ${HOSTNAME}&quot; 1&gt;&amp;2
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2008-04-04 18:28:08 UTC (rev 8763)
++++ trunk/scripts/dbidispatch	2008-04-07 20:49:20 UTC (rev 8764)
+@@ -105,10 +105,8 @@
+ 
+ In the file of the option --file=FILEPATH, there must not be double quotes around the {{}} as they are for the shell and if the command is in the file, they are not interpreted by the shell.
+ 
++The '--no_clean_up' set the DBI option clean_up to false
+ 
+-Not defined but existing parameter: --no_clean_up.
+-
+-
+ The environnement variable DBIDISPATCH_DEFAULT_OPTION can contain default option that you always want to pass to dbidispatch. You can override them on the command line.
+ &quot;&quot;&quot;%{'ShortHelp':ShortHelp,'ScriptName':ScriptName}
+ 
+@@ -218,6 +216,13 @@
+         print &quot;WARNING: The parameter&quot;,i,&quot;is not valid for the&quot;,launch_cmd,&quot;back-end&quot;
+ print &quot;With the command to be expended:&quot;,&quot; &quot;.join(command_argv),&quot;\n\n&quot;
+ 
++from socket import gethostname
++if gethostname().endswith(&quot;.iro.umontreal.ca&quot;):
++    if not os.path.abspath(os.path.curdir).startswith(&quot;/home/fringant2/&quot;):
++        raise Exception(&quot;You must be in a subfolder of /home/fringant2/&quot;)
++    if not os.getenv(&quot;CONDOR_LOCAL_SOURCE&quot;).startswith(&quot;/home/fringant2/&quot;):
++        dbi_param['copy_local_source_file']=True
++
+ def generate_combination(repl):
+     if repl == []:
+         return []
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002211.html">[Plearn-commits] r8763 - trunk/python_modules/plearn/pymake
+</A></li>
+	<LI>Next message: <A HREF="002213.html">[Plearn-commits] r8765 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2212">[ date ]</a>
+              <a href="thread.html#2212">[ thread ]</a>
+              <a href="subject.html#2212">[ subject ]</a>
+              <a href="author.html#2212">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

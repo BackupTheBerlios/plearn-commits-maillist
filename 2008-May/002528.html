@@ -1,0 +1,725 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9080 - in trunk/scripts: . EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9080%20-%20in%20trunk/scripts%3A%20.%20EXPERIMENTAL&In-Reply-To=%3C200805312122.m4VLMwQT013164%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002527.html">
+   
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9080 - in trunk/scripts: . EXPERIMENTAL</H1>
+    <B>plearner at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9080%20-%20in%20trunk/scripts%3A%20.%20EXPERIMENTAL&In-Reply-To=%3C200805312122.m4VLMwQT013164%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9080 - in trunk/scripts: . EXPERIMENTAL">plearner at mail.berlios.de
+       </A><BR>
+    <I>Sat May 31 23:22:58 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002527.html">[Plearn-commits] r9079 - trunk/python_modules/plearn/plotting
+</A></li>
+        
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2528">[ date ]</a>
+              <a href="thread.html#2528">[ thread ]</a>
+              <a href="subject.html#2528">[ subject ]</a>
+              <a href="author.html#2528">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: plearner
+Date: 2008-05-31 23:22:57 +0200 (Sat, 31 May 2008)
+New Revision: 9080
+
+Added:
+   trunk/scripts/EXPERIMENTAL/dcaexperiment.py
+   trunk/scripts/EXPERIMENTAL/linearfilters.py
+Modified:
+   trunk/scripts/EXPERIMENTAL/iTraining.py
+   trunk/scripts/EXPERIMENTAL/itest.py
+   trunk/scripts/EXPERIMENTAL/itest2.py
+   trunk/scripts/pyplot
+   trunk/scripts/show_rows_as_images.py
+Log:
+Minor improvements/fixed to plotting scripts.
+And added currently experimental plotting scripts.
+
+
+
+Added: trunk/scripts/EXPERIMENTAL/dcaexperiment.py
+===================================================================
+--- trunk/scripts/EXPERIMENTAL/dcaexperiment.py	2008-05-31 21:21:42 UTC (rev 9079)
++++ trunk/scripts/EXPERIMENTAL/dcaexperiment.py	2008-05-31 21:22:57 UTC (rev 9080)
+@@ -0,0 +1,442 @@
++#!/usr/bin/env python
++
++import os ,sys, time, matplotlib, math, copy
++from matplotlib.pylab import *
++from matplotlib.colors import *
++from plearn.plotting.netplot import plotRowsAsImages, showRowsAsImages
++from plearn.vmat.PMat import *
++
++import numpy
++from numpy import *
++#from numpy.linalg import *
++import numpy.numarray
++#from plearn.vmat.PMat import *
++
++# from numpy.numarray import *
++# from numarray import *
++#from numarray.linear_algebra import *
++
++from plearn.io.server import *
++from plearn.pyplearn import *
++
++#from plearn.plotting import *
++#from copy import *
++
++#from plearn.plotting.netplot import showRowsAsImages
++
++server_command = 'plearn_exp server'
++serv = launch_plearn_server(command = server_command)
++
++class DCAExperiment:
++
++    def __init__(self,
++                 X,
++                 seed=1827,
++                 ncomponents=2,
++                 constrain_norm_type=-1,
++                 cov_transformation_type=&quot;cov&quot;,
++                 diag_weight = -1.0,
++                 diag_nonlinearity=&quot;square&quot;, 
++                 diag_premul = 1.0,
++                 offdiag_weight=1.0,
++                 offdiag_nonlinearity=&quot;square&quot;, 
++                 offdiag_premul = 1.0,
++                 lr=0.01, nsteps=1, optimizer_nsteps=1,
++                 epsilon=1e-4, nu=0,
++                 img_height=None,
++                 img_width=None):
++
++        self.nsteps = nsteps
++
++        #some calculations for plotting
++        if img_height is None:
++            img_size = len(X[0])
++            img_width = math.sqrt(img_size)
++            img_height = img_size/img_width
++        self.img_height = img_height
++        self.img_width = img_width
++
++        if isinstance(X, numpy.ndarray):
++            self.d = len(X[0])
++            self.X = X            
++            vmat = pl.MemoryVMatrix(data = X, inputsize=len(X[0]), targetsize=0, weightsize=0)
++        else:
++            self.d = 100000
++            vmat = X
++
++        if self.d==2:
++            C = cov(X, rowvar=0, bias=1)
++            ei, eiv = eig(C)
++            self.principal_components = eiv.T
++
++        dcaspec = pl.DiverseComponentAnalysis(
++            seed = seed,
++            ncomponents = ncomponents,
++            constrain_norm_type=constrain_norm_type,
++            cov_transformation_type=cov_transformation_type,
++            diag_weight = diag_weight,
++            diag_nonlinearity = diag_nonlinearity, 
++            diag_premul = diag_premul,
++            offdiag_weight = offdiag_weight,
++            offdiag_nonlinearity = offdiag_nonlinearity, 
++            offdiag_premul = offdiag_premul,
++            optimizer = pl.GradientOptimizer(start_learning_rate = lr,
++                                             decrease_constant = 0,
++                                             nstages = optimizer_nsteps),
++            epsilon = epsilon,
++            nu = nu
++            )
++
++        self.dca = serv.new(dcaspec)
++        print &quot;Setting training set...&quot;
++        self.dca.setTrainingSet(vmat,1)
++
++        W = self.dca.getVarValue('W')
++        # print &quot;W[0]=&quot;,W[0]
++        print &quot;Squared norm of first row of W: &quot;,sum(W[0]*W[0])
++        
++        self.dca.nstages = 1
++        print &quot;Training to stage 1&quot;
++        self.dca.train()
++        print &quot;Training to stage 1 DONE.&quot;
++        print &quot;Squared norm of first row of W: &quot;,sum(W[0]*W[0])
++        self.training_curve = []
++
++        self.datafig = 2
++        self.traincurvefig = 1
++        self.filterfig = 3
++        self.Wfig = 4
++        self.Cytfig = 5
++        self.Cxfig = 6
++        self.Cythist = 7
++
++        self.draw()
++        
++        figure(self.traincurvefig)
++        connect('key_press_event', self.keyPressed)
++
++        if self.d==2:
++            figure(self.datafig)
++            connect('key_press_event', self.keyPressed)
++            # connect('button_press_event', self.__clicked)
++
++        figure(self.filterfig)
++        connect('key_press_event', self.keyPressed)
++        #figure(self.Wfig)
++        figure(self.Cytfig)
++        #figure(self.Cxfig)
++        #figure(self.Cythist)
++
++        # start interactive loop
++        show()
++
++
++    def draw(self):
++        figure(self.traincurvefig)
++        clf()
++        # print 'stages:',arange(2,2+len(self.training_curve))
++        # print 'losses:',array(self.training_curve)
++        plot(arange(2,2+len(self.training_curve)),array(self.training_curve),'g-')
++        title(&quot;Training curve&quot;)
++        xlabel(&quot;stage&quot;)
++        ylabel(&quot;optimized cost L&quot;)
++        draw()
++
++        if(self.d==2):
++            figure(self.datafig)
++            clf()
++            axis('equal')
++            plot(self.X[:,0], self.X[:,1], 'b.')
++            mu = self.dca.mu
++            W = self.dca.getVarValue('W')
++            for direction in self.principal_components:
++                arrow( mu[0], mu[1], direction[0], direction[1],
++                       linewidth=2, edgecolor='black', facecolor='black')
++            i = 0
++            for w in W:
++                arrow( mu[0], mu[1], w[0], w[1],
++                       linewidth=2, edgecolor='red', facecolor='red')
++                text(mu[0]+w[0], mu[1]+w[1], str(i))
++                i = i+1
++            title(&quot;Data and learnt projection directions&quot;)
++            draw()
++        
++    def printState(self): 
++        print &quot;----------------------------------&quot;
++        print &quot;stage&quot;,self.dca.nstages
++        print &quot;L =&quot;,self.dca.getVarValue('L')[0,0]
++        if self.d&lt;=2:
++            print &quot;Cyt = &quot;
++            print self.dca.getVarValue('Cyt')
++            print &quot;gradient Cyt = &quot;
++            print self.dca.getVarGradient('Cyt')
++            print &quot;W = &quot;
++            print self.dca.getVarValue('W')
++            print &quot;gradient W = &quot;
++            print self.dca.getVarGradient('W')
++       
++    def trainN(self, n=1):
++        lr = self.dca.getOption(&quot;optimizer.start_learning_rate&quot;)
++        print &quot;-------------------------------&quot;
++        print &quot;TRAINING for&quot;,n,&quot;steps at lr=&quot;,lr
++        while n&gt;0:
++            self.dca.nstages = self.dca.nstages+1
++            self.dca.train()
++            loss = self.dca.getVarValue('L')[0,0]
++            self.training_curve.append(loss)
++            n = n-1
++        self.printState()
++        self.draw()
++
++    def changeSteps(self):
++        print &quot;********************************&quot;
++        print &quot;new nsteps (&quot;,self.nsteps,&quot;)?&quot;,
++        self.nsteps = input()
++        lr = self.dca.getOption(&quot;optimizer.start_learning_rate&quot;)
++        print &quot;new lr (&quot;,lr,&quot;)?&quot;,
++        lr = input()
++        self.dca.changeOptions({&quot;optimizer.start_learning_rate&quot;:lr})
++        self.dca.changeOptions({&quot;optimizer.learning_rate&quot;:lr})
++        self.draw()
++
++    def showFilters(self):
++        W = self.dca.getVarValue('W')
++
++        #figure(self.Wfig)
++        #clf()
++        #title('W')
++        #imshow(W, interpolation=&quot;nearest&quot;, cmap = cm.jet)
++        #colorbar()
++        #draw()
++
++        figure(self.Cytfig)
++        Cyt = self.dca.getVarValue('Cyt')
++        l = len(Cyt)
++        diagvals = []
++        offdiagvals = []
++        for i in xrange(l):            
++            for j in xrange(i):
++                offdiagvals.append(Cyt[i,j])
++            diagvals.append(Cyt[i,i])
++
++        clf()
++        subplot(1,3,1)
++        title('Cyt')
++        imshow(Cyt, interpolation=&quot;nearest&quot;, cmap = cm.jet)
++        colorbar()
++
++        subplot(1,3,2)
++        title('Cyt diagonal values histogram')
++        hist(diagvals)
++        
++        subplot(1,3,3)
++        title('Cyt off-diagonal values histogram')
++        hist(offdiagvals)
++
++        draw()
++        
++        #figure(self.Cxfig)
++        #clf()
++        #title('Cx')
++        #imshow(self.dca.getVarValue('Cx'), interpolation=&quot;nearest&quot;, cmap = cm.jet)
++        #colorbar()
++        #draw()
++
++        figure(self.filterfig)
++        clf()
++        plotRowsAsImages(W, 
++                         img_height = self.img_height,
++                         img_width = self.img_width,
++                         nrows=5, ncols=10,
++                         figtitle=&quot;filters&quot;,
++                         show_colorbar=False, disable_ticks=True, colormap = cm.gray,
++                         luminance_scale_mode = 0, vmin=None, vmax=None)        
++        draw()
++
++    def save(self):
++        print &quot;*** SAVE TO FILE ***&quot;
++        print &quot;normalize output (0 or 1)? &quot;,
++        normalize = int(raw_input())
++        self.dca.changeOptions({'normalize':normalize})        
++        print &quot;filename (.psave)? &quot;,
++        filename = raw_input()
++        self.dca.save(filename,'plearn_ascii')
++        print &quot;*** SAVING DONE ***&quot;
++
++    def keyPressed(self, event):
++        char = event.key
++        print 'Pressed',char
++        if char == ' ':
++            self.trainN(self.nsteps)
++        elif char == '1':
++            self.trainN(10*self.nsteps)
++        elif char == '2':
++            self.trainN(20*self.nsteps)
++        elif char == '3':
++            self.trainN(30*self.nsteps)
++        elif char == '4':
++            self.trainN(40*self.nsteps)
++        elif char == '5':
++            self.trainN(50*self.nsteps)
++        elif char == '6':
++            self.trainN(60*self.nsteps)
++        elif char == '7':
++            self.trainN(70*self.nsteps)
++        elif char == '8':
++            self.trainN(80*self.nsteps)
++        elif char == '9':
++            self.trainN(90*self.nsteps)
++        elif char == 'o':
++            self.changeSteps()
++        elif char == 'w':
++            self.showFilters()
++        elif char == 's':
++            self.save()
++        elif char == '':
++            pass
++        else:
++            print &quot;&quot;&quot;
++            *******************************************************
++            * KEYS
++            *   spacebar: does nsteps training steps
++            *   '1'     : does 10*nsteps training steps
++            *   '2'     : does 20*nsteps training steps
++            *   ....           ...
++            *   '9'     : does 90*nsteps training steps
++            *   'o'     : to change optimizaiton nsteps and lr
++            *   'f'     : interactive show filters
++            *   's'     : save learner to file
++            * Close window to stop.
++            *******************************************************
++            &quot;&quot;&quot;
++
++
++def generate2dNormalAtAngle(npoints=300, angle=None, stddev1=1, stddev2=0.1, mean=[0,0]):    
++    if angle is None:
++        angle = random.uniform(0., 2*math.pi)
++    v1 = array([stddev1*math.cos(angle), stddev1*math.sin(angle)])
++    v2 = array([stddev2*math.sin(angle), stddev2*math.cos(angle)])
++    V = vstack([v1,v2])
++    cov = 0.5*dot(V.T,V)
++    X = random.multivariate_normal(mean,cov,npoints)
++    return X
++    
++def generate2dNormal(npoints=200):
++    # rnd = random.RandomState(seed)
++    mean = random.normal(0, 1, 2)
++    #mean = array([0,0])
++    cov = random.uniform(-0.2,0.2,(2,2))
++    X = random.multivariate_normal(mean,cov,npoints)
++    #X = random.normal(0,1,(200,2))
++    #W = random.uniform(-1,1,(2,2))
++    #b = random.uniform(-0.5, 0.5, (2,1))
++    #X = dot(X,W)+b.T
++    return X
++
++def loadInputs(datapmatfile, inputsize=None):
++    data = load_pmat_as_array(datapmatfile)
++    if inputsize is None:
++        inputsize = len(data[0])-1
++    X = data[:,0:inputsize]
++    return X
++
++def getDataSet(dataset):
++    &quot;&quot;&quot;dataset is a string that specifies either a .pmat or is of the form data_seed:ngaussians&quot;&quot;&quot;
++    data_seed = None
++    try:
++        data_seed, ngaussians = dataset.split(':')
++        data_seed = int(data_seed)
++        ngaussians = int(ngaussians)
++    except ValueError:
++        pass
++
++    if data_seed is None:
++        X = PMat(dataset)
++        print &quot;** flushing&quot;
++        X.flush()
++        print &quot;** flushing DONE&quot;
++        # X = loadInputs(dataset)
++    else:
++        random.seed(data_seed)
++        if ngaussians==0:
++            X = random.multivariate_normal(array([0,0]),eye(2),1000)
++        elif ngaussians&gt;0:
++            pointgroups = [ generate2dNormal(200) for i in range(ngaussians) ]
++            X = vstack(pointgroups)
++        else: # ngaussians&lt;0
++            ngaussians = -ngaussians
++            pointgroups = [ generate2dNormalAtAngle(200) for i in range(ngaussians) ]
++            X = vstack(pointgroups)
++            
++    return X
++    
++
++
++####################
++### main program ###
++
++if __name__ == &quot;__main__&quot;:
++
++    try:
++        dataset, learner_seed, ncomponents, constrain_norm_type, cov_transformation_type, diag_weight, diag_nonlinearity, diag_premul, offdiag_weight, offdiag_nonlinearity, offdiag_premul = sys.argv[1:]        
++
++        learner_seed = int(learner_seed)
++        ncomponents = int(ncomponents)
++        constrain_norm_type = float(constrain_norm_type)
++        diag_weight = float(diag_weight)
++        diag_premul = float(diag_premul)
++        offdiag_weight = float(offdiag_weight)
++        offdiag_premul = float(offdiag_premul)
++        
++
++
++
++    except:
++        print &quot;Usage: &quot;+sys.argv[0]+&quot; dataset learner_seed ncomponents constrain_norm_type cov_transformation_type diag_weight diag_nonlinearity diag_premul offdiag_weight offdiag_nonlinearity offdiag_premul&quot;
++        print &quot;  dataset can be either a .pmat or data_seed:ngaussians&quot;
++        print &quot;&quot;&quot;  constrain_norm_type controls how to constrain the norms of rows of W:
++        -1:constrained source;
++        -2:explicit normalization;
++        &gt;0:ordinary weight decay&quot;&quot;&quot;
++        print &quot;&quot;&quot;  cov_transformation_type controls the kind of transformation to apply to covariance matrix
++        cov: no transformation (keep covariance)
++        corr: transform into correlations, but keeping variances on the diagonal.
++        squaredist: do a 'squared distance kernel' kind of transformation.&quot;&quot;&quot;
++        print &quot;Ex: &quot;+sys.argv[0]+&quot; 123:1    123 2    -1 cov     -1 square 1       1 square 1&quot;
++        print &quot;Ex: &quot;+sys.argv[0]+&quot; 121:-2    123 4    -1 squaredist     0 exp 1       1 exp -1.6&quot;
++        raise
++    # sys.exit()
++
++    print &quot;Getting data&quot;
++    X = getDataSet(dataset)
++    print &quot;Data OK.&quot;
++
++    DCAExperiment(X,
++                  seed=learner_seed, 
++                  ncomponents=ncomponents,
++                  constrain_norm_type=constrain_norm_type,
++                  cov_transformation_type=cov_transformation_type,
++                  diag_weight = diag_weight,
++                  diag_nonlinearity = diag_nonlinearity, 
++                  diag_premul = diag_premul,
++                  offdiag_weight = offdiag_weight,
++                  offdiag_nonlinearity = offdiag_nonlinearity, 
++                  offdiag_premul = offdiag_premul,
++                  lr=0.01, nsteps=1, optimizer_nsteps=10)
++    
++
++#     try:
++#         datapmatfile, inputsize, filtertype, param = sys.argv[1:]
++#         inputsize = int(inputsize)
++#         param = float(param)
++#     except:
++#         print &quot;Usage: &quot;+sys.argv[0]+&quot; &lt;datafile.pmat&gt; &lt;inputsize&gt; &lt;filtertype&gt; &lt;param&gt;&quot;
++#         print &quot;&quot;&quot;
++#         For filtertype 'PCA', param is the noise added to the diagonal of the covariance matrix
++#         For filtertype 'denoising', param is the destruction proportion.
++#         &quot;&quot;&quot;
++#         raise
++#     # sys.exit()
++
++
++
+
+
+Property changes on: trunk/scripts/EXPERIMENTAL/dcaexperiment.py
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Modified: trunk/scripts/EXPERIMENTAL/iTraining.py
+===================================================================
+--- trunk/scripts/EXPERIMENTAL/iTraining.py	2008-05-31 21:21:42 UTC (rev 9079)
++++ trunk/scripts/EXPERIMENTAL/iTraining.py	2008-05-31 21:22:57 UTC (rev 9080)
+@@ -8,7 +8,7 @@
+ 
+ from plearn.io.server import *
+ from plearn.pyplearn import *
+-from plearn.plotting import *
++from plearn.plotting.matplotlib_utils import *
+ from numpy import *
+ from pickle import *
+ from copy import *
+
+Modified: trunk/scripts/EXPERIMENTAL/itest.py
+===================================================================
+--- trunk/scripts/EXPERIMENTAL/itest.py	2008-05-31 21:21:42 UTC (rev 9079)
++++ trunk/scripts/EXPERIMENTAL/itest.py	2008-05-31 21:22:57 UTC (rev 9080)
+@@ -6,10 +6,7 @@
+ # from numarray import *
+ # from numarray.linear_algebra import *
+ 
+-from plearn.io.server import *
+-from plearn.pyplearn import *
+-from plearn.plotting import *
+-from copy import *
++from plearn.plotting.matplotlib_utils import *
+ 
+ from iTraining import *
+ from generators import *
+@@ -24,14 +21,11 @@
+ #iTraining2.py
+ #to control interactively the training process
+ 
+-import os, sys, time, matplotlib, math, numpy ,copy
+-
+ from matplotlib.pylab import plot,show,draw,close,text,scatter,colorbar
+ from matplotlib.colors import *
+ 
+ from plearn.io.server import *
+ from plearn.pyplearn import *
+-from plearn.plotting import *
+ from numpy import *
+ from pickle import *
+ from copy import *
+
+Modified: trunk/scripts/EXPERIMENTAL/itest2.py
+===================================================================
+--- trunk/scripts/EXPERIMENTAL/itest2.py	2008-05-31 21:21:42 UTC (rev 9079)
++++ trunk/scripts/EXPERIMENTAL/itest2.py	2008-05-31 21:22:57 UTC (rev 9080)
+@@ -8,7 +8,7 @@
+ 
+ from plearn.io.server import *
+ from plearn.pyplearn import *
+-from plearn.plotting import *
++from plearn.plotting.matplotlib_utils import *
+ from copy import *
+ 
+ from iTraining import *
+
+Added: trunk/scripts/EXPERIMENTAL/linearfilters.py
+===================================================================
+--- trunk/scripts/EXPERIMENTAL/linearfilters.py	2008-05-31 21:21:42 UTC (rev 9079)
++++ trunk/scripts/EXPERIMENTAL/linearfilters.py	2008-05-31 21:22:57 UTC (rev 9080)
+@@ -0,0 +1,76 @@
++#!/usr/bin/env python
++
++import sys
++from numpy import *
++from numpy.linalg import *
++from plearn.vmat.PMat import load_pmat_as_array
++from plearn.plotting.netplot import showRowsAsImages
++
++#server_command = 'plearn_exp server'
++#serv = launch_plearn_server(command = server_command)
++
++def computeAndShowFilters(datapmatfile, img_height, img_width, filtertype, lambd, nu):
++    data = load_pmat_as_array(datapmatfile)
++    inputs = data[:,0:img_height*img_width]
++    C = cov(inputs, rowvar=0, bias=1)
++    if(filtertype==&quot;PCA&quot;):
++        filters = computePCAFilters(C, lambd, nu)
++    elif(filtertype==&quot;denoising&quot;):
++        filters = computeDenoisingFilters(C, lambd, nu)
++    else:
++        raise ValueError(&quot;Invalid filtertype &quot;+filtertype)    
++    showRowsAsImages(filters, img_height, img_width, figtitle=&quot;Filters&quot;)
++
++def mycov(inputs, centered=True):
++    if centered:
++        C = cov(inputs, rowvar=0, bias=1)
++    else:
++        C = dot(inputs.T, inputs)
++        C *= 1.0/len(inputs)        
++    return C
++
++def computePCAFilters(C, lambd=1e-6, nu=0):
++    C = C+diag(len(C)*[lambd])
++    Cd = C.diagonal()
++    C2 = C*(1.0-nu)
++    # copy back intial diagonal
++    for i in range(len(Cd)):
++        C2[i,i] = Cd[i]
++    eigvals, eigvecs = eig(C2)
++    return real(eigvecs.T)
++
++def computeDenoisingFilters(C, lambd=1e-6, nu=0.10):
++    C = C+diag(len(C)*[lambd])
++    Cd = C.diagonal()
++    C2 = C*(1.0-nu)
++    # copy back intial diagonal
++    for i in range(len(Cd)):
++        C2[i,i] = Cd[i]
++    WW = dot(inv(C2),C)
++    return WW
++
++
++####################
++### main program ###
++
++if __name__ == &quot;__main__&quot;:
++
++    try:
++        datapmatfile, img_height, img_width, filtertype, lambd, nu = sys.argv[1:]
++        img_height = int(img_height)
++        img_width = int(img_width)
++        lambd = float(lambd)
++        nu = float(nu)
++    except:
++        print &quot;Usage: &quot;+sys.argv[0]+&quot; &lt;datafile.pmat&gt; &lt;img_height&gt; &lt;img_width&gt; &lt;filtertype&gt; &lt;lambda&gt; &lt;nu&gt;&quot;
++        print &quot;&quot;&quot;
++        Input is considered to be the first img_height x img_width columns.
++        Covariance matrix will get lambda*I added to its diagonal, and its off-diagonal terms multiplied by (1-nu).
++        Filtertype can be 'PCA' or 'denoising'        
++        &quot;&quot;&quot;
++        raise
++    # sys.exit()
++
++    computeAndShowFilters(datapmatfile, img_height, img_width, filtertype, lambd, nu)
++
++
+
+
+Property changes on: trunk/scripts/EXPERIMENTAL/linearfilters.py
+___________________________________________________________________
+Name: svn:executable
+   + *
+
+Modified: trunk/scripts/pyplot
+===================================================================
+--- trunk/scripts/pyplot	2008-05-31 21:21:42 UTC (rev 9079)
++++ trunk/scripts/pyplot	2008-05-31 21:22:57 UTC (rev 9080)
+@@ -48,7 +48,8 @@
+     pass
+ 
+ from plearn.io.server import *
+-from plearn.plotting import *
++from plearn.plotting.matplotlib_utils import *
++from plearn.plotting.mayavi_utils import surfplot_xymagnitude
+ 
+ server_command = 'plearn server'
+ serv = launch_plearn_server(command = server_command)
+
+Modified: trunk/scripts/show_rows_as_images.py
+===================================================================
+--- trunk/scripts/show_rows_as_images.py	2008-05-31 21:21:42 UTC (rev 9079)
++++ trunk/scripts/show_rows_as_images.py	2008-05-31 21:22:57 UTC (rev 9080)
+@@ -1,7 +1,7 @@
+ #!/usr/bin/env python
+ 
+ import sys
+-from plearn.vmat.PMat import load_pmat_as_array
++from plearn.vmat.PMat import PMat
+ from plearn.plotting.netplot import showRowsAsImages
+ 
+ ####################
+@@ -22,12 +22,12 @@
+         These will be interactively displayed in a nrows x ncols grid of imagettes.
+         &quot;&quot;&quot;
+         print &quot;Ex: &quot;+sys.argv[0]+&quot; /home/fringant2/lisa/data/faces/olivetti/faces.pmat 64 64  5 7&quot;
++        print &quot;Ex: &quot;+sys.argv[0]+&quot; /home/fringant2/lisa/data/icml07data/mnist_basic/plearn/mnist_basic2_train.pmat 28 28 5 7&quot;
+         raise
+     # sys.exit()
+ 
+-    data = load_pmat_as_array(datapmatfile)
+-    inputs = data[:,0:imgheight*imgwidth]
+-    showRowsAsImages(inputs, figtitle=datapmatfile, nrows=nrows, ncols=ncols, img_width=imgwidth)
++    data = PMat(datapmatfile)
++    showRowsAsImages(data, img_height=imgheight, img_width=imgwidth, nrows=nrows, ncols=ncols, figtitle=datapmatfile)
+ 
+ 
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002527.html">[Plearn-commits] r9079 - trunk/python_modules/plearn/plotting
+</A></li>
+	
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2528">[ date ]</a>
+              <a href="thread.html#2528">[ thread ]</a>
+              <a href="subject.html#2528">[ subject ]</a>
+              <a href="author.html#2528">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

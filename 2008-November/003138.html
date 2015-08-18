@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9698 - trunk/python_modules/plearn/parallel
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9698%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200811182057.mAIKvPk8018004%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003137.html">
+   <LINK REL="Next"  HREF="003139.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9698 - trunk/python_modules/plearn/parallel</H1>
+    <B>ducharme at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9698%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200811182057.mAIKvPk8018004%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9698 - trunk/python_modules/plearn/parallel">ducharme at mail.berlios.de
+       </A><BR>
+    <I>Tue Nov 18 21:57:25 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003137.html">[Plearn-commits] r9697 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+        <LI>Next message: <A HREF="003139.html">[Plearn-commits] r9699 - in trunk: plearn/ker/EXPERIMENTAL	plearn_learners/classifiers plearn_learners/unsupervised
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3138">[ date ]</a>
+              <a href="thread.html#3138">[ thread ]</a>
+              <a href="subject.html#3138">[ subject ]</a>
+              <a href="author.html#3138">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: ducharme
+Date: 2008-11-18 21:57:25 +0100 (Tue, 18 Nov 2008)
+New Revision: 9698
+
+Modified:
+   trunk/python_modules/plearn/parallel/dispatch.py
+Log:
+- Check if it runs under a 32 or 64-bit machine (at ApSTAT)
+- Correct bug in method &quot;availableMachinesCount&quot; (take into account free machine cpus)
+
+
+Modified: trunk/python_modules/plearn/parallel/dispatch.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dispatch.py	2008-11-18 20:52:57 UTC (rev 9697)
++++ trunk/python_modules/plearn/parallel/dispatch.py	2008-11-18 20:57:25 UTC (rev 9698)
+@@ -40,21 +40,26 @@
+                      '## UNKNOWN DOMAINE ##': 'OnHostTask'
+                      }
+ 
++# Figure out if we are running on a 32bit or 64 bit machine.
++if sys.maxint &gt; 2147483647:
++    apstat_machines = [ 'nai' ]
++else:
++    apstat_machines = [ 'lodur',
++                        'garm',
++                        'mimir',
++                        'embla',
++                        'valhalla',
++                        'inari', 
++                        'kamado',
++                        'loki',
++                        'odin',
++                        'midgard',
++                        'vili' ]
++
+ # Used only for clusters of type 'ssh'. Do not enter the same machine more
+ # than once: use the MAX_LOADAVG map to allow for higher maximum load
+-# average than the default of 2.
+-SSH_MACHINES_MAP = { 'apstat.com': [ 'lodur',
+-                                     'garm',
+-                                     'mimir',
+-                                     'embla',
+-                                     'valhalla',
+-                                     'inari', 
+-                                     'kamado',
+-                                     'loki',
+-                                     'odin',
+-                                     'midgard',
+-                                     'vili'
+-                                     ],
++# average than the default of 1.
++SSH_MACHINES_MAP = { 'apstat.com': apstat_machines,
+ 
+                      'iro.umontreal.ca' : [ 'lhmm',    'lknn',    'lmfa',      'lmlp',
+                                             'lsom',    'lsvm',    'currie',    'dirac',
+@@ -181,7 +186,7 @@
+         &quot;&quot;&quot;Returns the number of machines currently available for cluster job dispatch.&quot;&quot;&quot;
+         avail = 0
+         for am in cls.listAvailableMachines():
+-            avail += 1
++            avail += int(MAX_LOADAVG.get(am, 1.) - cls.getMachineLoad(am))
+         return avail
+     availableMachinesCount = classmethod(availableMachinesCount)
+ 
+@@ -352,14 +357,18 @@
+             #print &quot;Saved %f at %s (now %s)&quot;%(loadavg, t, cur_t)
+             if cur_t &lt; t+LOADAVG_DELAY:
+                 return loadavg
++        return cls.getMachineLoad(machine)
++    getLoadAvg = classmethod(getLoadAvg)
+ 
++    def getMachineLoad(cls, machine, command = lambda host: 'ssh -x %s cat /proc/loadavg' % host):
+         # Query for the load average
+         #print &quot;NEW QUERY!&quot;
+         p = os.popen( command(machine) )
+         line = p.readline()
+         return float(line.split()[0]) # Take the last minute average
+-    getLoadAvg = classmethod(getLoadAvg)
++    getMachineLoad = classmethod(getMachineLoad)
+     
++
+     def listAvailableMachines(cls):
+         for m in cls._machines:
+             try:
+@@ -668,3 +677,6 @@
+ if __name__ == &quot;__main__&quot;:
+     dispatch = Dispatch( program = &quot;time&quot;, logdir=None )
+     dispatch.start({ &quot;_constant_args_&quot; : &quot;ls -lah&quot; }) 
++
++
++# vim: filetype=python:expandtab:shiftwidth=4:tabstop=8:softtabstop=4 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003137.html">[Plearn-commits] r9697 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+	<LI>Next message: <A HREF="003139.html">[Plearn-commits] r9699 - in trunk: plearn/ker/EXPERIMENTAL	plearn_learners/classifiers plearn_learners/unsupervised
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3138">[ date ]</a>
+              <a href="thread.html#3138">[ thread ]</a>
+              <a href="subject.html#3138">[ subject ]</a>
+              <a href="author.html#3138">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

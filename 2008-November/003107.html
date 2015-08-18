@@ -1,0 +1,512 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9667 - trunk/plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-November/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9667%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200811102004.mAAK4USt026343%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003106.html">
+   <LINK REL="Next"  HREF="003108.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9667 - trunk/plearn_learners/regressors</H1>
+    <B>ducharme at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9667%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200811102004.mAAK4USt026343%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9667 - trunk/plearn_learners/regressors">ducharme at mail.berlios.de
+       </A><BR>
+    <I>Mon Nov 10 21:04:30 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003106.html">[Plearn-commits] r9666 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="003108.html">[Plearn-commits] r9668 - trunk/plearn_learners/meta
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3107">[ date ]</a>
+              <a href="thread.html#3107">[ thread ]</a>
+              <a href="subject.html#3107">[ subject ]</a>
+              <a href="author.html#3107">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: ducharme
+Date: 2008-11-10 21:04:30 +0100 (Mon, 10 Nov 2008)
+New Revision: 9667
+
+Added:
+   trunk/plearn_learners/regressors/PruningLinearRegressor.cc
+   trunk/plearn_learners/regressors/PruningLinearRegressor.h
+Log:
+LinearRegressor for which we prune the regression coefficients with the smallest t-ratios.
+
+
+Added: trunk/plearn_learners/regressors/PruningLinearRegressor.cc
+===================================================================
+--- trunk/plearn_learners/regressors/PruningLinearRegressor.cc	2008-11-10 17:26:21 UTC (rev 9666)
++++ trunk/plearn_learners/regressors/PruningLinearRegressor.cc	2008-11-10 20:04:30 UTC (rev 9667)
+@@ -0,0 +1,270 @@
++// -*- C++ -*-
++
++// PruningLinearRegressor.cc
++//
++// Copyright (C) 2008 Rejean Ducharme
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Rejean Ducharme
++
++/*! \file PruningLinearRegressor.cc */
++
++#include &quot;PruningLinearRegressor.h&quot;
++#include &lt;plearn/math/plapack.h&gt;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    PruningLinearRegressor,
++    &quot;Same as LinearRegressor, but adding the pruning of the regression coefficients&quot;,
++    &quot;This class permits to reduce the degree of freedom of a LinearRegressor by\n&quot;
++    &quot;pruning some regression coefficients.  Several pruning methods are supported:\n&quot;
++    &quot;  - minimum t-ratio: keep only the coefficients for which the t-ratio exceeds a threshold\n&quot;
++    &quot;  - absolute max: keep only a maximum number of coefficient (with best t-ratios)\n&quot;
++    &quot;  - relative max: keep only a maximum fraction of coefficient (with best t-ratios)\n&quot;
++    );
++
++PruningLinearRegressor::PruningLinearRegressor()
++    : pruning_method(&quot;max_number&quot;),
++      min_t_ratio(0.05),
++      max_number(50),
++      max_fraction(0.5)
++{ }
++
++void PruningLinearRegressor::declareOptions(OptionList&amp; ol)
++{
++    //#####  Build Options  ####################################################
++
++    declareOption(ol, &quot;pruning_method&quot;, &amp;PruningLinearRegressor::pruning_method,
++                  OptionBase::buildoption,
++                  &quot;The pruning method:\n&quot;
++                  &quot; - \&quot;max_number\&quot;    = keep only the weights with the k-best t-ratio\n&quot;
++                  &quot; - \&quot;max_fraction\&quot;  = same as \&quot;max_number\&quot;, but using a fraction rather than a hard threshold\n&quot;
++                  &quot; - \&quot;min_t_ratio\&quot;   = keep only the weights with t-ratio &gt; min_t_ratio&quot;);
++
++    declareOption(ol, &quot;min_t_ratio&quot;, &amp;PruningLinearRegressor::min_t_ratio,
++                  OptionBase::buildoption,
++                  &quot;Minimum t-ratio for not pruning a coefficient&quot;);
++
++    declareOption(ol, &quot;max_number&quot;, &amp;PruningLinearRegressor::max_number,
++                  OptionBase::buildoption,
++                  &quot;Maximum number of coefficients (the default)&quot;);
++
++    declareOption(ol, &quot;max_fraction&quot;, &amp;PruningLinearRegressor::max_fraction,
++                  OptionBase::buildoption,
++                  &quot;Maximum fraction (in [0,1]) of coefficients&quot;);
++
++    //#####  Learnt Options  ###################################################
++
++    declareOption(ol, &quot;t_ratio&quot;, &amp;PruningLinearRegressor::t_ratio,
++                  OptionBase::learntoption,
++                  &quot;t-ratio statistics for the estimator b (regression coefficients)\n&quot;
++                  &quot;Saved as a learned option to allow computing statistical significance\n&quot;
++                  &quot;of the coefficients when the model is reloaded and used in test mode.&quot;);
++
++    declareOption(ol, &quot;input_indices&quot;, &amp;PruningLinearRegressor::input_indices,
++                  OptionBase::learntoption,
++                  &quot;Indices of inputs kept for regression&quot;);
++
++    inherited::declareOptions(ol);
++}
++
++void PruningLinearRegressor::build_()
++{
++    if (pruning_method == &quot;max_number&quot;)
++    {
++        if (max_number &lt; 1)
++            PLERROR(&quot;\&quot;max_number\&quot; should be strictly positive&quot;);
++    }
++    else if (pruning_method == &quot;max_fraction&quot;)
++    {
++        if (max_fraction &lt;= 0.0  ||  max_fraction &gt;= 1.0)
++            PLERROR(&quot;\&quot;max_fraction\&quot; should be in range ]0,1[&quot;);
++    }
++    else if (pruning_method == &quot;min_t_ratio&quot;)
++    {
++        if (min_t_ratio &lt;= 0.0)
++            PLERROR(&quot;\&quot;min_t_ratio\&quot; should be strictly positive&quot;);
++    }
++    else
++        PLERROR(&quot;Pruning method \&quot;%s\&quot; not supported&quot;, pruning_method.c_str());
++}
++
++void PruningLinearRegressor::build()
++{
++    inherited::build();
++    build_();
++}
++
++void PruningLinearRegressor::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++    deepCopyField(t_ratio, copies);
++    deepCopyField(input_indices, copies);
++}
++
++void PruningLinearRegressor::forget()
++{
++    inherited::forget();
++    t_ratio.resize(0);
++}
++
++void PruningLinearRegressor::setTrainingSet(VMat training_set, bool call_forget)
++{
++    inherited::setTrainingSet(training_set, call_forget);
++    if (targetsize() &gt; 1)
++        PLERROR(&quot;PruningLinearRegressor works only with single target problems&quot;);
++}
++
++void PruningLinearRegressor::train()
++{
++    // train with all coefficients
++    inherited::train();
++
++    // find the dataset indices corresponding to coefficients not pruned
++    newDatasetIndices();
++
++    // Add target and (possibly) weight indices
++    TVec&lt;int&gt; all_indices = input_indices.copy();
++    all_indices.append(inputsize());        // target index = inputsize
++    if (weightsize())
++        all_indices.append(inputsize()+1);  // weight index = target index + 1
++
++    // Build new training set
++    VMat new_trainset = train_set.columns(all_indices);
++    int new_inputsize = input_indices.length();
++    new_trainset-&gt;defineSizes(new_inputsize, 1, weightsize());
++
++    // Train with this new training set
++    setTrainingSet(new_trainset);
++    inherited::train();
++}
++
++void PruningLinearRegressor::computeOutput(const Vec&amp; input, Vec&amp; output) const
++{
++    Vec actual_input(input_indices.length());
++    selectElements(input, input_indices, actual_input);
++    inherited::computeOutput(actual_input, output);
++}
++
++void PruningLinearRegressor::computeTRatio()
++{
++    // We wish to compute the t-ratio of the estimator coefficients.
++    // For that purpose, we use the following formula:
++    //
++    //    t = |b| / sigma_b
++    //
++    // where b is the coefficients vector and sigma_b is the stderr matrix
++    // of the estimator of b.  The latter is computed as:
++    //
++    //     sigma_b = s^2 * inverse(X'X)
++    //
++    // where s^2 is the residual variance (estimated using the
++    // LinearRegressor::computeResidualsVariance method)
++    // and X is the matrix of regressors..
++
++    const int ninputs = weights.length();
++    Mat sigma_b(ninputs, ninputs);
++    t_ratio.resize(ninputs);
++
++    // We compute the estimator
++    PLASSERT(resid_variance.length() == 1);
++    PLASSERT(weights.width() == 1);
++    real residual_variance = resid_variance[0];
++ 
++    Mat XtX_copy = XtX.copy();  // matInvert overwrite the input matrix
++    Mat XtX_inverse(XtX.length(), XtX.width());
++    matInvert(XtX_copy, XtX_inverse);
++    for (int i=0; i&lt;ninputs; i++)
++    {
++        real sigma_b = sqrt(residual_variance*XtX_inverse(i,i));
++        t_ratio[i] = abs(weights(i,0)) / sigma_b;
++    }
++}
++
++void PruningLinearRegressor::newDatasetIndices()
++{
++    // Compute first the t-ratios
++    computeTRatio();
++
++    // Sort all t-ratios
++    int nb_weights = weights.length();
++    Vec t_ratio_sort = t_ratio.copy();
++    sortElements(t_ratio_sort, true);
++
++    // Find the t-ratio threshold
++    real t_ratio_threshold = 0.0;
++    if (pruning_method == &quot;max_number&quot;)
++    {
++        int keep_n_weights = min(max_number, nb_weights);
++        if (include_bias)
++            ++keep_n_weights;
++        t_ratio_threshold = t_ratio_sort[keep_n_weights-1];
++    }
++    else if (pruning_method == &quot;max_fraction&quot;)
++    {
++        int keep_n_weights = max_fraction*nb_weights;
++        t_ratio_threshold = t_ratio_sort[keep_n_weights-1];
++    }
++    else if (pruning_method == &quot;min_t_ratio&quot;)
++    {
++        t_ratio_threshold = min_t_ratio;
++    }
++
++    // Find kept (not pruned) coefficient indices
++    input_indices.resize(0);
++    int offset = include_bias ? 1 : 0;
++    for (int i=0; i&lt;nb_weights; i++)
++    {
++        if (t_ratio[i] &gt;= t_ratio_threshold)
++        {
++            int data_index = i - offset;
++            if (data_index &gt;= 0)  // = -1 for bias
++                input_indices.append(data_index);
++        }
++    }
++}
++
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/regressors/PruningLinearRegressor.h
+===================================================================
+--- trunk/plearn_learners/regressors/PruningLinearRegressor.h	2008-11-10 17:26:21 UTC (rev 9666)
++++ trunk/plearn_learners/regressors/PruningLinearRegressor.h	2008-11-10 20:04:30 UTC (rev 9667)
+@@ -0,0 +1,158 @@
++// -*- C++ -*-
++
++// PruningLinearRegressor.h
++//
++// Copyright (C) 2008 Rejean Ducharme
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Rejean Ducharme
++
++/*! \file PruningLinearRegressor.h */
++
++
++#ifndef PruningLinearRegressor_INC
++#define PruningLinearRegressor_INC
++
++#include &lt;plearn_learners/regressors/LinearRegressor.h&gt;
++
++namespace PLearn {
++
++/**
++ * The first sentence should be a BRIEF DESCRIPTION of what the class does.
++ * Place the rest of the class programmer documentation here.  Doxygen supports
++ * Javadoc-style comments.  See <A HREF="http://www.doxygen.org/manual.html">http://www.doxygen.org/manual.html</A>
++ *
++ * @todo Write class to-do's here if there are any.
++ *
++ * @deprecated Write deprecated stuff here if there is any.  Indicate what else
++ * should be used instead.
++ */
++class PruningLinearRegressor : public LinearRegressor
++{
++    typedef LinearRegressor inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! ### declare public option fields (such as build options) here
++    string pruning_method;
++    real min_t_ratio;
++    int max_number;
++    real max_fraction;
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    // ### Make sure the implementation in the .cc
++    // ### initializes all fields to reasonable default values.
++    PruningLinearRegressor();
++
++
++    //#####  PLearner Member Functions  #######################################
++
++    //! (Re-)initializes the PLearner in its fresh state (that state may depend
++    //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
++    //! a fresh learner!).
++    virtual void forget();
++
++    //! The role of the train method is to bring the learner up to
++    //! stage==nstages, updating the train_stats collector with training costs
++    //! measured on-line in the process.
++    virtual void train();
++
++    //! Computes the output from the input
++    virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    PLEARN_DECLARE_OBJECT(PruningLinearRegressor);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++    virtual void setTrainingSet(VMat training_set, bool call_forget=true);
++
++protected:
++    //#####  Protected Options  ###############################################
++
++    // ### Declare protected option fields (such as learned parameters) here
++
++    //! t-ratio statistics for the estimator b (regression coefficients)
++    //! Saved as a learned option to allow computing statistical significance
++    //! of the weights when the model is reloaded and used in test mode.
++    Vec t_ratio;
++
++    //! Indices of inputs kept for regression
++    TVec&lt;int&gt; input_indices;
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++    //! Utility function to compute the t-ratio for the estimator b
++    //! (regression coefficients)
++    void computeTRatio();
++
++    //! Find the dataset indices corresponding to coefficients not pruned
++    void newDatasetIndices();
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(PruningLinearRegressor);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003106.html">[Plearn-commits] r9666 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="003108.html">[Plearn-commits] r9668 - trunk/plearn_learners/meta
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3107">[ date ]</a>
+              <a href="thread.html#3107">[ thread ]</a>
+              <a href="subject.html#3107">[ subject ]</a>
+              <a href="author.html#3107">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

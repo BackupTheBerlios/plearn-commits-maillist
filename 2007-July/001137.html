@@ -1,0 +1,407 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7689 - in trunk: . python_modules/plearn/pymake
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7689%20-%20in%20trunk%3A%20.%20python_modules/plearn/pymake&In-Reply-To=%3C200707040234.l642Y66i018369%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001136.html">
+   <LINK REL="Next"  HREF="001138.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7689 - in trunk: . python_modules/plearn/pymake</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7689%20-%20in%20trunk%3A%20.%20python_modules/plearn/pymake&In-Reply-To=%3C200707040234.l642Y66i018369%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7689 - in trunk: . python_modules/plearn/pymake">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Wed Jul  4 04:34:06 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001136.html">[Plearn-commits] r7688 - trunk/python_modules/plearn/pymake
+</A></li>
+        <LI>Next message: <A HREF="001138.html">[Plearn-commits] r7690 - in trunk: plearn_learners/hyper	plearn_learners_experimental/SurfaceTemplate
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1137">[ date ]</a>
+              <a href="thread.html#1137">[ thread ]</a>
+              <a href="subject.html#1137">[ subject ]</a>
+              <a href="author.html#1137">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-07-04 04:34:04 +0200 (Wed, 04 Jul 2007)
+New Revision: 7689
+
+Modified:
+   trunk/pymake.config.model
+   trunk/python_modules/plearn/pymake/pymake.py
+Log:
+Support for 'host/nprocesses nice_value' format in pymake *.hosts files
+
+
+Modified: trunk/pymake.config.model
+===================================================================
+--- trunk/pymake.config.model	2007-07-04 00:41:33 UTC (rev 7688)
++++ trunk/pymake.config.model	2007-07-04 02:34:04 UTC (rev 7689)
+@@ -65,7 +65,7 @@
+ if domain_name.endswith('apstat.com') or domain_name.endswith('iro.umontreal.ca') or domain_name.endswith('public'):
+     rshcommand= 'ssh -x'
+ 
+-nice_value = '1'
++default_nice_value = 1
+ 
+ # List of directories in which to look for .h includes and corresponding
+ # .cc files to compile and link with your program (no need to include
+@@ -753,7 +753,7 @@
+ 
+ #####  Network Setup  #######################################################
+ 
+-# nprocesses_per_processor = 1
++# nprocesses_on_localhost = 1
+ 
+ # ###
+ # # Declaration of other options
+
+Modified: trunk/python_modules/plearn/pymake/pymake.py
+===================================================================
+--- trunk/python_modules/plearn/pymake/pymake.py	2007-07-04 00:41:33 UTC (rev 7688)
++++ trunk/python_modules/plearn/pymake/pymake.py	2007-07-04 02:34:04 UTC (rev 7689)
+@@ -694,13 +694,22 @@
+ 
+ def process_hostspath_list(hostspath_list):
+     list_of_hosts = []
++    nice_values = {} # dictionary containing hostname:nice_value
+     for hostspath in hostspath_list:
+         f = open(hostspath,'r')
+         for line in f:
++            nice_value = default_nice_value
+             line = line.strip()
++
+             # Remove comments
+             i = line.find('#')
+             if i != -1:
++                line = line[:i].strip()
++
++            # Get nice value to use (a number, preceded by a space)
++            i = line.find(' ')
++            if i != -1:
++                nice_value = int(line[i+1:])
+                 line = line[:i]
+ 
+             # Get number of processors to use (syntax: host/n_proc)
+@@ -712,19 +721,21 @@
+                 host = line[:i]
+                 n_proc = int(line[i+1:])
+ 
+-            # Remove ''
++            # Remove empty strings
+             if host:
+                 list_of_hosts.extend([host] * n_proc)
++                nice_values[host] = nice_value
+ 
+         f.close()
+ 
+     if 'localhost' not in list_of_hosts and myhostname not in list_of_hosts:
+         list_of_hosts.extend(['localhost'] * nprocesses_on_localhost)
+ 
+-    return list_of_hosts
++    return (list_of_hosts, nice_values)
+ 
+ 
+ def get_list_of_hosts():
++    nice_values = {}
+     distcc_list_of_hosts = get_distcc_hosts()
+ 
+     if force_32bits:
+@@ -741,7 +752,7 @@
+         if distcc_list_of_hosts is not None:
+             print '*** Overriding distcc settings. (Remove pymake *.hosts file to use distcc settings.)'
+         print '*** Parallel compilation using list of hosts from file(s): ' + string.join( hostspath_list, ', ' )
+-        list_of_hosts = process_hostspath_list(hostspath_list)
++        (list_of_hosts, nice_values) = process_hostspath_list(hostspath_list)
+     elif distcc_list_of_hosts is not None:
+         print '*** Parallel compilation using distcc list of hosts (%d)' % len(distcc_list_of_hosts)
+         list_of_hosts = distcc_list_of_hosts
+@@ -752,7 +763,7 @@
+ 
+     # randomize order of list_of_hosts
+     shuffle(list_of_hosts)
+-    return list_of_hosts
++    return (list_of_hosts, nice_values)
+ 
+ 
+ ###  For text processing of the source files
+@@ -911,7 +922,8 @@
+ 
+ ###  File compilation and linking
+ 
+-def parallel_compile(files_to_compile, num_retries=3, ofiles_to_copy=[]):
++def parallel_compile(files_to_compile, list_of_hosts, nice_values={},
++        num_retries=3, ofiles_to_copy=[]):
+     &quot;&quot;&quot;files_to_compile is a list of FileInfo of .cc files&quot;&quot;&quot;
+ 
+     def wait_for_some_completion(outs, errs, ofiles_to_copy, files_to_check):
+@@ -931,7 +943,13 @@
+             info = outs[f]
+         del errs[info.launched.childerr]
+         del outs[info.launched.fromchild]
+-        info.finished_compilation() # print error messages, warnings, and get failure/success status
++
++        # print error messages, warnings, and get failure/success status
++        info.finished_compilation()
++        if info.remove_hostname:
++            list_of_hosts.remove(info.hostname)
++            info.hostname = ''
++
+         # check for new ofiles to copy
+         if local_ofiles:
+             for f in files_to_check:
+@@ -963,19 +981,21 @@
+                 hostname = 'localhost'
+             else:
+                 hostname = list_of_hosts[hostnum]
+-            ccfile.launch_compilation(hostname)
++            nice_value = nice_values.get(hostname, default_nice_value)
++            ccfile.launch_compilation(hostname, nice_value)
+             outs[ccfile.launched.fromchild] = ccfile
+             errs[ccfile.launched.childerr] = ccfile
+             hostnum = hostnum + 1
+         else: # all processes are busy, wait for something to finish...
+             hostname = ''
+             while hostname == '':
+-                hostname= wait_for_some_completion(outs, errs, ofiles_to_copy, files_to_check)
++                hostname = wait_for_some_completion(outs, errs, ofiles_to_copy, files_to_check)
+                 # This should not happen unless localhost is unable to compile
+                 if not list_of_hosts:
+                     raise &quot;Couldn't access ANY of the listed hosts for compilation&quot;
+             else:
+-                ccfile.launch_compilation(hostname)
++                nice_value = nice_values.get(hostname, default_nice_value)
++                ccfile.launch_compilation(hostname, nice_value)
+                 outs[ccfile.launched.fromchild] = ccfile
+                 errs[ccfile.launched.childerr] = ccfile
+ 
+@@ -992,7 +1012,8 @@
+         if num_retries &gt; 0:
+             if verbose &gt;= 2:
+                 print '[ RETRYING COMPILATION FOR %d FILES ]' % len(ccfiles_to_retry)
+-            parallel_compile(ccfiles_to_retry, num_retries-1, ofiles_to_copy)
++            parallel_compile(ccfiles_to_retry, list_of_hosts, nice_values,
++                    num_retries-1, ofiles_to_copy)
+         else:
+             if verbose &gt;= 2:
+                 print '[ %d FILES TO RETRY, BUT NO MORE TRIES AVAILABLE ]' % len(ccfiles_to_retry)
+@@ -1002,7 +1023,7 @@
+ 
+     for ccfile in files_to_compile:
+         ccfile.make_objs_dir() # make sure the OBJS dir exists, otherwise the command will fail
+-        ccfile.launch_compilation('localhost')
++        ccfile.launch_compilation('localhost', default_nice_value)
+         ccfile.finished_compilation() # print error messages, warnings, and get failure/success status
+ 
+ def sequential_link(executables_to_link, linkname):
+@@ -1492,6 +1513,7 @@
+     - errormsgs: a list of error messages taken from the launched process' stdout
+     - warningmsgs: a list of warning messages taken from the launched process' stderr
+     - retry_compilation: whether to retry the compilation because the current failure was caused by an out of memory error, etc.
++    - remove_hostname: whether to remove hostname from list_of_hosts, because the current failure was caused by this machine
+     &quot;&quot;&quot;
+ 
+     # static patterns useful for parsing the file
+@@ -1823,7 +1845,7 @@
+         the symbolic link, is specified then the symbolic link will have
+         this path and name, and the object files will be placed in the OBJS
+         subdirectory of the directory where the source file is.
+-        
++
+         If the third argument is given, it overrides the target of the link,
+         i.e. the location of the executable object.&quot;&quot;&quot;
+ 
+@@ -1896,7 +1918,7 @@
+ 
+         return compileroptions
+ 
+-    def compile_command(self):
++    def compile_command(self, nice_value):
+         &quot;&quot;&quot;returns the command line necessary to compile this .cc file&quot;&quot;&quot;
+ 
+         compiler = default_compiler
+@@ -1907,10 +1929,10 @@
+                 compiler = optdef.compiler
+ 
+ 
+-        if platform == 'win32' or nice_value == '0':
+-          nice = ''
++        if platform == 'win32' or nice_value == 0:
++            nice = ''
+         else:
+-          nice = nice_command + nice_value + ' '
++            nice = nice_command + str(nice_value) + ' '
+ 
+         command = nice + compiler + ' ' + self.compiler_options() + \
+                   ' -o ' + self.corresponding_ofile + ' -c ' + self.filepath
+@@ -1930,9 +1952,9 @@
+ 
+ 
+ 
+-    def launch_compilation(self,hostname):
++    def launch_compilation(self, hostname, nice_value):
+         &quot;&quot;&quot;Launches the compilation of this .cc file on given host using rsh
+-        (or ssh if the -ssh option is given).
++        (or ssh if the -ssh option is given), with given nice value.
+         The call returns the pid of the launched process.
+         This will create a field 'launched', which is a Popen3 object,
+         and 'hostname' to remember on which host it has been launched.
+@@ -1945,7 +1967,7 @@
+             pass
+ 
+         # We do an 'echo $?'  at the end because rsh doesn't transmit the status byte correctly.
+-        quotedcommand = &quot;'cd &quot; + self.filedir + &quot;; &quot; + self.compile_command() + &quot;; echo $?'&quot;
++        quotedcommand = &quot;'cd &quot; + self.filedir + &quot;; &quot; + self.compile_command(nice_value) + &quot;; echo $?'&quot;
+         self.hostname = hostname
+         if hostname=='localhost' or hostname==myhostname:
+             if platform=='win32':
+@@ -1997,6 +2019,7 @@
+             del errormsgs[-1]
+ 
+         msg = warningmsgs + errormsgs
++        self.remove_hostname = False
+ 
+         # Somewhat dumb heuristic to figure out why compilation failed.
+         #
+@@ -2020,10 +2043,9 @@
+                 if warningmsgs[0].startswith('ssh: '):
+                     # The hostname has a problem, so we remove it from the list
+                     # and retry on another machine
+-                    list_of_hosts.remove(self.hostname)
+-                    self.hostname = ''
++                    self.remove_hostname = True
+                     self.retry_compilation = True
+-                elif warningmsgs[0].startswith('ssh_exchange_identification :'):
++                elif warningmsgs[0].startswith('ssh_exchange_identification: '):
+                     # It happens sometimes when logging multiple times onto the
+                     # same machine. No need to remove it from the list, we will
+                     # try again.
+@@ -2245,12 +2267,12 @@
+                 os.remove(corresponding_output)
+             except OSError:
+                 pass
+-            
++
+             if local_ofiles:
+                 copyfile_verbose(self.corresponding_output, new_corresponding_output)
+-                    
++
+             os.rename(new_corresponding_output, corresponding_output)
+-                   
++
+             if verbose&gt;=2:
+                 print &quot;Successfully created &quot; + new_corresponding_output + &quot; and renamed it to &quot; + corresponding_output
+ 
+@@ -2364,7 +2386,7 @@
+             compileflags, cpp_variables, cpp_definitions, \
+             objspolicy, objsdir, \
+             default_wrapper, dllwrap_basic_options, \
+-            nice_command, nice_value, verbose
++            nice_command, default_nice_value, verbose
+ 
+     # Variables that can be useful to have read access to in the config file
+     global optionargs, otherargs, linkname, link_target_override, \
+@@ -2377,7 +2399,7 @@
+     # TODO: fix it
+     global cpp_exts, h_exts, \
+             undefined_cpp_vars, defined_cpp_vars, cpp_vars_values, \
+-            list_of_hosts, options
++            options
+ 
+     # initialize a few variables from the environment
+     platform = get_platform()
+@@ -2430,7 +2452,7 @@
+ 
+     # nice default command and value
+     nice_command = 'env nice -n'
+-    nice_value = '10'
++    default_nice_value = 10
+     verbose=3
+ 
+     ######## Regular pymake processing
+@@ -2664,7 +2686,7 @@
+     if 'help' in optionargs:
+         printusage()
+         sys.exit()
+-        
++
+     if 'getoptions' in optionargs:
+         if len(otherargs)==0:
+             print 'Usage of &quot;-getoptions&quot; is: pymake -getoptions &lt;list of targets, files or directories&gt;'
+@@ -2674,7 +2696,7 @@
+             configpath = get_config_path(target)
+             execfile( configpath, globals() )
+             printusage()
+-            
++
+         sys.exit()
+ 
+     if 'vcproj' in optionargs:
+@@ -2688,12 +2710,13 @@
+     else:
+         vcproj = 0
+ 
+-    ####  Get the list of hosts on which to compile
++    ####  Get the list of hosts on which to compile, and nice values
+     # (Will be obsoleted when the batch job interface will come out)
++    nice_values = {}
+     if local_compilation:
+         list_of_hosts = nprocesses_on_localhost * ['localhost']
+     else:
+-        list_of_hosts = get_list_of_hosts()
++        (list_of_hosts, nice_values) = get_list_of_hosts()
+ 
+ 
+     ######  The compilation and linking
+@@ -2738,9 +2761,10 @@
+             if platform=='win32':
+                 win32_parallel_compile(ccfiles_to_compile.keys())
+             else:
+-                ofiles_to_copy= get_ofiles_to_copy(executables_to_link.keys())
+-                ofiles_to_copy= [x for x in ofiles_to_copy if x not in [y.corresponding_ofile for y in ccfiles_to_compile.keys()]]
+-                parallel_compile(ccfiles_to_compile.keys(), ofiles_to_copy= ofiles_to_copy)
++                ofiles_to_copy = get_ofiles_to_copy(executables_to_link.keys())
++                ofiles_to_copy = [x for x in ofiles_to_copy if x not in [y.corresponding_ofile for y in ccfiles_to_compile.keys()]]
++                parallel_compile(ccfiles_to_compile.keys(), list_of_hosts, nice_values,
++                        ofiles_to_copy = ofiles_to_copy)
+ 
+             if force_link or (executables_to_link.keys() and not create_dll):
+                 print '++++ Linking', string.join(map(lambda x: x.filebase, executables_to_link.keys()))
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001136.html">[Plearn-commits] r7688 - trunk/python_modules/plearn/pymake
+</A></li>
+	<LI>Next message: <A HREF="001138.html">[Plearn-commits] r7690 - in trunk: plearn_learners/hyper	plearn_learners_experimental/SurfaceTemplate
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1137">[ date ]</a>
+              <a href="thread.html#1137">[ thread ]</a>
+              <a href="subject.html#1137">[ subject ]</a>
+              <a href="author.html#1137">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

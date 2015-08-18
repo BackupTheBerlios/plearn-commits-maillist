@@ -1,0 +1,207 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9774 - in trunk/plearn: io math var vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-December/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9774%20-%20in%20trunk/plearn%3A%20io%20math%20var%20vmat&In-Reply-To=%3C200812112106.mBBL6SAc029409%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003213.html">
+   <LINK REL="Next"  HREF="003215.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9774 - in trunk/plearn: io math var vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9774%20-%20in%20trunk/plearn%3A%20io%20math%20var%20vmat&In-Reply-To=%3C200812112106.mBBL6SAc029409%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9774 - in trunk/plearn: io math var vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Thu Dec 11 22:06:28 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003213.html">[Plearn-commits] r9773 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="003215.html">[Plearn-commits] r9775 - trunk/plearn/io
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3214">[ date ]</a>
+              <a href="thread.html#3214">[ thread ]</a>
+              <a href="subject.html#3214">[ subject ]</a>
+              <a href="author.html#3214">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-12-11 22:06:26 +0100 (Thu, 11 Dec 2008)
+New Revision: 9774
+
+Modified:
+   trunk/plearn/io/PPath.cc
+   trunk/plearn/math/StatsCollector.cc
+   trunk/plearn/math/TMat_maths_impl.h
+   trunk/plearn/var/Variable.cc
+   trunk/plearn/vmat/ConcatRowsVMatrix.cc
+   trunk/plearn/vmat/VMatrix.cc
+Log:
+change some static variable to make them thread safe. Many of those static variable have no purpose being static and the other are not in hot code.
+
+
+Modified: trunk/plearn/io/PPath.cc
+===================================================================
+--- trunk/plearn/io/PPath.cc	2008-12-11 19:18:44 UTC (rev 9773)
++++ trunk/plearn/io/PPath.cc	2008-12-11 21:06:26 UTC (rev 9774)
+@@ -398,7 +398,7 @@
+     const string* the_path = &amp;path_;
+ #if defined(__CYGWIN__) || defined(_MINGW_)
+ #ifdef __CYGWIN__
+-    static char buf[3000];
++    char buf[3000];
+ #endif
+     string new_path;
+     // This is a hack to try to get the right DOS path from Cygwin.
+
+Modified: trunk/plearn/math/StatsCollector.cc
+===================================================================
+--- trunk/plearn/math/StatsCollector.cc	2008-12-11 19:18:44 UTC (rev 9773)
++++ trunk/plearn/math/StatsCollector.cc	2008-12-11 21:06:26 UTC (rev 9774)
+@@ -1130,6 +1130,10 @@
+     static bool init = false;
+     static map&lt;string,STATFUN&gt; statistics;
+     if (!init) {
++        //the two if(!init) is volontary not to acquire a lock at each fct call
++#pragma omp critical
++        if(!init){
++        init = true;
+         statistics[&quot;E&quot;]           = STATFUN(&amp;StatsCollector::mean);
+         statistics[&quot;V&quot;]           = STATFUN(&amp;StatsCollector::variance);
+         statistics[&quot;STDDEV&quot;]      = STATFUN(&amp;StatsCollector::stddev);
+@@ -1161,7 +1165,7 @@
+         statistics[&quot;MEAN_LIFT&quot;]   = STATFUN(&amp;StatsCollector::mean_lift);
+         statistics[&quot;PRBP&quot;]        = STATFUN(&amp;StatsCollector::prbp);
+         statistics[&quot;DMODE&quot;]       = STATFUN(&amp;StatsCollector::dmode);
+-        init = true;
++        }
+     }
+ 
+     // Special case :: interpret the PSEUDOQ(xx) and LIFT(xxx) forms
+
+Modified: trunk/plearn/math/TMat_maths_impl.h
+===================================================================
+--- trunk/plearn/math/TMat_maths_impl.h	2008-12-11 19:18:44 UTC (rev 9773)
++++ trunk/plearn/math/TMat_maths_impl.h	2008-12-11 21:06:26 UTC (rev 9774)
+@@ -1065,7 +1065,6 @@
+ T powdistance(const TVec&lt;T&gt;&amp; vec1, const TVec&lt;T&gt;&amp; vec2, double n,
+               bool ignore_missing = false)
+ {
+-    static T result, diff;
+ #ifdef BOUNDCHECK
+     if(vec1.length() != vec2.length())
+         PLERROR(&quot;In weighted_powdistance: vec1, vec2 should have the same length (%d!=%d)&quot;,
+@@ -1074,7 +1073,8 @@
+     int length = vec1.length();
+     if (length == 0)
+         return 0.0;
+-    result = 0.0;
++    T result = 0;
++    T diff = 0;
+     T* v1 = vec1.data();
+     T* v2 = vec2.data();
+     if(fast_exact_is_equal(n, 1.0)) // L1 distance
+@@ -4497,9 +4497,9 @@
+ template&lt;class T&gt;
+ void regularizeMatrix(const TMat&lt;T&gt;&amp; mat, T tolerance)
+ {
+-    static T reg;
+-    static T* k;
+-    static int shift;
++    T reg;
++    T* k;
++    int shift;
+     reg = tolerance * trace(mat);
+     k = mat.data();
+     shift = mat.mod() + 1;
+
+Modified: trunk/plearn/var/Variable.cc
+===================================================================
+--- trunk/plearn/var/Variable.cc	2008-12-11 19:18:44 UTC (rev 9773)
++++ trunk/plearn/var/Variable.cc	2008-12-11 21:06:26 UTC (rev 9774)
+@@ -591,12 +591,10 @@
+ 
+ bool Variable::update(real step_size, Vec direction_vec, real coeff, real b)
+ {
+-    static bool hit;
+-    static real full_coeff;
++    bool hit = false;
+     if(allows_partial_update)
+         PLWARNING(&quot;Warning in Variable::update(real,Vec): will update every elements of the Variable&quot;);
+-    hit = false;
+-    full_coeff = step_size * coeff + b;
++    real full_coeff = step_size * coeff + b;
+     if(min_value&gt;-FLT_MAX || max_value&lt;FLT_MAX)
+         // constrained update
+     {
+
+Modified: trunk/plearn/vmat/ConcatRowsVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/ConcatRowsVMatrix.cc	2008-12-11 19:18:44 UTC (rev 9773)
++++ trunk/plearn/vmat/ConcatRowsVMatrix.cc	2008-12-11 21:06:26 UTC (rev 9774)
+@@ -406,13 +406,12 @@
+ /////////
+ real ConcatRowsVMatrix::get(int i, int j) const
+ {
+-    static real val;
+     int whichvm, rowofvm;
+     getpositions(i,whichvm,rowofvm);
+     if (!need_fix_mappings || fixed_mappings(whichvm, j).size() == 0)
+         return to_concat[whichvm]-&gt;get(rowofvm,j);
+     else {
+-        val = to_concat[whichvm]-&gt;get(rowofvm,j);
++        real val = to_concat[whichvm]-&gt;get(rowofvm,j);
+         if (!is_missing(val)) {
+             map&lt;real, real&gt;::iterator it = fixed_mappings(whichvm, j).find(val);
+             if (it != fixed_mappings(whichvm, j).end()) {
+
+Modified: trunk/plearn/vmat/VMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/VMatrix.cc	2008-12-11 19:18:44 UTC (rev 9773)
++++ trunk/plearn/vmat/VMatrix.cc	2008-12-11 21:06:26 UTC (rev 9774)
+@@ -1198,9 +1198,8 @@
+ ///////////////
+ string VMatrix::getString(int row,int col) const
+ {
+-    static string str;
+     real val = get(row,col);
+-    str = getValString(col, val);
++    string str = getValString(col, val);
+     if (str == &quot;&quot;)
+         // There is no string mapping associated to this value.
+         return tostring(val);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003213.html">[Plearn-commits] r9773 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="003215.html">[Plearn-commits] r9775 - trunk/plearn/io
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3214">[ date ]</a>
+              <a href="thread.html#3214">[ thread ]</a>
+              <a href="subject.html#3214">[ subject ]</a>
+              <a href="author.html#3214">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

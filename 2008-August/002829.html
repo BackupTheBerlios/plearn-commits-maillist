@@ -1,0 +1,305 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9389 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9389%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200808211348.m7LDmmc4028938%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002828.html">
+   <LINK REL="Next"  HREF="002830.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9389 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9389%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200808211348.m7LDmmc4028938%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9389 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Thu Aug 21 15:48:48 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002828.html">[Plearn-commits] r9388 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="002830.html">[Plearn-commits] r9390 - trunk/plearn_learners/meta
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2829">[ date ]</a>
+              <a href="thread.html#2829">[ thread ]</a>
+              <a href="subject.html#2829">[ subject ]</a>
+              <a href="author.html#2829">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-08-21 15:48:47 +0200 (Thu, 21 Aug 2008)
+New Revision: 9389
+
+Modified:
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+Log:
+Added different types of noises...
+
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2008-08-20 18:57:41 UTC (rev 9388)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2008-08-21 13:48:47 UTC (rev 9389)
+@@ -65,7 +65,7 @@
+     online( false ),
+     compute_all_test_costs( false ),
+     reconstruct_hidden( false ),
+-    noise_type( &quot;none&quot; ),
++    noise_type( &quot;masking_noise&quot; ),
+     fraction_of_masked_inputs( 0 ),
+     probability_of_masked_inputs( 0 ),
+     mask_with_mean( false ),
+@@ -229,9 +229,10 @@
+                   OptionBase::buildoption,
+                   &quot;Type of noise that corrupts the autoassociators input. &quot;
+                   &quot;Choose among:\n&quot;
+-                  &quot; - \&quot;masking noise\&quot;\n&quot;
+-                  &quot; - \&quot;binary sampling\&quot;\n&quot;
++                  &quot; - \&quot;masking_noise\&quot;\n&quot;
++                  &quot; - \&quot;binary_sampling\&quot;\n&quot;
+                   &quot; - \&quot;gaussian\&quot;\n&quot;
++                  &quot; - \&quot;none\&quot;\n&quot;
+         );
+ 
+     declareOption(ol, &quot;fraction_of_masked_inputs&quot;,
+@@ -322,10 +323,10 @@
+                   &quot;Hidden layers for the correlation connections&quot;
+         );
+ 
+-    declareOption(ol, &quot;input_mean&quot;,
+-                  &amp;StackedAutoassociatorsNet::input_mean,
++    declareOption(ol, &quot;expectation_means&quot;,
++                  &amp;StackedAutoassociatorsNet::expectation_means,
+                   OptionBase::learntoption,
+-                  &quot;Mean of inputs on the training set&quot;
++                  &quot;Mean of layers on the training set for each layer&quot;
+         );
+ 
+     // Now call the parent class' declareOptions
+@@ -410,21 +411,6 @@
+                     &quot; - \n&quot;
+                     &quot;masked inputs has not been implemented for online option.\n&quot;);
+ 
+-        if( train_set &amp;&amp; noise_type == &quot;masking noise&quot; &amp;&amp; mask_with_mean )
+-        {
+-            Vec input(inputsize());
+-            Vec target(train_set-&gt;targetsize());
+-            real weight;
+-            input_mean.resize(inputsize());
+-            input_mean.clear();
+-            for( int l = 0; l&lt;train_set-&gt;length(); l++ )
+-            {
+-                train_set-&gt;getExample(l, input, target, weight);
+-                input_mean += input;
+-            }
+-            input_mean /= train_set-&gt;length();
+-        }
+-
+         if( !online )
+         {
+             if( greedy_stages.length() == 0)
+@@ -644,6 +630,22 @@
+     expectations[n_layers-1].resize( layers[n_layers-1]-&gt;size );
+     activation_gradients[n_layers-1].resize( layers[n_layers-1]-&gt;size );
+     expectation_gradients[n_layers-1].resize( layers[n_layers-1]-&gt;size );
++
++    // For denoising autoencoders
++    corrupted_autoassociator_expectations.resize( n_layers-1 );
++    if( noise_type == &quot;masking_noise&quot; &amp;&amp; fraction_of_masked_inputs &gt; 0 )
++        autoassociator_expectation_indices.resize( n_layers-1 );
++    
++    for( int i=0 ; i&lt;n_layers-1 ; i++ )
++    {
++        corrupted_autoassociator_expectations[i].resize( layers[i]-&gt;size );
++        if( noise_type == &quot;masking_noise&quot; &amp;&amp; fraction_of_masked_inputs &gt; 0 )
++        {
++            autoassociator_expectation_indices[i].resize( layers[i]-&gt;size );
++            for( int j=0 ; j &lt; autoassociator_expectation_indices[i].length() ; j++ )
++                autoassociator_expectation_indices[i][j] = j;
++        }
++    }
+ }
+ 
+ void StackedAutoassociatorsNet::build_costs()
+@@ -797,7 +799,7 @@
+     deepCopyField(final_cost_gradients, copies);
+     deepCopyField(corrupted_autoassociator_expectations, copies);
+     deepCopyField(autoassociator_expectation_indices, copies);
+-    deepCopyField(input_mean, copies);
++    deepCopyField(expectation_means, copies);
+     deepCopyField(greedy_stages, copies);
+ }
+ 
+@@ -915,6 +917,46 @@
+             MODULE_LOG &lt;&lt; &quot;  end_stage = &quot; &lt;&lt; end_stage &lt;&lt; endl;
+             MODULE_LOG &lt;&lt; &quot;  greedy_learning_rate = &quot; &lt;&lt; greedy_learning_rate &lt;&lt; endl;
+ 
++            if( *this_stage == 0 &amp;&amp; noise_type == &quot;masking_noise&quot; &amp;&amp; mask_with_mean )
++            {
++                Vec in(inputsize());
++                Vec tar(train_set-&gt;targetsize());
++                real w;
++                expectation_means.resize(n_layers-1);
++                expectation_means[i].resize(expectations[i].length());
++                expectation_means[i].clear();
++                for( int l = 0; l&lt;train_set-&gt;length(); l++ )
++                {
++                    train_set-&gt;getExample(l, in, tar, w);
++                    // Get representation
++                    expectations[0] &lt;&lt; in;
++                    if(correlation_connections.length() != 0)
++                    {
++                        for( int j=0 ; j&lt;i; j++ )
++                        {
++                            connections[j]-&gt;fprop( expectations[j], correlation_activations[j] );
++                            layers[j+1]-&gt;fprop( correlation_activations[j],
++                                                correlation_expectations[j] );
++                            correlation_connections[j]-&gt;fprop( correlation_expectations[j],
++                                                               activations[j+1] );
++                            correlation_layers[j]-&gt;fprop( activations[j+1],
++                                                          expectations[j+1] );
++                        }
++                    }
++                    else
++                    {
++                        for( int j=0 ; j&lt;i; j++ )
++                        {
++                            connections[j]-&gt;fprop( expectations[j], activations[j+1] );
++                            layers[j+1]-&gt;fprop(activations[j+1],expectations[j+1]);
++                        }
++                    }
++                    
++                    expectation_means[i] += expectations[i];
++                }
++                expectation_means[i] /= train_set-&gt;length();
++            }
++
+             if( report_progress &amp;&amp; *this_stage &lt; end_stage )
+                 pb = new ProgressBar( &quot;Training layer &quot;+tostring(i)
+                                       +&quot; of &quot;+classname(),
+@@ -1035,20 +1077,6 @@
+                     layers[i]-&gt;size );
+             }
+ 
+-            if( noise_type == &quot;masking noise&quot; &amp;&amp; fraction_of_masked_inputs &gt; 0 )
+-            {
+-                corrupted_autoassociator_expectations.resize( n_layers-1 );
+-                autoassociator_expectation_indices.resize( n_layers-1 );
+-
+-                for( int i=0 ; i&lt;n_layers-1 ; i++ )
+-                {
+-                    corrupted_autoassociator_expectations[i].resize( layers[i]-&gt;size );
+-                    autoassociator_expectation_indices[i].resize( layers[i]-&gt;size );
+-                    for( int j=0 ; j &lt; autoassociator_expectation_indices[i].length() ; j++ )
+-                        autoassociator_expectation_indices[i][j] = j;
+-                }
+-            }
+-
+             setLearningRate( unsupervised_fine_tuning_learning_rate );
+             train_costs.fill(MISSING_VALUE);
+             for( ; unsupervised_stage&lt;unsupervised_nstages ; unsupervised_stage++ )
+@@ -1191,27 +1219,16 @@
+ void StackedAutoassociatorsNet::corrupt_input(const Vec&amp; input, Vec&amp; corrupted_input, int layer)
+ {
+     corrupted_input.resize(input.length());
+-    if( noise_type == &quot;masking noise&quot; )
++    if( noise_type == &quot;masking_noise&quot; )
+     {
+-        if( fraction_of_masked_inputs &gt; 0 )
++        if( probability_of_masked_inputs &gt; 0 )
+         {
+-            if( probability_of_masked_inputs &gt; 0 )
++            if( fraction_of_masked_inputs &gt; 0 )
+                 PLERROR(&quot;In StackedAutoassociatorsNet::corrupt_input(): fraction_of_masked_inputs and probability_of_masked_inputs can't be both &gt; 0&quot;);
+-            random_gen-&gt;shuffleElements(autoassociator_expectation_indices[layer]);
+-            corrupted_input &lt;&lt; input;
+             if( mask_with_mean )
+-                for( int j=0 ; j &lt; round(fraction_of_masked_inputs*input.length()) ; j++)
+-                    corrupted_input[ autoassociator_expectation_indices[layer][j] ] = input_mean[autoassociator_expectation_indices[layer][j]];
+-            else
+-                for( int j=0 ; j &lt; round(fraction_of_masked_inputs*input.length()) ; j++)
+-                    corrupted_input[ autoassociator_expectation_indices[layer][j] ] = 0;
+-        }
+-        else if( probability_of_masked_inputs &gt; 0 )
+-        {
+-            if( mask_with_mean )
+                 for( int j=0 ; j &lt;input.length() ; j++)
+                     if( random_gen-&gt;uniform_sample() &lt; probability_of_masked_inputs )
+-                        corrupted_input[ j ] = input_mean[ j ];
++                        corrupted_input[ j ] = expectation_means[layer][ j ];
+                     else
+                         corrupted_input[ j ] = input[ j ];
+             else
+@@ -1223,10 +1240,19 @@
+                 
+         }
+         else
+-            PLERROR(&quot;In StackedAutoassociatorsNet::corrupt_input(): either fraction_of_masked_inputs or probability_of_masked_inputs should be &gt; 0&quot;);
++        {
++            random_gen-&gt;shuffleElements(autoassociator_expectation_indices[layer]);
++            corrupted_input &lt;&lt; input;
++            if( mask_with_mean )
++                for( int j=0 ; j &lt; round(fraction_of_masked_inputs*input.length()) ; j++)
++                    corrupted_input[ autoassociator_expectation_indices[layer][j] ] = expectation_means[layer][autoassociator_expectation_indices[layer][j]];
++            else
++                for( int j=0 ; j &lt; round(fraction_of_masked_inputs*input.length()) ; j++)
++                    corrupted_input[ autoassociator_expectation_indices[layer][j] ] = 0;
++        }
+ 
+     }
+-    else if( noise_type == &quot;binary sampling&quot; )
++    else if( noise_type == &quot;binary_sampling&quot; )
+     {
+         for( int i=0; i&lt;corrupted_input.length(); i++ )
+             corrupted_input[i] = random_gen-&gt;binomial_sample((input[i]-0.5)*binary_sampling_noise_parameter+0.5);
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2008-08-20 18:57:41 UTC (rev 9388)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2008-08-21 13:48:47 UTC (rev 9389)
+@@ -397,8 +397,8 @@
+     //! Indices of the expectation components
+     TVec&lt; TVec&lt;int&gt; &gt; autoassociator_expectation_indices;
+ 
+-    //! Mean of inputs on the training set
+-    Vec input_mean;
++    //! Mean of layers on the training set for each layer
++    TVec&lt;Vec&gt; expectation_means;
+ 
+     //! Stages of the different greedy phases
+     TVec&lt;int&gt; greedy_stages;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002828.html">[Plearn-commits] r9388 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="002830.html">[Plearn-commits] r9390 - trunk/plearn_learners/meta
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2829">[ date ]</a>
+              <a href="thread.html#2829">[ thread ]</a>
+              <a href="subject.html#2829">[ subject ]</a>
+              <a href="author.html#2829">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

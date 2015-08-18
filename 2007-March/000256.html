@@ -1,0 +1,224 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6807 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6807%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200703311518.l2VFIY0k002778%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000255.html">
+   <LINK REL="Next"  HREF="000257.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6807 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6807%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200703311518.l2VFIY0k002778%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6807 - trunk/plearn_learners/generic/EXPERIMENTAL">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Sat Mar 31 17:18:34 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000255.html">[Plearn-commits] r6806 - trunk/plearn/misc
+</A></li>
+        <LI>Next message: <A HREF="000257.html">[Plearn-commits] r6808 - in trunk/plearn_learners: generic	generic/EXPERIMENTAL testers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#256">[ date ]</a>
+              <a href="thread.html#256">[ thread ]</a>
+              <a href="subject.html#256">[ subject ]</a>
+              <a href="author.html#256">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-03-31 17:18:33 +0200 (Sat, 31 Mar 2007)
+New Revision: 6807
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradEstimator.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+Log:
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradEstimator.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradEstimator.cc	2007-03-31 14:58:39 UTC (rev 6806)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradEstimator.cc	2007-03-31 15:18:33 UTC (rev 6807)
+@@ -224,12 +224,26 @@
+     int status = lapackSolveLinearSystem(A,r_row,pivots);
+     if (status!=0)
+         PLWARNING(&quot;NatGradEstimator: lapackSolveLinearSystem returned %d\n:&quot;,status);
+-    if (verbosity&gt;0 &amp;&amp; i%(cov_minibatch_size/3)==0)
++    if (verbosity&gt;1 &amp;&amp; i%(cov_minibatch_size/3)==0)
+         cout &lt;&lt; &quot;solution r = &quot; &lt;&lt; r &lt;&lt; endl;
+     // solution is in r
+     transposeProduct(v, Xt, r);
+     if (renormalize)
+         v*=(1 - pow(gamma,real(t+1)))/(1 - gamma);
++        //v/=(1 - pow(gamma,real(t+1)))/(1 - gamma);
++/*    {
++        real gnorm = dot(g,g);
++        real vnorm = dot(v,v);
++        g*=sqrt(vnorm/gnorm);
++    }
++*/
++    if (verbosity&gt;0 &amp;&amp; i%(cov_minibatch_size/2)==0)
++    {
++        real gnorm = dot(g,g);
++        real vnorm = dot(v,v);
++        real angle = acos(dot(v,g)/sqrt(gnorm*vnorm))*360/(2*3.14159);
++        cout &lt;&lt; &quot;angle(g,v)=&quot;&lt;&lt;angle&lt;&lt;&quot;, norm ratio=&quot;&lt;&lt;vnorm/gnorm&lt;&lt;endl;
++    }
+ 
+     // recompute the eigen-decomposition
+     if (i+1==cov_minibatch_size)
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-03-31 14:58:39 UTC (rev 6806)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-03-31 15:18:33 UTC (rev 6807)
+@@ -61,7 +61,8 @@
+       minibatch_size(1),
+       output_type(&quot;NLL&quot;),
+       verbosity(0),
+-      n_layers(-1)
++      n_layers(-1),
++      cumulative_training_time(0)
+ {
+     random_gen = new PRandom();
+ }
+@@ -90,6 +91,10 @@
+                   OptionBase::learntoption,
+                   &quot;Derived from hidden_layer_sizes, inputsize_ and noutputs\n&quot;);
+ 
++    declareOption(ol, &quot;cumulative_training_time&quot;, &amp;NatGradNNet::cumulative_training_time,
++                  OptionBase::learntoption,
++                  &quot;Cumulative training time since age=0, in seconds.\n&quot;);
++
+     declareOption(ol, &quot;layer_params&quot;, &amp;NatGradNNet::layer_params,
+                   OptionBase::learntoption,
+                   &quot;Parameters for each layer, organized as follows: layer_params[i] \n&quot;
+@@ -209,8 +214,8 @@
+             neuron_params[k]=all_params.subVec(p,1+layer_sizes[i]);
+             neuron_params_delta[k]=all_params_delta.subVec(p,1+layer_sizes[i]);
+             neuron_params_gradient[k]=all_params_gradient.subVec(p,1+layer_sizes[i]);
++            p+=1+layer_sizes[i];
+         }
+-        p+=np;
+     }
+     if (params_natgrad_template)
+     {
+@@ -241,7 +246,7 @@
+     }
+     example_weights.resize(minibatch_size);
+     TVec&lt;string&gt; train_cost_names = getTrainCostNames() ;
+-    train_costs.resize(minibatch_size,train_cost_names.length()-1 );
++    train_costs.resize(minibatch_size,train_cost_names.length()-2 );
+ 
+     Profiler::activate();
+ }
+@@ -305,6 +310,7 @@
+         biases[i].clear();
+     }
+     stage = 0;
++    cumulative_training_time=0;
+ }
+ 
+ void NatGradNNet::train()
+@@ -332,8 +338,9 @@
+         pb = new ProgressBar( &quot;Training &quot;+classname(),
+                               nstages - stage );
+ 
+-    Vec costs_plus_time(train_costs.width()+1);
++    Vec costs_plus_time(train_costs.width()+2);
+     costs_plus_time[train_costs.width()] = MISSING_VALUE;
++    costs_plus_time[train_costs.width()+1] = MISSING_VALUE;
+     Vec costs = costs_plus_time.subVec(0,train_costs.width());
+     int nsamples = train_set-&gt;length();
+ 
+@@ -362,7 +369,10 @@
+         Profiler::report(cout);
+     const Profiler::Stats&amp; stats = Profiler::getStats(&quot;training&quot;);
+     costs.fill(MISSING_VALUE);
+-    costs_plus_time[train_costs.width()] = (stats.user_duration+stats.system_duration)/60.0;
++    real cpu_time = (stats.user_duration+stats.system_duration)/60.0;
++    cumulative_training_time += cpu_time;
++    costs_plus_time[train_costs.width()] = cpu_time;
++    costs_plus_time[train_costs.width()+1] = cumulative_training_time;
+     train_stats-&gt;update( costs_plus_time );
+     train_stats-&gt;finalize(); // finalize statistics for this epoch
+ }
+@@ -370,7 +380,8 @@
+ void NatGradNNet::onlineStep(int t, const Mat&amp; targets,
+                              Mat&amp; train_costs, Vec example_weights)
+ {
+-    real lrate = init_lrate/(1 + t*lrate_decay);
++    // mean gradient over minibatch_size examples has less variance, can afford larger learning rate
++    real lrate = sqrt(minibatch_size)*init_lrate/(1 + t*lrate_decay);
+     PLASSERT(targets.length()==minibatch_size &amp;&amp; train_costs.length()==minibatch_size &amp;&amp; example_weights.length()==minibatch_size);
+     fpropNet(minibatch_size);
+     fbpropLoss(neuron_outputs_per_layer[n_layers-1],targets,example_weights,train_costs);
+@@ -417,7 +428,7 @@
+             // compute gradient on weights and update them in one go (more efficient)
+             productScaleAcc(layer_params[i-1],neuron_gradients_per_layer[i],true,
+                             neuron_extended_outputs_per_layer[i-1],false,
+-                            -lrate/minibatch_size,1); // mean gradient
++                            -lrate/minibatch_size,1); // mean gradient, has less variance, can afford larger learning rate
+     }
+     if (full_natgrad) 
+     {
+@@ -540,7 +551,8 @@
+ TVec&lt;string&gt; NatGradNNet::getTrainCostNames() const
+ {
+     TVec&lt;string&gt; costs = getTestCostNames();
+-    costs.append(&quot;CPU&quot;);
++    costs.append(&quot;train_seconds&quot;);
++    costs.append(&quot;cum_train_seconds&quot;);
+     return costs;
+ }
+ 
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-03-31 14:58:39 UTC (rev 6806)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-03-31 15:18:33 UTC (rev 6807)
+@@ -185,6 +185,8 @@
+     TVec&lt;Mat&gt; biases;
+     TVec&lt;Mat&gt; weights;
+ 
++    real cumulative_training_time;
++
+ protected:
+     //#####  Protected Member Functions  ######################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000255.html">[Plearn-commits] r6806 - trunk/plearn/misc
+</A></li>
+	<LI>Next message: <A HREF="000257.html">[Plearn-commits] r6808 - in trunk/plearn_learners: generic	generic/EXPERIMENTAL testers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#256">[ date ]</a>
+              <a href="thread.html#256">[ thread ]</a>
+              <a href="subject.html#256">[ subject ]</a>
+              <a href="author.html#256">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

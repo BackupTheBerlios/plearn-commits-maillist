@@ -1,0 +1,153 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9897 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9897%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200902032052.n13Kq4EF007552%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003336.html">
+   <LINK REL="Next"  HREF="003338.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9897 - trunk/plearn_learners_experimental</H1>
+    <B>laulysta at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9897%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200902032052.n13Kq4EF007552%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9897 - trunk/plearn_learners_experimental">laulysta at mail.berlios.de
+       </A><BR>
+    <I>Tue Feb  3 21:52:04 CET 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003336.html">[Plearn-commits] r9896 - trunk
+</A></li>
+        <LI>Next message: <A HREF="003338.html">[Plearn-commits] r9898 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3337">[ date ]</a>
+              <a href="thread.html#3337">[ thread ]</a>
+              <a href="subject.html#3337">[ subject ]</a>
+              <a href="author.html#3337">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: laulysta
+Date: 2009-02-03 21:52:04 +0100 (Tue, 03 Feb 2009)
+New Revision: 9897
+
+Modified:
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.h
+Log:
+deep copy
+
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2009-02-03 17:06:38 UTC (rev 9896)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2009-02-03 20:52:04 UTC (rev 9897)
+@@ -480,6 +480,8 @@
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
++    // Public fields
++    deepCopyField( target_layers_weights, copies );
+     deepCopyField( input_layer, copies);
+     deepCopyField( target_layers , copies);
+     deepCopyField( hidden_layer, copies);
+@@ -492,8 +494,18 @@
+     deepCopyField( target_layers_n_of_target_elements, copies);
+     deepCopyField( input_symbol_sizes, copies);
+     deepCopyField( target_symbol_sizes, copies);
+-    
++    deepCopyField( mean_encoded_vec, copies);
++    deepCopyField( input_reconstruction_bias, copies);
++    deepCopyField( hidden_reconstruction_bias, copies);
+ 
++    // Protected fields
++    deepCopyField( data, copies);
++    deepCopyField( acc_target_connections_gr, copies);
++    deepCopyField( acc_input_connections_gr, copies);
++    deepCopyField( acc_dynamic_connections_gr, copies);
++    deepCopyField( acc_target_bias_gr, copies);
++    deepCopyField( acc_hidden_bias_gr, copies);
++    deepCopyField( acc_recons_bias_gr, copies);
+     deepCopyField( bias_gradient , copies);
+     deepCopyField( visi_bias_gradient , copies);
+     deepCopyField( hidden_gradient , copies);
+@@ -509,8 +521,15 @@
+     deepCopyField( nll_list , copies);
+     deepCopyField( masks_list , copies);
+     deepCopyField( dynamic_act_no_bias_contribution, copies);
++    deepCopyField( trainset_boundaries, copies);
++    deepCopyField( testset_boundaries, copies);
++    deepCopyField( seq, copies);
++    deepCopyField( encoded_seq, copies);
++    deepCopyField( clean_encoded_seq, copies);
++    deepCopyField( input_reconstruction_prob, copies);
++    deepCopyField( hidden_reconstruction_prob, copies);
++    
+ 
+-
+     // deepCopyField(, copies);
+ 
+     //PLERROR(&quot;DenoisingRecurrentNet::makeDeepCopyFromShallowCopy(): &quot;
+@@ -1240,13 +1259,14 @@
+ 
+     // update weight
+     externalProductScaleAcc(acc_weights_gr, hidden, hidden_reconstruction_activation_grad, -lr);
++    
+     /********************************************************************************/
+ 
+     double result_cost = 0;
+     double neg_log_cost = 0; // neg log softmax
+     for(int k=0; k&lt;reconstruction_prob.length(); k++)
+         if(hidden_target[k]!=0)
+-            neg_log_cost -= hidden_target[k]*safelog(reconstruction_prob[k]);
++            neg_log_cost -= hidden_target[k]*safelog(reconstruction_prob[k]) + (1-hidden_target[k])*safelog(1-reconstruction_prob[k]);
+     result_cost = neg_log_cost;
+     
+     return result_cost;
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.h
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.h	2009-02-03 17:06:38 UTC (rev 9896)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.h	2009-02-03 20:52:04 UTC (rev 9897)
+@@ -312,7 +312,7 @@
+     mutable double current_learning_rate;
+ 
+     //! Store external data;
+-    AutoVMatrix*  data;
++    PP&lt;AutoVMatrix&gt; data;
+    
+     mutable TVec&lt; Mat &gt; acc_target_connections_gr;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003336.html">[Plearn-commits] r9896 - trunk
+</A></li>
+	<LI>Next message: <A HREF="003338.html">[Plearn-commits] r9898 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3337">[ date ]</a>
+              <a href="thread.html#3337">[ thread ]</a>
+              <a href="subject.html#3337">[ subject ]</a>
+              <a href="author.html#3337">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

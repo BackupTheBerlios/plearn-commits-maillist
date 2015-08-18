@@ -1,0 +1,177 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7896 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7896%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708020352.l723qTFR017680%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001343.html">
+   <LINK REL="Next"  HREF="001345.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7896 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7896%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708020352.l723qTFR017680%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7896 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Thu Aug  2 05:52:29 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001343.html">[Plearn-commits] r7895 - in trunk: plearn/math	plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001345.html">[Plearn-commits] r7897 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1344">[ date ]</a>
+              <a href="thread.html#1344">[ thread ]</a>
+              <a href="subject.html#1344">[ subject ]</a>
+              <a href="author.html#1344">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-08-02 05:52:29 +0200 (Thu, 02 Aug 2007)
+New Revision: 7896
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+Log:
+Use new, more generic way to compute free energy.
+
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-08-02 03:39:50 UTC (rev 7895)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-08-02 03:52:29 UTC (rev 7896)
+@@ -431,9 +431,9 @@
+ // FREE-ENERGY(hidden) CASE
+ // we know h:
+ // free energy = -log sum_x e^{-energy(h,x)}
+-//  = -c'h - sum_i log sigmoid(b_i + W_{.i}'h) .... FOR BINOMIAL INPUT LAYER
+ // or more robustly,
+-//  = hidden_layer-&gt;energy(h) - sum_i softplus(visible_layer-&gt;activation[i])
++//  = hidden_layer-&gt;energy(h)
++//    + visible_layer-&gt;freeEnergyContribution(visible_layer-&gt;activation)
+ void RBMModule::computeFreeEnergyOfHidden(const Mat&amp; hidden, Mat&amp; energy)
+ {
+     int mbs=hidden.length();
+@@ -442,17 +442,13 @@
+     else {
+         PLASSERT( energy.length() == mbs &amp;&amp; energy.width() == 1 );
+     }
+-    PLASSERT(visible_layer-&gt;classname()==&quot;RBMBinomialLayer&quot;);
++
+     computeVisibleActivations(hidden, false);
+     for (int i=0;i&lt;mbs;i++)
+     {
+-        energy(i,0) = hidden_layer-&gt;energy(hidden(i));
+-        if (use_fast_approximations)
+-            for (int j=0;j&lt;visible_layer-&gt;size;j++)
+-                energy(i,0) -= tabulated_softplus(visible_layer-&gt;activations(i,j));
+-        else
+-            for (int j=0;j&lt;visible_layer-&gt;size;j++)
+-                energy(i,0) -= softplus(visible_layer-&gt;activations(i,j));
++        energy(i,0) = hidden_layer-&gt;energy(hidden(i))
++            + visible_layer-&gt;freeEnergyContribution(
++                visible_layer-&gt;activations(i));
+     }
+ }
+ 
+@@ -462,9 +458,9 @@
+ // FREE-ENERGY(visible) CASE
+ // we know x:
+ // free energy = -log sum_h e^{-energy(h,x)}
+-//  = -b'x - sum_i log sigmoid(c_i + W_i'x) .... FOR BINOMIAL HIDDEN LAYER
+ // or more robustly,
+-//  = visible_layer-&gt;energy(x) - sum_i softplus(hidden_layer-&gt;activation[i])
++//  = visible_layer-&gt;energy(x)
++//    + hidden_layer-&gt;freeEnergyContribution(hidden_layer-&gt;activation)
+ void RBMModule::computeFreeEnergyOfVisible(const Mat&amp; visible, Mat&amp; energy,
+                                            bool positive_phase)
+ {
+@@ -474,7 +470,7 @@
+     else {
+         PLASSERT( energy.length() == mbs &amp;&amp; energy.width() == 1 );
+     }
+-    PLASSERT(hidden_layer-&gt;classname()==&quot;RBMBinomialLayer&quot;);
++
+     Mat* hidden_activations = NULL;
+     if (positive_phase) {
+         computePositivePhaseHiddenActivations(visible);
+@@ -488,13 +484,8 @@
+             &amp;&amp; hidden_activations-&gt;width() == hidden_layer-&gt;size );
+     for (int i=0;i&lt;mbs;i++)
+     {
+-        energy(i,0) = visible_layer-&gt;energy(visible(i));
+-        if (use_fast_approximations)
+-            for (int j=0;j&lt;hidden_layer-&gt;size;j++)
+-                energy(i,0) -= tabulated_softplus((*hidden_activations)(i,j));
+-        else
+-            for (int j=0;j&lt;hidden_layer-&gt;size;j++)
+-                energy(i,0) -= softplus((*hidden_activations)(i,j));
++        energy(i,0) = visible_layer-&gt;energy(visible(i))
++            + hidden_layer-&gt;freeEnergyContribution((*hidden_activations)(i));
+     }
+ }
+ 
+@@ -1130,9 +1121,6 @@
+                                                       neg_hidden_act.width());
+             *negative_phase_hidden_activations &lt;&lt; neg_hidden_act;
+ 
+-            // compute the energy (again for now only in the binomial case)
+-            PLASSERT(hidden_layer-&gt;classname()==&quot;RBMBinomialLayer&quot;);
+-
+             // note that h_act and h may point to hidden_act_store and hidden_exp_store
+             PLASSERT(h_act &amp;&amp; !h_act-&gt;isEmpty());
+             PLASSERT(h &amp;&amp; !h-&gt;isEmpty());
+@@ -1141,12 +1129,13 @@
+             // compute contrastive divergence itself
+             for (int i=0;i&lt;mbs;i++)
+             {
+-	    	real s = visible_layer-&gt;energy((*visible)(i)) - visible_layer-&gt;energy(visible_layer-&gt;samples(i));
+-		Vec a = (*h_act)(i);
+-		Vec b = hidden_layer-&gt;activations(i); 
+-		for (int j=0;j&lt;hidden_layer-&gt;size;j++)
+-		    s -= tabulated_softplus(a[j]) - tabulated_softplus(b[j]);
+-		(*contrastive_divergence)(i,0) = s;
++                // + Free energy of positive example
++                // - free energy of negative example
++                (*contrastive_divergence)(i,0) =
++                    visible_layer-&gt;energy((*visible)(i))
++                  + hidden_layer-&gt;freeEnergyContribution((*h_act)(i))
++                  - visible_layer-&gt;energy(visible_layer-&gt;samples(i))
++                  - hidden_layer-&gt;freeEnergyContribution(hidden_layer-&gt;activations(i));
+             }
+         }
+         else
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001343.html">[Plearn-commits] r7895 - in trunk: plearn/math	plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001345.html">[Plearn-commits] r7897 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1344">[ date ]</a>
+              <a href="thread.html#1344">[ thread ]</a>
+              <a href="subject.html#1344">[ subject ]</a>
+              <a href="author.html#1344">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

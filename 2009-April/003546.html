@@ -1,0 +1,340 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10106 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10106%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200904091723.n39HN0sM020745%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003545.html">
+   <LINK REL="Next"  HREF="003547.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10106 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10106%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200904091723.n39HN0sM020745%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10106 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Thu Apr  9 19:23:00 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003545.html">[Plearn-commits] r10105 - trunk/plearn_learners_experimental
+</A></li>
+        <LI>Next message: <A HREF="003547.html">[Plearn-commits] r10107 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3546">[ date ]</a>
+              <a href="thread.html#3546">[ thread ]</a>
+              <a href="subject.html#3546">[ subject ]</a>
+              <a href="author.html#3546">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2009-04-09 19:22:59 +0200 (Thu, 09 Apr 2009)
+New Revision: 10106
+
+Modified:
+   trunk/plearn_learners/online/RBMWoodsLayer.cc
+   trunk/plearn_learners/online/RBMWoodsLayer.h
+Log:
+Implemented mini-batch version of computeExpectation and generateSample
+
+
+Modified: trunk/plearn_learners/online/RBMWoodsLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMWoodsLayer.cc	2009-04-09 17:20:25 UTC (rev 10105)
++++ trunk/plearn_learners/online/RBMWoodsLayer.cc	2009-04-09 17:22:59 UTC (rev 10106)
+@@ -117,7 +117,44 @@
+ 
+     PLASSERT( samples.width() == size &amp;&amp; samples.length() == batch_size );
+ 
+-    PLERROR( &quot;RBMWoodsLayer::generateSamples(): not implemented yet&quot; );
++    //PLERROR( &quot;RBMWoodsLayer::generateSamples(): not implemented yet&quot; );
++    samples.clear();
++
++    int n_nodes_per_tree = size / n_trees;
++    int node, depth, node_sample, sub_tree_size;
++    int offset = 0;
++
++    for( int b=0; b&lt;batch_size; b++ )
++    {
++        offset = 0;
++        for( int t=0; t&lt;n_trees; t++ )
++        {
++            depth = 0;
++            node = n_nodes_per_tree / 2;
++            sub_tree_size = node;
++            while( depth &lt; tree_depth )
++            {
++                // HUGO: Note that local_node_expectation is really
++                // used as a probability, even for signed samples.
++                // Sorry for the misleading choice of variable name...
++                node_sample = random_gen-&gt;binomial_sample(
++                    local_node_expectations(b, node + offset ) );
++                if( use_signed_samples )
++                    samples(b,node + offset) = 2*node_sample-1;
++                else
++                    samples(b,node + offset) = node_sample;
++                
++                // Descending in the tree
++                sub_tree_size /= 2;
++                if ( node_sample &gt; 0.5 )
++                    node -= sub_tree_size+1;
++                else
++                    node += sub_tree_size+1;
++                depth++;
++            }
++            offset += n_nodes_per_tree;
++        }    
++    }
+ }
+ 
+ void RBMWoodsLayer::computeProbabilisticClustering(Vec&amp; prob_clusters)
+@@ -316,8 +353,178 @@
+     if( expectations_are_up_to_date )
+         return;
+ 
+-    PLERROR( &quot;RBMWoodsLayer::computeExpectations(): not implemented yet&quot; );
++    PLASSERT( expectations.width() == size
++              &amp;&amp; expectations.length() == batch_size );
++    off_expectations.resize(batch_size,size);
++    local_node_expectations.resize(batch_size,size);
++    on_free_energies.resize(batch_size,size);
++    off_free_energies.resize(batch_size,size);
+ 
++    int n_nodes_per_tree = size / n_trees;
++    int node, depth, sub_tree_size, grand_parent;
++    int offset = 0;
++    bool left_of_grand_parent;
++    real grand_parent_prob;
++    for( int b=0; b&lt;batch_size; b++ )
++    {
++        offset=0;
++        // Get local expectations at every node
++        
++        // HUGO: Note that local_node_expectations is really
++        // used as a probability, even for signed samples.
++        // Sorry for the misleading choice of variable name...
++        
++        // Divide and conquer computation of local (conditional) free energies
++        for( int t=0; t&lt;n_trees; t++ )
++        {
++            depth = tree_depth-1;
++            sub_tree_size = 0;
++
++            // Initialize last level
++            for( int n=sub_tree_size; n&lt;n_nodes_per_tree; n += 2*sub_tree_size + 2 )
++            {
++                //on_free_energies(b, n + offset ) = safeexp(activations(b,n+offset));
++                //off_free_energies(b, n + offset ) = 1;
++                // Now working in log-domain
++                on_free_energies(b, n + offset ) = activations(b,n+offset);
++                if( use_signed_samples )
++                    off_free_energies(b, n + offset ) = -activations(b,n+offset);
++                else
++                    off_free_energies(b, n + offset ) = 0;
++            }
++
++            depth = tree_depth-2;
++            sub_tree_size = 1;
++
++            while( depth &gt;= 0 )
++            {
++                for( int n=sub_tree_size; n&lt;n_nodes_per_tree; n += 2*sub_tree_size + 2 )
++                {
++                    //on_free_energies(b, n + offset ) = safeexp(activations(b,n+offset)) *
++                    //    ( on_free_energies(b,n + offset - sub_tree_size) + off_free_energies(b,n + offset - sub_tree_size) ) ;
++                    //off_free_energies(b, n + offset ) =
++                    //    ( on_free_energies(b,n + offset + sub_tree_size) + off_free_energies(b,n + offset + sub_tree_size) ) ;
++                    // Now working in log-domain
++                    on_free_energies(b, n + offset ) = activations(b,n+offset) +
++                        logadd( on_free_energies(b,n + offset - (sub_tree_size/2+1)),
++                                off_free_energies(b,n + offset - (sub_tree_size/2+1)) ) ;
++                    if( use_signed_samples )
++                        off_free_energies(b, n + offset ) = -activations(b,n+offset) +
++                            logadd( on_free_energies(b,n + offset + (sub_tree_size/2+1)),
++                                    off_free_energies(b,n + offset + (sub_tree_size/2+1)) ) ;
++                    else
++                        off_free_energies(b, n + offset ) =
++                            logadd( on_free_energies(b,n + offset + (sub_tree_size/2+1)),
++                                    off_free_energies(b,n + offset + (sub_tree_size/2+1)) ) ;
++
++                }
++                sub_tree_size = 2 * ( sub_tree_size + 1 ) - 1;
++                depth--;
++            }
++            offset += n_nodes_per_tree;
++        }
++
++        for( int i=0 ; i&lt;size ; i++ )
++            //local_node_expectations(b,i) = on_free_energies(b,i) / ( on_free_energies(b,i) + off_free_energies(b,i) );
++            // Now working in log-domain
++            local_node_expectations(b,i) = safeexp(on_free_energies(b,i)
++                                                - logadd(on_free_energies(b,i), off_free_energies(b,i)));
++
++        // Compute marginal expectations
++        offset = 0;
++        for( int t=0; t&lt;n_trees; t++ )
++        {
++            // Initialize root
++            node = n_nodes_per_tree / 2;
++            expectations(b, node + offset ) = local_node_expectations(b, node + offset );
++            off_expectations(b, node + offset ) = (1 - local_node_expectations(b, node + offset ));
++            sub_tree_size = node;
++
++            // First level nodes
++            depth = 1;
++            sub_tree_size /= 2;
++
++            // Left child
++            node = sub_tree_size;
++            expectations(b, node + offset ) = local_node_expectations(b, node + offset )
++                * local_node_expectations(b, node + offset + sub_tree_size + 1 );
++            off_expectations(b, node + offset ) = (1 - local_node_expectations(b, node + offset ))
++                * local_node_expectations(b, node + offset + sub_tree_size + 1 );
++
++            // Right child
++            node = 3*sub_tree_size+2;
++            expectations(b, node + offset ) = local_node_expectations(b, node + offset )
++                * (1 - local_node_expectations(b, node + offset - sub_tree_size - 1 ));
++            off_expectations(b, node + offset ) = (1 - local_node_expectations(b, node + offset ))
++                * (1 - local_node_expectations(b, node + offset - sub_tree_size - 1 ));
++
++            // Set other nodes, level-wise
++            depth = 2;
++            sub_tree_size /= 2;
++            while( depth &lt; tree_depth )
++            {
++                // Left child
++                left_of_grand_parent = true;
++                for( int n=sub_tree_size; n&lt;n_nodes_per_tree; n += 4*sub_tree_size + 4 )
++                {
++                    if( left_of_grand_parent )
++                    {
++                        grand_parent = n + offset + 3*sub_tree_size + 3;
++                        grand_parent_prob = expectations(b, grand_parent );
++                        left_of_grand_parent = false;
++                    }
++                    else
++                    {
++                        grand_parent = n + offset - sub_tree_size - 1;
++                        grand_parent_prob = off_expectations(b, grand_parent );
++                        left_of_grand_parent = true;
++                    }
++
++                    expectations(b, n + offset ) = local_node_expectations(b, n + offset )
++                        * local_node_expectations(b, n + offset + sub_tree_size + 1 )
++                        * grand_parent_prob;
++                    off_expectations(b, n + offset ) = (1 - local_node_expectations(b, n + offset ))
++                        * local_node_expectations(b, n + offset + sub_tree_size + 1 )
++                        * grand_parent_prob;
++
++                }
++
++                // Right child
++                left_of_grand_parent = true;
++                for( int n=3*sub_tree_size+2; n&lt;n_nodes_per_tree; n += 4*sub_tree_size + 4 )
++                {
++                    if( left_of_grand_parent )
++                    {
++                        grand_parent = n + offset + sub_tree_size + 1;
++                        grand_parent_prob = expectations(b, grand_parent );
++                        left_of_grand_parent = false;
++                    }
++                    else
++                    {
++                        grand_parent = n + offset - 3*sub_tree_size - 3;
++                        grand_parent_prob = off_expectations(b, grand_parent );
++                        left_of_grand_parent = true;
++                    }
++
++                    expectations(b, n + offset ) = local_node_expectations(b, n + offset )
++                        * (1 - local_node_expectations(b, n + offset - sub_tree_size - 1 ))
++                        * grand_parent_prob;
++                    off_expectations(b, n + offset ) = (1 - local_node_expectations(b, n + offset ))
++                        * (1 - local_node_expectations(b, n + offset - sub_tree_size - 1 ))
++                        * grand_parent_prob;
++                }
++                sub_tree_size /= 2;
++                depth++;
++            }
++            offset += n_nodes_per_tree;
++        }
++    }
++    
++    if( use_signed_samples )
++        for( int b=0; b&lt;batch_size; b++ )
++            for( int i=0; i&lt;expectation.length(); i++ )
++                expectations(b,i) = expectations(b,i) - off_expectations(b,i);
++
+     expectations_are_up_to_date = true;
+ }
+ 
+@@ -1028,9 +1235,13 @@
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+     deepCopyField( off_expectation, copies );
++    deepCopyField( off_expectations, copies );
+     deepCopyField( local_node_expectation, copies );
++    deepCopyField( local_node_expectations, copies );
+     deepCopyField( on_free_energy, copies );
++    deepCopyField( on_free_energies, copies );
+     deepCopyField( off_free_energy, copies );
++    deepCopyField( off_free_energies, copies );
+     deepCopyField( local_node_expectation_gradient, copies );
+     deepCopyField( on_tree_gradient, copies );
+     deepCopyField( off_tree_gradient, copies );
+
+Modified: trunk/plearn_learners/online/RBMWoodsLayer.h
+===================================================================
+--- trunk/plearn_learners/online/RBMWoodsLayer.h	2009-04-09 17:20:25 UTC (rev 10105)
++++ trunk/plearn_learners/online/RBMWoodsLayer.h	2009-04-09 17:22:59 UTC (rev 10106)
+@@ -161,13 +161,17 @@
+ 
+     // Probability that sampling reaches a node but samples h=0 (expectation is for h=1)
+     Vec off_expectation;
++    Mat off_expectations;
+     // Ordinary RBMBinomialLayer expectation
+     Vec local_node_expectation;
++    Mat local_node_expectations;
+ 
+     // Computations of the local_node_expectation free energies for h = 1
+     Vec on_free_energy;
++    Mat on_free_energies;
+     // Computations of the local_node_expectation free energies for h = 0
+     Vec off_free_energy;
++    Mat off_free_energies;
+ 
+     // Gradient through the local_node_expectations (after sigmoid)
+     Vec local_node_expectation_gradient;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003545.html">[Plearn-commits] r10105 - trunk/plearn_learners_experimental
+</A></li>
+	<LI>Next message: <A HREF="003547.html">[Plearn-commits] r10107 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3546">[ date ]</a>
+              <a href="thread.html#3546">[ thread ]</a>
+              <a href="subject.html#3546">[ subject ]</a>
+              <a href="author.html#3546">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

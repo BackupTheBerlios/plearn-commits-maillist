@@ -1,0 +1,155 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6630 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6630%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200702030202.l13229wU030426%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000078.html">
+   <LINK REL="Next"  HREF="000080.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6630 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6630%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200702030202.l13229wU030426%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6630 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Sat Feb  3 03:02:09 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000078.html">[Plearn-commits] r6629 - trunk/python_modules/plearn/pytest
+</A></li>
+        <LI>Next message: <A HREF="000080.html">[Plearn-commits] r6631 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#79">[ date ]</a>
+              <a href="thread.html#79">[ thread ]</a>
+              <a href="subject.html#79">[ subject ]</a>
+              <a href="author.html#79">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-02-03 03:02:08 +0100 (Sat, 03 Feb 2007)
+New Revision: 6630
+
+Modified:
+   trunk/plearn_learners/online/RBMTruncExpLayer.cc
+Log:
+Fix bad formula for gradient bprop
+Fix several numerical instabilities:
+    - in generateSample(), by using logadd
+    - in generateSample(), fprop(), computeExpectation() and
+bpropUpdate() by approximating the transfer function by its Taylor
+expansion around 0.
+
+
+
+Modified: trunk/plearn_learners/online/RBMTruncExpLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMTruncExpLayer.cc	2007-02-02 14:20:31 UTC (rev 6629)
++++ trunk/plearn_learners/online/RBMTruncExpLayer.cc	2007-02-03 02:02:08 UTC (rev 6630)
+@@ -102,7 +102,13 @@
+     {
+         real s = random_gen-&gt;uniform_sample();
+         real a_i = activation[i];
+-        sample[i] = - pl_log( 1. - s*( 1 - exp(-a_i) ) ) / a_i;
++
++        // Polynomial approximation to avoid numerical instability if a ~ 0
++        // C^{-1}(s) ~ s + (-s + s^2)/2 * a + O(a^2)
++        if( fabs( a_i ) &lt;= 1e-5 )
++            sample[i] = s + a_i*( s*(-1 + s)/2 );
++        else
++            sample[i] = - logadd( pl_log( 1-s ), pl_log(s) - a_i );
+     }
+ }
+ 
+@@ -118,7 +124,13 @@
+     for( int i=0 ; i&lt;size ; i++ )
+     {
+         real a_i = activation[i];
+-        expectation[i] = 1/(1-exp(a_i)) + 1/a_i;
++
++        // Polynomial approximation to avoid numerical instability
++        // f(a) = 1/2 - a/12 + a^3/720 + O(a^5)
++        if( fabs( a_i ) &lt;= 0.01 )
++            expectation[i] = 0.5 - a_i*(1./12. + a_i*a_i/720.);
++        else
++            expectation[i] = 1/(1-exp(a_i)) + 1/a_i;
+     }
+ 
+     expectation_is_up_to_date = true;
+@@ -132,8 +144,15 @@
+ 
+     for( int i=0 ; i&lt;size ; i++ )
+     {
+-        real x_i = input[i] + bias[i];
+-        output[i] = 1/(1-exp(x_i)) + 1/x_i;
++        real a_i = input[i] + bias[i];
++
++        // Polynomial approximation to avoid numerical instability
++        // f(a) = 1/(1-exp(a) + 1/a
++        // f(a) = 1/2 - a/12 + a^3/720 + O(a^5)
++        if( fabs( a_i ) &lt;= 0.01 )
++            output[i] = 0.5 - a_i*(1./12. +a_i*a_i/720.);
++        else
++            output[i] = 1/(1-exp(a_i)) + 1/a_i;
+     }
+ }
+ 
+@@ -150,9 +169,21 @@
+ 
+     for( int i=0 ; i&lt;size ; i++ )
+     {
+-        real a_i = input[i];
+-        real ea_i = exp( a_i );
+-        input_gradient[i] = ea_i/( (1 - ea_i) * (1 - ea_i) ) + 1/(a_i * a_i);
++        real a_i = input[i] + bias[i];
++
++        // Polynomial approximation to avoid numerical instability
++        // df/da = -1/12 + a^2/240 + O(a^4)
++        if( fabs( a_i ) &lt;= 0.01 )
++        {
++            input_gradient[i] = output_gradient[i] * (
++                -1./12. + a_i * a_i / 240. );
++        }
++        else
++        {
++            real ea_i = exp( a_i );
++            input_gradient[i] = output_gradient[i] * (
++                ea_i/( (1 - ea_i) * (1 - ea_i) ) + 1/(a_i * a_i) );
++        }
+     }
+ 
+     if( momentum == 0. )
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000078.html">[Plearn-commits] r6629 - trunk/python_modules/plearn/pytest
+</A></li>
+	<LI>Next message: <A HREF="000080.html">[Plearn-commits] r6631 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#79">[ date ]</a>
+              <a href="thread.html#79">[ thread ]</a>
+              <a href="subject.html#79">[ subject ]</a>
+              <a href="author.html#79">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

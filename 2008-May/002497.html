@@ -1,0 +1,242 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9049 - trunk/plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9049%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200805231929.m4NJTs66019077%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002496.html">
+   <LINK REL="Next"  HREF="002498.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9049 - trunk/plearn_learners/regressors</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9049%20-%20trunk/plearn_learners/regressors&In-Reply-To=%3C200805231929.m4NJTs66019077%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9049 - trunk/plearn_learners/regressors">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Fri May 23 21:29:54 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002496.html">[Plearn-commits] r9048 - trunk/plearn_learners/regressors
+</A></li>
+        <LI>Next message: <A HREF="002498.html">[Plearn-commits] r9050 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2497">[ date ]</a>
+              <a href="thread.html#2497">[ thread ]</a>
+              <a href="subject.html#2497">[ subject ]</a>
+              <a href="author.html#2497">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-05-23 21:29:53 +0200 (Fri, 23 May 2008)
+New Revision: 9049
+
+Modified:
+   trunk/plearn_learners/regressors/RegressionTreeNode.cc
+   trunk/plearn_learners/regressors/RegressionTreeNode.h
+Log:
+implemented new version of lookForBestSplit() that find the best by row before globally. This is not slower and allow to get stats by row.
+Also will be easier to make parallel version
+
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.cc
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.cc	2008-05-23 19:24:57 UTC (rev 9048)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.cc	2008-05-23 19:29:53 UTC (rev 9049)
+@@ -42,7 +42,6 @@
+ #include &quot;RegressionTreeNode.h&quot;
+ #include &quot;RegressionTreeRegisters.h&quot;
+ #include &quot;RegressionTreeLeave.h&quot;
+-#include &quot;RegressionTreeRegisters.h&quot;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -213,7 +212,8 @@
+ 
+     leave-&gt;getOutputAndError(leave_output,leave_error);
+ }
+-
++#define BY_ROW
++//#define RCMP
+ void RegressionTreeNode::lookForBestSplit()
+ {
+     if(leave-&gt;length&lt;=1)
+@@ -226,6 +226,14 @@
+     Vec missing_error(3);
+     missing_error.clear();
+     int inputsize = train_set-&gt;inputsize();
++#ifdef RCMP
++    Vec row_split_err(inputsize);
++    Vec row_split_value(inputsize);
++    Vec row_split_balance(inputsize);
++    row_split_err.clear();
++    row_split_value.clear();
++    row_split_balance.clear();
++#endif
+     int leave_id = leave-&gt;id;
+     for (int col = 0; col &lt; inputsize; col++)
+     {
+@@ -235,6 +243,7 @@
+         registered_row.resize(0);
+         train_set-&gt;getAllRegisteredRow(leave_id,col,registered_row);
+         PLASSERT(registered_row.size()&gt;0);
++        PLASSERT(candidate.size()==0);
+         for(int row_idx = 0;row_idx&lt;registered_row.size();row_idx++)
+         {
+             int row=registered_row[row_idx];
+@@ -247,6 +256,7 @@
+         }
+         missing_leave-&gt;getOutputAndError(tmp_vec, missing_error);
+ 
++#ifndef BY_ROW
+         //in case of missing value
+         if(candidate.size()==0)
+             continue;
+@@ -261,9 +271,89 @@
+                          right_error, missing_error);
+             row = next_row;
+         }
++#else
++        tuple&lt;real,real,int&gt; ret=bestSplitInRow(col, candidate, left_error,
++                                                right_error, missing_error,
++                                                right_leave, left_leave,
++                                                train_set);
++#ifdef RCMP
++        row_split_err[col] = get&lt;0&gt;(ret);
++        row_split_value[col] = get&lt;1&gt;(ret);
++        row_split_balance[col] = get&lt;2&gt;(ret);
++#endif
++        if (fast_is_more(get&lt;0&gt;(ret), after_split_error)) continue;
++        else if (fast_is_equal(get&lt;0&gt;(ret), after_split_error) &amp;&amp;
++                 fast_is_more(get&lt;2&gt;(ret), split_balance)) continue;
++
++        split_col = col;
++        after_split_error = get&lt;0&gt;(ret);
++        split_feature_value = get&lt;1&gt;(ret);
++        split_balance = get&lt;2&gt;(ret);
++#endif
+     }
++#ifdef RCMP
++    pout&lt;&lt;&quot;error after split: &quot;&lt;&lt;after_split_error&lt;&lt;endl;
++    pout&lt;&lt;&quot;split value: &quot;&lt;&lt;split_feature_value&lt;&lt;endl;
++    pout&lt;&lt;&quot;split_col: &quot;&lt;&lt;split_col&lt;&lt;&quot; &quot;&lt;&lt;train_set-&gt;fieldName(split_col)&lt;&lt;endl;
++    pout&lt;&lt;&quot;col 27 (&quot;&lt;&lt;train_set-&gt;fieldName(27)&lt;&lt;&quot;) split error &quot;
++        &lt;&lt;row_split_err[27]&lt;&lt;endl;
++    pout&lt;&lt;&quot;col 27 (&quot;&lt;&lt;train_set-&gt;fieldName(27)&lt;&lt;&quot;) split value &quot;
++        &lt;&lt;row_split_value[27]&lt;&lt;endl;
++#endif
+ }
++tuple&lt;real,real,int&gt;RegressionTreeNode::bestSplitInRow(
++    int col,
++    TVec&lt;RTR_type&gt;&amp; candidates,
++    Vec left_error,
++    Vec right_error,
++    const Vec missing_error,
++    PP&lt;RegressionTreeLeave&gt; right_leave,
++    PP&lt;RegressionTreeLeave&gt; left_leave,
++    PP&lt;RegressionTreeRegisters&gt; train_set
++    )
++{
++    int best_balance=INT_MAX;
++    real best_feature_value = REAL_MAX;
++    real best_split_error = REAL_MAX;
++    //in case of only missing value
++    if(candidates.size()==0)
++        return make_tuple(best_feature_value, best_split_error, best_balance);
++    int row = candidates.pop();
++//    real row_value = train_set-&gt;get(row, col);
++    Vec tmp(3);
+ 
++    while (candidates.size()&gt;0)
++    {
++        int next_row = candidates.pop();
++        left_leave-&gt;removeRow(row, tmp, left_error);
++        right_leave-&gt;addRow(row, tmp, right_error);
++
++        {//compare split
++        real next_feature=train_set-&gt;get(next_row, col);
++        real row_feature=train_set-&gt;get(row, col);
++        PLASSERT(next_feature&lt;=row_feature);
++//        PLASSERT(row_value == row_feature);
++        row = next_row;
++//        row_value = next_feature;
++
++        if (next_feature &gt;= row_feature) continue;
++        real work_error = missing_error[0] + missing_error[1] + left_error[0]
++            + left_error[1] + right_error[0] + right_error[1];
++        int work_balance = abs(left_leave-&gt;getLength() -
++                               right_leave-&gt;getLength());
++        if (fast_is_more(work_error,best_split_error)) continue;
++        else if (fast_is_equal(work_error,best_split_error) &amp;&amp;
++                 fast_is_more(work_balance,best_balance)) continue;
++
++        best_feature_value = 0.5 * (row_feature + next_feature);
++        best_split_error = work_error;
++        best_balance = work_balance;
++        }
++
++    }
++    return make_tuple(best_split_error, best_feature_value, best_balance);
++}
++
+ void RegressionTreeNode::compareSplit(int col, real left_leave_last_feature, real right_leave_first_feature,
+                                       Vec left_error, Vec right_error, Vec missing_error)
+ {
+
+Modified: trunk/plearn_learners/regressors/RegressionTreeNode.h
+===================================================================
+--- trunk/plearn_learners/regressors/RegressionTreeNode.h	2008-05-23 19:24:57 UTC (rev 9048)
++++ trunk/plearn_learners/regressors/RegressionTreeNode.h	2008-05-23 19:29:53 UTC (rev 9049)
+@@ -45,6 +45,7 @@
+ #include &lt;plearn/base/Object.h&gt;
+ #include &lt;plearn/base/PP.h&gt;
+ #include &lt;plearn/math/TVec.h&gt;
++#include &lt;boost/tuple/tuple.hpp&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -117,6 +118,11 @@
+ private:
+     void         build_();
+     void         verbose(string msg, int level); 
++    static tuple&lt;real,real,int&gt; bestSplitInRow(int col, TVec&lt;RTR_type&gt;&amp; candidates,
++        Vec left_error, Vec right_error, const Vec missing_error,
++        PP&lt;RegressionTreeLeave&gt; right_leave, PP&lt;RegressionTreeLeave&gt; left_leave,
++        PP&lt;RegressionTreeRegisters&gt; train_set                                
++        );
+ };
+ 
+ DECLARE_OBJECT_PTR(RegressionTreeNode);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002496.html">[Plearn-commits] r9048 - trunk/plearn_learners/regressors
+</A></li>
+	<LI>Next message: <A HREF="002498.html">[Plearn-commits] r9050 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2497">[ date ]</a>
+              <a href="thread.html#2497">[ thread ]</a>
+              <a href="subject.html#2497">[ subject ]</a>
+              <a href="author.html#2497">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

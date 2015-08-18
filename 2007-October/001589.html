@@ -1,0 +1,330 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8141 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8141%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200710032016.l93KGG4m016755%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001588.html">
+   <LINK REL="Next"  HREF="001590.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8141 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>manzagop at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8141%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200710032016.l93KGG4m016755%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8141 - trunk/plearn_learners/generic/EXPERIMENTAL">manzagop at mail.berlios.de
+       </A><BR>
+    <I>Wed Oct  3 22:16:16 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001588.html">[Plearn-commits] r8140 - in trunk/plearn_learners:	online/test/DeepBeliefNet/.pytest/PL_DBN_SimpleRBM/expected_results	online/test/ModuleLearner/.pytest/PL_ModuleLearner_Greedy/expected_results	regressors/test/KernelRidgeRegressor/.pytest/PL_kernel_ridge_hyper_regressor/expected_results
+</A></li>
+        <LI>Next message: <A HREF="001590.html">[Plearn-commits] r8142 - trunk/plearn_learners/hyper
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1589">[ date ]</a>
+              <a href="thread.html#1589">[ thread ]</a>
+              <a href="subject.html#1589">[ subject ]</a>
+              <a href="author.html#1589">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: manzagop
+Date: 2007-10-03 22:16:16 +0200 (Wed, 03 Oct 2007)
+New Revision: 8141
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/PvGradNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/PvGradNNet.h
+Log:
+- Replaced the pv_gradstats (a VecStatsCollector) by some in-class statistics
+to allow for more flexibility (such as discounting).
+- Added 4 functions (XxxGrad()) to experiment with different weight update
+strategies.
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/PvGradNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/PvGradNNet.cc	2007-10-03 19:58:24 UTC (rev 8140)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/PvGradNNet.cc	2007-10-03 20:16:16 UTC (rev 8141)
+@@ -57,6 +57,7 @@
+       pv_deceleration(0.5),
+       pv_min_samples(2),
+       pv_required_confidence(0.80),
++      pv_strategy(1),
+       pv_random_sample_step(false)
+ 
+ {
+@@ -101,6 +102,11 @@
+                   OptionBase::buildoption,
+                   &quot;Minimum required confidence (probability of being positive or negative) for taking a step.&quot;);
+ 
++    declareOption(ol, &quot;pv_strategy&quot;,
++                  &amp;PvGradNNet::pv_strategy,
++                  OptionBase::buildoption,
++                  &quot;Strategy to use for the weight updates (number from 1 to 4).&quot;);
++
+     declareOption(ol, &quot;pv_random_sample_step&quot;,
+                   &amp;PvGradNNet::pv_random_sample_step,
+                   OptionBase::buildoption,
+@@ -115,25 +121,32 @@
+ // TODO - reloading an object will not work! layer_params will juste get lost.
+ void PvGradNNet::build_()
+ {
+-    pv_gradstats = new VecStatsCollector();
+-
+     int n = all_params.length();
++    pv_all_nsamples.resize(n);
++    pv_all_sum.resize(n);
++    pv_all_sumsquare.resize(n);
+     pv_all_stepsigns.resize(n);
+     pv_all_stepsizes.resize(n);
+-    //pv_all_nsamples.resize(n);    // *stat*
+ 
+     // Get some structure on the previous Vecs
++    pv_layer_nsamples.resize(n_layers-1);
++    pv_layer_sum.resize(n_layers-1);
++    pv_layer_sumsquare.resize(n_layers-1);
+     pv_layer_stepsigns.resize(n_layers-1);
+     pv_layer_stepsizes.resize(n_layers-1);
+-    //pv_layer_nsamples.resize(n_layers-1); // *stat*
++    int np;
+     for (int i=0,p=0;i&lt;n_layers-1;i++)  {
+-        int np=layer_sizes[i+1]*(1+layer_sizes[i]);
++        np=layer_sizes[i+1]*(1+layer_sizes[i]);
++        pv_layer_nsamples.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
++        pv_layer_sum.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
++        pv_layer_sumsquare.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
+         pv_layer_stepsigns[i]=pv_all_stepsigns.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
+         pv_layer_stepsizes[i]=pv_all_stepsizes.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
+-        //pv_layer_nsamples[i]=pv_all_nsamples.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1); // *stat*
+         p+=np;
+     }
+ 
++//    pv_gradstats = new VecStatsCollector();
++
+ }
+ 
+ // ### Nothing to add here, simply calls build_
+@@ -148,14 +161,18 @@
+ {
+     inherited::makeDeepCopyFromShallowCopy(copies);
+ 
+-    deepCopyField(pv_gradstats, copies);
++    deepCopyField(pv_all_nsamples, copies); 
++    deepCopyField(pv_layer_nsamples, copies);
++    deepCopyField(pv_all_sum, copies); 
++    deepCopyField(pv_layer_sum, copies);
++    deepCopyField(pv_all_sumsquare, copies);
++    deepCopyField(pv_layer_sumsquare, copies);
+     deepCopyField(pv_all_stepsigns, copies);
+     deepCopyField(pv_layer_stepsigns, copies);
+     deepCopyField(pv_all_stepsizes, copies);
+     deepCopyField(pv_layer_stepsizes, copies);
+-    //deepCopyField(pv_all_nsamples, copies); // *stat*
+-    //deepCopyField(pv_layer_nsamples, copies); // *stat*
+ 
++//    deepCopyField(pv_gradstats, copies);
+ }
+ 
+ void PvGradNNet::forget()
+@@ -165,28 +182,58 @@
+     //! a fresh learner!)
+     inherited::forget();
+ 
+-    pv_gradstats-&gt;forget();
++    pv_all_nsamples.fill(0);
++    pv_all_sum.fill(0.0);
++    pv_all_sumsquare.fill(0.0);
+     pv_all_stepsigns.fill(0);
+     pv_all_stepsizes.fill(pv_initial_stepsize);
+-    //pv_all_nsamples.fill(0);
++
++//    pv_gradstats-&gt;forget();
+ }
+ 
+ //! Performs the backprop update. Must be called after the fbpropNet.
+ void PvGradNNet::bpropUpdateNet(int t)
+ {
+     bpropNet(t);
+-    pv_gradstats-&gt;update(all_params_gradient);
+ 
++    switch( pv_strategy )   {
++        case 1 :
++            pvGrad();
++            break;
++        case 2 :
++            discountGrad();
++            break;
++        case 3 :
++            globalSyncGrad();
++            break;
++        case 4 :
++            neuronSyncGrad();
++            break;
++        default :
++            PLERROR(&quot;PvGradNNet::bpropUpdateNet() - No such pv_strategy.&quot;);
++    }
++}
++
++void PvGradNNet::pvGrad()   
++{
+     int np = all_params.length();
+-    int ns;
+     real m, e, prob_pos, prob_neg;
+ 
+     for(int k=0; k&lt;np; k++) {
+-        StatsCollector&amp; st = pv_gradstats-&gt;getStats(k);
+-        ns = (int)st.nnonmissing();
+-        if(ns&gt;pv_min_samples)   {
+-            m = st.mean();
+-            e = st.stderror();
++        // update stats
++        pv_all_nsamples[k]++;
++        pv_all_sum[k] += all_params_gradient[k];
++        pv_all_sumsquare[k] += all_params_gradient[k] * all_params_gradient[k];
++
++        if(pv_all_nsamples[k]&gt;pv_min_samples)   {
++            m = pv_all_sum[k] / pv_all_nsamples[k];
++            // e is the standard error
++            //e = sqrt( (pv_all_sumsquare[k] - (pv_all_sum[k]*pv_all_sum[k])/pv_all_nsamples[k]) / (real)(pv_all_nsamples[k]*(pv_all_nsamples[k]-1)) );
++            // variance
++            e = real((pv_all_sumsquare[k] - square(pv_all_sum[k])/pv_all_nsamples[k])/(pv_all_nsamples[k]-1));
++            // standard error 
++            e = sqrt(e/pv_all_nsamples[k]);
++
+             // test to see if numerical problems
+             if( fabs(m) &lt; 1e-15 || e &lt; 1e-15 )  {
+                 cout &lt;&lt; &quot;PvGradNNet::bpropUpdateNet() - small mean-error ratio.&quot; &lt;&lt; endl;
+@@ -216,7 +263,9 @@
+                     }
+                     all_params[k] -= pv_all_stepsizes[k];
+                     pv_all_stepsigns[k] = 1;
+-                    st.forget();
++                    pv_all_nsamples[k]=0;
++                    pv_all_sum[k]=0.0;
++                    pv_all_sumsquare[k]=0.0;
+                 }
+                 // gradient is negative
+                 else if(prob_neg&gt;=pv_required_confidence)   {
+@@ -233,7 +282,9 @@
+                     }
+                     all_params[k] += pv_all_stepsizes[k];
+                     pv_all_stepsigns[k] = -1;
+-                    st.forget();
++                    pv_all_nsamples[k]=0;
++                    pv_all_sum[k]=0.0;
++                    pv_all_sumsquare[k]=0.0;
+                 }
+             }
+             /*else  // random sample update direction (sign)
+@@ -253,6 +304,18 @@
+ 
+ }
+ 
++void PvGradNNet::discountGrad()
++{
++}
++
++void PvGradNNet::globalSyncGrad()
++{
++}
++
++void PvGradNNet::neuronSyncGrad()
++{
++}
++
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/PvGradNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/PvGradNNet.h	2007-10-03 19:58:24 UTC (rev 8140)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/PvGradNNet.h	2007-10-03 20:16:16 UTC (rev 8141)
+@@ -69,6 +69,8 @@
+     //! for taking a step.
+     real pv_required_confidence;
+ 
++    int pv_strategy;
++
+     //! If this is set to true, then we will randomly choose the step sign for
+     // each parameter based on the estimated probability of it being positive
+     // or negative.
+@@ -113,7 +115,11 @@
+     static void declareOptions(OptionList&amp; ol);
+ 
+     virtual void bpropUpdateNet(const int t);
+-//    virtual void bpropNet(const int t);
++
++    void pvGrad(); 
++    void discountGrad();
++    void globalSyncGrad();
++    void neuronSyncGrad();
+     
+ private:
+     //#####  Private Member Functions  ########################################
+@@ -124,8 +130,15 @@
+ private:
+     //#####  Private Data Members  ############################################
+ 
+-    //! accumulated statistics of gradients on each parameter.
+-    PP&lt;VecStatsCollector&gt; pv_gradstats;
++    //! Holds the number of samples gathered for each weight
++    TVec&lt;int&gt; pv_all_nsamples;
++    TVec&lt; TMat&lt;int&gt; &gt; pv_layer_nsamples;
++    //! Sum of collected gradients 
++    Vec pv_all_sum;
++    TVec&lt;Mat&gt; pv_layer_sum;
++    //! Sum of squares of collected gradients 
++    Vec pv_all_sumsquare;
++    TVec&lt;Mat&gt; pv_layer_sumsquare;
+ 
+     //! Temporary add-on. Allows an undetermined signed value (zero).
+     TVec&lt;int&gt; pv_all_stepsigns;
+@@ -135,11 +148,10 @@
+     Vec pv_all_stepsizes;
+     TVec&lt;Mat&gt; pv_layer_stepsizes;
+ 
+-    //! Holds the number of samples gathered for each weight
+-    //! This is purely for outputing stats.
+-    //TVec&lt;int&gt; pv_all_nsamples;
+-    //TVec&lt; TMat&lt;int&gt; &gt; pv_layer_nsamples;
++    //! accumulated statistics of gradients on each parameter.
++    //PP&lt;VecStatsCollector&gt; pv_gradstats;
+ 
++
+ };
+ 
+ // Declares a few other classes and functions related to this class
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001588.html">[Plearn-commits] r8140 - in trunk/plearn_learners:	online/test/DeepBeliefNet/.pytest/PL_DBN_SimpleRBM/expected_results	online/test/ModuleLearner/.pytest/PL_ModuleLearner_Greedy/expected_results	regressors/test/KernelRidgeRegressor/.pytest/PL_kernel_ridge_hyper_regressor/expected_results
+</A></li>
+	<LI>Next message: <A HREF="001590.html">[Plearn-commits] r8142 - trunk/plearn_learners/hyper
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1589">[ date ]</a>
+              <a href="thread.html#1589">[ thread ]</a>
+              <a href="subject.html#1589">[ subject ]</a>
+              <a href="author.html#1589">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,163 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9136 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9136%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200806171817.m5HIH0HI014116%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002583.html">
+   <LINK REL="Next"  HREF="002585.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9136 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9136%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200806171817.m5HIH0HI014116%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9136 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue Jun 17 20:17:00 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002583.html">[Plearn-commits] r9135 - trunk/plearn_learners_experimental
+</A></li>
+        <LI>Next message: <A HREF="002585.html">[Plearn-commits] r9137 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2584">[ date ]</a>
+              <a href="thread.html#2584">[ thread ]</a>
+              <a href="subject.html#2584">[ subject ]</a>
+              <a href="author.html#2584">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-06-17 20:17:00 +0200 (Tue, 17 Jun 2008)
+New Revision: 9136
+
+Modified:
+   trunk/plearn_learners/online/ModuleLearner.cc
+   trunk/plearn_learners/online/ModuleLearner.h
+Log:
+- The output port can now be given a name different from 'output'
+- Does not crash anymore when computing the output and there is none
+
+
+Modified: trunk/plearn_learners/online/ModuleLearner.cc
+===================================================================
+--- trunk/plearn_learners/online/ModuleLearner.cc	2008-06-17 17:10:00 UTC (rev 9135)
++++ trunk/plearn_learners/online/ModuleLearner.cc	2008-06-17 18:17:00 UTC (rev 9136)
+@@ -53,8 +53,8 @@
+     &quot;That module should have ports that can be fed with the input, target\n&quot;
+     &quot;and weight of an example (defined by the 'input_ports', 'target_ports'\n&quot;
+     &quot;and 'weight_ports' options), ports that compute costs (defined by the\n&quot;
+-    &quot;'cost_ports' option), and a port named 'output' that computes the\n&quot;
+-    &quot;output of this learner.\n&quot;
++    &quot;'cost_ports' option), and a port that computes the output of this\n&quot;
++    &quot;learner (whose name is given by the 'output_port' option).\n&quot;
+     &quot;\n&quot;
+     &quot;For example one can use a NetworkModule, which can define such ports.\n&quot;
+     &quot;\n&quot;
+@@ -78,6 +78,7 @@
+     cost_ports(TVec&lt;string&gt;(1, &quot;cost&quot;)),
+     input_ports(TVec&lt;string&gt;(1, &quot;input&quot;)),
+     target_ports(TVec&lt;string&gt;(1, &quot;target&quot;)),
++    output_port(&quot;output&quot;),
+     // Note: many learners do not use weights, thus the default behavior is not
+     // to have a 'weight' port in 'weight_ports'.
+     operate_on_bags(false),
+@@ -125,6 +126,10 @@
+                   OptionBase::buildoption,
+        &quot;List of ports that take the weight part of a sample as input.&quot;);
+ 
++    declareOption(ol, &quot;output_port&quot;, &amp;ModuleLearner::output_port,
++                  OptionBase::buildoption,
++       &quot;The port that will contain the output of the learner.&quot;);
++
+     declareOption(ol, &quot;operate_on_bags&quot;, &amp;ModuleLearner::operate_on_bags,
+                   OptionBase::buildoption,
+        &quot;If true, then each training step will be done on batch_size *bags*\n&quot;
+@@ -194,11 +199,11 @@
+                     module, weight_ports[i], false));
+     }
+ 
+-    if (ports.find(&quot;output&quot;) &gt;= 0) {
++    if (ports.find(output_port) &gt;= 0) {
+         store_outputs = new MatrixModule(&quot;store_outputs&quot;, true);
+         all_modules.append(get_pointer(store_outputs));
+         all_connections.append(new NetworkConnection(
+-                    module, &quot;output&quot;,
++                    module, output_port,
+                     get_pointer(store_outputs), &quot;data&quot;, false));
+     } else
+         store_outputs = NULL;
+@@ -266,7 +271,7 @@
+ int ModuleLearner::outputsize() const
+ {
+     if ( module &amp;&amp; store_outputs )
+-        return module-&gt;getPortWidth(&quot;output&quot;);
++        return module-&gt;getPortWidth(output_port);
+     else
+         return -1; // Undefined.
+ }
+@@ -449,11 +454,13 @@
+     network-&gt;fprop(null_pointers);
+ 
+     // Store output.
+-    PLASSERT( store_outputs );
+-    const Mat&amp; net_out = store_outputs-&gt;getData();
+-    PLASSERT( net_out.length() == 1 );
+-    output.resize(net_out.width());
+-    output &lt;&lt; net_out;
++    if (store_outputs) {
++        const Mat&amp; net_out = store_outputs-&gt;getData();
++        PLASSERT( net_out.length() == 1 );
++        output.resize(net_out.width());
++        output &lt;&lt; net_out;
++    } else
++        output.resize(0);
+ 
+     // Store costs.
+     costs.resize(0);
+
+Modified: trunk/plearn_learners/online/ModuleLearner.h
+===================================================================
+--- trunk/plearn_learners/online/ModuleLearner.h	2008-06-17 17:10:00 UTC (rev 9135)
++++ trunk/plearn_learners/online/ModuleLearner.h	2008-06-17 18:17:00 UTC (rev 9136)
+@@ -62,6 +62,7 @@
+     TVec&lt;string&gt; input_ports;
+     TVec&lt;string&gt; target_ports;
+     TVec&lt;string&gt; weight_ports;
++    string output_port;
+ 
+     bool operate_on_bags;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002583.html">[Plearn-commits] r9135 - trunk/plearn_learners_experimental
+</A></li>
+	<LI>Next message: <A HREF="002585.html">[Plearn-commits] r9137 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2584">[ date ]</a>
+              <a href="thread.html#2584">[ thread ]</a>
+              <a href="subject.html#2584">[ subject ]</a>
+              <a href="author.html#2584">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

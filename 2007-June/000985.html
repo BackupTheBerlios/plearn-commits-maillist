@@ -1,0 +1,283 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7536 - in trunk/plearn_learners/online: .	test/ModuleTester
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7536%20-%20in%20trunk/plearn_learners/online%3A%20.%0A%09test/ModuleTester&In-Reply-To=%3C200706051440.l55Eerhp010265%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000984.html">
+   <LINK REL="Next"  HREF="000986.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7536 - in trunk/plearn_learners/online: .	test/ModuleTester</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7536%20-%20in%20trunk/plearn_learners/online%3A%20.%0A%09test/ModuleTester&In-Reply-To=%3C200706051440.l55Eerhp010265%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7536 - in trunk/plearn_learners/online: .	test/ModuleTester">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Tue Jun  5 16:40:53 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000984.html">[Plearn-commits] r7535 - trunk/python_modules/plearn/learners/autolr
+</A></li>
+        <LI>Next message: <A HREF="000986.html">[Plearn-commits] r7537 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#985">[ date ]</a>
+              <a href="thread.html#985">[ thread ]</a>
+              <a href="subject.html#985">[ subject ]</a>
+              <a href="author.html#985">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-06-05 16:40:52 +0200 (Tue, 05 Jun 2007)
+New Revision: 7536
+
+Modified:
+   trunk/plearn_learners/online/OnlineLearningModule.cc
+   trunk/plearn_learners/online/OnlineLearningModule.h
+   trunk/plearn_learners/online/RBMBinomialLayer.cc
+   trunk/plearn_learners/online/RBMModule.cc
+   trunk/plearn_learners/online/TanhModule.cc
+   trunk/plearn_learners/online/test/ModuleTester/PL_ModuleTester_RBM.pyplearn
+Log:
+added use_fast_approximations option
+
+
+Modified: trunk/plearn_learners/online/OnlineLearningModule.cc
+===================================================================
+--- trunk/plearn_learners/online/OnlineLearningModule.cc	2007-06-05 13:44:32 UTC (rev 7535)
++++ trunk/plearn_learners/online/OnlineLearningModule.cc	2007-06-05 14:40:52 UTC (rev 7536)
+@@ -72,7 +72,8 @@
+     input_size(-1),
+     output_size(-1),
+     name(the_name),
+-    estimate_simpler_diag_hessian(false)
++    estimate_simpler_diag_hessian(false),
++    use_fast_approximations(true)
+ {
+     if (call_build_) {
+         if (the_name.empty())
+@@ -287,8 +288,12 @@
+ 
+     declareOption(ol, &quot;name&quot;, &amp;OnlineLearningModule::name,
+                   OptionBase::buildoption,
+-        &quot;Name of the module (if not provided, the class name is used).&quot;);
++                  &quot;Name of the module (if not provided, the class name is used).&quot;);
+ 
++    declareOption(ol, &quot;use_fast_approximations&quot;, &amp;OnlineLearningModule::use_fast_approximations,
++                  OptionBase::buildoption,
++                  &quot;Use tables to approximate nonlinearities such as sigmoid, tanh, and softplus\n&quot;);
++
+     declareOption(ol, &quot;estimate_simpler_diag_hessian&quot;,
+                   &amp;OnlineLearningModule::estimate_simpler_diag_hessian,
+                   OptionBase::buildoption,
+
+Modified: trunk/plearn_learners/online/OnlineLearningModule.h
+===================================================================
+--- trunk/plearn_learners/online/OnlineLearningModule.h	2007-06-05 13:44:32 UTC (rev 7535)
++++ trunk/plearn_learners/online/OnlineLearningModule.h	2007-06-05 14:40:52 UTC (rev 7536)
+@@ -94,6 +94,9 @@
+     //! optional random generator, possibly shared among several modules
+     PP&lt;PRandom&gt; random_gen;
+ 
++    //! use tables to approximate nonlinearities such as sigmoid, tanh, and softplus
++    bool use_fast_approximations;
++
+ public:
+     //#####  Public Member Fun ctions  #########################################
+ 
+
+Modified: trunk/plearn_learners/online/RBMBinomialLayer.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMBinomialLayer.cc	2007-06-05 13:44:32 UTC (rev 7535)
++++ trunk/plearn_learners/online/RBMBinomialLayer.cc	2007-06-05 14:40:52 UTC (rev 7536)
+@@ -113,8 +113,12 @@
+     if( expectation_is_up_to_date )
+         return;
+ 
+-    for( int i=0 ; i&lt;size ; i++ )
+-        expectation[i] = fastsigmoid( -activation[i] );
++    if (use_fast_approximations)
++        for( int i=0 ; i&lt;size ; i++ )
++            expectation[i] = fastsigmoid( -activation[i] );
++    else
++        for( int i=0 ; i&lt;size ; i++ )
++            expectation[i] = sigmoid( -activation[i] );
+ 
+     expectation_is_up_to_date = true;
+ }
+@@ -129,9 +133,14 @@
+ 
+     PLASSERT( expectations.width() == size
+               &amp;&amp; expectations.length() == batch_size );
+-    for (int k = 0; k &lt; batch_size; k++)
+-        for (int i = 0 ; i &lt; size ; i++)
+-            expectations(k, i) = fastsigmoid(-activations(k, i));
++    if (use_fast_approximations)
++        for (int k = 0; k &lt; batch_size; k++)
++            for (int i = 0 ; i &lt; size ; i++)
++                expectations(k, i) = fastsigmoid(-activations(k, i));
++    else
++        for (int k = 0; k &lt; batch_size; k++)
++            for (int i = 0 ; i &lt; size ; i++)
++                expectations(k, i) = sigmoid(-activations(k, i));
+ 
+     expectations_are_up_to_date = true;
+ }
+@@ -144,8 +153,12 @@
+     PLASSERT( input.size() == input_size );
+     output.resize( output_size );
+ 
+-    for( int i=0 ; i&lt;size ; i++ )
+-        output[i] = fastsigmoid( -input[i] - bias[i] );
++    if (use_fast_approximations)
++        for( int i=0 ; i&lt;size ; i++ )
++            output[i] = fastsigmoid( -input[i] - bias[i] );
++    else
++        for( int i=0 ; i&lt;size ; i++ )
++            output[i] = sigmoid( -input[i] - bias[i] );
+ }
+ 
+ void RBMBinomialLayer::fprop( const Mat&amp; inputs, Mat&amp; outputs ) const
+@@ -154,9 +167,14 @@
+     PLASSERT( inputs.width() == size );
+     outputs.resize( mbatch_size, size );
+ 
+-    for( int k = 0; k &lt; mbatch_size; k++ )
+-        for( int i = 0; i &lt; size; i++ )
+-            outputs(k,i) = fastsigmoid( -inputs(k,i) - bias[i] );
++    if (use_fast_approximations)
++        for( int k = 0; k &lt; mbatch_size; k++ )
++            for( int i = 0; i &lt; size; i++ )
++                outputs(k,i) = fastsigmoid( -inputs(k,i) - bias[i] );
++    else
++        for( int k = 0; k &lt; mbatch_size; k++ )
++            for( int i = 0; i &lt; size; i++ )
++                outputs(k,i) = sigmoid( -inputs(k,i) - bias[i] );
+ }
+ 
+ void RBMBinomialLayer::fprop( const Vec&amp; input, const Vec&amp; rbm_bias,
+@@ -166,8 +184,12 @@
+     PLASSERT( rbm_bias.size() == input_size );
+     output.resize( output_size );
+ 
+-    for( int i=0 ; i&lt;size ; i++ )
+-        output[i] = fastsigmoid( -input[i] - rbm_bias[i]);
++    if (use_fast_approximations)
++        for( int i=0 ; i&lt;size ; i++ )
++            output[i] = fastsigmoid( -input[i] - rbm_bias[i]);
++    else
++        for( int i=0 ; i&lt;size ; i++ )
++            output[i] = sigmoid( -input[i] - rbm_bias[i]);
+ }
+ 
+ /////////////////
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-06-05 13:44:32 UTC (rev 7535)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-06-05 14:40:52 UTC (rev 7536)
+@@ -392,8 +392,12 @@
+     for (int i=0;i&lt;mbs;i++)
+     {
+         energy(i,0) = hidden_layer-&gt;energy(hidden(i));
+-        for (int j=0;j&lt;visible_layer-&gt;size;j++)
+-            energy(i,0) -= tabulated_softplus(-visible_layer-&gt;activations(i,j));
++        if (use_fast_approximations)
++            for (int j=0;j&lt;visible_layer-&gt;size;j++)
++                energy(i,0) -= tabulated_softplus(-visible_layer-&gt;activations(i,j));
++        else
++            for (int j=0;j&lt;visible_layer-&gt;size;j++)
++                energy(i,0) -= softplus(-visible_layer-&gt;activations(i,j));
+     }
+ }
+ 
+@@ -424,8 +428,12 @@
+     for (int i=0;i&lt;mbs;i++)
+     {
+         energy(i,0) = visible_layer-&gt;energy(visible(i));
+-        for (int j=0;j&lt;hidden_layer-&gt;size;j++)
+-            energy(i,0) -= tabulated_softplus(-(*hidden_activations)(i,j));
++        if (use_fast_approximations)
++            for (int j=0;j&lt;hidden_layer-&gt;size;j++)
++                energy(i,0) -= tabulated_softplus(-(*hidden_activations)(i,j));
++        else
++            for (int j=0;j&lt;hidden_layer-&gt;size;j++)
++                energy(i,0) -= softplus(-(*hidden_activations)(i,j));
+     }
+ }
+ 
+
+Modified: trunk/plearn_learners/online/TanhModule.cc
+===================================================================
+--- trunk/plearn_learners/online/TanhModule.cc	2007-06-05 13:44:32 UTC (rev 7535)
++++ trunk/plearn_learners/online/TanhModule.cc	2007-06-05 14:40:52 UTC (rev 7536)
+@@ -73,10 +73,12 @@
+     }
+ 
+     output.resize( output_size );
+-    for( int i=0 ; i&lt;output_size ; i++ )
+-    {
+-        output[i] = ex_scale * fasttanh( in_scale * input[i] );
+-    }
++    if (use_fast_approximations)
++        for( int i=0 ; i&lt;output_size ; i++ )
++            output[i] = ex_scale * fasttanh( in_scale * input[i] );
++    else
++        for( int i=0 ; i&lt;output_size ; i++ )
++            output[i] = ex_scale * tanh( in_scale * input[i] );
+ }
+ 
+ void TanhModule::fprop(const Mat&amp; inputs, Mat&amp; outputs)
+
+Modified: trunk/plearn_learners/online/test/ModuleTester/PL_ModuleTester_RBM.pyplearn
+===================================================================
+--- trunk/plearn_learners/online/test/ModuleTester/PL_ModuleTester_RBM.pyplearn	2007-06-05 13:44:32 UTC (rev 7535)
++++ trunk/plearn_learners/online/test/ModuleTester/PL_ModuleTester_RBM.pyplearn	2007-06-05 14:40:52 UTC (rev 7536)
+@@ -8,10 +8,11 @@
+     return pl.RBMModule(
+             name = name,
+             compute_contrastive_divergence = compute_cd,
+-            cd_learning_rate = cd_learning_rate,
++            cd_learning_rate = cd_learning_rate, 
+             grad_learning_rate = grad_learning_rate,
+-            visible_layer = pl.RBMBinomialLayer(size = visible_size),
+-            hidden_layer = pl.RBMBinomialLayer(size = hidden_size),
++            use_fast_approximations=False,
++            visible_layer = pl.RBMBinomialLayer(size = visible_size, use_fast_approximations=False),
++            hidden_layer = pl.RBMBinomialLayer(size = hidden_size, use_fast_approximations=False),
+             standard_cd_weights_grad = standard_cd_weights_grad,
+             standard_cd_bias_grad = standard_cd_bias_grad,
+             connection = pl.RBMMatrixConnection(
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000984.html">[Plearn-commits] r7535 - trunk/python_modules/plearn/learners/autolr
+</A></li>
+	<LI>Next message: <A HREF="000986.html">[Plearn-commits] r7537 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#985">[ date ]</a>
+              <a href="thread.html#985">[ thread ]</a>
+              <a href="subject.html#985">[ subject ]</a>
+              <a href="author.html#985">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

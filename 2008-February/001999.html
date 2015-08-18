@@ -1,0 +1,462 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8552 - in trunk: commands plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8552%20-%20in%20trunk%3A%20commands%20plearn/vmat&In-Reply-To=%3C200802210141.m1L1fQHK002843%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002000.html">
+   <LINK REL="Next"  HREF="002001.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8552 - in trunk: commands plearn/vmat</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8552%20-%20in%20trunk%3A%20commands%20plearn/vmat&In-Reply-To=%3C200802210141.m1L1fQHK002843%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8552 - in trunk: commands plearn/vmat">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Thu Feb 21 02:41:26 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002000.html">[Plearn-commits] r8551 - trunk/plearn/math
+</A></li>
+        <LI>Next message: <A HREF="002001.html">[Plearn-commits] r8553 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1999">[ date ]</a>
+              <a href="thread.html#1999">[ thread ]</a>
+              <a href="subject.html#1999">[ subject ]</a>
+              <a href="author.html#1999">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2008-02-21 02:41:23 +0100 (Thu, 21 Feb 2008)
+New Revision: 8552
+
+Added:
+   trunk/plearn/vmat/MixtureVMatrix.cc
+   trunk/plearn/vmat/MixtureVMatrix.h
+Modified:
+   trunk/commands/plearn_noblas_inc.h
+Log:
+New VMat, used for mixing sources with different proportions.
+
+
+Modified: trunk/commands/plearn_noblas_inc.h
+===================================================================
+--- trunk/commands/plearn_noblas_inc.h	2008-02-21 01:37:30 UTC (rev 8551)
++++ trunk/commands/plearn_noblas_inc.h	2008-02-21 01:41:23 UTC (rev 8552)
+@@ -319,6 +319,7 @@
+ #include &lt;plearn/vmat/MeanImputationVMatrix.h&gt;
+ #include &lt;plearn/vmat/MemoryVMatrixNoSave.h&gt;
+ #include &lt;plearn/vmat/MissingInstructionVMatrix.h&gt;
++#include &lt;plearn/vmat/MixtureVMatrix.h&gt;
+ //#include &lt;plearn/vmat/MixUnlabeledNeighbourVMatrix.h&gt;
+ #include &lt;plearn/vmat/MultiInstanceVMatrix.h&gt;
+ #include &lt;plearn/vmat/MultiTargetOneHotVMatrix.h&gt;
+
+Added: trunk/plearn/vmat/MixtureVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/MixtureVMatrix.cc	2008-02-21 01:37:30 UTC (rev 8551)
++++ trunk/plearn/vmat/MixtureVMatrix.cc	2008-02-21 01:41:23 UTC (rev 8552)
+@@ -0,0 +1,217 @@
++// -*- C++ -*-
++
++// MixtureVMatrix.cc
++//
++// Copyright (C) 2008 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file MixtureVMatrix.cc */
++
++
++#include &quot;MixtureVMatrix.h&quot;
++
++namespace PLearn {
++using namespace std;
++
++
++PLEARN_IMPLEMENT_OBJECT(
++    MixtureVMatrix,
++    &quot;Mixes several underlying source VMat, with ponderation.&quot;,
++    &quot;&quot;
++    );
++
++MixtureVMatrix::MixtureVMatrix():
++    n_sources(0),
++    period_length(0)
++{
++}
++
++void MixtureVMatrix::getNewRow(int i, const Vec&amp; v) const
++{
++    // The source it comes from
++    int source = period[i % period_length];
++    // The number of previous samples of the same source in the same period
++    int occurrence = occurrences[i % period_length];
++    // The index in this source
++    int index = (i/period_length)*weights[source] + occurrence;
++
++    sources[source]-&gt;getRow(index % sources[source].length(), v);
++}
++
++void MixtureVMatrix::declareOptions(OptionList&amp; ol)
++{
++    // declareOption(ol, &quot;myoption&quot;, &amp;MixtureVMatrix::myoption,
++    //               OptionBase::buildoption,
++    //               &quot;Help text describing this option&quot;);
++
++    declareOption(ol, &quot;sources&quot;, &amp;MixtureVMatrix::sources,
++                  OptionBase::buildoption,
++                  &quot;The VMat to mix&quot;);
++
++    declareOption(ol, &quot;weights&quot;, &amp;MixtureVMatrix::weights,
++                  OptionBase::buildoption,
++                  &quot;Weights of the different sources.\n&quot;
++                  &quot;If weights[0]==2 and weights[1]==2, then there will be\n&quot;
++                  &quot;twice as many exambles coming from sources[0] than from\n&quot;
++                  &quot;sources[1], regardless of the sources' length.&quot;
++                  );
++
++    declareOption(ol, &quot;n_sources&quot;, &amp;MixtureVMatrix::n_sources,
++                  OptionBase::learntoption,
++                  &quot;Number of sources&quot;);
++
++    declareOption(ol, &quot;period_length&quot;, &amp;MixtureVMatrix::period_length,
++                  OptionBase::learntoption,
++                  &quot;sum(weights)&quot;);
++
++    declareOption(ol, &quot;period&quot;, &amp;MixtureVMatrix::period,
++                  OptionBase::learntoption,
++                  &quot;Sequence of sources to select, ensuring the proportion of\n&quot;
++                  &quot;sources and their homogeneity .&quot;
++                  );
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++void MixtureVMatrix::build_()
++{
++    n_sources = sources.size();
++    if (n_sources == 0)
++        return;
++
++    PLCHECK_MSG(sources.size() == weights.size(),
++                &quot;You should provide as many weights as sources&quot;);
++
++    PLCHECK_MSG(length_ &gt;= 0,
++                &quot;You should provide a length greater than 0&quot;);
++
++    width_ = sources[0]-&gt;width();
++    for (int i=1; i&lt;n_sources; i++)
++        PLCHECK_MSG(sources[i]-&gt;width() == width_,
++                    &quot;All sources should have the same width&quot;);
++
++    if (inputsize_&lt;0 || targetsize_&lt;0 || weightsize_&lt;0 || extrasize_&lt;0
++        || inputsize_ + targetsize_ + weightsize_ + extrasize_ != width_)
++    {
++        inputsize_ = sources[0]-&gt;inputsize();
++        targetsize_ = sources[0]-&gt;targetsize();
++        weightsize_ = sources[0]-&gt;weightsize();
++        extrasize_ = sources[0]-&gt;extrasize();
++    }
++
++    period_length = sum(weights);
++    period.resize(period_length);
++    occurrences.resize(period_length);
++
++    bool incorrect_period = false;
++    for (int i=0; i&lt;n_sources; i++)
++        if (period.count(i) != weights[i])
++        {
++            incorrect_period = true;
++            break;
++        }
++
++    if (incorrect_period)
++        buildPeriod();
++}
++
++void MixtureVMatrix::buildPeriod()
++{
++    TVec&lt;int&gt; ideal_count(n_sources);
++    TVec&lt;int&gt; actual_count(n_sources);
++    TVec&lt;int&gt; sources_count(n_sources);
++
++    for (int i=0; i&lt;period_length; i++)
++    {
++        // Find the source that is the most underrepresented
++        ideal_count += weights;
++
++        int max = 0;
++        int argmax = -1;
++        for (int j=0; j&lt;n_sources; j++)
++        {
++            if (ideal_count[j] - actual_count[j] &gt; max)
++            {
++                argmax = j;
++                max = ideal_count[j] - actual_count[j];
++            }
++        }
++        PLASSERT(argmax &gt;= 0);
++
++        period[i] = argmax;
++        actual_count[argmax] += period_length;
++        occurrences[i] = sources_count[argmax];
++        sources_count[argmax]++;
++    }
++
++#ifdef BOUNDCHECK
++    for (int i=0; i&lt;n_sources; i++)
++    {
++        PLASSERT(period.count(i) == weights[i]);
++        PLASSERT( i==0 &amp;&amp; occurrences[0]==0
++                  || period.subVec(0,i-1).count(period[i]) == occurrences[i]);
++    }
++#endif
++}
++
++// ### Nothing to add here, simply calls build_
++void MixtureVMatrix::build()
++{
++    inherited::build();
++    build_();
++}
++
++void MixtureVMatrix::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    deepCopyField(sources, copies);
++    deepCopyField(weights, copies);
++    deepCopyField(period, copies);
++    deepCopyField(occurrences, copies);
++}
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn/vmat/MixtureVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/MixtureVMatrix.h	2008-02-21 01:37:30 UTC (rev 8551)
++++ trunk/plearn/vmat/MixtureVMatrix.h	2008-02-21 01:41:23 UTC (rev 8552)
+@@ -0,0 +1,146 @@
++// -*- C++ -*-
++
++// MixtureVMatrix.h
++//
++// Copyright (C) 2008 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file MixtureVMatrix.h */
++
++
++#ifndef MixtureVMatrix_INC
++#define MixtureVMatrix_INC
++
++#include &lt;plearn/vmat/RowBufferedVMatrix.h&gt;
++#include &lt;plearn/vmat/VMat.h&gt;
++
++namespace PLearn {
++
++/**
++ * Mixes several underlying source VMat, with ponderation.
++ */
++class MixtureVMatrix : public RowBufferedVMatrix
++{
++    typedef RowBufferedVMatrix inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! The sources to mix (with repetitions if needed)
++    TVec&lt;VMat&gt; sources;
++
++    //! Weights of the different sources. If weights[0]==2 and weights[1]==2,
++    //! then there will be twice as many exambles coming from sources[0] than
++    //! from sources[1], regardless of the sources' length.
++    TVec&lt;int&gt; weights;
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    // ### Make sure the implementation in the .cc
++    // ### initializes all fields to reasonable default values.
++    MixtureVMatrix();
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    PLEARN_DECLARE_OBJECT(MixtureVMatrix);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++    //#####  Protected Options  ###############################################
++
++    //! sources.size()
++    int n_sources;
++
++    //! sum(weights)
++    int period_length;
++
++    //! Sequence of sources to select, ensuring the proportion of sources and
++    //! their homogeneity
++    TVec&lt;int&gt; period;
++
++    //! occurrences[i] is the count of element period[i] in period[0..i-1]
++    TVec&lt;int&gt; occurrences;
++
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++    //! Fill the vector 'v' with the content of the i-th row.
++    //! 'v' is assumed to be the right size.
++    virtual void getNewRow(int i, const Vec&amp; v) const;
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++
++    //! build period and occurrences
++    void buildPeriod();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(MixtureVMatrix);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002000.html">[Plearn-commits] r8551 - trunk/plearn/math
+</A></li>
+	<LI>Next message: <A HREF="002001.html">[Plearn-commits] r8553 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1999">[ date ]</a>
+              <a href="thread.html#1999">[ thread ]</a>
+              <a href="subject.html#1999">[ subject ]</a>
+              <a href="author.html#1999">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

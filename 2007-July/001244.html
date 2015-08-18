@@ -1,0 +1,1771 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7796 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7796%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200707181954.l6IJsLRd028583%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001243.html">
+   <LINK REL="Next"  HREF="001245.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7796 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7796%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200707181954.l6IJsLRd028583%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7796 - trunk/plearn_learners/generic/EXPERIMENTAL">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Wed Jul 18 21:54:21 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001243.html">[Plearn-commits] r7795 - trunk/plearn/base
+</A></li>
+        <LI>Next message: <A HREF="001245.html">[Plearn-commits] r7797 - trunk/plearn/io
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1244">[ date ]</a>
+              <a href="thread.html#1244">[ thread ]</a>
+              <a href="subject.html#1244">[ subject ]</a>
+              <a href="author.html#1244">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-07-18 21:54:20 +0200 (Wed, 18 Jul 2007)
+New Revision: 7796
+
+Added:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h
+Log:
+SMP implementation of stochastic gradient
+
+Added: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc	2007-07-18 18:49:56 UTC (rev 7795)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.cc	2007-07-18 19:54:20 UTC (rev 7796)
+@@ -0,0 +1,1329 @@
++// -*- C++ -*-
++
++// NatGradSMPNNet.cc
++//
++// Copyright (C) 2007 Yoshua Bengio
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Yoshua Bengio
++
++/*! \file NatGradSMPNNet.cc */
++
++
++#include &quot;NatGradSMPNNet.h&quot;
++#include &lt;plearn/math/pl_erf.h&gt;
++
++#include &lt;sys/ipc.h&gt;
++#include &lt;sys/sem.h&gt;
++#include &lt;sys/shm.h&gt;
++
++namespace PLearn {
++using namespace std;
++
++union semun {
++    int val;                    /*!&lt; value for SETVAL */
++    struct semid_ds *buf;       /*!&lt; buffer for IPC_STAT, IPC_SET */
++    unsigned short int *array;  /*!&lt; array for GETALL, SETALL */
++    struct seminfo *__buf;      /*!&lt; buffer for IPC_INFO */
++};
++
++PLEARN_IMPLEMENT_OBJECT(
++    NatGradSMPNNet,
++    &quot;Multi-layer neural network trained with an efficient Natural Gradient optimization&quot;,
++    &quot;A separate covariance matrix is estimated for the gradients associated with the\n&quot;
++    &quot;the input weights of each neuron, and a covariance matrix between the gradients\n&quot;
++    &quot;on the neurons is also computed. These are combined to obtained an adjusted gradient\n&quot;
++    &quot;on all the parameters. The class GradientCorrector embodies the adjustment algorithm.\n&quot;
++    &quot;Users may specify different options for the estimator that is used for correcting\n&quot;
++    &quot;the neurons gradients and for the estimator that is used for correcting the\n&quot;
++    &quot;parameters gradients (separately for each neuron).\n&quot;
++    );
++
++NatGradSMPNNet::NatGradSMPNNet()
++    : noutputs(-1),
++      params_averaging_coeff(1.0),
++      params_averaging_freq(5),
++      init_lrate(0.01),
++      lrate_decay(0),
++      output_layer_L1_penalty_factor(0.0),
++      output_layer_lrate_scale(1),
++      minibatch_size(1),
++      output_type(&quot;NLL&quot;),
++      input_size_lrate_normalization_power(0),
++      lrate_scale_factor(3),
++      lrate_scale_factor_max_power(0),
++      lrate_scale_factor_min_power(0),
++      self_adjusted_scaling_and_bias(false),
++      target_mean_activation(-4), // 
++      target_stdev_activation(3), // 2.5% of the time we are above 1
++      verbosity(0),
++      //corr_profiling_start(0), 
++      //corr_profiling_end(0),
++      use_pvgrad(false),
++      pv_initial_stepsize(1e-6),
++      pv_acceleration(2),
++      pv_min_samples(2),
++      pv_required_confidence(0.80),
++      pv_random_sample_step(false),
++      pv_gradstats(new VecStatsCollector()),
++      n_layers(-1),
++      cumulative_training_time(0),
++      params_ptr(NULL),
++      params_id(-1),
++      nsteps(0),
++      semaphore_id(-1)
++{
++    random_gen = new PRandom();
++}
++
++void NatGradSMPNNet::declareOptions(OptionList&amp; ol)
++{
++    declareOption(ol, &quot;noutputs&quot;, &amp;NatGradSMPNNet::noutputs,
++                  OptionBase::buildoption,
++                  &quot;Number of outputs of the neural network, which can be derived from  output_type and targetsize_\n&quot;);
++
++    declareOption(ol, &quot;n_layers&quot;, &amp;NatGradSMPNNet::n_layers,
++                  OptionBase::learntoption,
++                  &quot;Number of layers of weights (ie. 2 for a neural net with one hidden layer).\n&quot;
++                  &quot;Needs not be specified explicitly (derived from hidden_layer_sizes).\n&quot;);
++
++    declareOption(ol, &quot;hidden_layer_sizes&quot;, &amp;NatGradSMPNNet::hidden_layer_sizes,
++                  OptionBase::buildoption,
++                  &quot;Defines the architecture of the multi-layer neural network by\n&quot;
++                  &quot;specifying the number of hidden units in each hidden layer.\n&quot;);
++
++    declareOption(ol, &quot;layer_sizes&quot;, &amp;NatGradSMPNNet::layer_sizes,
++                  OptionBase::learntoption,
++                  &quot;Derived from hidden_layer_sizes, inputsize_ and noutputs\n&quot;);
++
++    declareOption(ol, &quot;cumulative_training_time&quot;, &amp;NatGradSMPNNet::cumulative_training_time,
++                  OptionBase::learntoption,
++                  &quot;Cumulative training time since age=0, in seconds.\n&quot;);
++
++    declareOption(ol, &quot;layer_params&quot;, &amp;NatGradSMPNNet::layer_params,
++                  OptionBase::learntoption,
++                  &quot;Parameters used while training, for each layer, organized as follows: layer_params[i] \n&quot;
++                  &quot;is a matrix of dimension layer_sizes[i+1] x (layer_sizes[i]+1)\n&quot;
++                  &quot;containing the neuron biases in its first column.\n&quot;);
++
++    declareOption(ol, &quot;activations_scaling&quot;, &amp;NatGradSMPNNet::activations_scaling,
++                  OptionBase::learntoption,
++                  &quot;Scaling coefficients for each neuron of each layer, if self_adjusted_scaling_and_bias:\n&quot;
++                  &quot; output = tanh(activations_scaling[layer][neuron] * (biases[layer][neuron] + weights[layer]*input[layer-1])\n&quot;);
++
++    declareOption(ol, &quot;layer_mparams&quot;, &amp;NatGradSMPNNet::layer_mparams,
++                  OptionBase::learntoption,
++                  &quot;Test parameters for each layer, organized like layer_params.\n&quot;
++                  &quot;This is a moving average of layer_params, computed with\n&quot;
++                  &quot;coefficient params_averaging_coeff. Thus the mparams are\n&quot;
++                  &quot;a smoothed version of the params, and they are used only\n&quot;
++                  &quot;during testing.\n&quot;);
++
++    declareOption(ol, &quot;params_averaging_coeff&quot;, &amp;NatGradSMPNNet::params_averaging_coeff,
++                  OptionBase::buildoption,
++                  &quot;Coefficient used to control how fast we forget old parameters\n&quot;
++                  &quot;in the moving average performed as follows:\n&quot;
++                  &quot;mparams &lt;-- (1-params_averaging_coeff)mparams + params_averaging_coeff*params\n&quot;);
++
++    declareOption(ol, &quot;params_averaging_freq&quot;, &amp;NatGradSMPNNet::params_averaging_freq,
++                  OptionBase::buildoption,
++                  &quot;How often (in terms of number of minibatches, i.e. weight updates)\n&quot;
++                  &quot;do we perform the moving average update calculation\n&quot;
++                  &quot;mparams &lt;-- (1-params_averaging_coeff)mparams + params_averaging_coeff*params\n&quot;);
++
++    declareOption(ol, &quot;init_lrate&quot;, &amp;NatGradSMPNNet::init_lrate,
++                  OptionBase::buildoption,
++                  &quot;Initial learning rate\n&quot;);
++
++    declareOption(ol, &quot;lrate_decay&quot;, &amp;NatGradSMPNNet::lrate_decay,
++                  OptionBase::buildoption,
++                  &quot;Learning rate decay factor\n&quot;);
++
++    declareOption(ol, &quot;output_layer_L1_penalty_factor&quot;,
++                  &amp;NatGradSMPNNet::output_layer_L1_penalty_factor,
++                  OptionBase::buildoption,
++                  &quot;Optional (default=0) factor of L1 regularization term, i.e.\n&quot;
++                  &quot;minimize L1_penalty_factor * sum_{ij} |weights(i,j)| during training.\n&quot;
++                  &quot;Gets multiplied by the learning rate. Only on output layer!!&quot;);
++
++    declareOption(ol, &quot;output_layer_lrate_scale&quot;, &amp;NatGradSMPNNet::output_layer_lrate_scale,
++                  OptionBase::buildoption,
++                  &quot;Scaling factor of the learning rate for the output layer. Values less than 1&quot;
++                  &quot;mean that the output layer parameters have a smaller learning rate than the others.\n&quot;);
++
++    declareOption(ol, &quot;minibatch_size&quot;, &amp;NatGradSMPNNet::minibatch_size,
++                  OptionBase::buildoption,
++                  &quot;Update the parameters only so often (number of examples).\n&quot;);
++
++    declareOption(ol, &quot;neurons_natgrad_template&quot;, &amp;NatGradSMPNNet::neurons_natgrad_template,
++                  OptionBase::buildoption,
++                  &quot;Optional template GradientCorrector for the neurons gradient.\n&quot;
++                  &quot;If not provided, then the natural gradient correction\n&quot;
++                  &quot;on the neurons gradient is not performed.\n&quot;);
++
++    declareOption(ol, &quot;neurons_natgrad_per_layer&quot;, 
++                  &amp;NatGradSMPNNet::neurons_natgrad_per_layer,
++                  OptionBase::learntoption,
++                  &quot;Vector of GradientCorrector objects for the gradient on the neurons of each layer.\n&quot;
++                  &quot;They are copies of the neuron_natgrad_template provided by the user.\n&quot;);
++
++    declareOption(ol, &quot;params_natgrad_template&quot;, 
++                  &amp;NatGradSMPNNet::params_natgrad_template,
++                  OptionBase::buildoption,
++                  &quot;Optional template GradientCorrector object for the gradient of the parameters inside each neuron\n&quot;
++                  &quot;It is replicated in the params_natgrad vector, for each neuron\n&quot;
++                  &quot;If not provided, then the neuron-specific natural gradient estimator is not used.\n&quot;);
++
++    declareOption(ol, &quot;params_natgrad_per_input_template&quot;,
++                  &amp;NatGradSMPNNet::params_natgrad_per_input_template,
++                  OptionBase::buildoption,
++                  &quot;Optional template GradientCorrector object for the gradient of the parameters of the first layer\n&quot;
++                  &quot;grouped based upon their input. It is replicated in the params_natgrad_per_group vector, for each group.\n&quot;
++                  &quot;If provided, overides the params_natgrad_template for the parameters of the first layer.\n&quot;);
++
++    declareOption(ol, &quot;params_natgrad_per_group&quot;, 
++                    &amp;NatGradSMPNNet::params_natgrad_per_group,
++                    OptionBase::learntoption,
++                    &quot;Vector of GradientCorrector objects for the gradient inside groups of parameters.\n&quot;
++                    &quot;They are copies of the params_natgrad_template and params_natgrad_per_input_template\n&quot;
++                    &quot;templates provided by the user.\n&quot;);
++
++    declareOption(ol, &quot;full_natgrad&quot;, &amp;NatGradSMPNNet::full_natgrad,
++                  OptionBase::buildoption,
++                  &quot;GradientCorrector for all the parameter gradients simultaneously.\n&quot;
++                  &quot;This should not be set if neurons_natgrad or params_natgrad_template\n&quot;
++                  &quot;is provided. If none of the GradientCorrectors is provided, then\n&quot;
++                  &quot;regular stochastic gradient is performed.\n&quot;);
++
++    declareOption(ol, &quot;output_type&quot;, 
++                  &amp;NatGradSMPNNet::output_type,
++                  OptionBase::buildoption,
++                  &quot;type of output cost: 'cross_entropy' for binary classification,\n&quot;
++                  &quot;'NLL' for classification problems, or 'MSE' for regression.\n&quot;);
++
++    declareOption(ol, &quot;input_size_lrate_normalization_power&quot;, 
++                  &amp;NatGradSMPNNet::input_size_lrate_normalization_power, 
++                  OptionBase::buildoption,
++                  &quot;Scale the learning rate neuron-wise (or layer-wise actually, here):\n&quot;
++                  &quot;-1 scales by 1 / ||x||^2, where x is the 1-extended input vector of the neuron\n&quot;
++                  &quot;0 does not scale the learning rate\n&quot;
++                  &quot;1 scales it by 1 / the nb of inputs of the neuron\n&quot;
++                  &quot;2 scales it by 1 / sqrt(the nb of inputs of the neuron), etc.\n&quot;);
++
++    declareOption(ol, &quot;lrate_scale_factor&quot;,
++                  &amp;NatGradSMPNNet::lrate_scale_factor,
++                  OptionBase::buildoption,
++                  &quot;scale the learning rate in different neurons by a factor\n&quot;
++                  &quot;taken randomly as follows: choose integer n uniformly between\n&quot;
++                  &quot;lrate_scale_factor_min_power and lrate_scale_factor_max_power\n&quot;
++                  &quot;inclusively, and then scale learning rate by lrate_scale_factor^n.\n&quot;);
++
++    declareOption(ol, &quot;lrate_scale_factor_max_power&quot;,
++                  &amp;NatGradSMPNNet::lrate_scale_factor_max_power,
++                  OptionBase::buildoption,
++                  &quot;See help on lrate_scale_factor\n&quot;);
++
++    declareOption(ol, &quot;lrate_scale_factor_min_power&quot;,
++                  &amp;NatGradSMPNNet::lrate_scale_factor_min_power,
++                  OptionBase::buildoption,
++                  &quot;See help on lrate_scale_factor\n&quot;);
++
++    declareOption(ol, &quot;self_adjusted_scaling_and_bias&quot;,
++                  &amp;NatGradSMPNNet::self_adjusted_scaling_and_bias,
++                  OptionBase::buildoption,
++                  &quot;If true, let each neuron self-adjust its bias and scaling factor\n&quot;
++                  &quot;of its activations so that the mean and standard deviation of the\n&quot;
++                  &quot;activations reach the target_mean_activation and target_stdev_activation.\n&quot;
++                  &quot;The activations mean and variance are estimated by a moving average with\n&quot;
++                  &quot;coefficient given by activations_statistics_moving_average_coefficient\n&quot;);
++
++    declareOption(ol, &quot;target_mean_activation&quot;,
++                  &amp;NatGradSMPNNet::target_mean_activation,
++                  OptionBase::buildoption,
++                  &quot;See help on self_adjusted_scaling_and_bias\n&quot;);
++
++    declareOption(ol, &quot;target_stdev_activation&quot;,
++                  &amp;NatGradSMPNNet::target_stdev_activation,
++                  OptionBase::buildoption,
++                  &quot;See help on self_adjusted_scaling_and_bias\n&quot;);
++
++    declareOption(ol, &quot;activation_statistics_moving_average_coefficient&quot;,
++                  &amp;NatGradSMPNNet::activation_statistics_moving_average_coefficient,
++                  OptionBase::buildoption,
++                  &quot;The activations mean and variance used for self_adjusted_scaling_and_bias\n&quot;
++                  &quot;are estimated by a moving average with this coefficient:\n&quot;
++                  &quot;   xbar &lt;-- coefficient * xbar + (1-coefficient) x\n&quot;
++                  &quot;where x could be the activation or its square\n&quot;);
++
++    //declareOption(ol, &quot;corr_profiling_start&quot;,
++    //              &amp;NatGradSMPNNet::corr_profiling_start,
++    //              OptionBase::buildoption,
++    //              &quot;Stage to start the profiling of the gradients' and the\n&quot;
++    //              &quot;natural gradients' correlation.\n&quot;);
++
++    //declareOption(ol, &quot;corr_profiling_end&quot;,
++    //              &amp;NatGradSMPNNet::corr_profiling_end,
++    //              OptionBase::buildoption,
++    //              &quot;Stage to end the profiling of the gradients' and the\n&quot;
++    //              &quot;natural gradients' correlations.\n&quot;);
++
++    declareOption(ol, &quot;use_pvgrad&quot;,
++                  &amp;NatGradSMPNNet::use_pvgrad,
++                  OptionBase::buildoption,
++                  &quot;Use Pascal Vincent's gradient technique.\n&quot;
++                  &quot;All options specific to this technique start with pv_...\n&quot;
++                  &quot;This is currently very experimental. Current code is \n&quot;
++                  &quot;NOT YET optimised for speed (nor supports minibatch).&quot;);
++
++    declareOption(ol, &quot;pv_initial_stepsize&quot;,
++                  &amp;NatGradSMPNNet::pv_initial_stepsize,
++                  OptionBase::buildoption,
++                  &quot;Initial size of steps in parameter space&quot;);
++
++    declareOption(ol, &quot;pv_acceleration&quot;,
++                  &amp;NatGradSMPNNet::pv_acceleration,
++                  OptionBase::buildoption,
++                  &quot;Coefficient by which to multiply/divide the step sizes&quot;);
++
++    declareOption(ol, &quot;pv_min_samples&quot;,
++                  &amp;NatGradSMPNNet::pv_min_samples,
++                  OptionBase::buildoption,
++                  &quot;PV's minimum number of samples to estimate gradient sign.\n&quot;
++                  &quot;This should at least be 2.&quot;);
++
++    declareOption(ol, &quot;pv_required_confidence&quot;,
++                  &amp;NatGradSMPNNet::pv_required_confidence,
++                  OptionBase::buildoption,
++                  &quot;Minimum required confidence (probability of being positive or negative) for taking a step.&quot;);
++
++    declareOption(ol, &quot;pv_random_sample_step&quot;,
++                  &amp;NatGradSMPNNet::pv_random_sample_step,
++                  OptionBase::buildoption,
++                  &quot;If this is set to true, then we will randomly choose the step sign\n&quot;
++                  &quot;for each parameter based on the estimated probability of it being\n&quot;
++                  &quot;positive or negative.&quot;);
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++void NatGradSMPNNet::build_()
++{
++    if (!train_set)
++        return;
++    inputsize_ = train_set-&gt;inputsize();
++    if (output_type==&quot;MSE&quot;)
++    {
++        if (noutputs&lt;0) noutputs = targetsize_;
++        else PLASSERT_MSG(noutputs==targetsize_,&quot;NatGradSMPNNet: noutputs should be -1 or match data's targetsize&quot;);
++    }
++    else if (output_type==&quot;NLL&quot;)
++    {
++        if (noutputs&lt;0)
++            PLERROR(&quot;NatGradSMPNNet: if output_type=NLL (classification), one \n&quot;
++                    &quot;should provide noutputs = number of classes, or possibly\n&quot;
++                    &quot;1 when 2 classes\n&quot;);
++    }
++    else if (output_type==&quot;cross_entropy&quot;)
++    {
++        if(noutputs!=1)
++            PLERROR(&quot;NatGradSMPNNet: if output_type=cross_entropy, then \n&quot;
++                    &quot;noutputs should be 1.\n&quot;);
++    }
++    else PLERROR(&quot;NatGradSMPNNet: output_type should be cross_entropy, NLL or MSE\n&quot;);
++
++    if( output_layer_L1_penalty_factor &lt; 0. )
++        PLWARNING(&quot;NatGradSMPNNet::build_ - output_layer_L1_penalty_factor is negative!\n&quot;);
++
++    if(use_pvgrad &amp;&amp; minibatch_size!=1)
++        PLERROR(&quot;PV's gradient technique (triggered by use_pvgrad): support for minibatch not yet implemented (must have minibatch_size=1)&quot;);
++    
++    while (hidden_layer_sizes.length()&gt;0 &amp;&amp; hidden_layer_sizes[hidden_layer_sizes.length()-1]==0)
++        hidden_layer_sizes.resize(hidden_layer_sizes.length()-1);
++    n_layers = hidden_layer_sizes.length()+2;
++    layer_sizes.resize(n_layers);
++    layer_sizes.subVec(1,n_layers-2) &lt;&lt; hidden_layer_sizes;
++    layer_sizes[0]=inputsize_;
++    layer_sizes[n_layers-1]=noutputs;
++    if (!layer_params.isEmpty())
++        PLERROR(&quot;In NatGradSMPNNet::build_ - Currently, one can only build &quot;
++                &quot;a network from scratch&quot;);
++    layer_params.resize(n_layers-1);
++    layer_mparams.resize(n_layers-1);
++    layer_params_delta.resize(n_layers-1);
++    layer_params_gradient.resize(n_layers-1);
++    biases.resize(n_layers-1);
++    activations_scaling.resize(n_layers-1);
++    weights.resize(n_layers-1);
++    mweights.resize(n_layers-1);
++    mean_activations.resize(n_layers-1);
++    var_activations.resize(n_layers-1);
++    int n_neurons=0;
++    int n_params=0;
++    for (int i=0;i&lt;n_layers-1;i++)
++    {
++        n_neurons+=layer_sizes[i+1];
++        n_params+=layer_sizes[i+1]*(1+layer_sizes[i]);
++    }
++
++    // Allocate shared memory for parameters.
++    // First deallocate memory if needed.
++    if (params_ptr) {
++        shmctl(params_id, IPC_RMID, 0);
++        params_ptr = NULL;
++    }
++    long total_memory_needed = long(n_params) * sizeof(real);
++    params_id = shmget(IPC_PRIVATE, total_memory_needed, 0666 | IPC_CREAT);
++    PLCHECK( params_id != -1 );
++    params_ptr = (real*) shmat(params_id, 0, 0);
++    assert( params_ptr );
++    // We should have copied data from 'all_params' first if there were some!
++    PLCHECK_MSG( all_params.isEmpty(), &quot;Multiple builds not implemented yet&quot; );
++    all_params = Vec(n_params, params_ptr);
++
++    all_params.resize(n_params);
++    all_mparams.resize(n_params);
++    all_params_gradient.resize(n_params);
++    all_params_delta.resize(n_params);
++
++    // depending on how parameters are grouped on the first layer
++    int n_groups = params_natgrad_per_input_template ? (n_neurons-layer_sizes[1]+layer_sizes[0]+1) : n_neurons;
++    group_params.resize(n_groups);
++    group_params_delta.resize(n_groups);
++    group_params_gradient.resize(n_groups);
++
++    for (int i=0,k=0,p=0;i&lt;n_layers-1;i++)
++    {
++        int np=layer_sizes[i+1]*(1+layer_sizes[i]);
++        // First layer has natural gradient applied on groups of parameters
++        // linked to the same input -&gt; parameters must be stored TRANSPOSED!
++        if( i==0 &amp;&amp; params_natgrad_per_input_template ) {
++            PLERROR(&quot;This should not be executed&quot;);
++            layer_params[i]=all_params.subVec(p,np).toMat(layer_sizes[i]+1,layer_sizes[i+1]);
++            layer_mparams[i]=all_mparams.subVec(p,np).toMat(layer_sizes[i]+1,layer_sizes[i+1]);
++            biases[i]=layer_params[i].subMatRows(0,1);
++            weights[i]=layer_params[i].subMatRows(1,layer_sizes[i]); //weights[0] from layer 0 to layer 1
++            mweights[i]=layer_mparams[i].subMatRows(1,layer_sizes[i]); //weights[0] from layer 0 to layer 1
++            layer_params_gradient[i]=all_params_gradient.subVec(p,np).toMat(layer_sizes[i]+1,layer_sizes[i+1]);
++            layer_params_delta[i]=all_params_delta.subVec(p,np);
++            for (int j=0;j&lt;layer_sizes[i]+1;j++,k++)   // include a bias input 
++            {
++                group_params[k]=all_params.subVec(p,layer_sizes[i+1]);
++                group_params_delta[k]=all_params_delta.subVec(p,layer_sizes[i+1]);
++                group_params_gradient[k]=all_params_gradient.subVec(p,layer_sizes[i+1]);
++                p+=layer_sizes[i+1];
++            }
++        // Usual parameter storage
++        }   else    {
++            layer_params[i]=all_params.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
++            layer_mparams[i]=all_mparams.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
++            biases[i]=layer_params[i].subMatColumns(0,1);
++            weights[i]=layer_params[i].subMatColumns(1,layer_sizes[i]); // weights[0] from layer 0 to layer 1
++            mweights[i]=layer_mparams[i].subMatColumns(1,layer_sizes[i]); // weights[0] from layer 0 to layer 1
++            layer_params_gradient[i]=all_params_gradient.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
++            layer_params_delta[i]=all_params_delta.subVec(p,np);
++            for (int j=0;j&lt;layer_sizes[i+1];j++,k++)
++            {
++                group_params[k]=all_params.subVec(p,1+layer_sizes[i]);
++                group_params_delta[k]=all_params_delta.subVec(p,1+layer_sizes[i]);
++                group_params_gradient[k]=all_params_gradient.subVec(p,1+layer_sizes[i]);
++                p+=1+layer_sizes[i];
++            }
++        }
++        activations_scaling[i].resize(layer_sizes[i+1]);
++        mean_activations[i].resize(layer_sizes[i+1]);
++        var_activations[i].resize(layer_sizes[i+1]);
++    }
++    if (params_natgrad_template || params_natgrad_per_input_template)
++    {
++        int n_input_groups=0;
++        int n_neuron_groups=0;
++        if(params_natgrad_template)
++            n_neuron_groups = n_neurons;
++        if( params_natgrad_per_input_template ) {
++            n_input_groups = layer_sizes[0]+1;
++            if(params_natgrad_template) // override first layer groups if present
++                n_neuron_groups -= layer_sizes[1];
++        }
++        params_natgrad_per_group.resize(n_input_groups+n_neuron_groups);
++        for (int i=0;i&lt;n_input_groups;i++)
++            params_natgrad_per_group[i] = PLearn::deepCopy(params_natgrad_per_input_template);
++        for (int i=n_input_groups; i&lt;n_input_groups+n_neuron_groups;i++)
++            params_natgrad_per_group[i] = PLearn::deepCopy(params_natgrad_template);
++    }
++    if (neurons_natgrad_template &amp;&amp; neurons_natgrad_per_layer.length()==0)
++    {
++        neurons_natgrad_per_layer.resize(n_layers); // 0 not used
++        for (int i=1;i&lt;n_layers;i++) // no need for correcting input layer
++            neurons_natgrad_per_layer[i] = PLearn::deepCopy(neurons_natgrad_template);
++    }
++    neuron_gradients.resize(minibatch_size,n_neurons);
++    neuron_outputs_per_layer.resize(n_layers); // layer 0 = input, layer n_layers-1 = output
++    neuron_extended_outputs_per_layer.resize(n_layers); // layer 0 = input, layer n_layers-1 = output
++    neuron_gradients_per_layer.resize(n_layers); // layer 0 not used
++    neuron_extended_outputs_per_layer[0].resize(minibatch_size,1+layer_sizes[0]);
++    neuron_outputs_per_layer[0]=neuron_extended_outputs_per_layer[0].subMatColumns(1,layer_sizes[0]);
++    neuron_extended_outputs_per_layer[0].column(0).fill(1.0); // for biases
++    for (int i=1,k=0;i&lt;n_layers;k+=layer_sizes[i],i++)
++    {
++        neuron_extended_outputs_per_layer[i].resize(minibatch_size,1+layer_sizes[i]);
++        neuron_outputs_per_layer[i]=neuron_extended_outputs_per_layer[i].subMatColumns(1,layer_sizes[i]);
++        neuron_extended_outputs_per_layer[i].column(0).fill(1.0); // for biases
++        neuron_gradients_per_layer[i] = 
++            neuron_gradients.subMatColumns(k,layer_sizes[i]);
++    }
++    example_weights.resize(minibatch_size);
++    TVec&lt;string&gt; train_cost_names = getTrainCostNames() ;
++    train_costs.resize(minibatch_size,train_cost_names.length()-2 );
++
++    Profiler::activate();
++
++    // Gradient correlation profiling
++    //if( corr_profiling_start != corr_profiling_end )  {
++    //    PLASSERT( (0&lt;=corr_profiling_start) &amp;&amp; (corr_profiling_start&lt;corr_profiling_end) );
++    //    cout &lt;&lt; &quot;n_params &quot; &lt;&lt; n_params &lt;&lt; endl;
++    //    // Build the names.
++    //    stringstream ss_suffix;
++    //    for (int i=0;i&lt;n_layers;i++)    {
++    //        ss_suffix &lt;&lt; &quot;_&quot; &lt;&lt; layer_sizes[i];
++    //    }
++    //    ss_suffix &lt;&lt; &quot;_stages_&quot; &lt;&lt; corr_profiling_start &lt;&lt; &quot;_&quot; &lt;&lt; corr_profiling_end;
++    //    string str_gc_name = &quot;gCcorr&quot; + ss_suffix.str();
++    //    string str_ngc_name;
++    //    if( full_natgrad )  {
++    //        str_ngc_name = &quot;ngCcorr_full&quot; + ss_suffix.str();
++    //    }   else if (params_natgrad_template)   {
++    //        str_ngc_name = &quot;ngCcorr_params&quot; + ss_suffix.str();
++    //    }
++    //    // Build the profilers.
++    //    g_corrprof = new CorrelationProfiler( n_params, str_gc_name);
++    //    g_corrprof-&gt;build();
++    //    ng_corrprof = new CorrelationProfiler( n_params, str_ngc_name);
++    //    ng_corrprof-&gt;build();
++    //}
++
++}
++
++// ### Nothing to add here, simply calls build_
++void NatGradSMPNNet::build()
++{
++    inherited::build();
++    build_();
++}
++
++
++void NatGradSMPNNet::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    deepCopyField(hidden_layer_sizes, copies);
++    deepCopyField(layer_params, copies);
++    deepCopyField(layer_mparams, copies);
++    deepCopyField(biases, copies);
++    deepCopyField(weights, copies);
++    deepCopyField(mweights, copies);
++    deepCopyField(activations_scaling, copies);
++    deepCopyField(neurons_natgrad_template, copies);
++    deepCopyField(neurons_natgrad_per_layer, copies);
++    deepCopyField(params_natgrad_template, copies);
++    deepCopyField(params_natgrad_per_input_template, copies);
++    deepCopyField(params_natgrad_per_group, copies);
++    deepCopyField(full_natgrad, copies);
++    deepCopyField(layer_sizes, copies);
++    deepCopyField(targets, copies);
++    deepCopyField(example_weights, copies);
++    deepCopyField(train_costs, copies);
++    deepCopyField(neuron_outputs_per_layer, copies);
++    deepCopyField(neuron_extended_outputs_per_layer, copies);
++    deepCopyField(all_params, copies);
++    deepCopyField(all_mparams, copies);
++    deepCopyField(all_params_gradient, copies);
++    deepCopyField(layer_params_gradient, copies);
++    deepCopyField(neuron_gradients, copies);
++    deepCopyField(neuron_gradients_per_layer, copies);
++    deepCopyField(all_params_delta, copies);
++    deepCopyField(group_params, copies);
++    deepCopyField(group_params_gradient, copies);
++    deepCopyField(group_params_delta, copies);
++    deepCopyField(layer_params_delta, copies);
++
++    deepCopyField(pv_gradstats, copies);
++    deepCopyField(pv_stepsizes, copies);
++    deepCopyField(pv_stepsigns, copies);
++
++    if (params_ptr)
++        PLERROR(&quot;In NatGradSMPNNet::makeDeepCopyFromShallowCopy - Deep copy of&quot;
++                &quot; 'params_ptr' not implemented&quot;);
++
++
++/*
++    deepCopyField(, copies);
++*/
++}
++
++
++int NatGradSMPNNet::outputsize() const
++{
++    return noutputs;
++}
++
++void NatGradSMPNNet::forget()
++{
++    //! (Re-)initialize the PLearner in its fresh state (that state may depend
++    //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
++    //! a fresh learner!)
++    inherited::forget();
++    for (int i=0;i&lt;n_layers-1;i++)
++    {
++        real delta = 1/sqrt(real(layer_sizes[i]));
++        random_gen-&gt;fill_random_uniform(weights[i],-delta,delta);
++        biases[i].clear();
++        activations_scaling[i].fill(1.0);
++        mean_activations[i].clear();
++        var_activations[i].fill(1.0);
++    }
++    stage = 0;
++    cumulative_training_time=0;
++    if (params_averaging_coeff!=1.0)
++        all_mparams &lt;&lt; all_params;
++    
++    if(use_pvgrad)
++    {
++        pv_gradstats-&gt;forget();
++        int n = all_params.length();
++        pv_stepsizes.resize(n);
++        pv_stepsizes.fill(pv_initial_stepsize);
++        pv_stepsigns.resize(n);
++        pv_stepsigns.fill(true);
++    }
++
++    nsteps = 0;
++}
++
++void NatGradSMPNNet::train()
++{
++
++    if (inputsize_&lt;0)
++        build();
++
++    targets.resize(minibatch_size,targetsize());  // the train_set's targetsize()
++
++    if(!train_set)
++        PLERROR(&quot;In NNet::train, you did not setTrainingSet&quot;);
++    
++    if(!train_stats)
++        setTrainStatsCollector(new VecStatsCollector());
++
++    train_costs.fill(MISSING_VALUE) ;
++
++    train_stats-&gt;forget();
++
++    PP&lt;ProgressBar&gt; pb;
++
++    Profiler::reset(&quot;training&quot;);
++    Profiler::start(&quot;training&quot;);
++    Profiler::pl_profile_start(&quot;Totaltraining&quot;);
++    if( report_progress &amp;&amp; stage &lt; nstages )
++        pb = new ProgressBar( &quot;Training &quot;+classname(),
++                              nstages - stage );
++
++    Vec costs_plus_time(train_costs.width()+2);
++    costs_plus_time[train_costs.width()] = MISSING_VALUE;
++    costs_plus_time[train_costs.width()+1] = MISSING_VALUE;
++    Vec costs = costs_plus_time.subVec(0,train_costs.width());
++    int nsamples = train_set-&gt;length();
++
++    // Obtain the number of CPUs we want to use.
++    char* ncpus_ptr = getenv(&quot;NCPUS&quot;);
++    if (!ncpus_ptr)
++        PLERROR(&quot;In NatGradSMPNNet::train - The environment variable 'NCPUS' &quot;
++                &quot;must be set (to the number of CPUs being used)&quot;);
++    int ncpus = atoi(ncpus_ptr);
++
++    // Semaphore to know which cpu should be updating weights next.
++    if (semaphore_id &gt;= 0) {
++        // First get rid of existing semaphore.
++        int success = semctl(semaphore_id, 0, IPC_RMID);
++        if (success &lt; 0)
++            PLERROR(&quot;In NatGradSMPNNet::train - Could not remove previous &quot;
++                    &quot;semaphore (errno = %d)&quot;, errno);
++        semaphore_id = -1;
++    }
++    // The semaphore has 'ncpus' + 1 values.
++    // The first one is the index of the CPU that will be next to update
++    // weights.
++    // The other ones are 0/1 values that are initialized with 0, and take 1
++    // once the corresponding CPU has finished all updates for this training
++    // period.
++    semaphore_id = semget(IPC_PRIVATE, ncpus + 1, 0666 | IPC_CREAT);
++    if (semaphore_id == -1)
++        PLERROR(&quot;In NatGradSMPNNet::train - Could not create semaphore &quot;
++                &quot;(errno = %d)&quot;, errno);
++    // Initialize all values in the semaphore to zero.
++    semun semun_v;
++    semun_v.val = 0;
++    for (int i = 0; i &lt; ncpus + 1; i++) {
++        int success = semctl(semaphore_id, i, SETVAL, semun_v);
++        if (success != 0)
++            PLERROR(&quot;In NatGradSMPNNet::train - Could not initialize semaphore&quot;
++                    &quot; value (errno = %d)&quot;, errno);
++    }
++
++    // Fork one process/cpu.
++    int iam = 0;
++    for (int cpu = 1; cpu &lt; ncpus ; cpu++)
++        if (fork() == 0) {
++            iam = cpu;
++            break;
++        }
++
++    // Each processor computes gradient over its own subset of samples (between
++    // indices 'start' and 'end' in the training set).
++    int start = (nsamples / ncpus) * iam;
++    int end = iam == ncpus - 1 ? nsamples
++                               : (nsamples / ncpus) * (iam + 1);
++    int my_n_samples = end - start;
++
++    int stage_incr = nstages - stage;
++    int stage_incr_per_cpu = stage_incr / ncpus;
++    int stage_incr_left = stage_incr % ncpus;
++    int my_stage_incr = iam &gt;= stage_incr_left ? stage_incr_per_cpu
++                                               : stage_incr_per_cpu + 1;
++
++    for(int i = 0; i &lt; my_stage_incr; i++)
++    {
++        int sample = start + i % my_n_samples;
++        int b = i % minibatch_size;
++        Vec input = neuron_outputs_per_layer[0](b);
++        Vec target = targets(b);
++        //Profiler::pl_profile_start(&quot;getting_data&quot;);
++        train_set-&gt;getExample(sample, input, target, example_weights[b]);
++        //Profiler::pl_profile_end(&quot;getting_data&quot;);
++        if (b+1==minibatch_size) // do also special end-case || stage+1==nstages)
++        {
++            onlineStep(stage, targets, train_costs, example_weights );
++            nsteps++;
++            /*
++            for (int i=0;i&lt;minibatch_size;i++)
++            {
++                costs &lt;&lt; train_costs(b);
++                train_stats-&gt;update( costs_plus_time );
++            }
++            */
++            // Update weights if it is this cpu's turn.
++            int sem_value = semctl(semaphore_id, 0, GETVAL);
++            if (sem_value == iam) {
++                printf(&quot;CPU %d updating (nsteps =%d)\n&quot;, iam, nsteps);
++                sem_value = (sem_value + 1) % ncpus;
++                semun_v.val = sem_value;
++                semctl(semaphore_id, 0, SETVAL, semun_v);
++                nsteps = 0;
++                // TODO Perform update.
++            } else {
++#if 0
++                printf(&quot;CPU %d NOT updating (sem_value = %d)\n&quot;,
++                        iam, sem_value);
++#endif
++            }
++        }
++        /*
++        if (params_averaging_coeff!=1.0 &amp;&amp; 
++            b==minibatch_size-1 &amp;&amp; 
++            (stage+1)%(minibatch_size*params_averaging_freq)==0)
++        {
++            PLERROR(&quot;Not implemented for SMP&quot;);
++            multiplyScaledAdd(all_params, 1-params_averaging_coeff,
++                    params_averaging_coeff, all_mparams);
++        }
++        if( pb ) {
++            PLERROR(&quot;Progress bar not implemented for SMP&quot;);
++            pb-&gt;update( stage + 1 );
++        }
++        */
++    }
++
++    // Wait until it is our turn.
++    while (true) {
++        int sem_value = semctl(semaphore_id, 0, GETVAL);
++        if (sem_value == iam || iam == 0) {
++            if (sem_value == iam) {
++                if (nsteps &gt;  0) {
++                    // TODO Update weights at the end of training.
++                    printf(&quot;CPU %d final updating (nsteps =%d)\n&quot;, iam, nsteps);
++                    nsteps = 0;
++                }
++                // Indicate this CPU is done.
++                semun_v.val = 1;
++                semctl(semaphore_id, iam + 1, SETVAL, semun_v);
++                if (iam != 0) {
++                    // Exit additional processes after training.
++                    printf(&quot;CPU %d exiting\n&quot;, iam);
++                    exit(0);
++                }
++            }
++            // The master process is controlling the counter, to ensure all
++            // processes will correctly exit.
++            if (semctl(semaphore_id, sem_value + 1, GETVAL) == 0) {
++                // The next process is not done yet: we need to wait.
++#if 0
++                printf(&quot;Main CPU (%d) still waiting on CPU %d\n&quot;, iam,
++                        sem_value);
++#endif
++                continue;
++            }
++
++            // Check if all CPUs are done.
++            bool finished = true;
++            for (int i = 0; i &lt; ncpus; i++) {
++                if (semctl(semaphore_id, i + 1, GETVAL) == 0) {
++                    printf(&quot;Main CPU still waiting on CPU %d (GETVAL =&gt; %d)\n&quot;,
++                            i, semctl(semaphore_id, i + 1, GETVAL));
++                    finished = false;
++                    break;
++                }
++            }
++            if (finished) {
++                printf(&quot;Main CPU ready to finish (all ready!)\n&quot;);
++                break;
++            }
++
++            // Next CPU!
++            sem_value = (sem_value + 1) % ncpus;
++            semun_v.val = sem_value;
++            semctl(semaphore_id, 0, SETVAL, semun_v);
++        }
++    }
++
++    // Free semaphore's ressources.
++    if (semaphore_id &gt;= 0) {
++        int success = semctl(semaphore_id, 0, IPC_RMID);
++        if (success &lt; 0)
++            PLERROR(&quot;In NatGradSMPNNet::train - Could not remove previous &quot;
++                    &quot;semaphore (errno = %d)&quot;, errno);
++        semaphore_id = -1;
++    }
++
++    // Update the learner's stage.
++    stage = nstages;
++
++    Profiler::end(&quot;training&quot;);
++    Profiler::pl_profile_end(&quot;Totaltraining&quot;);
++    if (verbosity&gt;0)
++        Profiler::report(cout);
++    const Profiler::Stats&amp; stats = Profiler::getStats(&quot;training&quot;);
++    costs.fill(MISSING_VALUE);
++    real ticksPerSec = Profiler::ticksPerSecond();
++    real cpu_time = (stats.user_duration+stats.system_duration)/ticksPerSec;
++    cumulative_training_time += cpu_time;
++    costs_plus_time[train_costs.width()] = cpu_time;
++    costs_plus_time[train_costs.width()+1] = cumulative_training_time;
++    train_stats-&gt;update( costs_plus_time );
++    train_stats-&gt;finalize(); // finalize statistics for this epoch
++
++    // profiling gradient correlation
++    //if( g_corrprof )    {
++    //    PLASSERT( corr_profiling_end &lt;= nstages );
++    //    g_corrprof-&gt;printAndReset();
++    //    ng_corrprof-&gt;printAndReset();
++    //}
++
++}
++
++void NatGradSMPNNet::onlineStep(int tutu, const Mat&amp; targets,
++                             Mat&amp; train_costs, Vec example_weights)
++{
++    // Simply crash right now (easy!) if one tries to use a decrease constant.
++    if (!fast_exact_is_equal(lrate_decay, 0))
++        PLERROR(&quot;In NatGradSMPNNet::onlineStep - Learning rate decay not &quot;
++                &quot;implemented&quot;);
++    // mean gradient over minibatch_size examples has less variance, can afford larger learning rate
++    // TODO Note that this scaling formula is disabled to avoid confusion about
++    // what learning rates are being used in experiments.
++    real lrate = /*sqrt(real(minibatch_size))* */ init_lrate/(1 + 0*lrate_decay);
++    PLASSERT(targets.length()==minibatch_size &amp;&amp; train_costs.length()==minibatch_size &amp;&amp; example_weights.length()==minibatch_size);
++    fpropNet(minibatch_size, true);
++    fbpropLoss(neuron_outputs_per_layer[n_layers-1],targets,example_weights,train_costs);
++    for (int i=n_layers-1;i&gt;0;i--)
++    {
++        // here neuron_gradients_per_layer[i] contains the gradient on activations (weighted sums)
++        //      (minibatch_size x layer_size[i])
++
++        Mat previous_neurons_gradient = neuron_gradients_per_layer[i-1];
++        Mat next_neurons_gradient = neuron_gradients_per_layer[i];
++        Mat previous_neurons_output = neuron_outputs_per_layer[i-1];
++        real layer_lrate_factor = (i==n_layers-1)?output_layer_lrate_scale:1;
++        if (self_adjusted_scaling_and_bias &amp;&amp; i+1&lt;n_layers-1)
++            for (int k=0;k&lt;minibatch_size;k++)
++            {
++                Vec g=next_neurons_gradient(k);
++                g*=activations_scaling[i-1]; // pass gradient through scaling
++            }
++        if (input_size_lrate_normalization_power==-1)
++            layer_lrate_factor /= sumsquare(neuron_extended_outputs_per_layer[i-1]);
++        else if (input_size_lrate_normalization_power==-2)
++            layer_lrate_factor /= sqrt(sumsquare(neuron_extended_outputs_per_layer[i-1]));
++        else if (input_size_lrate_normalization_power!=0)
++        {
++            int fan_in = neuron_extended_outputs_per_layer[i-1].length();
++            if (input_size_lrate_normalization_power==1)
++                layer_lrate_factor/=fan_in;
++            else if (input_size_lrate_normalization_power==2)
++                layer_lrate_factor/=sqrt(real(fan_in));
++            else layer_lrate_factor/=pow(fan_in,1.0/input_size_lrate_normalization_power);
++        }
++        // optionally correct the gradient on neurons using their covariance
++        if (neurons_natgrad_template &amp;&amp; neurons_natgrad_per_layer[i])
++        {
++            static Vec tmp;
++            tmp.resize(layer_sizes[i]);
++            for (int k=0;k&lt;minibatch_size;k++)
++            {
++                Vec g_k = next_neurons_gradient(k);
++                PLERROR(&quot;Not implemented (t not available)&quot;);
++                //(*neurons_natgrad_per_layer[i])(t-minibatch_size+1+k,g_k,tmp);
++                g_k &lt;&lt; tmp;
++            }
++        }
++        if (i&gt;1) // compute gradient on previous layer
++        {
++            // propagate gradients
++            //Profiler::pl_profile_start(&quot;ProducScaleAccOnlineStep&quot;);
++            productScaleAcc(previous_neurons_gradient,next_neurons_gradient,false,
++                            weights[i-1],false,1,0);
++            //Profiler::pl_profile_end(&quot;ProducScaleAccOnlineStep&quot;);
++            // propagate through tanh non-linearity
++            for (int j=0;j&lt;previous_neurons_gradient.length();j++)
++            {
++                real* grad = previous_neurons_gradient[j];
++                real* out = previous_neurons_output[j];
++                for (int k=0;k&lt;previous_neurons_gradient.width();k++,out++)
++                    grad[k] *= (1 - *out * *out); // gradient through tanh derivative
++            }
++        }
++        // compute gradient on parameters, possibly update them
++        if (use_pvgrad)
++        {
++            PLERROR(&quot;What is this?&quot;);
++            productScaleAcc(layer_params_gradient[i-1],next_neurons_gradient,true,
++                            neuron_extended_outputs_per_layer[i-1],false,1,0);
++        }
++        else if (full_natgrad || params_natgrad_template || params_natgrad_per_input_template) 
++        {
++//alternate
++            PLERROR(&quot;No, I just want stochastic gradient!&quot;);
++            if( params_natgrad_per_input_template &amp;&amp; i==1 ){ // parameters are transposed
++                Profiler::pl_profile_start(&quot;ProducScaleAccOnlineStep&quot;);
++                productScaleAcc(layer_params_gradient[i-1],
++                            neuron_extended_outputs_per_layer[i-1], true,
++                            next_neurons_gradient, false, 
++                            1, 0);
++                Profiler::pl_profile_end(&quot;ProducScaleAccOnlineStep&quot;);
++            }else{
++                Profiler::pl_profile_start(&quot;ProducScaleAccOnlineStep&quot;);
++                productScaleAcc(layer_params_gradient[i-1],next_neurons_gradient,true,
++                            neuron_extended_outputs_per_layer[i-1],false,1,0);
++                Profiler::pl_profile_end(&quot;ProducScaleAccOnlineStep&quot;);
++            }
++            layer_params_gradient[i-1] *= 1.0/minibatch_size; // use the MEAN gradient
++        } else {// just regular stochastic gradient
++            // compute gradient on weights and update them in one go (more efficient)
++            // mean gradient has less variance, can afford larger learning rate
++            //Profiler::pl_profile_start(&quot;ProducScaleAccOnlineStep&quot;);
++            productScaleAcc(layer_params[i-1],next_neurons_gradient,true,
++                            neuron_extended_outputs_per_layer[i-1],false,
++                            -layer_lrate_factor*lrate /* /minibatch_size */, 1);
++            //Profiler::pl_profile_end(&quot;ProducScaleAccOnlineStep&quot;);
++        }
++    }
++    if (use_pvgrad)
++    {
++        PLERROR(&quot;What is this?&quot;);
++        pvGradUpdate();
++    }
++    else if (full_natgrad)
++    {
++        PLERROR(&quot;Not implemented (t not available)&quot;);
++        //(*full_natgrad)(t/minibatch_size,all_params_gradient,all_params_delta); // compute update direction by natural gradient
++        if (output_layer_lrate_scale!=1.0)
++            layer_params_delta[n_layers-2] *= output_layer_lrate_scale; // scale output layer's learning rate
++        multiplyAcc(all_params,all_params_delta,-lrate); // update
++        // Hack to apply batch gradient even in this case (used for profiling
++        // the gradient correlations)
++        //if (output_layer_lrate_scale!=1.0)
++        //      layer_params_gradient[n_layers-2] *= output_layer_lrate_scale; // scale output layer's learning rate
++        //  multiplyAcc(all_params,all_params_gradient,-lrate); // update
++
++    } else if (params_natgrad_template || params_natgrad_per_input_template)
++    {
++        PLERROR(&quot;Not implemented (t not available)&quot;);
++        for (int i=0;i&lt;params_natgrad_per_group.length();i++)
++        {
++            //GradientCorrector&amp; neuron_natgrad = *(params_natgrad_per_group[i]);
++            //neuron_natgrad(t/minibatch_size,group_params_gradient[i],group_params_delta[i]); // compute update direction by natural gradient
++        }
++//alternate
++        if (output_layer_lrate_scale!=1.0)
++            layer_params_delta[n_layers-2] *= output_layer_lrate_scale; // scale output layer's learning rate 
++        multiplyAcc(all_params,all_params_delta,-lrate); // update
++    }
++
++    // profiling gradient correlation
++    //if( (t&gt;=corr_profiling_start) &amp;&amp; (t&lt;=corr_profiling_end) &amp;&amp; g_corrprof )    {
++    //    (*g_corrprof)(all_params_gradient);
++    //    (*ng_corrprof)(all_params_delta);
++    //}
++
++    // Output layer L1 regularization
++    if( output_layer_L1_penalty_factor != 0. )    {
++        PLERROR(&quot;Not implemented&quot;);
++        real L1_delta = lrate * output_layer_L1_penalty_factor;
++        real* m_i = layer_params[n_layers-2].data();
++
++        for(int i=0; i&lt;layer_params[n_layers-2].length(); i++,m_i+=layer_params[n_layers-2].mod())  {
++            for(int j=0; j&lt;layer_params[n_layers-2].width(); j++)   {
++                if( m_i[j] &gt; L1_delta )
++                    m_i[j] -= L1_delta;
++                else if( m_i[j] &lt; -L1_delta )
++                    m_i[j] += L1_delta;
++                else
++                    m_i[j] = 0.;
++            }
++        }
++    }
++
++}
++
++void NatGradSMPNNet::pvGradUpdate()
++{
++    int n = all_params_gradient.length();
++    if(pv_stepsizes.length()==0)
++    {
++        pv_stepsizes.resize(n);
++        pv_stepsizes.fill(pv_initial_stepsize);
++        pv_stepsigns.resize(n);
++        pv_stepsigns.fill(true);
++    }
++    pv_gradstats-&gt;update(all_params_gradient);
++    real pv_deceleration = 1.0/pv_acceleration;
++    for(int k=0; k&lt;n; k++)
++    {
++        StatsCollector&amp; st = pv_gradstats-&gt;getStats(k);
++        int n = (int)st.nnonmissing();
++        if(n&gt;pv_min_samples)
++        {
++            real m = st.mean();
++            real e = st.stderror();
++            real prob_pos = gauss_01_cum(m/e);
++            real prob_neg = 1.-prob_pos;
++            if(!pv_random_sample_step)
++            {
++                if(prob_pos&gt;=pv_required_confidence)
++                {
++                    all_params[k] += pv_stepsizes[k];
++                    pv_stepsizes[k] *= (pv_stepsigns[k]?pv_acceleration:pv_deceleration);
++                    pv_stepsigns[k] = true;
++                    st.forget();
++                }
++                else if(prob_neg&gt;=pv_required_confidence)
++                {
++                    all_params[k] -= pv_stepsizes[k];
++                    pv_stepsizes[k] *= ((!pv_stepsigns[k])?pv_acceleration:pv_deceleration);
++                    pv_stepsigns[k] = false;
++                    st.forget();
++                }
++            }
++            else  // random sample update direction (sign)
++            {
++                bool ispos = (random_gen-&gt;binomial_sample(prob_pos)&gt;0);
++                if(ispos) // picked positive
++                    all_params[k] += pv_stepsizes[k];
++                else  // picked negative
++                    all_params[k] -= pv_stepsizes[k];
++                pv_stepsizes[k] *= (pv_stepsigns[k]==ispos) ?pv_acceleration :pv_deceleration;
++                pv_stepsigns[k] = ispos;
++                st.forget();
++            }
++        }
++    }
++}
++
++void NatGradSMPNNet::computeOutput(const Vec&amp; input, Vec&amp; output) const
++{
++    Profiler::pl_profile_start(&quot;computeOutput&quot;);
++    neuron_outputs_per_layer[0](0) &lt;&lt; input;
++    fpropNet(1,false);
++    output &lt;&lt; neuron_outputs_per_layer[n_layers-1](0);
++    Profiler::pl_profile_end(&quot;computeOutput&quot;);
++}
++
++//! compute (pre-final-non-linearity) network top-layer output given input
++void NatGradSMPNNet::fpropNet(int n_examples, bool during_training) const
++{
++    PLASSERT_MSG(n_examples&lt;=minibatch_size,&quot;NatGradSMPNNet::fpropNet: nb input vectors treated should be &lt;= minibatch_size\n&quot;);
++    for (int i=0;i&lt;n_layers-1;i++)
++    {
++        Mat prev_layer = (self_adjusted_scaling_and_bias &amp;&amp; i+1&lt;n_layers-1)?
++            neuron_outputs_per_layer[i]:neuron_extended_outputs_per_layer[i];
++        Mat next_layer = neuron_outputs_per_layer[i+1];
++        if (n_examples!=minibatch_size)
++        {
++            prev_layer = prev_layer.subMatRows(0,n_examples);
++            next_layer = next_layer.subMatRows(0,n_examples);
++        }
++//alternate
++        // Are the input weights transposed? (because of ...)
++        bool tw = true;
++        if( params_natgrad_per_input_template &amp;&amp; i==0 )
++            tw = false;
++
++        // try to use BLAS for the expensive operation
++        if (self_adjusted_scaling_and_bias &amp;&amp; i+1&lt;n_layers-1){
++            if (during_training)
++                Profiler::pl_profile_start(&quot;ProducScaleAccFpropTrain&quot;);
++            else
++                Profiler::pl_profile_start(&quot;ProducScaleAccFpropNoTrain&quot;);
++            productScaleAcc(next_layer, prev_layer, false, 
++                            (during_training || params_averaging_coeff==1.0)?
++                            weights[i]:mweights[i], 
++                            tw, 1, 0);
++            if (during_training)
++                Profiler::pl_profile_end(&quot;ProducScaleAccFpropTrain&quot;);
++            else
++                Profiler::pl_profile_end(&quot;ProducScaleAcccFpropNoTrain&quot;);
++        }else{
++            if (during_training)
++                Profiler::pl_profile_start(&quot;ProducScaleAccFpropTrain&quot;);
++            else
++                Profiler::pl_profile_start(&quot;ProducScaleAcccFpropNoTrain&quot;);
++            productScaleAcc(next_layer, prev_layer, false, 
++                            (during_training || params_averaging_coeff==1.0)?
++                            layer_params[i]:layer_mparams[i], 
++                            tw, 1, 0);
++            if (during_training)
++                Profiler::pl_profile_end(&quot;ProducScaleAccFpropTrain&quot;);
++            else
++                Profiler::pl_profile_end(&quot;ProducScaleAcccFpropNoTrain&quot;);
++        }
++        // compute layer's output non-linearity
++        if (i+1&lt;n_layers-1)
++            for (int k=0;k&lt;n_examples;k++)
++            {
++                Vec L=next_layer(k);
++                if (self_adjusted_scaling_and_bias)
++                {
++                    real* m=mean_activations[i].data();
++                    real* v=var_activations[i].data();
++                    real* a=L.data();
++                    real* s=activations_scaling[i].data();
++                    real* b=biases[i].data(); // biases[i] is a 1-column matrix
++                    int bmod = biases[i].mod();
++                    for (int j=0;j&lt;layer_sizes[i+1];j++,b+=bmod,m++,v++,a++,s++)
++                    {
++                        if (during_training)
++                        {
++                            real diff = *a - *m;
++                            *v = (1-activation_statistics_moving_average_coefficient) * *v
++                                + activation_statistics_moving_average_coefficient * diff*diff;
++                            *m = (1-activation_statistics_moving_average_coefficient) * *m
++                                + activation_statistics_moving_average_coefficient * *a;
++                            *b = target_mean_activation - *m;
++                            if (*v&lt;100*target_stdev_activation*target_stdev_activation)
++                                *s = target_stdev_activation/sqrt(*v);
++                            else // rescale the weights and the statistics for that neuron
++                            {
++                                real rescale_factor = target_stdev_activation/sqrt(*v);
++                                Vec w = weights[i](j);
++                                w *= rescale_factor;
++                                *b *= rescale_factor;
++                                *s = 1;
++                                *m *= rescale_factor;
++                                *v *= rescale_factor*rescale_factor;
++                            }
++                        }
++                        Profiler::pl_profile_start(&quot;activation function&quot;);
++                        *a = tanh((*a + *b) * *s);
++                        Profiler::pl_profile_end(&quot;activation function&quot;);
++                    }
++                }
++                else{
++                    Profiler::pl_profile_start(&quot;activation function&quot;);
++                    compute_tanh(L,L);
++                    Profiler::pl_profile_end(&quot;activation function&quot;);
++                }
++            }
++        else if (output_type==&quot;NLL&quot;)
++            for (int k=0;k&lt;n_examples;k++)
++            {
++                Vec L=next_layer(k);
++                Profiler::pl_profile_start(&quot;activation function&quot;);
++                log_softmax(L,L);
++                Profiler::pl_profile_end(&quot;activation function&quot;);
++            }
++        else if (output_type==&quot;cross_entropy&quot;)  {
++            for (int k=0;k&lt;n_examples;k++)
++            {
++                Vec L=next_layer(k);
++                Profiler::pl_profile_start(&quot;activation function&quot;);
++                log_sigmoid(L,L);
++                Profiler::pl_profile_end(&quot;activation function&quot;);
++            }
++         }
++    }
++}
++
++//! compute train costs given the (pre-final-non-linearity) network top-layer output
++void NatGradSMPNNet::fbpropLoss(const Mat&amp; output, const Mat&amp; target, const Vec&amp; example_weight, Mat&amp; costs) const
++{
++    int n_examples = output.length();
++    Mat out_grad = neuron_gradients_per_layer[n_layers-1];
++    if (n_examples!=minibatch_size)
++        out_grad = out_grad.subMatRows(0,n_examples);
++    if (output_type==&quot;NLL&quot;)
++    {
++        for (int i=0;i&lt;n_examples;i++)
++        {
++            int target_class = int(round(target(i,0)));
++            Vec outp = output(i);
++            Vec grad = out_grad(i);
++            exp(outp,grad); // map log-prob to prob
++            costs(i,0) = -outp[target_class];
++            costs(i,1) = (target_class == argmax(outp))?0:1;
++            grad[target_class]-=1;
++            if (example_weight[i]!=1.0)
++                costs(i,0) *= example_weight[i];
++        }
++    }
++    else if(output_type==&quot;cross_entropy&quot;)   {
++        for (int i=0;i&lt;n_examples;i++)
++        {
++            int target_class = int(round(target(i,0)));
++            Vec outp = output(i);
++            Vec grad = out_grad(i);
++            exp(outp,grad); // map log-prob to prob
++            if( target_class == 1 ) {
++                costs(i,0) = - outp[0];
++                costs(i,1) = (grad[0]&gt;0.5)?0:1;
++            }   else    {
++                costs(i,0) = - pl_log( 1.0 - grad[0] );
++                costs(i,1) = (grad[0]&gt;0.5)?1:0;
++            }
++            grad[0] -= (real)target_class;
++            if (example_weight[i]!=1.0)
++                costs(i,0) *= example_weight[i];
++        }
++//cout &lt;&lt; &quot;costs\t&quot; &lt;&lt; costs(0) &lt;&lt; endl;
++//cout &lt;&lt; &quot;gradient\t&quot; &lt;&lt; out_grad(0) &lt;&lt; endl;
++
++    }
++    else // if (output_type==&quot;MSE&quot;)
++    {
++        substract(output,target,out_grad);
++        for (int i=0;i&lt;n_examples;i++)
++        {
++            costs(i,0) = pownorm(out_grad(i));
++            if (example_weight[i]!=1.0)
++            {
++                out_grad(i) *= example_weight[i];
++                costs(i,0) *= example_weight[i];
++            }
++        }
++    }
++}
++
++void NatGradSMPNNet::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                           const Vec&amp; target, Vec&amp; costs) const
++{
++    Vec w(1);
++    w[0]=1;
++    Mat outputM = output.toMat(1,output.length());
++    Mat targetM = target.toMat(1,output.length());
++    Mat costsM = costs.toMat(1,costs.length());
++    fbpropLoss(outputM,targetM,w,costsM);
++}
++
++TVec&lt;string&gt; NatGradSMPNNet::getTestCostNames() const
++{
++    TVec&lt;string&gt; costs;
++    if (output_type==&quot;NLL&quot;)
++    {
++        costs.resize(2);
++        costs[0]=&quot;NLL&quot;;
++        costs[1]=&quot;class_error&quot;;
++    }
++    else if (output_type==&quot;cross_entropy&quot;)  {
++        costs.resize(2);
++        costs[0]=&quot;cross_entropy&quot;;
++        costs[1]=&quot;class_error&quot;;
++    }
++    else if (output_type==&quot;MSE&quot;)
++    {
++        costs.resize(1);
++        costs[0]=&quot;MSE&quot;;
++    }
++    return costs;
++}
++
++TVec&lt;string&gt; NatGradSMPNNet::getTrainCostNames() const
++{
++    TVec&lt;string&gt; costs = getTestCostNames();
++    costs.append(&quot;train_seconds&quot;);
++    costs.append(&quot;cum_train_seconds&quot;);
++    return costs;
++}
++
++NatGradSMPNNet::~NatGradSMPNNet()
++{
++    if (params_ptr) {
++        shmctl(params_id, IPC_RMID, 0);
++        params_ptr = NULL;
++    }
++    if (semaphore_id &gt;= 0) {
++        int success = semctl(semaphore_id, 0, IPC_RMID);
++        if (success &lt; 0)
++            PLERROR(&quot;In NatGradSMPNNet::train - Could not remove previous &quot;
++                    &quot;semaphore (errno = %d)&quot;, errno);
++        semaphore_id = -1;
++    }
++}
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h	2007-07-18 18:49:56 UTC (rev 7795)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradSMPNNet.h	2007-07-18 19:54:20 UTC (rev 7796)
+@@ -0,0 +1,359 @@
++// -*- C++ -*-
++
++// NatGradSMPNNet.h
++//
++// Copyright (C) 2007 Yoshua Bengio
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Yoshua Bengio
++
++/*! \file NatGradSMPNNet.h */
++
++
++#ifndef NatGradSMPNNet_INC
++#define NatGradSMPNNet_INC
++
++#include &lt;plearn_learners/generic/PLearner.h&gt;
++#include &lt;plearn_learners/generic/GradientCorrector.h&gt;
++#include &lt;plearn/sys/Profiler.h&gt;
++//#include &quot;CorrelationProfiler.h&quot;
++
++namespace PLearn {
++
++/**
++ * Multi-layer neural network trained with an efficient Natural Gradient optimization.
++ */
++class NatGradSMPNNet : public PLearner
++{
++    typedef PLearner inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    int noutputs;
++
++    //! sizes of hidden layers, provided by the user.
++    TVec&lt;int&gt; hidden_layer_sizes;
++
++    //! layer_params[i] is a matrix of dimension layer_sizes[i+1] x (layer_sizes[i]+1)
++    //! containing the neuron biases in its first column.
++    TVec&lt;Mat&gt; layer_params;
++    //! mean layer_params, averaged over past updates (moving average)
++    TVec&lt;Mat&gt; layer_mparams;
++
++    //! mparams &lt;-- (1-params_averaging_coeff)mparams + params_averaging_coeff*params
++    real params_averaging_coeff;
++    //! how often (in terms of minibatches, i.e. weight updates) do we perform the above?
++    int params_averaging_freq;
++
++    //! initial learning rate
++    real init_lrate;
++
++    //! learning rate decay factor
++    real lrate_decay;
++
++    //! L1 penalty applied to the output layer's parameters
++    real output_layer_L1_penalty_factor;
++
++    //! scaling factor of the learning rate for the output layer
++    real output_layer_lrate_scale;
++
++    //! update the parameters only so often
++    int minibatch_size;
++
++    //! natural gradient estimator for neurons
++    //! (if 0 then do not correct the gradient on neurons)
++    PP&lt;GradientCorrector&gt; neurons_natgrad_template;
++    TVec&lt;PP&lt;GradientCorrector&gt; &gt; neurons_natgrad_per_layer;
++
++    //! natural gradient estimator for the parameters within each neuron
++    //! (if 0 then do not correct the gradient on each neuron weight)
++    PP&lt;GradientCorrector&gt; params_natgrad_template;
++    //! natural gradient estimator solely for the parameters of the first
++    //! layer. If present, performs over groups of parameters related to the
++    //! same input (this includes the additional bias input).
++    //! Has precedence over params_natgrad_template, ie if present, there is
++    //! no natural gradient performed on the groups of a neuron's parameters:
++    //! params_natgrad_template is not applied for the first hidden layer's
++    //! parameters). 
++    PP&lt;GradientCorrector&gt; params_natgrad_per_input_template;
++
++    //! the above templates are used by the user to specifiy all the elements of the vector below
++    TVec&lt;PP&lt;GradientCorrector&gt; &gt; params_natgrad_per_group;
++
++    //! optionally, if neurons_natgrad==0 and params_natgrad_template==0, one can
++    //! have regular stochastic gradient descent, or full-covariance natural gradient
++    //! using the natural gradient estimator below
++    PP&lt;GradientCorrector&gt; full_natgrad;
++
++    //! type of output cost: &quot;NLL&quot; for classification problems, &quot;MSE&quot; for regression
++    string output_type;
++
++    //! 0 does not scale the learning rate
++    //! 1 scales it by 1 / the nb of inputs of the neuron
++    //! 2 scales it by 1 / sqrt(the nb of inputs of the neuron)
++    //! etc.
++    real input_size_lrate_normalization_power;
++
++    //! scale the learning rate in different neurons by a factor
++    //! taken randomly as follows: choose integer n uniformly between 
++    //! lrate_scale_factor_min_power and lrate_scale_factor_max_power
++    //! inclusively, and then scale learning rate by lrate_scale_factor^n.
++    real lrate_scale_factor;
++    int lrate_scale_factor_max_power;
++    int lrate_scale_factor_min_power;
++
++    //! Let each neuron self-adjust its bias and scaling factor of its activations
++    //! so that the mean and standard deviation of the activations reach 
++    //! the target_mean_activation and target_stdev_activation.
++    bool self_adjusted_scaling_and_bias;
++    real target_mean_activation;
++    real target_stdev_activation;
++    // the mean and variance of the activations is estimated by a moving
++    // average with this coefficient (near 0 for very slow averaging)
++    real activation_statistics_moving_average_coefficient;
++
++    int verbosity;
++
++    //! Stages for profiling the correlation between the gradients' elements
++    //int corr_profiling_start, corr_profiling_end;
++
++public:
++    //*************************************************************
++    //*** Members used for Pascal Vincent's gradient technique  ***
++
++    //! Use Pascal's gradient 
++    bool use_pvgrad;
++
++    //! Initial size of steps in parameter space
++    real pv_initial_stepsize;
++
++    //! Coefficient by which to multiply/divide the step sizes  
++    real pv_acceleration;
++
++    //! PV's gradient minimum number of samples to estimate confidence
++    int pv_min_samples;
++
++    //! Minimum required confidence (probability of being positive or negative) for taking a step. 
++    real pv_required_confidence;
++
++    //! If this is set to true, then we will randomly choose the step sign for
++    // each parameter based on the estimated probability of it being positive or
++    // negative.
++    bool pv_random_sample_step;
++    
++
++protected:
++    //! accumulated statistics of gradients on each parameter.
++    PP&lt;VecStatsCollector&gt; pv_gradstats;
++
++    //! The step size (absolute value) to be taken for each parameter.
++    Vec pv_stepsizes;
++
++    //! Indicates whether the previous step was positive (true) or negative (false)
++    TVec&lt;bool&gt; pv_stepsigns;
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    NatGradSMPNNet();
++
++    //! Destructor (to free shared memory).
++    virtual ~NatGradSMPNNet();
++
++    //#####  PLearner Member Functions  #######################################
++
++    //! Returns the size of this learner's output, (which typically
++    //! may depend on its inputsize(), targetsize() and set options).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual int outputsize() const;
++
++    //! (Re-)initializes the PLearner in its fresh state (that state may depend
++    //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
++    //! a fresh learner!).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void forget();
++
++    //! The role of the train method is to bring the learner up to
++    //! stage==nstages, updating the train_stats collector with training costs
++    //! measured on-line in the process.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void train();
++
++    //! Computes the output from the input.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
++
++    //! Computes the costs from already computed output.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                         const Vec&amp; target, Vec&amp; costs) const;
++
++    //! Returns the names of the costs computed by computeCostsFromOutpus (and
++    //! thus the test method).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual TVec&lt;std::string&gt; getTestCostNames() const;
++
++    //! Returns the names of the objective costs that the train method computes
++    //! and  for which it updates the VecStatsCollector train_stats.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual TVec&lt;std::string&gt; getTrainCostNames() const;
++
++
++    // *** SUBCLASS WRITING: ***
++    // While in general not necessary, in case of particular needs
++    // (efficiency concerns for ex) you may also want to overload
++    // some of the following methods:
++    // virtual void computeOutputAndCosts(const Vec&amp; input, const Vec&amp; target,
++    //                                    Vec&amp; output, Vec&amp; costs) const;
++    // virtual void computeCostsOnly(const Vec&amp; input, const Vec&amp; target,
++    //                               Vec&amp; costs) const;
++    // virtual void test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
++    //                   VMat testoutputs=0, VMat testcosts=0) const;
++    // virtual int nTestCosts() const;
++    // virtual int nTrainCosts() const;
++    // virtual void resetInternalState();
++    // virtual bool isStatefulLearner() const;
++
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    // ### If your class is not instantiatable (it has pure virtual methods)
++    // ### you should replace this by PLEARN_DECLARE_ABSTRACT_OBJECT_METHODS
++    PLEARN_DECLARE_OBJECT(NatGradSMPNNet);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++    //#####  Protected Options  ###############################################
++
++    // ### Declare protected option fields (such as learned parameters) here
++
++    //! number of layers of weights (2 for a neural net with one hidden layer)
++    int n_layers;
++
++    //! layer sizes (derived from hidden_layer_sizes, inputsize_ and outputsize_)
++    TVec&lt;int&gt; layer_sizes;
++
++    //! pointers into the layer_params
++    TVec&lt;Mat&gt; biases;
++    TVec&lt;Mat&gt; weights,mweights;
++    TVec&lt;Vec&gt; activations_scaling; // output = tanh(activations_scaling[layer][neuron] * (biases[layer][neuron] + weights[layer]*input[layer-1])
++    TVec&lt;Vec&gt; mean_activations;
++    TVec&lt;Vec&gt; var_activations;
++    real cumulative_training_time;
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    // (PLEASE IMPLEMENT IN .cc)
++    static void declareOptions(OptionList&amp; ol);
++
++    //! one minibatch training step
++    void onlineStep(int t, const Mat&amp; targets, Mat&amp; train_costs, Vec example_weights);
++
++    //! compute a minibatch of size n_examples network top-layer output given layer 0 output (= network input)
++    //! (note that log-probabilities are computed for classification tasks, output_type=NLL)
++    void fpropNet(int n_examples, bool during_training) const;
++
++    //! compute train costs given the network top-layer output
++    //! and write into neuron_gradients_per_layer[n_layers-2], gradient on pre-non-linearity activation
++    void fbpropLoss(const Mat&amp; output, const Mat&amp; target, const Vec&amp; example_weights, Mat&amp; train_costs) const;
++
++    //! gradient computation and weight update in Pascal Vincent's gradient technique
++    void pvGradUpdate();
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    // (PLEASE IMPLEMENT IN .cc)
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++
++    Vec all_params; // all the parameters in one vector
++    Vec all_params_delta; // update direction
++    Vec all_params_gradient; // all the parameter gradients in one vector
++    Vec all_mparams; // mean parameters (moving-averaged over past values)
++    TVec&lt;Mat&gt; layer_params_gradient;
++    TVec&lt;Vec&gt; layer_params_delta;
++    TVec&lt;Vec&gt; group_params; // params of each group (pointing in all_params)
++    TVec&lt;Vec&gt; group_params_delta; // params_delta of each group (pointing in all_params_delta)
++    TVec&lt;Vec&gt; group_params_gradient; // params_delta of each group (pointing in all_params_gradient)
++    Mat neuron_gradients; // one row per example of a minibatch, has concatenation of layer 0, layer 1, ... gradients.
++    TVec&lt;Mat&gt; neuron_gradients_per_layer; // pointing into neuron_gradients (one row per example of a minibatch)
++    mutable TVec&lt;Mat&gt; neuron_outputs_per_layer;  // same structure
++    mutable TVec&lt;Mat&gt; neuron_extended_outputs_per_layer;  // with 1's in the first pseudo-neuron, for doing biases
++    Mat targets; // one target row per example in a minibatch
++    Vec example_weights; // one element per example in a minibatch
++    Mat train_costs; // one row per example in a minibatch
++
++    real* params_ptr; // Raw pointer to the (shared) parameters.
++    int params_id; // Shared memory id for parameters.
++
++    //! Number of online steps performed since the last global parameter update.
++    int nsteps;
++
++    //! Semaphore used to control which CPU must perform an update.
++    int semaphore_id;
++
++    //PP&lt;CorrelationProfiler&gt; g_corrprof, ng_corrprof;    // for optional gradient correlation profiling
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(NatGradSMPNNet);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001243.html">[Plearn-commits] r7795 - trunk/plearn/base
+</A></li>
+	<LI>Next message: <A HREF="001245.html">[Plearn-commits] r7797 - trunk/plearn/io
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1244">[ date ]</a>
+              <a href="thread.html#1244">[ thread ]</a>
+              <a href="subject.html#1244">[ subject ]</a>
+              <a href="author.html#1244">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

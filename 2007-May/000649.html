@@ -1,0 +1,304 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7200 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7200%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705210201.l4L217pK004227%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000648.html">
+   <LINK REL="Next"  HREF="000650.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7200 - trunk/plearn_learners/online</H1>
+    <B>yoshua at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7200%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705210201.l4L217pK004227%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7200 - trunk/plearn_learners/online">yoshua at mail.berlios.de
+       </A><BR>
+    <I>Mon May 21 04:01:07 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000648.html">[Plearn-commits] r7199 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000650.html">[Plearn-commits] r7201 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#649">[ date ]</a>
+              <a href="thread.html#649">[ thread ]</a>
+              <a href="subject.html#649">[ subject ]</a>
+              <a href="author.html#649">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: yoshua
+Date: 2007-05-21 04:01:05 +0200 (Mon, 21 May 2007)
+New Revision: 7200
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+   trunk/plearn_learners/online/RBMModule.h
+Log:
+Added visible_sample and hidden_sample ports to RBMModule
+
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-05-20 21:27:31 UTC (rev 7199)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-05-21 02:01:05 UTC (rev 7200)
+@@ -92,6 +92,30 @@
+                   OptionBase::buildoption,
+         &quot;Learning rate for the constrastive divergence step.&quot;);
+ 
++    declareOption(ol, &quot;min_n_Gibbs_steps&quot;, &amp;RBMModule::min_n_Gibbs_steps,
++                  OptionBase::buildoption,
++                  &quot;Used in generative mode (when visible_sample or hidden_sample is requested)\n&quot;
++                  &quot;when one has to sample from the joint or a marginal of visible and hidden,\n&quot;
++                  &quot;and thus a Gibbs chain has to be run. This option gives the minimum number\n&quot;
++                  &quot;of Gibbs steps to perform in the chain before outputting a sample.\n&quot;);
++
++    declareOption(ol, &quot;n_Gibbs_steps_per_generated_sample&quot;, 
++                  &amp;RBMModule::n_Gibbs_steps_per_generated_sample,
++                  OptionBase::buildoption,
++                  &quot;Used in generative mode (when visible_sample or hidden_sample is requested)\n&quot;
++                  &quot;when one has to sample from the joint or a marginal of visible and hidden,\n&quot;
++                  &quot;This option gives the number of steps to run in the Gibbs chain between\n&quot;
++                  &quot;consecutive generated samples that are produced in output of the fprop method.\n&quot;
++                  &quot;By default this is equal to min_n_Gibbs_steps.\n&quot;);
++
++    declareOption(ol, &quot;Gibbs_step&quot;, 
++                  &amp;RBMModule::Gibbs_step,
++                  OptionBase::learntoption,
++                  &quot;Used in generative mode (when visible_sample or hidden_sample is requested)\n&quot;
++                  &quot;when one has to sample from the joint or a marginal of visible and hidden,\n&quot;
++                  &quot;Keeps track of the number of steps that have been ran since the beginning\n&quot;
++                  &quot;of the chain.\n&quot;);
++
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+ }
+@@ -215,70 +239,79 @@
+     Mat* visible = ports_value[0];
+     Mat* hidden = ports_value[1];
+     Mat* hidden_act = ports_value[2];
+-    if ( visible &amp;&amp; hidden &amp;&amp;
+-         !visible-&gt;isEmpty() &amp;&amp; hidden-&gt;isEmpty() )
++    Mat* visible_sample = ports_value[3];
++    Mat* hidden_sample = ports_value[4];
++    if ( visible &amp;&amp; !visible-&gt;isEmpty() &amp;&amp;
++         ((hidden &amp;&amp; hidden-&gt;isEmpty() ) ||
++          (hidden_act &amp;&amp; hidden_act-&gt;isEmpty())) )
+     {
+-        visible_layer-&gt;setExpectations(*visible);
+-        connection-&gt;setAsDownInputs(visible_layer-&gt;getExpectations());
++        // visible_layer-&gt;setExpectations(*visible);
++        connection-&gt;setAsDownInputs(*visible); // visible_layer-&gt;getExpectations());
+         hidden_layer-&gt;getAllActivations(connection, 0, true);
+-        if (hidden_act) {
++        if (hidden_act &amp;&amp; hidden_act-&gt;isEmpty()) {
+             // Also store hidden layer activations.
+             PLASSERT( hidden_act-&gt;isEmpty() );
+             const Mat&amp; to_store = hidden_layer-&gt;activations;
+             hidden_act-&gt;resize(to_store.length(), to_store.width());
+             *hidden_act &lt;&lt; to_store;
+         }
+-        hidden_layer-&gt;computeExpectations();
+-        Mat&amp; hidden_out = hidden_layer-&gt;getExpectations();
+-        hidden-&gt;resize(hidden_out.length(), hidden_out.width());
+-        *hidden &lt;&lt; hidden_out;
+-    } else {
+-        PLERROR(&quot;In RBMModule::fprop - Only bottom-up fprop is currently &quot;
+-                &quot;implemented&quot; );
+-    }
++        if (hidden &amp;&amp; hidden-&gt;isEmpty()) {
++            hidden_layer-&gt;computeExpectations();
++            Mat&amp; hidden_out = hidden_layer-&gt;getExpectations();
++            hidden-&gt;resize(hidden_out.length(), hidden_out.width());
++            *hidden &lt;&lt; hidden_out;
++        }
++        return;
++    } 
++    if ((visible_sample &amp;&amp; visible_sample-&gt;isEmpty()) // it is asked to sample the visible units
++        || (hidden_sample &amp;&amp; hidden_sample-&gt;isEmpty())) // or to sample the hidden units
++    {
++        if (hidden &amp;&amp; !hidden-&gt;isEmpty()) // sample visible conditionally on hidden
++        {
++            connection-&gt;setAsUpInputs(*hidden);
++            visible_layer-&gt;getAllActivations(connection, 0, true);
++            visible_layer-&gt;generateSamples();
++            visible_sample-&gt;resize(visible_layer-&gt;samples.length(),visible_layer-&gt;samples.width());
++            *visible_sample &lt;&lt; visible_layer-&gt;samples;
++        }
++        else // sample unconditionally: Gibbs sample after k steps
++        {
++            if (visible &amp;&amp; !visible-&gt;isEmpty()) // if an input is provided, start the chain from it
++            {
++                Gibbs_step = 0;
++                visible_layer-&gt;samples &lt;&lt; *visible;
++            }
++            // else we might want to restore as a separate &quot;state&quot; the last visible_layer-&gt;samples,
++            // (copied elsewhere) in case the RBM is used to something else than sampling 
++            // in between calls to this fprop-for-sampling.
++            int min_n = min(Gibbs_step+n_Gibbs_steps_per_generated_sample,
++                            min_n_Gibbs_steps);
++            for (;Gibbs_step&lt;min_n;Gibbs_step++)
++            {
++                connection-&gt;setAsDownInputs(visible_layer-&gt;samples);
++                hidden_layer-&gt;getAllActivations(connection, 0, true);
++                hidden_layer-&gt;generateSamples();
++                connection-&gt;setAsUpInputs(hidden_layer-&gt;samples);
++                visible_layer-&gt;getAllActivations(connection, 0, true);
++                visible_layer-&gt;generateSamples();
++            }
++            if (visible_sample &amp;&amp; visible_sample-&gt;isEmpty()) // provide sample of the visible units
++            {
++                visible_sample-&gt;resize(visible_layer-&gt;samples.length(),
++                                       visible_layer-&gt;samples.width());
++                *visible_sample &lt;&lt; visible_layer-&gt;samples;
++            }
++            if (hidden_sample &amp;&amp; hidden_sample-&gt;isEmpty()) // provide sample of the hidden units
++            {
++                hidden_sample-&gt;resize(hidden_layer-&gt;samples.length(),
++                                      hidden_layer-&gt;samples.width());
++                *hidden_sample &lt;&lt; hidden_layer-&gt;samples;
++            }
++        }        
++    } 
++    PLERROR(&quot;In RBMModule::fprop - Unknown port configuration&quot;);
+ }
+ 
+-/////////////////
+-// bpropUpdate //
+-/////////////////
+-/* THIS METHOD IS OPTIONAL
+-void RBMModule::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+-                               Vec&amp; input_gradient,
+-                               const Vec&amp; output_gradient,
+-                               bool accumulate)
+-{
+-}
+-*/
+-
+-/* THIS METHOD IS OPTIONAL
+-void RBMModule::bpropUpdate(const Vec&amp; input, const Vec&amp; output,
+-                               const Vec&amp; output_gradient)
+-{
+-}
+-*/
+-
+-//////////////////
+-// bbpropUpdate //
+-//////////////////
+-/* THIS METHOD IS OPTIONAL
+-void RBMModule::bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
+-                                Vec&amp; input_gradient,
+-                                const Vec&amp; output_gradient,
+-                                Vec&amp; input_diag_hessian,
+-                                const Vec&amp; output_diag_hessian,
+-                                bool accumulate)
+-{
+-}
+-*/
+-
+-/* THIS METHOD IS OPTIONAL
+-void RBMModule::bbpropUpdate(const Vec&amp; input, const Vec&amp; output,
+-                                const Vec&amp; output_gradient,
+-                                const Vec&amp; output_diag_hessian)
+-{
+-}
+-*/
+-
+ ////////////
+ // forget //
+ ////////////
+@@ -306,15 +339,6 @@
+ }
+ 
+ //////////////
+-// finalize //
+-//////////////
+-/* THIS METHOD IS OPTIONAL
+-void RBMModule::finalize()
+-{
+-}
+-*/
+-
+-//////////////
+ // getPorts //
+ //////////////
+ const TVec&lt;string&gt;&amp; RBMModule::getPorts()
+@@ -324,6 +348,8 @@
+         ports.append(&quot;visible&quot;);
+         ports.append(&quot;hidden&quot;);
+         ports.append(&quot;hidden_activations.state&quot;);
++        ports.append(&quot;visible_sample&quot;);
++        ports.append(&quot;hidden_sample&quot;);
+     }
+     return ports;
+ }
+@@ -334,11 +360,14 @@
+ const TMat&lt;int&gt;&amp; RBMModule::getPortSizes() {
+     port_sizes.resize(nPorts(), 2);
+     port_sizes.fill(-1);
+-    if (visible_layer)
++    if (visible_layer) {
+         port_sizes(0, 1) = visible_layer-&gt;size;
++        port_sizes(3, 1) = visible_layer-&gt;size;
++    }
+     if (hidden_layer) {
+         port_sizes(1, 1) = hidden_layer-&gt;size;
+         port_sizes(2, 1) = hidden_layer-&gt;size;
++        port_sizes(4, 1) = hidden_layer-&gt;size;
+     }
+     return port_sizes;
+ }
+
+Modified: trunk/plearn_learners/online/RBMModule.h
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.h	2007-05-20 21:27:31 UTC (rev 7199)
++++ trunk/plearn_learners/online/RBMModule.h	2007-05-21 02:01:05 UTC (rev 7200)
+@@ -69,7 +69,14 @@
+ 
+     real cd_learning_rate;
+     real grad_learning_rate;
+-    
++    //! used to generate samples from the RBM
++    int min_n_Gibbs_steps; 
++    int n_Gibbs_steps_per_generated_sample;
++
++    //#####  Public Learnt Options  ############################################
++    //! used to generate samples from the RBM
++    int Gibbs_step;
++
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000648.html">[Plearn-commits] r7199 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000650.html">[Plearn-commits] r7201 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#649">[ date ]</a>
+              <a href="thread.html#649">[ thread ]</a>
+              <a href="subject.html#649">[ subject ]</a>
+              <a href="author.html#649">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

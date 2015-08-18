@@ -1,0 +1,158 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7471 - trunk/commands/PLearnCommands
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7471%20-%20trunk/commands/PLearnCommands&In-Reply-To=%3C200705311903.l4VJ3ZVe005424%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000919.html">
+   <LINK REL="Next"  HREF="000921.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7471 - trunk/commands/PLearnCommands</H1>
+    <B>plearner at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7471%20-%20trunk/commands/PLearnCommands&In-Reply-To=%3C200705311903.l4VJ3ZVe005424%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7471 - trunk/commands/PLearnCommands">plearner at mail.berlios.de
+       </A><BR>
+    <I>Thu May 31 21:03:35 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000919.html">[Plearn-commits] r7470 - trunk/scripts
+</A></li>
+        <LI>Next message: <A HREF="000921.html">[Plearn-commits] r7472 - trunk/plearn_learners/hyper
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#920">[ date ]</a>
+              <a href="thread.html#920">[ thread ]</a>
+              <a href="subject.html#920">[ subject ]</a>
+              <a href="author.html#920">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: plearner
+Date: 2007-05-31 21:03:35 +0200 (Thu, 31 May 2007)
+New Revision: 7471
+
+Modified:
+   trunk/commands/PLearnCommands/ServerCommand.cc
+Log:
+Allowing extra arguments to plearn server command to specify writing server location to a file (and optionally allow for singleuse server connexion)
+
+
+Modified: trunk/commands/PLearnCommands/ServerCommand.cc
+===================================================================
+--- trunk/commands/PLearnCommands/ServerCommand.cc	2007-05-31 18:57:51 UTC (rev 7470)
++++ trunk/commands/PLearnCommands/ServerCommand.cc	2007-05-31 19:03:35 UTC (rev 7471)
+@@ -48,6 +48,7 @@
+ // #include &lt;plearn/io/FdPStreamBuf.h&gt;
+ #include &lt;plearn/io/pl_log.h&gt;
+ #include &lt;plearn/io/PrPStreamBuf.h&gt;
++#include &lt;plearn/io/openFile.h&gt;
+ #include &lt;plearn/base/tostring.h&gt;
+ #include &lt;plearn/base/PrUtils.h&gt;
+ #include &lt;nspr/prio.h&gt;
+@@ -77,11 +78,14 @@
+                   &quot;  listening for commands on standard in \n&quot;
+                   &quot;  and outputing results on standard out. \n&quot;
+                   &quot; \n&quot;
+-                  &quot;server [&lt;tcp_port&gt;] \n&quot;
++                  &quot;server &lt;tcp_port&gt; [&lt;outfile&gt;] [-singleuse]\n&quot;
+                   &quot;  Launches plearn in TCP server mode \n&quot;
+-                  &quot;  Will wait for a connection on the given TCP port. \n&quot;
++                  &quot;  Will then print a line to outfile or to stdout (if no outfile is specified) of the form: \n&quot;
++                  &quot;    PLEARN_SERVER_TCP hostname port pid\n&quot;
++                  &quot;  Will then wait for a connection on the given TCP port. \n&quot;
+                   &quot;  All i/o for commands are then done through that connection. \n&quot;
+-                  &quot; \n&quot;
++                  &quot;  If you specify -singleuse, then the server will exit when the conneciton \n&quot;
++                  &quot;  with its first client is closed or lost.&quot;
+         )
+ {}
+ 
+@@ -93,6 +97,19 @@
+         PRStatus st;
+         char buf[256];
+         int port = toint(args[0]);
++
++        bool singleuse=false;
++        string outfile;
++        if(args.size()&gt;1)
++        {
++            if(args[1]==&quot;-singleuse&quot;)
++                singleuse = true;
++            else
++                outfile = args[1];
++            if(args.size()&gt;2 &amp;&amp; args[2]==&quot;-singleuse&quot;)
++                singleuse = true;
++        }
++
+         PRFileDesc* sock = PR_NewTCPSocket();
+         if (!sock)
+             PLERROR(&quot;Servercommand: socket creation failed! (Maybe you ran out of file descriptors?)&quot;);
+@@ -120,11 +137,23 @@
+         st= PR_GetSockName(sock, &amp;assigned_addr);
+         if(port==0 &amp;&amp; st==PR_SUCCESS)
+             port= PR_ntohs(assigned_addr.inet.port);
++        
++        if(outfile.size()&gt;0)
++        {
++            string tmpoutfile =outfile+&quot;.tmp&quot;;
++            PStream out = openFile(tmpoutfile, PStream::raw_ascii, &quot;w&quot;);
++            out &lt;&lt; &quot;PLEARN_SERVER_TCP &quot; &lt;&lt; myhostname &lt;&lt; &quot; &quot; &lt;&lt; port &lt;&lt; &quot; &quot; &lt;&lt; mypid &lt;&lt; endl;            
++            out = 0; // close it
++            PR_Rename(tmpoutfile.c_str(), outfile.c_str());
++        }
++        else
++            pout &lt;&lt; &quot;PLEARN_SERVER_TCP &quot; &lt;&lt; myhostname &lt;&lt; &quot; &quot; &lt;&lt; port &lt;&lt; &quot; &quot; &lt;&lt; mypid &lt;&lt; endl;
+ 
+-        pout &lt;&lt; &quot;PLEARN_SERVER_TCP &quot; &lt;&lt; myhostname &lt;&lt; &quot; &quot; &lt;&lt; port &lt;&lt; &quot; &quot; &lt;&lt; mypid &lt;&lt; endl;
+         NORMAL_LOG &lt;&lt; &quot;PLEARN_SERVER STARTING IN TCP MODE ON &quot;  &lt;&lt; myhostname &lt;&lt; &quot;, PORT &quot; &lt;&lt; port &lt;&lt; &quot;, PID &quot; &lt;&lt; mypid &lt;&lt; endl;
++        NORMAL_LOG &lt;&lt; &quot;singleuse = &quot; &lt;&lt; singleuse &lt;&lt; endl;
+ 
+-        for (bool running = true; running; ) {
++        bool running = true;
++        do  {
+             NORMAL_LOG &lt;&lt; &quot;\nPLEARN_SERVER WAITING FOR CONNECTION&quot;  &lt;&lt; endl;
+             
+             ///***///***
+@@ -149,7 +178,8 @@
+             if (PR_Close(fd) != PR_SUCCESS)
+                 PLERROR(&quot;ServerCommand: couldn't close client socket from %s!&quot;, buf);
+ 
+-        }
++        } while(running &amp;&amp; !singleuse);
++
+         NORMAL_LOG &lt;&lt; &quot;PLEARN_SERVER CLOSING SOCKET&quot; &lt;&lt; endl;
+         if (PR_Shutdown(sock, PR_SHUTDOWN_BOTH) != PR_SUCCESS)
+             PLERROR(&quot;ServerCommand: couldn't shutdown socket %d!&quot;, port);
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000919.html">[Plearn-commits] r7470 - trunk/scripts
+</A></li>
+	<LI>Next message: <A HREF="000921.html">[Plearn-commits] r7472 - trunk/plearn_learners/hyper
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#920">[ date ]</a>
+              <a href="thread.html#920">[ thread ]</a>
+              <a href="subject.html#920">[ subject ]</a>
+              <a href="author.html#920">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

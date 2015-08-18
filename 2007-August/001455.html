@@ -1,0 +1,245 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8007 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8007%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708212108.l7LL86nH005984%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001454.html">
+   <LINK REL="Next"  HREF="001456.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8007 - trunk/plearn_learners/online</H1>
+    <B>louradou at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8007%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708212108.l7LL86nH005984%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8007 - trunk/plearn_learners/online">louradou at mail.berlios.de
+       </A><BR>
+    <I>Tue Aug 21 23:08:06 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001454.html">[Plearn-commits] r8006 - in trunk: plearn/python	python_modules/plearn/pymake
+</A></li>
+        <LI>Next message: <A HREF="001456.html">[Plearn-commits] r8008 - in trunk/plearn/python/test: .	.pytest/EmbeddedPython_InterfunctionXchg/expected_results
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1455">[ date ]</a>
+              <a href="thread.html#1455">[ thread ]</a>
+              <a href="subject.html#1455">[ subject ]</a>
+              <a href="author.html#1455">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: louradou
+Date: 2007-08-21 23:08:05 +0200 (Tue, 21 Aug 2007)
+New Revision: 8007
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+   trunk/plearn_learners/online/RBMModule.h
+Log:
+RBMModule: added an option &quot;deterministic_reconstruction_in_cd&quot;
+(a variant of contrastive divergence learning,
+where the visible are reconstructed by mean field and not sampling,
+as suggested by Hinton)
+
+
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2007-08-21 19:12:57 UTC (rev 8006)
++++ trunk/plearn_learners/online/RBMModule.cc	2007-08-21 21:08:05 UTC (rev 8007)
+@@ -115,6 +115,7 @@
+     Gibbs_step(0),
+     log_partition_function(0),
+     partition_function_is_stale(true),
++    deterministic_reconstruction_in_cd(false),
+     standard_cd_grad(true),
+     standard_cd_bias_grad(true),
+     standard_cd_weights_grad(true),
+@@ -165,6 +166,16 @@
+                   OptionBase::buildoption,
+         &quot;Compute the constrastive divergence in an output port.&quot;);
+ 
++    declareOption(ol, &quot;deterministic_reconstruction_in_cd&quot;,
++                  &amp;RBMModule::deterministic_reconstruction_in_cd,
++                  OptionBase::buildoption,
++        &quot;Whether to use the expectation of the visible (given a hidden sample)\n&quot;
++	&quot;or a sample of the visible in the contrastive divergence learning.\n&quot;
++        &quot;In other words, instead of the classical Gibbs sampling\n&quot;
++        &quot;   v_0 --&gt; h_0 ~ p(h|v_0) --&gt; v_1 ~ p(v|h_0) --&gt;  p(h|v_1)\n&quot;
++        &quot;we will have by setting 'deterministic_reconstruction_in_cd=1'\n&quot;
++        &quot;   v_0 --&gt; h_0 ~ p(h|v_0) --&gt; v_1 = E(v|h_0) --&gt;  p(h|E(v|h_0)).&quot;);
++ 
+     declareOption(ol, &quot;standard_cd_grad&quot;,
+                   &amp;RBMModule::standard_cd_grad,
+                   OptionBase::buildoption,
+@@ -1106,10 +1117,21 @@
+             for( int i=0; i&lt;n_Gibbs_steps_CD; i++)
+             {
+                 hidden_layer-&gt;generateSamples();
+-                // (Negative phase) Generate visible samples.
+-                sampleVisibleGivenHidden(hidden_layer-&gt;samples);
+-                // compute corresponding hidden expectations.
+-                computeHiddenActivations(visible_layer-&gt;samples);
++                if (deterministic_reconstruction_in_cd)
++                {
++                   // (Negative phase) compute visible expectations
++                   computeVisibleActivations(hidden_layer-&gt;samples);
++                   visible_layer-&gt;computeExpectations();
++                   // compute corresponding hidden expectations.
++                   computeHiddenActivations(visible_layer-&gt;getExpectations());
++                }
++                else
++                {
++                   // (Negative phase) Generate visible samples.
++                   sampleVisibleGivenHidden(hidden_layer-&gt;samples);
++                   // compute corresponding hidden expectations.
++                   computeHiddenActivations(visible_layer-&gt;samples);
++                }
+                 hidden_activations_are_computed = false;
+                 hidden_layer-&gt;computeExpectations();
+             }
+@@ -1119,7 +1141,10 @@
+             PLASSERT(negative_phase_hidden_activations &amp;&amp;
+                      negative_phase_hidden_activations_is_output);
+             negative_phase_visible_samples-&gt;resize(mbs,visible_layer-&gt;size);
+-            *negative_phase_visible_samples &lt;&lt; visible_layer-&gt;samples;
++            if (deterministic_reconstruction_in_cd)
++               *negative_phase_visible_samples &lt;&lt; visible_layer-&gt;getExpectations();
++            else
++               *negative_phase_visible_samples &lt;&lt; visible_layer-&gt;samples;
+             negative_phase_hidden_expectations-&gt;resize(hidden_expectations.length(),
+                                                        hidden_expectations.width());
+             *negative_phase_hidden_expectations &lt;&lt; hidden_expectations;
+@@ -1177,19 +1202,6 @@
+ 
+     if (!found_a_valid_configuration)
+     {
+-        /*
+-        if (visible)
+-            cout &lt;&lt; &quot;visible_empty : &quot;&lt;&lt; (bool) visible-&gt;isEmpty() &lt;&lt; endl;
+-        if (hidden)
+-            cout &lt;&lt; &quot;hidden_empty : &quot;&lt;&lt; (bool) hidden-&gt;isEmpty() &lt;&lt; endl;
+-        if (visible_sample)
+-            cout &lt;&lt; &quot;visible_sample_empty : &quot;&lt;&lt; (bool) visible_sample-&gt;isEmpty() &lt;&lt; endl;
+-        if (hidden_sample)
+-            cout &lt;&lt; &quot;hidden_sample_empty : &quot;&lt;&lt; (bool) hidden_sample-&gt;isEmpty() &lt;&lt; endl;
+-        if (visible_expectation)
+-            cout &lt;&lt; &quot;visible_expectation_empty : &quot;&lt;&lt; (bool) visible_expectation-&gt;isEmpty() &lt;&lt; endl;
+-
+-        */
+         PLERROR(&quot;In RBMModule::fprop - Unknown port configuration for module %s&quot;, name.c_str());
+     }
+ 
+@@ -1474,6 +1486,8 @@
+         PLASSERT( visible &amp;&amp; hidden );
+         PLASSERT( !negative_phase_visible_samples ||
+                   !negative_phase_visible_samples-&gt;isEmpty() );
++
++        Mat vis_expect_ptr;
+         if (!negative_phase_visible_samples)
+         {
+             // Generate hidden samples.
+@@ -1481,18 +1495,34 @@
+             for( int i=0; i&lt;n_Gibbs_steps_CD; i++)
+             {
+                 hidden_layer-&gt;generateSamples();
+-                // (Negative phase) Generate visible samples.
+-                sampleVisibleGivenHidden(hidden_layer-&gt;samples);
+-                // compute corresponding hidden expectations.
+-                computeHiddenActivations(visible_layer-&gt;samples);
++                if (deterministic_reconstruction_in_cd)
++                {
++                   // (Negative phase) compute visible expectations
++                   computeVisibleActivations(hidden_layer-&gt;samples);
++                   visible_layer-&gt;computeExpectations();
++                   // compute corresponding hidden expectations.
++                   computeHiddenActivations(visible_layer-&gt;getExpectations());
++                }
++                else // classical CD learning
++                {
++                   // (Negative phase) Generate visible samples.
++                   sampleVisibleGivenHidden(hidden_layer-&gt;samples);
++                   // compute corresponding hidden expectations.
++                   computeHiddenActivations(visible_layer-&gt;samples);
++                }
+                 hidden_layer-&gt;computeExpectations();
+             }
+             PLASSERT( !computed_contrastive_divergence );
+             PLASSERT( !negative_phase_hidden_expectations );
+             PLASSERT( !negative_phase_hidden_activations );
++            if (deterministic_reconstruction_in_cd) {
++                vis_expect_ptr = visible_layer-&gt;getExpectations();
++                negative_phase_visible_samples = &amp;vis_expect_ptr;
++            }
++	    else // classical CD learning
++               negative_phase_visible_samples = &amp;(visible_layer-&gt;samples);
++            negative_phase_hidden_activations = &amp;(hidden_layer-&gt;activations);
+             negative_phase_hidden_expectations = &amp;(hidden_layer-&gt;getExpectations());
+-            negative_phase_visible_samples = &amp;(visible_layer-&gt;samples);
+-            negative_phase_hidden_activations = &amp;(hidden_layer-&gt;activations);
+         }
+         PLASSERT( negative_phase_hidden_expectations &amp;&amp;
+                   !negative_phase_hidden_expectations-&gt;isEmpty() );
+@@ -1589,7 +1619,6 @@
+             }
+         }
+         if (!connection_update_is_done)
+-            // Perform standard update of the connection.
+             connection-&gt;update(*visible, *hidden,
+                     *negative_phase_visible_samples,
+                     *negative_phase_hidden_expectations);
+@@ -1640,7 +1669,6 @@
+                 bias -= lr * (*hidden_bias_g)(i);
+         }
+ 
+-
+         partition_function_is_stale = true;
+     } else {
+         PLCHECK_MSG( !contrastive_divergence_grad ||
+
+Modified: trunk/plearn_learners/online/RBMModule.h
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.h	2007-08-21 19:12:57 UTC (rev 8006)
++++ trunk/plearn_learners/online/RBMModule.h	2007-08-21 21:08:05 UTC (rev 8007)
+@@ -92,6 +92,9 @@
+     real log_partition_function;
+     bool partition_function_is_stale;
+ 
++    bool deterministic_reconstruction_in_cd;
++    bool stochastic_posterior_in_cd;
++
+     bool standard_cd_grad;
+     bool standard_cd_bias_grad;
+     bool standard_cd_weights_grad;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001454.html">[Plearn-commits] r8006 - in trunk: plearn/python	python_modules/plearn/pymake
+</A></li>
+	<LI>Next message: <A HREF="001456.html">[Plearn-commits] r8008 - in trunk/plearn/python/test: .	.pytest/EmbeddedPython_InterfunctionXchg/expected_results
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1455">[ date ]</a>
+              <a href="thread.html#1455">[ thread ]</a>
+              <a href="subject.html#1455">[ subject ]</a>
+              <a href="author.html#1455">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

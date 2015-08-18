@@ -1,0 +1,141 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10288 - trunk/python_modules/plearn/parallel
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10288%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200908041531.n74FVURk011564%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003727.html">
+   <LINK REL="Next"  HREF="003729.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10288 - trunk/python_modules/plearn/parallel</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10288%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200908041531.n74FVURk011564%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10288 - trunk/python_modules/plearn/parallel">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue Aug  4 17:31:30 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003727.html">[Plearn-commits] r10287 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="003729.html">[Plearn-commits] r10289 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3728">[ date ]</a>
+              <a href="thread.html#3728">[ thread ]</a>
+              <a href="subject.html#3728">[ subject ]</a>
+              <a href="author.html#3728">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-08-04 17:31:30 +0200 (Tue, 04 Aug 2009)
+New Revision: 10288
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+-make the script that source the .bashrc file be executed by bash instead of sh
+-Separete the --mem=X requested from the ImageSize in condor, that way we don't loose this information if the jobs is relaunched.
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2009-08-04 14:04:53 UTC (rev 10287)
++++ trunk/python_modules/plearn/parallel/dbi.py	2009-08-04 15:31:30 UTC (rev 10288)
+@@ -824,6 +824,7 @@
+         self.debug = False
+         self.local_log_file = True#by default true as condor can have randomly failure otherwise.
+         self.next_job_start_delay = -1
++        self.imagesize=-1
+ 
+         DBIBase.__init__(self, commands, **args)
+         if self.debug:
+@@ -837,8 +838,6 @@
+             if len(commands)&gt;int(n):
+                 raise DBIError(&quot;[DBI] ERROR we refuse to start more jobs on the local universe then the total number of core. Start less jobs or use another universe.&quot;)
+ 
+-        #transform from meg to kilo
+-        self.mem=self.mem*1024
+         if not self.os:
+             #if their is not required os, condor launch on the same os.
+             p=Popen( &quot;condor_config_val OpSyS&quot;, shell=True,stdout=PIPE)
+@@ -1147,7 +1146,7 @@
+             bash=not self.source_file or not self.source_file.endswith(&quot;.cshrc&quot;)
+             if bash:
+                 fd.write(dedent('''\
+-                    #!/bin/sh
++                    #!/bin/bash
+                     '''))
+                 if self.condor_home:
+                     fd.write('export HOME=%s\n' % self.condor_home)
+@@ -1246,9 +1245,9 @@
+             fd.write('leave_in_queue = (ExitCode!=0)\n')
+         if self.next_job_start_delay&gt;0:
+             fd.write('next_job_start_delay = %s\n'%self.next_job_start_delay)
+-        if self.mem&gt;0:
++        if self.imagesize&gt;0:
+             #condor need value in Kb
+-            fd.write('ImageSize      = %d\n'%(self.mem))#need to be in k.
++            fd.write('ImageSize      = %d\n'%(self.imagesize))#need to be in k.
+ 
+         if self.files: #ON_EXIT_OR_EVICT
+             fd.write( dedent('''\
+@@ -1418,7 +1417,8 @@
+             self.req+=&quot;&amp;&amp;(Arch == \&quot;%s\&quot;)&quot;%(self.targetcondorplatform)
+         if self.cpu&gt;0:
+             self.req+='&amp;&amp;(target.CPUS&gt;='+str(self.cpu)+')'
+-
++        if self.mem&gt;0:
++            self.req+='&amp;&amp;(Memory&gt;='+str(self.mem)+')'#Must be in Meg
+         if self.os:
+             self.req=reduce(lambda x,y:x+' || (OpSys == &quot;'+str(y)+'&quot;)',
+                             self.os.split(','),
+@@ -1450,11 +1450,10 @@
+             self.req+='&amp;&amp;(Machine!=&quot;'+m+'&quot;)'
+         #if no mem requirement added, use the executable size.
+         #todo: if they are not the same executable, take the biggest
+-        if self.mem&lt;=0:
+-            try:
+-                self.mem = os.stat(self.tasks[0].commands[0].split()[0]).st_size/1024
+-            except:
+-                pass
++        try:
++            self.imagesize = os.stat(self.tasks[0].commands[0].split()[0]).st_size/1024
++        except:
++            pass
+ 
+         self.condor_submit_file = os.path.join(self.log_dir,
+                                                &quot;submit_file.condor&quot;)
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003727.html">[Plearn-commits] r10287 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="003729.html">[Plearn-commits] r10289 - trunk/scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3728">[ date ]</a>
+              <a href="thread.html#3728">[ thread ]</a>
+              <a href="subject.html#3728">[ subject ]</a>
+              <a href="author.html#3728">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

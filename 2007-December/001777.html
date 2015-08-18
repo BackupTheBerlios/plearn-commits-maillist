@@ -1,0 +1,210 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8329 - trunk/plearn/python
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-December/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8329%20-%20trunk/plearn/python&In-Reply-To=%3C200712042209.lB4M90Nc026422%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   
+   <LINK REL="Next"  HREF="001778.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8329 - trunk/plearn/python</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8329%20-%20trunk/plearn/python&In-Reply-To=%3C200712042209.lB4M90Nc026422%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8329 - trunk/plearn/python">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Tue Dec  4 23:09:00 CET 2007</I>
+    <P><UL>
+        
+        <LI>Next message: <A HREF="001778.html">[Plearn-commits] r8330 - trunk/plearn/python
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1777">[ date ]</a>
+              <a href="thread.html#1777">[ thread ]</a>
+              <a href="subject.html#1777">[ subject ]</a>
+              <a href="author.html#1777">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2007-12-04 23:09:00 +0100 (Tue, 04 Dec 2007)
+New Revision: 8329
+
+Modified:
+   trunk/plearn/python/PythonObjectWrapper.cc
+   trunk/plearn/python/PythonObjectWrapper.h
+Log:
+- allow wrapping of VMats in python (#ifdef PL_PYTHON_VMAT_AS_PTR)
+- keep wrappedObjectsSet
+
+
+
+Modified: trunk/plearn/python/PythonObjectWrapper.cc
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.cc	2007-11-29 21:50:10 UTC (rev 8328)
++++ trunk/plearn/python/PythonObjectWrapper.cc	2007-12-04 22:09:00 UTC (rev 8329)
+@@ -183,6 +183,7 @@
+     return obj;
+ }
+ 
++
+ void ConvertFromPyObject&lt;Vec&gt;::convert(PyObject* pyobj, Vec&amp; v,
+                                        bool print_traceback)
+ {
+@@ -478,7 +479,7 @@
+     PythonObjectWrapper::m_wrapped_objects[o]= pyo;
+     //perr &lt;&lt; &quot;refCPPObj: &quot; &lt;&lt; (void*)o &lt;&lt; &quot; : &quot; &lt;&lt; (void*)pyo &lt;&lt; endl;
+ 
+-    Py_INCREF(pyo);
++    addToWrappedObjectsSet(pyo);//Py_INCREF(pyo);
+     //printWrappedObjects();
+ 
+     return newPyObject();//None
+@@ -494,7 +495,8 @@
+         ++m_gc_next_object;
+         if(it-&gt;first-&gt;usage() == 1 &amp;&amp; it-&gt;second-&gt;ob_refcnt == 1)
+         {
+-            Py_DECREF(it-&gt;second);
++            //Py_DECREF(it-&gt;second);
++            removeFromWrappedObjectsSet(it-&gt;second);
+             gc_collect1();
+         }
+     }
+@@ -526,9 +528,6 @@
+ 
+ PyObject* ConvertToPyObject&lt;Object*&gt;::newPyObject(const Object* x)
+ {
+-    //perr &lt;&lt; &quot;in ConvertToPyObject&lt;Object*&gt;::newPyObject : &quot;
+-    //     &lt;&lt; x-&gt;classname() &lt;&lt; ' ' &lt;&lt; (void*)x &lt;&lt; endl;
+-
+     // void ptr becomes None
+     if(!x) return PythonObjectWrapper::newPyObject();
+ 
+@@ -542,12 +541,6 @@
+     if(objit != PythonObjectWrapper::m_wrapped_objects.end())
+     {
+         PyObject* o= objit-&gt;second;
+-
+-//         perr &lt;&lt; &quot;NEW REF TO &quot; &lt;&lt; objit-&gt;first-&gt;classname() &lt;&lt; ' ' &lt;&lt; (void*)objit-&gt;first 
+-//              &lt;&lt; ' ' &lt;&lt; objit-&gt;first-&gt;usage() &lt;&lt; &quot; : &quot; 
+-//              &lt;&lt; (void*)objit-&gt;second &lt;&lt; ' ' &lt;&lt; objit-&gt;second-&gt;ob_refcnt &lt;&lt; endl;
+-
+-//        printWrappedObjects();
+         Py_INCREF(o);//new ref
+         return o;//return ptr to already created pyobj
+     }
+@@ -585,7 +578,7 @@
+ 
+ //    perr &lt;&lt; &quot;newPyObject: &quot; &lt;&lt; (void*)x &lt;&lt; &quot; : &quot; &lt;&lt; (void*)the_obj &lt;&lt; endl;
+ 
+-    Py_INCREF(the_obj);
++    addToWrappedObjectsSet(the_obj);//Py_INCREF(the_obj);
+     //printWrappedObjects();
+ 
+     return the_obj;
+@@ -684,8 +677,11 @@
+     if (vm.isNull())
+         return ConvertToPyObject&lt;Mat&gt;::newPyObject(Mat());
+     else
+-        return ConvertToPyObject&lt;Mat&gt;::newPyObject(vm-&gt;toMat());
+-    //return ConvertToPyObject&lt;Object*&gt;::newPyObject(static_cast&lt;Object*&gt;(vm));
++#ifdef PL_PYTHON_VMAT_AS_PTR
++        return ConvertToPyObject&lt;Object*&gt;::newPyObject(static_cast&lt;Object*&gt;(vm));
++#else
++        return ConvertToPyObject&lt;Mat&gt;::newPyObject(vm-&gt;toMat());// as a numpy array
++#endif
+ }
+ 
+ PyObject* ConvertToPyObject&lt;PythonObjectWrapper&gt;::newPyObject(const PythonObjectWrapper&amp; pow)
+@@ -795,6 +791,28 @@
+     return out; // shut up compiler
+ }
+ 
++
++PStream&amp; operator&gt;&gt;(PStream&amp; in, PyObject* v)
++{
++    PLERROR(&quot;operator&gt;&gt;(PStream&amp; in, PyObject* v) not supported yet&quot;);
++    return in;
++}
++
++PStream&amp; operator&lt;&lt;(PStream&amp; out, const PyObject* v)
++{
++    PyObject* pystr= PyObject_Str(const_cast&lt;PyObject*&gt;(v));
++    if(!pystr)
++    {
++        if (PyErr_Occurred()) PyErr_Print();
++        PLERROR(&quot;in PythonTableVMatrix::build_ : &quot;
++                &quot;access to underlying table's 'weightsize' failed.&quot;);
++    }
++    out &lt;&lt; PythonObjectWrapper(pystr).as&lt;string&gt;();
++    Py_DECREF(pystr);
++    return out;
++}
++
++
+ //! debug
+ void printWrappedObjects()
+ {
+@@ -820,7 +838,7 @@
+             PythonObjectWrapper::wrapped_objects_t::iterator jt= it;
+             ++it;
+             if(jt-&gt;second-&gt;ob_refcnt == 1 &amp;&amp; jt-&gt;first-&gt;usage() == 1)
+-                Py_DECREF(jt-&gt;second);
++                removeFromWrappedObjectsSet(jt-&gt;second);
+         }
+     }
+ }
+
+Modified: trunk/plearn/python/PythonObjectWrapper.h
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.h	2007-11-29 21:50:10 UTC (rev 8328)
++++ trunk/plearn/python/PythonObjectWrapper.h	2007-12-04 22:09:00 UTC (rev 8329)
+@@ -331,7 +331,6 @@
+     static Object* convert(PyObject*, bool print_traceback);
+ };
+ 
+-
+ ///***///***
+ // PARTIAL specialisation from T*.  Assume Object*.
+ // todo: fix this assumption
+@@ -1397,6 +1396,8 @@
+ 
+ PStream&amp; operator&gt;&gt;(PStream&amp; in, PythonObjectWrapper&amp; v);
+ PStream&amp; operator&lt;&lt;(PStream&amp; out, const PythonObjectWrapper&amp; v);
++PStream&amp; operator&gt;&gt;(PStream&amp; in, PyObject* v);
++PStream&amp; operator&lt;&lt;(PStream&amp; out, const PyObject* v);
+ DECLARE_TYPE_TRAITS(PythonObjectWrapper);
+ 
+ //! for debug purposes
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	
+	<LI>Next message: <A HREF="001778.html">[Plearn-commits] r8330 - trunk/plearn/python
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1777">[ date ]</a>
+              <a href="thread.html#1777">[ thread ]</a>
+              <a href="subject.html#1777">[ subject ]</a>
+              <a href="author.html#1777">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

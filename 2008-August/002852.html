@@ -1,0 +1,148 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9412 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-August/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9412%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200808291534.m7TFYQjx004258%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002851.html">
+   <LINK REL="Next"  HREF="002853.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9412 - trunk/plearn_learners/online</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9412%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200808291534.m7TFYQjx004258%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9412 - trunk/plearn_learners/online">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Fri Aug 29 17:34:26 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002851.html">[Plearn-commits] r9411 - trunk/plearn_learners/generic
+</A></li>
+        <LI>Next message: <A HREF="002853.html">[Plearn-commits] r9413 - trunk/plearn/base
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2852">[ date ]</a>
+              <a href="thread.html#2852">[ thread ]</a>
+              <a href="subject.html#2852">[ subject ]</a>
+              <a href="author.html#2852">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-08-29 17:34:25 +0200 (Fri, 29 Aug 2008)
+New Revision: 9412
+
+Modified:
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+   trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+Log:
+
+Added option to corrupt input only during greedy layer-wise learning...
+
+
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.cc
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2008-08-29 15:02:14 UTC (rev 9411)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.cc	2008-08-29 15:34:25 UTC (rev 9412)
+@@ -74,6 +74,7 @@
+     unsupervised_nstages( 0 ),
+     unsupervised_fine_tuning_learning_rate( 0. ),
+     unsupervised_fine_tuning_decrease_ct( 0. ),
++    mask_input_layer_only( false ),
+     mask_input_layer_only_in_unsupervised_fine_tuning( false ),
+     train_stats_window( -1 ),
+     n_layers( 0 ),
+@@ -287,6 +288,12 @@
+                   &quot;The decrease constant of the learning rate used during\n&quot;
+                   &quot;unsupervised fine tuning gradient descent.\n&quot;);
+ 
++    declareOption(ol, &quot;mask_input_layer_only&quot;,
++                  &amp;StackedAutoassociatorsNet::mask_input_layer_only,
++                  OptionBase::buildoption,
++                  &quot;Indication that only the input layer should be masked\n&quot;
++                  &quot;during greedy layer-wise learning.\n&quot;);
++
+     declareOption(ol, &quot;mask_input_layer_only_in_unsupervised_fine_tuning&quot;,
+                   &amp;StackedAutoassociatorsNet::mask_input_layer_only_in_unsupervised_fine_tuning,
+                   OptionBase::buildoption,
+@@ -1219,6 +1226,12 @@
+ void StackedAutoassociatorsNet::corrupt_input(const Vec&amp; input, Vec&amp; corrupted_input, int layer)
+ {
+     corrupted_input.resize(input.length());
++    if( mask_input_layer_only &amp;&amp; layer != 0 )
++    {
++        corrupted_input &lt;&lt; input; 
++        return;
++    }
++    
+     if( noise_type == &quot;masking_noise&quot; )
+     {
+         if( probability_of_masked_inputs &gt; 0 )
+@@ -1515,6 +1528,9 @@
+     // fprop
+     expectations[0] &lt;&lt; input;
+ 
++    bool old_mask_input_layer_only = mask_input_layer_only;
++    mask_input_layer_only = mask_input_layer_only_in_unsupervised_fine_tuning;
++
+     if(correlation_connections.length() != 0)
+     {
+         
+@@ -1638,6 +1654,8 @@
+                 expectation_gradients[i], activation_gradients[i+1] );
+         }
+     }
++
++    mask_input_layer_only = old_mask_input_layer_only;
+ }
+ 
+ void StackedAutoassociatorsNet::unsupervisedFineTuningStep(const Mat&amp; inputs,
+
+Modified: trunk/plearn_learners/online/StackedAutoassociatorsNet.h
+===================================================================
+--- trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2008-08-29 15:02:14 UTC (rev 9411)
++++ trunk/plearn_learners/online/StackedAutoassociatorsNet.h	2008-08-29 15:34:25 UTC (rev 9412)
+@@ -181,6 +181,10 @@
+     real unsupervised_fine_tuning_decrease_ct;
+ 
+     //! Indication that only the input layer should be masked
++    //! during greedy layer-wise learning
++    bool mask_input_layer_only;
++
++    //! Indication that only the input layer should be masked
+     //! during unsupervised fine-tuning
+     bool mask_input_layer_only_in_unsupervised_fine_tuning;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002851.html">[Plearn-commits] r9411 - trunk/plearn_learners/generic
+</A></li>
+	<LI>Next message: <A HREF="002853.html">[Plearn-commits] r9413 - trunk/plearn/base
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2852">[ date ]</a>
+              <a href="thread.html#2852">[ thread ]</a>
+              <a href="subject.html#2852">[ subject ]</a>
+              <a href="author.html#2852">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,335 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9454 - trunk/python_modules/plearn/parallel
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-September/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9454%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200809102030.m8AKUwwS027884%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002893.html">
+   <LINK REL="Next"  HREF="002895.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9454 - trunk/python_modules/plearn/parallel</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9454%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200809102030.m8AKUwwS027884%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9454 - trunk/python_modules/plearn/parallel">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed Sep 10 22:30:58 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002893.html">[Plearn-commits] r9453 - in trunk: plearn_learners/meta	python_modules/plearn/learners
+</A></li>
+        <LI>Next message: <A HREF="002895.html">[Plearn-commits] r9455 - trunk/python_modules/plearn/gui_tools
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2894">[ date ]</a>
+              <a href="thread.html#2894">[ thread ]</a>
+              <a href="subject.html#2894">[ subject ]</a>
+              <a href="author.html#2894">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-09-10 22:30:57 +0200 (Wed, 10 Sep 2008)
+New Revision: 9454
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+some code refactoring
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2008-09-10 19:45:14 UTC (rev 9453)
++++ trunk/python_modules/plearn/parallel/dbi.py	2008-09-10 20:30:57 UTC (rev 9454)
+@@ -813,34 +813,10 @@
+             id+=1
+             #keeps a list of the temporary files created, so that they can be deleted at will
+     def run_dag(self):
+-        if len(self.tasks)==0:
+-            return #no task to run
+-
+-        #set special environment variable
+-        if self.set_special_env:
+-            self.env+='&quot; OMP_NUM_THREADS=$$(CPUS) GOTO_NUM_THREADS=$$(CPUS) MKL_NUM_THREADS=$$(CPUS) &quot;'
+-
+-
+         condor_file = os.path.join(self.log_dir, &quot;dag.condor&quot;)
+         self.temp_files.append(condor_file)
+         condor_dat = open( condor_file, 'w' )
+ 
+-        if self.req:
+-            req = self.req
+-        else:
+-            req = &quot;True&quot;
+-        if self.targetcondorplatform == 'BOTH':
+-            req+=&quot;&amp;&amp;((Arch == \&quot;INTEL\&quot;)||(Arch == \&quot;X86_64\&quot;))&quot;
+-        else :
+-            req+=&quot;&amp;&amp;(Arch == \&quot;%s\&quot;)&quot;%(self.targetcondorplatform)
+-        if self.cpu&gt;0:
+-            req+='&amp;&amp;(target.CPUS=='+self.cpu+')'
+-
+-        if self.os:
+-            req=reduce(lambda x,y:x+' || (OpSys == &quot;'+str(y)+'&quot;)',
+-                       self.os.split(','),
+-                       req+'&amp;&amp;(False ')+&quot;)&quot;
+-
+         source_file=os.getenv(&quot;CONDOR_LOCAL_SOURCE&quot;)
+         condor_home = os.getenv('CONDOR_HOME')
+         if source_file and source_file.endswith(&quot;.cshrc&quot;):
+@@ -848,12 +824,6 @@
+         else:
+             launch_file = os.path.join(self.log_dir, 'launch.sh')
+ 
+-        if self.mem&lt;=0:
+-            try:
+-                self.mem = os.stat(self.tasks[0].commands[0].split()[0]).st_size/1024
+-            except:
+-                pass
+-
+         self.log_file = os.path.join(&quot;/tmp/bastienf/dbidispatch&quot;,self.log_dir)
+         os.system('mkdir -p ' + self.log_file)
+         self.log_file = os.path.join(self.log_file,&quot;condor.log&quot;)
+@@ -868,7 +838,7 @@
+                 getenv         = %s
+                 nice_user      = %s
+                 arguments      = $(args)
+-                ''' % (launch_file,req,
++                ''' % (launch_file,self.req,
+                        self.log_file,str(self.getenv),str(self.nice))))
+         if self.mem&gt;0:
+             #condor need value in Kb
+@@ -1006,45 +976,10 @@
+             launch_dat.close()
+             os.chmod(launch_file, 0755)
+ 
+-        utils_file = os.path.join(self.tmp_dir, 'utils.py')
+-        if not os.path.exists(utils_file):
+-            shutil.copy( get_plearndir()+
+-                         '/python_modules/plearn/parallel/utils.py', utils_file)
+-            self.temp_files.append(utils_file)
+-            os.chmod(utils_file, 0755)
+-
+-        configobj_file = os.path.join(self.tmp_dir, 'configobj.py')
+-        if not os.path.exists('configobj.py'):
+-            shutil.copy( get_plearndir()+
+-                         '/python_modules/plearn/parallel/configobj.py',  configobj_file)
+-            self.temp_files.append(configobj_file)
+-            os.chmod(configobj_file, 0755)
+-
+-        # Launch condor
+         condor_cmd = 'condor_submit_dag -maxjobs %s %s'%(str(self.nb_proc), condor_file_dag)
+-        if self.test == False:
+-            (output,error)=self.get_redirection(self.log_file + '.out',self.log_file + '.err')
+-            print &quot;[DBI] Executing: &quot; + condor_cmd
+-            for task in self.tasks:
+-                task.set_scheduled_time()
+-            self.p = Popen( condor_cmd, shell=True)
+-            self.p.wait()
+-            if self.p.returncode != 0:
+-                print &quot;[DBI] condor_submit_dag failed! We can't stard the jobs&quot;
+-        else:
+-            print &quot;[DBI] In test mode we don't launch the jobs. To to it, you need to execute '&quot;+condor_cmd+&quot;'&quot;
+-            if self.dolog:
+-                print &quot;[DBI] The scheduling time will not be logged when you will submit the condor file&quot;
++        return condor_cmd
+ 
+-    def run_all_job(self):
+-        if len(self.tasks)==0:
+-            return #no task to run
+-
+-        #set special environment variable
+-        if self.set_special_env:
+-            self.env+='&quot; OMP_NUM_THREADS=$$(CPUS) GOTO_NUM_THREADS=$$(CPUS) MKL_NUM_THREADS=$$(CPUS) &quot;'
+-
+-
++    def run_non_dag(self):
+         # create the bqsubmit.dat, with
+         condor_datas = []
+ 
+@@ -1067,22 +1002,6 @@
+         self.temp_files.append(condor_file)
+         condor_dat = open( condor_file, 'w' )
+ 
+-        if self.req:
+-            req = self.req
+-        else:
+-            req = &quot;True&quot;
+-        if self.targetcondorplatform == 'BOTH':
+-            req+=&quot;&amp;&amp;((Arch == \&quot;INTEL\&quot;)||(Arch == \&quot;X86_64\&quot;))&quot;
+-        else :
+-            req+=&quot;&amp;&amp;(Arch == \&quot;%s\&quot;)&quot;%(self.targetcondorplatform)
+-        if self.cpu&gt;0:
+-            req+='&amp;&amp;(target.CPUS=='+self.cpu+')'
+-
+-        if self.os:
+-            req=reduce(lambda x,y:x+' || (OpSys == &quot;'+str(y)+'&quot;)',
+-                       self.os.split(','),
+-                       req+'&amp;&amp;(False ')+&quot;)&quot;
+-
+         source_file=os.getenv(&quot;CONDOR_LOCAL_SOURCE&quot;)
+         condor_home = os.getenv('CONDOR_HOME')
+         if source_file and source_file.endswith(&quot;.cshrc&quot;):
+@@ -1092,11 +1011,6 @@
+ 
+         self.log_file= os.path.join(self.log_dir,&quot;condor.log&quot;)
+ 
+-        if self.mem&lt;=0:
+-            try:
+-                self.mem = os.stat(self.tasks[0].commands[0].split()[0]).st_size/1024
+-            except:
+-                pass
+         condor_dat.write( dedent('''\
+                 executable     = %s
+                 universe       = vanilla
+@@ -1106,7 +1020,7 @@
+                 log            = %s
+                 getenv         = %s
+                 nice_user      = %s
+-                ''' % (launch_file,req,
++                ''' % (launch_file,self.req,
+                        self.log_dir,
+                        self.log_dir,
+                        self.log_file,str(self.getenv),str(self.nice))))
+@@ -1235,6 +1149,61 @@
+             launch_dat.close()
+             os.chmod(launch_file, 0755)
+ 
++        return &quot;condor_submit &quot; + condor_file
++
++    def clean(self):
++        if len(self.temp_files)&gt;0:
++            sleep(20)
++            for file_name in self.temp_files:
++                try:
++                    os.remove(file_name)
++                except os.error:
++                    pass
++                pass
++
++
++    def run(self):
++        print &quot;[DBI] The Log file are under %s&quot;%self.log_dir
++
++        self.exec_pre_batch()
++
++        #set special environment variable
++        if len(self.tasks)==0:
++            return #no task to run
++
++        if self.set_special_env:
++            self.env+='&quot; OMP_NUM_THREADS=$$(CPUS) GOTO_NUM_THREADS=$$(CPUS) MKL_NUM_THREADS=$$(CPUS) &quot;'
++
++        if not self.req:
++            self.req = &quot;True&quot;
++        if self.targetcondorplatform == 'BOTH':
++            self.req+=&quot;&amp;&amp;((Arch == \&quot;INTEL\&quot;)||(Arch == \&quot;X86_64\&quot;))&quot;
++        else :
++            self.req+=&quot;&amp;&amp;(Arch == \&quot;%s\&quot;)&quot;%(self.targetcondorplatform)
++        if self.cpu&gt;0:
++            self.req+='&amp;&amp;(target.CPUS=='+self.cpu+')'
++
++        if self.os:
++            self.req=reduce(lambda x,y:x+' || (OpSys == &quot;'+str(y)+'&quot;)',
++                            self.os.split(','),
++                            self.req+'&amp;&amp;(False ')+&quot;)&quot;
++
++        #if no mem requirement added, use the executable size.
++        #todo: if they are not the same executable, take the biggest
++        if self.mem&lt;=0:
++            try:
++                self.mem = os.stat(self.tasks[0].commands[0].split()[0]).st_size/1024
++            except:
++                pass
++
++        #exec dependent code
++        if self.nb_proc != 0:
++            cmd=self.run_dag()
++        else:
++            cmd=self.run_non_dag()
++
++        #add file if needed?
++        #why are they needed?
+         utils_file = os.path.join(self.tmp_dir, 'utils.py')
+         if not os.path.exists(utils_file):
+             shutil.copy( get_plearndir()+
+@@ -1249,41 +1218,22 @@
+             self.temp_files.append(configobj_file)
+             os.chmod(configobj_file, 0755)
+ 
+-        # Launch condor
++            
++        #launch the jobs
+         if self.test == False:
+             (output,error)=self.get_redirection(self.log_file + '.out',self.log_file + '.err')
+-            print &quot;[DBI] Executing: condor_submit &quot; + condor_file
++            print &quot;[DBI] Executing: &quot; + cmd
+             for task in self.tasks:
+                 task.set_scheduled_time()
+-            self.p = Popen( 'condor_submit '+ condor_file, shell=True)
++            self.p = Popen( cmd, shell=True)
+             self.p.wait()
+             if self.p.returncode != 0:
+-                print &quot;[DBI] condor_submit failed! We can't stard the jobs&quot;
++                print &quot;[DBI] submission failed! We can't stard the jobs&quot;
+         else:
+-            print &quot;[DBI] Created condor file: &quot; + condor_file
++            print &quot;[DBI] In test mode we don't launch the jobs. To to it, you need to execute '&quot;+cmd+&quot;'&quot;
+             if self.dolog:
+                 print &quot;[DBI] The scheduling time will not be logged when you will submit the condor file&quot;
+ 
+-    def clean(self):
+-        if len(self.temp_files)&gt;0:
+-            sleep(20)
+-            for file_name in self.temp_files:
+-                try:
+-                    os.remove(file_name)
+-                except os.error:
+-                    pass
+-                pass
+-
+-
+-    def run(self):
+-        print &quot;[DBI] The Log file are under %s&quot;%self.log_dir
+-
+-        self.exec_pre_batch()
+-        if self.nb_proc != 0:
+-            self.run_dag()
+-        else:
+-            self.run_all_job()
+-
+         self.exec_post_batch()
+ 
+     def wait(self):
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002893.html">[Plearn-commits] r9453 - in trunk: plearn_learners/meta	python_modules/plearn/learners
+</A></li>
+	<LI>Next message: <A HREF="002895.html">[Plearn-commits] r9455 - trunk/python_modules/plearn/gui_tools
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2894">[ date ]</a>
+              <a href="thread.html#2894">[ thread ]</a>
+              <a href="subject.html#2894">[ subject ]</a>
+              <a href="author.html#2894">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

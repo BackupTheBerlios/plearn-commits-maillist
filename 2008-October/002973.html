@@ -1,0 +1,189 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9533 - in trunk: . python_modules/plearn/pymake
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9533%20-%20in%20trunk%3A%20.%20python_modules/plearn/pymake&In-Reply-To=%3C200810081926.m98JQW7J021169%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002972.html">
+   <LINK REL="Next"  HREF="002974.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9533 - in trunk: . python_modules/plearn/pymake</H1>
+    <B>plearner at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9533%20-%20in%20trunk%3A%20.%20python_modules/plearn/pymake&In-Reply-To=%3C200810081926.m98JQW7J021169%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9533 - in trunk: . python_modules/plearn/pymake">plearner at mail.berlios.de
+       </A><BR>
+    <I>Wed Oct  8 21:26:32 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002972.html">[Plearn-commits] r9532 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="002974.html">[Plearn-commits] r9534 - in trunk: python_modules/plearn/vmat	scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2973">[ date ]</a>
+              <a href="thread.html#2973">[ thread ]</a>
+              <a href="subject.html#2973">[ subject ]</a>
+              <a href="author.html#2973">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: plearner
+Date: 2008-10-08 21:26:31 +0200 (Wed, 08 Oct 2008)
+New Revision: 9533
+
+Modified:
+   trunk/pymake.config.model
+   trunk/python_modules/plearn/pymake/pymake.py
+Log:
+Progress on supporting compilation of plearn as python extension on Mac OS X.
+Also slight refactoring of pymake.py
+Now make_plearn_python_ext produces an apparently valid .so and, wonder of wonders, import plearn.pyext no longer crashes.
+Its workings remain however to be tested (in particular in conjunction with numpy arrays).
+
+
+
+Modified: trunk/pymake.config.model
+===================================================================
+--- trunk/pymake.config.model	2008-10-08 18:44:06 UTC (rev 9532)
++++ trunk/pymake.config.model	2008-10-08 19:26:31 UTC (rev 9533)
+@@ -419,7 +419,7 @@
+         optionalLibrary( name = 'python',
+                      triggers = '[Pp]ython*',
+                      includedirs = numpy_includedirs,
+-                     linkeroptions = ( '-L%s -lnumarray ' % numpy_site_packages + 
++                     linkeroptions = ( # '-L%s -lnumarray ' % numpy_site_packages + 
+                                        '-L%s/python%s/config -lpython%s ' % (python_lib_root, python_version, python_version) +
+                                        '' )
+                      )
+
+Modified: trunk/python_modules/plearn/pymake/pymake.py
+===================================================================
+--- trunk/python_modules/plearn/pymake/pymake.py	2008-10-08 18:44:06 UTC (rev 9532)
++++ trunk/python_modules/plearn/pymake/pymake.py	2008-10-08 19:26:31 UTC (rev 9533)
+@@ -83,13 +83,18 @@
+                  Note: SAS does not seem to like the -g option in
+                  g++, thus one should use -opt if the dll is meant
+                  to be used in SAS.
+-  -m32: force compilation in 32bits mode.
+-        Works on AMD64 (linux-x86_64) and linux-i386 machines, probably also
+-        on ia64. Allows to compile on .pymake/linux-x86_64.hosts,
+-        linux-ia64.hosts and linux-i386.hosts.
+-  -so:  create a shared object (.so) instead of an executable file.
+-  -pyso: same as -so, but for python extension modules (does not add
+-         'lib' before the .so name.)
++  -m32:  force compilation in 32bits mode.
++         Works on AMD64 (linux-x86_64) and linux-i386 machines, probably also
++         on ia64. Allows to compile on .pymake/linux-x86_64.hosts,
++         linux-ia64.hosts and linux-i386.hosts.
++  -so:   On linux this will create a shared object (libxxx.so) instead of an executable file.
++         On Mac OS X darwin this will create a libxxx.dylib (using the -dylib option
++         to produce a mach-o shared library that has file type MH_DYLIB)
++  -pyso: Similar to -so, but for python extension modules
++         This will create a .so (both on linux and Mac OS X darwin) but without
++         preprending 'lib' to the .so name.
++         On Mac OS X darwin it uses options -bundle -flat_namespace options
++         to produce a mach-o bundle that has file type MH_BUNDLE         
+   -static: produce a statically linked executable.
+ 
+ Options that will not affect the final compiled file:
+@@ -1142,6 +1147,25 @@
+         target_file_info.launch_dll_wrapping()
+ 
+ 
++def get_so_options():
++    &quot;&quot;&quot;Returns the linker options related to shared libraries&quot;&quot;&quot;
++    so_options = &quot;&quot;    
++    if create_so:
++        if platform=='darwin':
++            so_options = &quot; -dylib -flat_namespace &quot;            
++        else:
++            so_options = &quot; -shared &quot;
++    elif create_pyso:
++        if platform=='darwin':
++            so_options = &quot; -bundle -flat_namespace &quot;            
++        else:
++            so_options = &quot; -shared &quot;
++    elif static_linking:                
++        so_options = &quot; -static &quot;
++
++    return so_options
++
++
+ ###  Special calling options, that don't actually compile anything
+ 
+ ## this function takes a target, and extract all the sources necessary
+@@ -1162,11 +1186,9 @@
+ 
+     linker = default_linker
+     linkeroptions = &quot;&quot;
+-    so_options = &quot;&quot;
++    so_options = get_so_options()
+     if force_32bits:
+         linkeroptions = linkeroptions + ' -m32'
+-    if create_so or create_pyso:
+-        so_options = &quot; -shared &quot;
+     for opt in options:
+         optdef = pymake_options_defs[opt]
+         if optdef.linkeroptions:
+@@ -1729,8 +1751,11 @@
+                 self.corresponding_def_file = join(self.filedir, self.filebase+'.def')
+ 
+             elif create_so:
+-                self.corresponding_output = join(self.filedir, objsdir, 'lib'+self.filebase+'.so')
+-                
++                if platform=='darwin':
++                    self.corresponding_output = join(self.filedir, objsdir, 'lib'+self.filebase+'.dylib')
++                else:
++                    self.corresponding_output = join(self.filedir, objsdir, 'lib'+self.filebase+'.so')
++                    
+             elif create_pyso:
+                 self.corresponding_output = join(self.filedir, objsdir, self.filebase+'.so')
+ 
+@@ -2330,13 +2355,9 @@
+             self.objsfilelist= map(local_filepath, self.objsfilelist)
+         linker = default_linker
+         linkeroptions = &quot;&quot;
+-        so_options = &quot;&quot;
++        so_options = get_so_options()
+         if force_32bits:
+             linkeroptions = linkeroptions + ' -m32'
+-        if create_so or create_pyso:
+-            so_options = &quot; -shared &quot;
+-        elif static_linking:
+-            so_options = &quot; -static &quot;
+         for opt in options:
+             optdef = pymake_options_defs[opt]
+             if optdef.linkeroptions:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002972.html">[Plearn-commits] r9532 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="002974.html">[Plearn-commits] r9534 - in trunk: python_modules/plearn/vmat	scripts
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2973">[ date ]</a>
+              <a href="thread.html#2973">[ thread ]</a>
+              <a href="subject.html#2973">[ subject ]</a>
+              <a href="author.html#2973">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,210 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9225 - trunk/plearn/python
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9225%20-%20trunk/plearn/python&In-Reply-To=%3C200807101851.m6AIpeIt014656%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002673.html">
+   <LINK REL="Next"  HREF="002675.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9225 - trunk/plearn/python</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9225%20-%20trunk/plearn/python&In-Reply-To=%3C200807101851.m6AIpeIt014656%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9225 - trunk/plearn/python">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Thu Jul 10 20:51:40 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002673.html">[Plearn-commits] r9224 - trunk/scripts
+</A></li>
+        <LI>Next message: <A HREF="002675.html">[Plearn-commits] r9226 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2674">[ date ]</a>
+              <a href="thread.html#2674">[ thread ]</a>
+              <a href="subject.html#2674">[ subject ]</a>
+              <a href="author.html#2674">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2008-07-10 20:51:39 +0200 (Thu, 10 Jul 2008)
+New Revision: 9225
+
+Modified:
+   trunk/plearn/python/PythonObjectWrapper.cc
+   trunk/plearn/python/PythonObjectWrapper.h
+Log:
+- added support for Array&lt;T&gt; and null VMats in PLearn&lt;-&gt;Python bridge
+
+
+
+Modified: trunk/plearn/python/PythonObjectWrapper.cc
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.cc	2008-07-10 16:21:00 UTC (rev 9224)
++++ trunk/plearn/python/PythonObjectWrapper.cc	2008-07-10 18:51:39 UTC (rev 9225)
+@@ -232,11 +232,14 @@
+     PLASSERT( pyobj );
+     PyObject* pyarr0= PyArray_CheckFromAny(pyobj, NULL,
+                                            2, 2, NPY_CARRAY_RO, Py_None);
++    if(!pyarr0)
++        PLPythonConversionError(&quot;ConvertFromPyObject&lt;Mat&gt;&quot;, pyobj,
++                                print_traceback);
+     PyObject* pyarr= 
+         PyArray_CastToType(reinterpret_cast&lt;PyArrayObject*&gt;(pyarr0),
+                            PyArray_DescrFromType(PL_NPY_REAL), 0);
+     Py_XDECREF(pyarr0);
+-    if (! pyarr)
++    if(!pyarr)
+         PLPythonConversionError(&quot;ConvertFromPyObject&lt;Mat&gt;&quot;, pyobj,
+                                 print_traceback);
+     m.resize(PyArray_DIM(pyarr,0), PyArray_DIM(pyarr,1));
+@@ -258,6 +261,8 @@
+                                                        bool print_traceback)
+ {
+     PLASSERT(pyobj);
++    if(pyobj == Py_None)
++        return 0;
+     if(PyObject_HasAttrString(pyobj, &quot;_cptr&quot;))
+         return static_cast&lt;VMatrix*&gt;(
+             ConvertFromPyObject&lt;Object*&gt;::convert(pyobj, print_traceback));
+@@ -507,6 +512,8 @@
+     Object* obj= args_tvec[0];
+     args_tvec.subVecSelf(1, args_tvec.size()-1);
+ 
++    //perr &lt;&lt; &quot;REMOTE METHOD: &quot; &lt;&lt; obj-&gt;classname() &lt;&lt; &quot;::&quot; &lt;&lt; tramp-&gt;documentation().name() &lt;&lt; endl;
++
+     gc_collect1();
+ 
+     //call, catch and send any errors to python
+
+Modified: trunk/plearn/python/PythonObjectWrapper.h
+===================================================================
+--- trunk/plearn/python/PythonObjectWrapper.h	2008-07-10 16:21:00 UTC (rev 9224)
++++ trunk/plearn/python/PythonObjectWrapper.h	2008-07-10 18:51:39 UTC (rev 9225)
+@@ -412,6 +412,12 @@
+ };
+ 
+ template &lt;class T&gt;
++struct ConvertFromPyObject&lt; Array&lt;T&gt; &gt;
++{
++    static Array&lt;T&gt; convert(PyObject*, bool print_traceback);
++};
++
++template &lt;class T&gt;
+ struct ConvertFromPyObject&lt;TMat&lt;T&gt; &gt;
+ {
+     static TMat&lt;T&gt; convert(PyObject*, bool print_traceback);
+@@ -653,6 +659,10 @@
+ struct ConvertToPyObject&lt;tuple&lt;T,U,V,W,X,Y,Z&gt; &gt;
+ { static PyObject* newPyObject(const tuple&lt;T, U, V, W, X, Y, Z&gt;&amp;); };
+ 
++//! Generic array: create a Python list of those objects recursively
++template &lt;class T&gt; struct ConvertToPyObject&lt;Array&lt;T&gt; &gt;
++{ static PyObject* newPyObject(const Array&lt;T&gt;&amp;); };
++
+ //! Generic vector: create a Python list of those objects recursively
+ template &lt;class T&gt; struct ConvertToPyObject&lt;TVec&lt;T&gt; &gt;
+ { static PyObject* newPyObject(const TVec&lt;T&gt;&amp;); };
+@@ -1024,6 +1034,48 @@
+ PyObject* convertArrayCheck(PyObject* pyobj, int numpy_type, int ndim, bool print_traceback);
+ 
+ template &lt;class T&gt;
++Array&lt;T&gt; ConvertFromPyObject&lt;Array&lt;T&gt; &gt;::convert(PyObject* pyobj,
++                                                  bool print_traceback)
++{
++    PLASSERT(pyobj);
++
++    // Here, we support both Python Tuples and Lists
++    if(PyTuple_Check(pyobj)) {
++        // Tuple case
++        int size = PyTuple_GET_SIZE(pyobj);
++        Array&lt;T&gt; v(size);
++        for (int i=0 ; i&lt;size ; ++i) {
++            PyObject* elem_i = PyTuple_GET_ITEM(pyobj, i);
++            v[i] = ConvertFromPyObject&lt;T&gt;::convert(elem_i, print_traceback);
++        }
++        return v;
++    }
++    else if (PyList_Check(pyobj)) {
++        // List case
++        int size = PyList_GET_SIZE(pyobj);
++        Array&lt;T&gt; v(size);
++        for (int i=0 ; i&lt;size ; ++i) {
++            PyObject* elem_i = PyList_GET_ITEM(pyobj, i);
++            v[i] = ConvertFromPyObject&lt;T&gt;::convert(elem_i, print_traceback);
++        }
++        return v;
++    }
++    else if (PyObject* pyarr= convertArrayCheck(pyobj, numpyType&lt;T&gt;(), 1, print_traceback))
++    {
++        int sz= PyArray_DIM(pyarr,0);
++        Array&lt;T&gt; v(sz);
++        v.copyFrom(static_cast&lt;T*&gt;(PyArray_DATA(pyarr)), sz);
++        Py_XDECREF(pyarr);
++        return v;
++    }
++    else
++        PLPythonConversionError(&quot;ConvertFromPyObject&lt;Array&lt;T&gt; &gt;&quot;, pyobj,
++                                print_traceback);
++
++    return Array&lt;T&gt;();                        // Shut up compiler
++}
++
++template &lt;class T&gt;
+ TVec&lt;T&gt; ConvertFromPyObject&lt; TVec&lt;T&gt; &gt;::convert(PyObject* pyobj,
+                                                 bool print_traceback)
+ {
+@@ -1257,6 +1309,19 @@
+ }
+ 
+ template &lt;class T&gt;
++PyObject* ConvertToPyObject&lt;Array&lt;T&gt; &gt;::newPyObject(const Array&lt;T&gt;&amp; data)
++{
++    PyObject* newlist = PyList_New(data.size());
++    for (int i=0, n=data.size() ; i&lt;n ; ++i) {
++        // Since PyList_SET_ITEM steals the reference to the item being set,
++        // one does not need to Py_XDECREF the inserted string as was required
++        // for the PyArrayObject code above...
++        PyList_SET_ITEM(newlist, i, ConvertToPyObject&lt;T&gt;::newPyObject(data[i]));
++    }
++    return newlist;
++}
++
++template &lt;class T&gt;
+ PyObject* ConvertToPyObject&lt;TVec&lt;T&gt; &gt;::newPyObject(const TVec&lt;T&gt;&amp; data)
+ {
+     PyObject* newlist = PyList_New(data.size());
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002673.html">[Plearn-commits] r9224 - trunk/scripts
+</A></li>
+	<LI>Next message: <A HREF="002675.html">[Plearn-commits] r9226 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2674">[ date ]</a>
+              <a href="thread.html#2674">[ thread ]</a>
+              <a href="subject.html#2674">[ subject ]</a>
+              <a href="author.html#2674">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

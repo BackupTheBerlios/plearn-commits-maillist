@@ -1,0 +1,629 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9269 -	trunk/plearn_learners/classifiers/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9269%20-%0A%09trunk/plearn_learners/classifiers/EXPERIMENTAL&In-Reply-To=%3C200807181921.m6IJLuDO012957%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002717.html">
+   <LINK REL="Next"  HREF="002719.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9269 -	trunk/plearn_learners/classifiers/EXPERIMENTAL</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9269%20-%0A%09trunk/plearn_learners/classifiers/EXPERIMENTAL&In-Reply-To=%3C200807181921.m6IJLuDO012957%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9269 -	trunk/plearn_learners/classifiers/EXPERIMENTAL">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Fri Jul 18 21:21:56 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002717.html">[Plearn-commits] r9268 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="002719.html">[Plearn-commits] r9270 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2718">[ date ]</a>
+              <a href="thread.html#2718">[ thread ]</a>
+              <a href="subject.html#2718">[ subject ]</a>
+              <a href="author.html#2718">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-07-18 21:21:55 +0200 (Fri, 18 Jul 2008)
+New Revision: 9269
+
+Added:
+   trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.cc
+   trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.h
+Log:
+New simple ensemble of logistic classifiers to have a quick easy-to-use benchmark
+
+Added: trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.cc
+===================================================================
+--- trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.cc	2008-07-18 18:38:29 UTC (rev 9268)
++++ trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.cc	2008-07-18 19:21:55 UTC (rev 9269)
+@@ -0,0 +1,351 @@
++// -*- C++ -*-
++
++// KFoldLogisticClassifier.cc
++//
++// Copyright (C) 2008 Olivier Delalleau
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Olivier Delalleau
++
++/*! \file KFoldLogisticClassifier.cc */
++
++
++#include &quot;KFoldLogisticClassifier.h&quot;
++#include &lt;plearn/opt/GradientOptimizer.h&gt;
++#include &lt;plearn/vmat/ExplicitSplitter.h&gt;
++#include &lt;plearn/vmat/KFoldSplitter.h&gt;
++#include &lt;plearn_learners/generic/NNet.h&gt;
++#include &lt;plearn_learners/hyper/EarlyStoppingOracle.h&gt;
++#include &lt;plearn_learners/hyper/HyperLearner.h&gt;
++#include &lt;plearn_learners/hyper/HyperOptimize.h&gt;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    KFoldLogisticClassifier,
++    &quot;Average of multiple logistic classifiers from K-Fold split of the data.&quot;,
++    &quot;The training set is split into 'kfold' folds, and we train one logistic\n&quot;
++    &quot;classifier on each fold (whose learning is controlled by early stopping\n&quot;
++    &quot;based on the validation NLL).\n&quot;
++    &quot;The output of this classifier is then the average of the outputs of the\n&quot;
++    &quot;underlying logistic classifiers.&quot;
++);
++
++/////////////////////////////
++// KFoldLogisticClassifier //
++/////////////////////////////
++KFoldLogisticClassifier::KFoldLogisticClassifier():
++    kfold(5),
++    learning_rate(1e-3),
++    max_degraded_steps(100),
++    max_epochs(1000),
++    step_size(1)
++{
++}
++
++////////////////////
++// declareOptions //
++////////////////////
++void KFoldLogisticClassifier::declareOptions(OptionList&amp; ol)
++{
++    // Build options.
++
++    declareOption(ol, &quot;kfold&quot;, &amp;KFoldLogisticClassifier::kfold,
++                  OptionBase::buildoption,
++        &quot;Number of splits of the data (and of classifiers being trained).&quot;);
++
++    declareOption(ol, &quot;learning_rate&quot;, &amp;KFoldLogisticClassifier::learning_rate,
++                  OptionBase::buildoption,
++        &quot;Learning rate in the logistic classifiers.&quot;);
++
++    declareOption(ol, &quot;max_degraded_steps&quot;,
++                  &amp;KFoldLogisticClassifier::max_degraded_steps,
++                  OptionBase::buildoption,
++        &quot;Maximum number of optimization steps performed after finding a\n&quot;
++        &quot;candidate for early stopping.&quot;);
++
++    declareOption(ol, &quot;max_epochs&quot;,
++                  &amp;KFoldLogisticClassifier::max_epochs,
++                  OptionBase::buildoption,
++        &quot;Maximum number of epochs when training logistic classifiers\n&quot;);
++
++    declareOption(ol, &quot;step_size&quot;,
++                  &amp;KFoldLogisticClassifier::step_size,
++                  OptionBase::buildoption,
++        &quot;Measure performance every 'step_size' epochs.&quot;);
++
++    // Learnt options.
++
++    declareOption(ol, &quot;log_net&quot;, &amp;KFoldLogisticClassifier::log_net,
++                  OptionBase::learntoption,
++        &quot;Underlying logistic classifiers.&quot;);
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++////////////
++// build_ //
++////////////
++void KFoldLogisticClassifier::build_()
++{
++}
++
++///////////
++// build //
++///////////
++void KFoldLogisticClassifier::build()
++{
++    inherited::build();
++    build_();
++}
++
++/////////////////////////////////
++// makeDeepCopyFromShallowCopy //
++/////////////////////////////////
++void KFoldLogisticClassifier::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    // ### Call deepCopyField on all &quot;pointer-like&quot; fields
++    // ### that you wish to be deepCopied rather than
++    // ### shallow-copied.
++    // ### ex:
++    // deepCopyField(trainvec, copies);
++
++    // ### Remove this line when you have fully implemented this method.
++    PLERROR(&quot;KFoldLogisticClassifier::makeDeepCopyFromShallowCopy not fully (correctly) implemented yet!&quot;);
++}
++
++////////////////
++// outputsize //
++////////////////
++int KFoldLogisticClassifier::outputsize() const
++{
++    if (log_net.isEmpty())
++        return -1;
++    else
++        return log_net[0]-&gt;outputsize();
++}
++
++////////////
++// forget //
++////////////
++void KFoldLogisticClassifier::forget()
++{
++    //! (Re-)initialize the PLearner in its fresh state (that state may depend
++    //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
++    //! a fresh learner!)
++    /*!
++      A typical forget() method should do the following:
++      - call inherited::forget() to initialize its random number generator
++        with the 'seed' option
++      - initialize the learner's parameters, using this random generator
++      - stage = 0
++    */
++    inherited::forget();
++    log_net.resize(0);
++}
++
++///////////
++// train //
++///////////
++void KFoldLogisticClassifier::train()
++{
++    if (!initTrain())
++        return;
++
++    PLCHECK( stage == 0 );
++
++    // Find out the number of classes in the dataset.
++    TVec&lt;bool&gt; all_classes;
++    Vec input, target;
++    real weight;
++    PLCHECK(train_set-&gt;targetsize() == 1);
++    for (int i = 0; i &lt; train_set-&gt;length(); i++) {
++        train_set-&gt;getExample(i, input, target, weight);
++        int t = int(round(target[0]));
++        if (t &gt;= all_classes.length()) {
++            int n_to_add = t - all_classes.length() + 1;
++            for (int j = 0; j &lt; n_to_add; j++)
++                all_classes.append(false);
++        }
++        all_classes[t] = true;
++    }
++    int n_classes = all_classes.length();
++    PLCHECK(n_classes &gt;= 2);
++    PLCHECK(all_classes.find(false) == -1);
++
++    // Split the data.
++    PP&lt;KFoldSplitter&gt; splitter = new KFoldSplitter();
++    splitter-&gt;K = this-&gt;kfold;
++    splitter-&gt;build();
++    splitter-&gt;setDataSet(train_set);
++
++    // Create logistic regressors.
++    log_net.resize(0);
++    string cost_func;
++    for (int k = 0; k &lt; kfold; k++) {
++        PP&lt;GradientOptimizer&gt; opt = new GradientOptimizer();
++        opt-&gt;start_learning_rate = this-&gt;learning_rate;
++        opt-&gt;build();
++        PP&lt;NNet&gt; nnet = new NNet();
++        nnet-&gt;optimizer = opt;
++        nnet-&gt;seed_ = this-&gt;seed_;
++        if (n_classes == 2) {
++            cost_func = &quot;stable_cross_entropy&quot;;
++            nnet-&gt;output_transfer_func = &quot;sigmoid&quot;;
++            nnet-&gt;noutputs = 1;
++        } else {
++            cost_func = &quot;NLL&quot;;
++            nnet-&gt;output_transfer_func = &quot;softmax&quot;;
++            nnet-&gt;noutputs = n_classes;
++        }
++        nnet-&gt;cost_funcs = TVec&lt;string&gt;(1, cost_func);
++        nnet-&gt;build();
++        log_net.append(get_pointer(nnet));
++    }
++
++    // Train logistic regressors.
++    for (int k = 0; k &lt; log_net.length(); k++) {
++        // Initialize the hyper-learning framework for early stopping.
++        // Splitter.
++        PP&lt;ExplicitSplitter&gt; hsplitter = new ExplicitSplitter();
++        hsplitter-&gt;splitsets = TMat&lt;VMat&gt;(1, 2);
++        hsplitter-&gt;splitsets(0) &lt;&lt; splitter-&gt;getSplit(k);
++        hsplitter-&gt;build();
++        // PTester.
++        PP&lt;PTester&gt; htester = new PTester();
++        htester-&gt;splitter = hsplitter;
++        string cost = &quot;E[test.E[&quot; + cost_func + &quot;]]&quot;;
++        htester-&gt;setStatNames(TVec&lt;string&gt;(1, cost), false);
++        htester-&gt;build();
++        // Oracle.
++        PP&lt;EarlyStoppingOracle&gt; early_stop = new EarlyStoppingOracle();
++        early_stop-&gt;max_degraded_steps = this-&gt;max_degraded_steps;
++        early_stop-&gt;range = TVec&lt;double&gt;(3, 1);
++        early_stop-&gt;range[1] = this-&gt;max_epochs + 1;
++        early_stop-&gt;range[2] = this-&gt;step_size;
++        early_stop-&gt;build();
++        // Strategy.
++        PP&lt;HyperOptimize&gt; strategy = new HyperOptimize();
++        strategy-&gt;oracle = early_stop;
++        strategy-&gt;which_cost = &quot;0&quot;;
++        strategy-&gt;build();
++        // HyperLearner.
++        PP&lt;HyperLearner&gt; hyper = new HyperLearner();
++        hyper-&gt;dont_restart_upon_change = TVec&lt;string&gt;(1, &quot;nstages&quot;);
++        hyper-&gt;learner_ = log_net[k];
++        hyper-&gt;option_fields = hyper-&gt;dont_restart_upon_change;
++        hyper-&gt;save_final_learner = false;
++        hyper-&gt;strategy = TVec&lt; PP&lt;HyperCommand&gt; &gt;(1, get_pointer(strategy));
++        hyper-&gt;tester = htester;
++        hyper-&gt;build();
++        // Perform training.
++        hyper-&gt;train();
++        // Make sure we keep only the best model.
++        log_net[k] = hyper-&gt;getLearner();
++    }
++    this-&gt;stage = 1;
++}
++
++///////////////////
++// computeOutput //
++///////////////////
++void KFoldLogisticClassifier::computeOutput(const Vec&amp; input, Vec&amp; output) const
++{
++    PLCHECK(!log_net.isEmpty());
++    log_net[0]-&gt;computeOutput(input, output);
++    store_output.resize(output.length());
++    for (int k = 1; k &lt; log_net.length(); k++) {
++        log_net[k]-&gt;computeOutput(input, store_output);
++        output += store_output;
++    }
++    output /= real(log_net.length());
++}
++
++/////////////////////////////
++// computeCostsFromOutputs //
++/////////////////////////////
++void KFoldLogisticClassifier::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                           const Vec&amp; target, Vec&amp; costs) const
++{
++    int t = int(round(target[0]));
++    costs.resize(1);
++    if (output.length() == 1) {
++        // Binary classification.
++        if (t == 1)
++            costs[0] = - pl_log(output[0]);
++        else {
++            PLASSERT(t == 0);
++            costs[0] = - pl_log(1 - output[0]);
++        }
++    } else {
++        // More than two targets.
++        PLASSERT(is_equal(sum(output), 1));
++        costs[0] = - pl_log(output[t]);
++    }
++}
++
++//////////////////////
++// getTestCostNames //
++//////////////////////
++TVec&lt;string&gt; KFoldLogisticClassifier::getTestCostNames() const
++{
++    static TVec&lt;string&gt; costs;
++    if (costs.isEmpty())
++        costs.append(&quot;nll&quot;);
++    return costs;
++}
++
++///////////////////////
++// getTrainCostNames //
++///////////////////////
++TVec&lt;string&gt; KFoldLogisticClassifier::getTrainCostNames() const
++{
++    return TVec&lt;string&gt;();
++}
++
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.h
+===================================================================
+--- trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.h	2008-07-18 18:38:29 UTC (rev 9268)
++++ trunk/plearn_learners/classifiers/EXPERIMENTAL/KFoldLogisticClassifier.h	2008-07-18 19:21:55 UTC (rev 9269)
+@@ -0,0 +1,195 @@
++// -*- C++ -*-
++
++// KFoldLogisticClassifier.h
++//
++// Copyright (C) 2008 Olivier Delalleau
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Olivier Delalleau
++
++/*! \file KFoldLogisticClassifier.h */
++
++
++#ifndef KFoldLogisticClassifier_INC
++#define KFoldLogisticClassifier_INC
++
++#include &lt;plearn_learners/generic/PLearner.h&gt;
++
++namespace PLearn {
++
++/**
++ * The first sentence should be a BRIEF DESCRIPTION of what the class does.
++ * Place the rest of the class programmer documentation here.  Doxygen supports
++ * Javadoc-style comments.  See <A HREF="http://www.doxygen.org/manual.html">http://www.doxygen.org/manual.html</A>
++ *
++ * @todo Write class to-do's here if there are any.
++ *
++ * @deprecated Write deprecated stuff here if there is any.  Indicate what else
++ * should be used instead.
++ */
++class KFoldLogisticClassifier : public PLearner
++{
++    typedef PLearner inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    int kfold;
++    real learning_rate;
++    int max_degraded_steps;
++    int max_epochs;
++    int step_size;
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    // ### Make sure the implementation in the .cc
++    // ### initializes all fields to reasonable default values.
++    KFoldLogisticClassifier();
++
++
++    //#####  PLearner Member Functions  #######################################
++
++    //! Returns the size of this learner's output, (which typically
++    //! may depend on its inputsize(), targetsize() and set options).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual int outputsize() const;
++
++    //! (Re-)initializes the PLearner in its fresh state (that state may depend
++    //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
++    //! a fresh learner!).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void forget();
++
++    //! The role of the train method is to bring the learner up to
++    //! stage==nstages, updating the train_stats collector with training costs
++    //! measured on-line in the process.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void train();
++
++    //! Computes the output from the input.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
++
++    //! Computes the costs from already computed output.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                         const Vec&amp; target, Vec&amp; costs) const;
++
++    //! Returns the names of the costs computed by computeCostsFromOutpus (and
++    //! thus the test method).
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual TVec&lt;std::string&gt; getTestCostNames() const;
++
++    //! Returns the names of the objective costs that the train method computes
++    //! and for which it updates the VecStatsCollector train_stats.
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual TVec&lt;std::string&gt; getTrainCostNames() const;
++
++
++    // *** SUBCLASS WRITING: ***
++    // While in general not necessary, in case of particular needs
++    // (efficiency concerns for ex) you may also want to overload
++    // some of the following methods:
++    // virtual void computeOutputAndCosts(const Vec&amp; input, const Vec&amp; target,
++    //                                    Vec&amp; output, Vec&amp; costs) const;
++    // virtual void computeCostsOnly(const Vec&amp; input, const Vec&amp; target,
++    //                               Vec&amp; costs) const;
++    // virtual void test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
++    //                   VMat testoutputs=0, VMat testcosts=0) const;
++    // virtual int nTestCosts() const;
++    // virtual int nTrainCosts() const;
++    // virtual void resetInternalState();
++    // virtual bool isStatefulLearner() const;
++
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    // ### If your class is not instantiatable (it has pure virtual methods)
++    // ### you should replace this by PLEARN_DECLARE_ABSTRACT_OBJECT_METHODS
++    PLEARN_DECLARE_OBJECT(KFoldLogisticClassifier);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++
++    //! Used to store outputs.
++    mutable Vec store_output;
++
++    //#####  Protected Options  ###############################################
++
++    TVec&lt; PP&lt;PLearner&gt; &gt; log_net;
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    // (PLEASE IMPLEMENT IN .cc)
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    // (PLEASE IMPLEMENT IN .cc)
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(KFoldLogisticClassifier);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002717.html">[Plearn-commits] r9268 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="002719.html">[Plearn-commits] r9270 - trunk/plearn_learners/regressors
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2718">[ date ]</a>
+              <a href="thread.html#2718">[ thread ]</a>
+              <a href="subject.html#2718">[ subject ]</a>
+              <a href="author.html#2718">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

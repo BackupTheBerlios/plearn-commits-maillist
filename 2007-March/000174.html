@@ -1,0 +1,1119 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6725 - in trunk: commands/PLearnCommands	plearn/base plearn/io plearn/math plearn/misc	plearn_learners/generic
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6725%20-%20in%20trunk%3A%20commands/PLearnCommands%0A%09plearn/base%20plearn/io%20plearn/math%20plearn/misc%0A%09plearn_learners/generic&In-Reply-To=%3C200703092354.l29NsbPu002686%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000173.html">
+   <LINK REL="Next"  HREF="000175.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6725 - in trunk: commands/PLearnCommands	plearn/base plearn/io plearn/math plearn/misc	plearn_learners/generic</H1>
+    <B>saintmlx at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6725%20-%20in%20trunk%3A%20commands/PLearnCommands%0A%09plearn/base%20plearn/io%20plearn/math%20plearn/misc%0A%09plearn_learners/generic&In-Reply-To=%3C200703092354.l29NsbPu002686%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6725 - in trunk: commands/PLearnCommands	plearn/base plearn/io plearn/math plearn/misc	plearn_learners/generic">saintmlx at mail.berlios.de
+       </A><BR>
+    <I>Sat Mar 10 00:54:37 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000173.html">[Plearn-commits] r6724 - in	trunk/plearn/math/test/VecStatsCollector/.pytest/PL_constant_regressor_script/expected_results/expdir:	. Split0 Split0/test1_confidence.pmat.metadata	Split0/test1_costs.pmat.metadata	Split0/test1_outputs.pmat.metadata global_stats.pmat.metadata	split_stats.pmat.metadata
+</A></li>
+        <LI>Next message: <A HREF="000175.html">[Plearn-commits] r6726 - in trunk: plearn/base plearn/math	plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#174">[ date ]</a>
+              <a href="thread.html#174">[ thread ]</a>
+              <a href="subject.html#174">[ subject ]</a>
+              <a href="author.html#174">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: saintmlx
+Date: 2007-03-10 00:54:32 +0100 (Sat, 10 Mar 2007)
+New Revision: 6725
+
+Modified:
+   trunk/commands/PLearnCommands/plearn_main.cc
+   trunk/plearn/base/Object.cc
+   trunk/plearn/base/Object.h
+   trunk/plearn/base/Option.h
+   trunk/plearn/base/OptionBase.cc
+   trunk/plearn/base/OptionBase.h
+   trunk/plearn/base/TypeFactory.cc
+   trunk/plearn/base/diff.h
+   trunk/plearn/io/PStream.cc
+   trunk/plearn/io/PStream.h
+   trunk/plearn/math/ObservationWindow.cc
+   trunk/plearn/math/ObservationWindow.h
+   trunk/plearn/math/StatsCollector.cc
+   trunk/plearn/math/StatsCollector.h
+   trunk/plearn/math/TMat_impl.h
+   trunk/plearn/math/VecStatsCollector.cc
+   trunk/plearn/math/VecStatsCollector.h
+   trunk/plearn/misc/PLearnServer.cc
+   trunk/plearn/misc/RemotePLearnServer.cc
+   trunk/plearn_learners/generic/NNet.cc
+   trunk/plearn_learners/generic/PLearner.cc
+Log:
+- fixed merge of VecStatsCollectors with observation windows
+- added remotetransmit flag to Options
+- use remotetransmit in streams, newwrite and [Remote]PLearnServer
+- added OptionLevels to Options, so that advanced options can
+  be hidden for beginners; only used in NNet as a test so far.
+
+
+
+Modified: trunk/commands/PLearnCommands/plearn_main.cc
+===================================================================
+--- trunk/commands/PLearnCommands/plearn_main.cc	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/commands/PLearnCommands/plearn_main.cc	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -161,6 +161,16 @@
+     // set verbosity level now so that it is valid for the rest of global_options
+     PL_Log::instance().verbosity( verbosity_value );
+ 
++    int option_level_pos= findpos(command_line, &quot;--option-level&quot;);
++    int option_level_value_pos= -1;
++    if (option_level_pos != -1)
++    {
++        option_level_value_pos= option_level_pos+1;
++        if(option_level_value_pos &gt;= argc)
++            PLERROR(&quot;Option --option-level must be followed by an OptionLevel.&quot;);
++        OptionBase::setCurrentOptionLevel(OptionBase::optionLevelFromString(command_line[option_level_value_pos]));
++    }
++
+     // Option to enable logging for the specified modules, specified as
+     // --enable-logging module1,module2,module3,... i.e. as a comma-separated
+     // list of modules (without spaces).  Special keywords __ALL__ and __NONE__
+@@ -220,7 +230,9 @@
+              c != global_calendar_pos        &amp;&amp;
+              c != global_calendar_value_pos  &amp;&amp;
+              c != servers_pos                &amp;&amp;
+-             c != serversfile_pos
++             c != serversfile_pos            &amp;&amp;
++             c != option_level_pos           &amp;&amp;
++             c != option_level_value_pos
+             )
+         {
+             if ( the_command == &quot;&quot; )
+
+Modified: trunk/plearn/base/Object.cc
+===================================================================
+--- trunk/plearn/base/Object.cc	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/base/Object.cc	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -4,6 +4,7 @@
+ // Copyright (C) 1998 Pascal Vincent
+ // Copyright (C) 1999-2002 Pascal Vincent, Yoshua Bengio and University of Montreal
+ // Copyright (C) 2002 Frederic Morin
++// Copyright (C) 2007 Xavier Saint-Mleux, ApSTAT Technologies inc.
+ 
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -419,6 +420,21 @@
+ }
+ 
+ 
++//#####  Object::getOptionsToRemoteTransmit  ############################################
++string Object::getOptionsToRemoteTransmit() const
++{
++    string res = &quot;&quot;;
++    OptionList&amp; options = getOptionList();
++  
++    for( OptionList::iterator it = options.begin(); it!=options.end(); ++it )
++    {
++        OptionBase::flag_t flags = (*it)-&gt;flags();
++        if(!(flags &amp; OptionBase::nosave) || flags &amp; OptionBase::remotetransmit)
++            res += (*it)-&gt;optionname() + &quot; &quot;;
++    }
++    return res;
++}
++
+ //#####  Object::newread  #####################################################
+ 
+ void Object::newread(PStream &amp;in)
+@@ -517,9 +533,13 @@
+ 
+ //#####  Object::newwrite  ####################################################
+ 
+-void Object::newwrite(PStream &amp;out) const
++void Object::newwrite(PStream&amp; out) const
+ {
+-    vector&lt;string&gt; optnames = split(getOptionsToSave());
++    vector&lt;string&gt; optnames= split(
++        out.remote_plearn_comm?
++        getOptionsToRemoteTransmit():
++        getOptionsToSave());
++
+     out.write(classname());
+     out.write(&quot;(\n&quot;);
+     for (size_t i = 0; i &lt; optnames.size(); ++i) 
+
+Modified: trunk/plearn/base/Object.h
+===================================================================
+--- trunk/plearn/base/Object.h	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/base/Object.h	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -5,6 +5,7 @@
+ // Copyright (C) 1999-2005 Pascal Vincent and Yoshua Bengio
+ // Copyright (C) 2002 Frederic Morin
+ // Copyright (C) 1999-2005 University of Montreal
++// Copyright (C) 2007 Xavier Saint-Mleux, ApSTAT Technologies inc.
+ 
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -423,7 +424,7 @@
+                  const Option&lt;ObjectType, CLASSTYPE&gt;* opt, PLearnDiff* diffs)           \
+         {                                                                               \
+             PP&lt;OptionBase&gt; new_opt = new Option&lt;ObjectType, PP&lt;CLASSTYPE&gt; &gt;             \
+-                (opt-&gt;optionname(), 0, 0, &quot;&quot;, &quot;&quot;, &quot;&quot;);                                  \
++                (opt-&gt;optionname(), 0, 0, &quot;&quot;, &quot;&quot;, &quot;&quot;, opt-&gt;level());                    \
+             return new_opt-&gt;diff(refer, other, diffs);                                  \
+         }                                                                               \
+         DECLARE_SPECIALIZED_DIFF_CLASS(CLASSTYPE)                                       \
+@@ -684,7 +685,7 @@
+                          string&amp; option_index) const;
+ 
+     /**
+-     *  Rreturns a string of the names of all options to save.
++     *  Returns a string of the names of all options to save.
+      *  (optionnames are to be separated by a space, and must be supported by
+      *  writeOptionVal)
+      *
+@@ -694,6 +695,12 @@
+     virtual string getOptionsToSave() const;
+ 
+     /**
++     *  Returns a string of the names of all options to transmit when
++     *  talking to remote PLearn hosts (see getOptionsToSave())
++     */
++    virtual string getOptionsToRemoteTransmit() const;
++
++    /**
+      *  Set an option (a data field) into an object.  This is a generic method
+      *  to be able to set an option in an object in the most generic manner
+      *  value is a string representation of the value to be set. It should only
+
+Modified: trunk/plearn/base/Option.h
+===================================================================
+--- trunk/plearn/base/Option.h	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/base/Option.h	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -94,8 +94,8 @@
+     //! with an informative help text.
+     Option(const string&amp; optionname, OptionType ObjectType::* member_ptr, 
+            flag_t flags, const string&amp; optiontype, const string&amp; defaultval,
+-           const string&amp; description)
+-        : inherited(optionname, flags, optiontype, defaultval, description),
++           const string&amp; description, const OptionLevel&amp; level)
++        : inherited(optionname, flags, optiontype, defaultval, description, level),
+           ptr(member_ptr)
+     { }
+ 
+@@ -173,9 +173,9 @@
+ public:
+     TVecOption(const string&amp; optionname, TVec&lt;VecElementType&gt; ObjectType::* member_ptr, 
+                OptionBase::flag_t flags, const string&amp; optiontype, const string&amp; defaultval,
+-               const string&amp; description)
++               const string&amp; description, const OptionBase::OptionLevel&amp; level)
+         : inherited(optionname, member_ptr, flags, optiontype, defaultval,
+-                    description)
++                    description, level)
+     { }
+ 
+     virtual void readIntoIndex(Object* o, PStream&amp; in, const string&amp; index)
+@@ -215,11 +215,12 @@
+                           OptionType ObjectType::* member_ptr, //!&lt; &amp;YourClass::your_field
+                           OptionBase::flag_t flags,            //!&lt; see the flags in OptionBase
+                           const string&amp; description,           //!&lt; a description of the option
+-                          const string&amp; defaultval=&quot;&quot;)         //!&lt; default value for this option, as set by the default constructor
++                          const string&amp; defaultval=&quot;&quot;,         //!&lt; default value for this option, as set by the default constructor
++                          const OptionBase::OptionLevel level= OptionBase::default_level) //!&lt; Option level (see OptionBase)
+ {
+     ol.push_back(new Option&lt;ObjectType, OptionType&gt;(optionname, member_ptr, flags, 
+                                                     TypeTraits&lt;OptionType&gt;::name(), 
+-                                                    defaultval, description));
++                                                    defaultval, description, level));
+ }
+ 
+ // Overload for simple pointers
+@@ -229,11 +230,12 @@
+                           OptionType* ObjectType::* member_ptr,
+                           OptionBase::flag_t flags,
+                           const string&amp; description,
+-                          const string&amp; defaultval=&quot;&quot;)
++                          const string&amp; defaultval=&quot;&quot;,
++                          const OptionBase::OptionLevel level= OptionBase::default_level)
+ {
+     ol.push_back(new Option&lt;ObjectType, OptionType *&gt;(optionname, member_ptr, flags,
+                                                       TypeTraits&lt;OptionType *&gt;::name(), 
+-                                                      defaultval, description));
++                                                      defaultval, description, level));
+ }
+ 
+ // Overload for TVec&lt;T&gt;
+@@ -243,12 +245,13 @@
+                           TVec&lt;VecElementType&gt; ObjectType::* member_ptr,
+                           OptionBase::flag_t flags,
+                           const string&amp; description,
+-                          const string&amp; defaultval=&quot;&quot;)
++                          const string&amp; defaultval=&quot;&quot;,
++                          const OptionBase::OptionLevel level= OptionBase::default_level)
+ {
+     ol.push_back(new TVecOption&lt;ObjectType, VecElementType&gt;(
+                      optionname, member_ptr, flags,
+                      TypeTraits&lt; TVec&lt;VecElementType&gt; &gt;::name(),
+-                     defaultval, description));
++                     defaultval, description, level));
+ }
+ 
+ 
+@@ -260,7 +263,8 @@
+                             OptionType ObjectType::* member_ptr, //!&lt; &amp;YourClass::your_field
+                             OptionBase::flag_t flags,            //! see the flags in OptionBase
+                             const string&amp; description,           //!&lt; a description of the option
+-                            const string &amp; defaultval=&quot;&quot;)        //!&lt; the default value for this option, as set by the default constructor
++                            const string&amp; defaultval=&quot;&quot;,         //!&lt; default value for this option, as set by the default constructor
++                            const OptionBase::OptionLevel level= OptionBase::default_level) //!&lt; Option level (see OptionBase)
+ {
+     bool found = false;
+     for (OptionList::iterator it = ol.begin(); !found &amp;&amp; it != ol.end(); it++) {
+@@ -268,7 +272,7 @@
+             // We found the option to redeclare.
+             found = true;
+             (*it) = new Option&lt;ObjectType, OptionType&gt;
+-                (optionname, member_ptr, flags, TypeTraits&lt;OptionType&gt;::name(), defaultval, description);
++                (optionname, member_ptr, flags, TypeTraits&lt;OptionType&gt;::name(), defaultval, description, level);
+         }
+     }
+     if (!found) {
+@@ -285,7 +289,8 @@
+                             OptionType* ObjectType::* member_ptr,//!&lt; &amp;YourClass::your_field
+                             OptionBase::flag_t flags,            //! see the flags in OptionBase
+                             const string&amp; description,           //!&lt; a description of the option
+-                            const string &amp; defaultval=&quot;&quot;)        //!&lt; the default value for this option, as set by the default constructor
++                            const string&amp; defaultval=&quot;&quot;,         //!&lt; default value for this option, as set by the default constructor
++                            const OptionBase::OptionLevel level= OptionBase::default_level) //!&lt; Option level (see OptionBase)
+ {
+     bool found = false;
+     for (OptionList::iterator it = ol.begin(); !found &amp;&amp; it != ol.end(); it++) {
+@@ -293,7 +298,7 @@
+             // We found the option to redeclare.
+             found = true;
+             (*it) = new Option&lt;ObjectType, OptionType*&gt;
+-                (optionname, member_ptr, flags, TypeTraits&lt;OptionType*&gt;::name(), defaultval, description);
++                (optionname, member_ptr, flags, TypeTraits&lt;OptionType*&gt;::name(), defaultval, description, level);
+         }
+     }
+     if (!found) {
+@@ -310,7 +315,8 @@
+                             TVec&lt;VecElementType&gt; ObjectType::* member_ptr,
+                             OptionBase::flag_t flags,
+                             const string&amp; description,
+-                            const string &amp; defaultval=&quot;&quot;)
++                            const string&amp; defaultval=&quot;&quot;,
++                            const OptionBase::OptionLevel level= OptionBase::default_level)
+ {
+     bool found = false;
+     for (OptionList::iterator it = ol.begin(); !found &amp;&amp; it != ol.end(); it++) {
+@@ -320,7 +326,7 @@
+             (*it) = new TVecOption&lt;ObjectType, VecElementType&gt;
+                 (optionname, member_ptr, flags,
+                  TypeTraits&lt; TVec&lt;VecElementType&gt; &gt;::name(),
+-                 defaultval, description);
++                 defaultval, description, level);
+         }
+     }
+     if (!found) {
+
+Modified: trunk/plearn/base/OptionBase.cc
+===================================================================
+--- trunk/plearn/base/OptionBase.cc	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/base/OptionBase.cc	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -4,6 +4,7 @@
+ // Copyright (C) 1998 Pascal Vincent
+ // Copyright (C) 1999-2002 Pascal Vincent, Yoshua Bengio and University of Montreal
+ // Copyright (C) 2002 Frederic Morin
++// Copyright (C) 2007 Xavier Saint-Mleux, ApSTAT Technologies inc.
+ 
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -42,6 +43,7 @@
+ 
+ #include &quot;OptionBase.h&quot;
+ #include &quot;Object.h&quot;
++#include &lt;plearn/base/stringutils.h&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -52,14 +54,21 @@
+ const OptionBase::flag_t OptionBase::nosave           = 1 &lt;&lt; 3; 
+ const OptionBase::flag_t OptionBase::nonparentable    = 1 &lt;&lt; 4;
+ const OptionBase::flag_t OptionBase::nontraversable   = 1 &lt;&lt; 5;
++const OptionBase::flag_t OptionBase::remotetransmit   = 1 &lt;&lt; 6;
+ 
++const OptionBase::OptionLevel OptionBase::basic_level= 200;
++const OptionBase::OptionLevel OptionBase::normal_level= 400;
++const OptionBase::OptionLevel OptionBase::advanced_level= 800;
++const OptionBase::OptionLevel OptionBase::experimental_level= 9999;
++const OptionBase::OptionLevel OptionBase::default_level= OptionBase::normal_level;
++OptionBase::OptionLevel OptionBase::current_option_level_= OptionBase::default_level;
+ 
+ OptionBase::OptionBase(const string&amp; optionname, flag_t flags,
+                        const string&amp; optiontype, const string&amp; defaultval, 
+-                       const string&amp; description)
++                       const string&amp; description, const OptionLevel&amp; level)
+     : optionname_(optionname), flags_(flags), 
+       optiontype_(optiontype), defaultval_(defaultval),
+-      description_(description)
++      description_(description), level_(level)
+ {
+     if (optionname.size() &gt; 0 &amp;&amp; optionname[0] == '_' )
+         PLERROR(&quot;OptionBase::OptionBase: options should not start with an underscore: '%s'&quot;,
+@@ -111,6 +120,7 @@
+         flag_map[nosave        ] = &quot;nosave&quot;;
+         flag_map[nonparentable ] = &quot;nonparentable&quot;;
+         flag_map[nontraversable] = &quot;nontraversable&quot;;
++        flag_map[remotetransmit] = &quot;remotetransmit&quot;;
+         initialized = true;
+     }
+ 
+@@ -133,6 +143,24 @@
+     return fs;
+ }
+ 
++
++
++OptionBase::OptionLevel OptionBase::optionLevelFromString(const string&amp; s)
++{
++    static map&lt;string, OptionLevel&gt; olevels;
++    if(olevels.size() == 0)
++    {
++        olevels[&quot;basic&quot;]= basic_level;
++        olevels[&quot;normal&quot;]= normal_level;
++        olevels[&quot;advanced&quot;]= advanced_level;
++        olevels[&quot;experimental&quot;]= experimental_level;
++    }
++    map&lt;string, OptionLevel&gt;::iterator it= olevels.find(s);
++    if(it != olevels.end())
++        return it-&gt;second;
++    return (OptionLevel)toint(s);
++}
++
+     
+ } // end of namespace PLearn
+ 
+
+Modified: trunk/plearn/base/OptionBase.h
+===================================================================
+--- trunk/plearn/base/OptionBase.h	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/base/OptionBase.h	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -4,6 +4,7 @@
+ // Copyright (C) 1998 Pascal Vincent
+ // Copyright (C) 1999-2002 Pascal Vincent, Yoshua Bengio and University of Montreal
+ // Copyright (C) 2002 Frederic Morin
++// Copyright (C) 2007 Xavier Saint-Mleux, ApSTAT Technologies inc.
+ 
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -118,13 +119,34 @@
+      */
+     static const flag_t nontraversable;
+ 
++    /**
++     * When this flag is set, the option is transmitted between servers
++     * and clients, even if the nosave flag is also set.
++     * All options w/o nosave are transmitted by default.
++     */
++    static const flag_t remotetransmit;
+ 
++    /**
++     * OptionLevel: How advanced (complicated, seldom used) is this option?
++     *   Used to hide options from help text as needed, to ease readability
++     *   for a basic, normal, advanced or experimental level of use.
++     */
++    typedef unsigned int OptionLevel;
++    static const OptionLevel basic_level;
++    static const OptionLevel normal_level;
++    static const OptionLevel advanced_level;
++    static const OptionLevel experimental_level;
++    static const OptionLevel default_level; //!&lt; default for options w/o explicit level
++
+ protected:
++    static OptionLevel current_option_level_;
++protected:
+     string optionname_;  //!&lt; the name of the option
+     flag_t flags_; 
+     string optiontype_;  //!&lt; the datatype of the option (&quot;int&quot; ...)
+     string defaultval_;  //!&lt; string representation of the default value (will be printed by optionHelp())
+     string description_; //!&lt; A description of this option
++    OptionLevel level_;  //!&lt; Option level (low=basic, high=advanced)
+ 
+ public:
+ 
+@@ -132,9 +154,8 @@
+     //! with an informative help text. (only optionname and flags are really important)
+     OptionBase(const string&amp; optionname, flag_t flags,
+                const string&amp; optiontype, const string&amp; defaultval, 
+-               const string&amp; description);
++               const string&amp; description, const OptionLevel&amp; level);
+ 
+-
+     //#####  Stream Read-Write  ###############################################
+ 
+     //! Read the option into the specified object from the input stream
+@@ -215,6 +236,9 @@
+     //! Default value accessor
+     inline const string&amp; defaultval() const { return defaultval_; }
+ 
++    //! Option level accessor
++    inline const OptionLevel&amp; level() const { return level_; }
++
+     //! Change the string representation of the default value.
+     inline void setDefaultVal(const string&amp; newdefaultval)
+     { defaultval_ = newdefaultval; }
+@@ -250,6 +274,14 @@
+ 
+     //! Comparison between two option values.
+     virtual int diff(const string&amp; refer, const string&amp; other, PLearnDiff* diffs) const = 0;
++
++    //! get the current option level for help text
++    static const OptionLevel&amp; getCurrentOptionLevel() { return current_option_level_; }
++    //! set the current option level for help text
++    static void setCurrentOptionLevel(const OptionLevel&amp; l) { current_option_level_= l; }
++    //! convert string to OptionLevel
++    static OptionLevel optionLevelFromString(const string&amp; s);
++
+ };
+ 
+ typedef std::vector&lt; PP&lt;OptionBase&gt; &gt; OptionList;
+
+Modified: trunk/plearn/base/TypeFactory.cc
+===================================================================
+--- trunk/plearn/base/TypeFactory.cc	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/base/TypeFactory.cc	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -152,7 +152,7 @@
+     for( OptionList::iterator olIt = options.begin(); olIt!=options.end(); ++olIt )
+     {
+         OptionBase::flag_t flags = (*olIt)-&gt;flags();
+-        if(flags &amp; OptionBase::buildoption)
++        if(flags &amp; OptionBase::buildoption &amp;&amp; (*olIt)-&gt;level() &lt;= OptionBase::getCurrentOptionLevel())
+         {
+             string descr = (*olIt)-&gt;description();
+             string optname = (*olIt)-&gt;optionname();
+
+Modified: trunk/plearn/base/diff.h
+===================================================================
+--- trunk/plearn/base/diff.h	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/base/diff.h	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -152,7 +152,7 @@
+     }
+     else {
+         PP&lt;OptionBase&gt; option_elem = new Option&lt;ObjectType, VecElementType&gt;
+-            (&quot;&quot;, 0, 0, TypeTraits&lt;VecElementType&gt;::name(), &quot;&quot;, &quot;&quot;);
++            (&quot;&quot;, 0, 0, TypeTraits&lt;VecElementType&gt;::name(), &quot;&quot;, &quot;&quot;, opt-&gt;level());//level could be anything here, I guess? -xsm
+         string refer_i, other_i;
+         // pout &lt;&lt; &quot;TVec of &quot; &lt;&lt; TypeTraits&lt;VecElementType&gt;::name() &lt;&lt; endl;
+         for (int i = 0; i &lt; n; i++) {
+@@ -195,7 +195,7 @@
+                     opt-&gt;optionname() + &quot;.width&quot;);
+     int n_diffs = 0;
+     PP&lt;OptionBase&gt; option_elem = new Option&lt;ObjectType, MatElementType&gt;
+-        (&quot;&quot;, 0, 0, TypeTraits&lt;MatElementType&gt;::name(), &quot;&quot;, &quot;&quot;);
++        (&quot;&quot;, 0, 0, TypeTraits&lt;MatElementType&gt;::name(), &quot;&quot;, &quot;&quot;, opt-&gt;level());//level could be anything here, I guess? -xsm
+     string refer_ij, other_ij;
+     for (int i = 0; i &lt; n; i++)
+         for (int j = 0; j &lt; w; j++) {
+@@ -229,7 +229,7 @@
+     in &gt;&gt; other_map;
+     in.flush();
+     PP&lt;OptionBase&gt; option_elem = new Option&lt;ObjectType, MapElementType&gt;
+-        (&quot;&quot;, 0, 0, TypeTraits&lt;MapElementType&gt;::name(), &quot;&quot;, &quot;&quot;);
++        (&quot;&quot;, 0, 0, TypeTraits&lt;MapElementType&gt;::name(), &quot;&quot;, &quot;&quot;, opt-&gt;level());//level could be anything here, I guess? -xsm
+     string refer_i, other_i;
+     typename map&lt;MapKeyType, MapElementType&gt;::iterator it_refer;
+     typename map&lt;MapKeyType, MapElementType&gt;::iterator it_other;
+@@ -291,7 +291,7 @@
+      */
+     // Now deal with different keys.
+     PP&lt;OptionBase&gt; option_key = new Option&lt;ObjectType, MapKeyType&gt;
+-        (&quot;&quot;, 0, 0, TypeTraits&lt;MapKeyType&gt;::name(), &quot;&quot;, &quot;&quot;);
++        (&quot;&quot;, 0, 0, TypeTraits&lt;MapKeyType&gt;::name(), &quot;&quot;, &quot;&quot;, opt-&gt;level());//level could be anything here, I guess? -xsm
+     bool save_diffs_backup;
+     setSaveDiffs(diffs, false, &amp;save_diffs_backup);
+     for (int i = 0; i &lt; missing_in_other.length(); i++) {
+
+Modified: trunk/plearn/io/PStream.cc
+===================================================================
+--- trunk/plearn/io/PStream.cc	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/io/PStream.cc	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -4,6 +4,7 @@
+ // Copyright (C) 1998 Pascal Vincent
+ // Copyright (C) 1999-2001 Pascal Vincent, Yoshua Bengio and University of Montreal
+ // Copyright (C) 2002 Frederic Morin, Xavier Saint-Mleux, Pascal Vincent
++// Copyright (C) 2007 Xavier Saint-Mleux, ApSTAT Technologies inc.
+ //
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -178,7 +179,8 @@
+      format_float (format_float_default),
+      format_double(format_double_default),
+      implicit_storage(true),
+-     compression_mode(compr_none)
++     compression_mode(compr_none),
++     remote_plearn_comm(false)
+ {}
+ 
+ PStream::PStream(streambuftype* sb)
+@@ -188,7 +190,8 @@
+      format_float (format_float_default),
+      format_double(format_double_default),
+      implicit_storage(true),
+-     compression_mode(compr_none)
++     compression_mode(compr_none),
++     remote_plearn_comm(false)
+ {}
+ 
+ 
+@@ -200,7 +203,8 @@
+      format_float (format_float_default),
+      format_double(format_double_default),
+      implicit_storage(true),
+-     compression_mode(compr_none)
++     compression_mode(compr_none),
++     remote_plearn_comm(false)
+ {}
+ //! ctor. from an ostream (O)
+ 
+@@ -211,7 +215,8 @@
+      format_float (format_float_default),
+      format_double(format_double_default),
+      implicit_storage(true),
+-     compression_mode(compr_none)
++     compression_mode(compr_none),
++     remote_plearn_comm(false)
+ {}
+ 
+ //! ctor. from an iostream (IO)
+@@ -222,7 +227,8 @@
+      format_float (format_float_default),
+      format_double(format_double_default),
+      implicit_storage(true),
+-     compression_mode(compr_none)
++     compression_mode(compr_none),
++     remote_plearn_comm(false)
+ {}
+ 
+ //! ctor. from an istream and an ostream (IO)
+@@ -233,7 +239,8 @@
+      format_float (format_float_default),
+      format_double(format_double_default),
+      implicit_storage(true),
+-     compression_mode(compr_none)
++     compression_mode(compr_none),
++     remote_plearn_comm(false)
+ {}
+ 
+ //! dtor.
+
+Modified: trunk/plearn/io/PStream.h
+===================================================================
+--- trunk/plearn/io/PStream.h	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/io/PStream.h	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -4,6 +4,7 @@
+ // Copyright (C) 1998 Pascal Vincent
+ // Copyright (C) 1999-2001 Pascal Vincent, Yoshua Bengio and University of Montreal
+ // Copyright (C) 2002 Frederic Morin, Xavier Saint-Mleux, Pascal Vincent
++// Copyright (C) 2007 Xavier Saint-Mleux, ApSTAT Technologies inc.
+ //
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -142,9 +143,15 @@
+     //! If true, then Mat and Vec will be serialized with their elements in place,
+     //! If false, they will have an explicit pointer to a storage
+     bool implicit_storage;
++
+     //! Determines the way data is compressed, if any.
+     compr_mode_t compression_mode;
+ 
++    //! Should be true if this stream is used to communicate 
++    //! with a remote PLearn host.  Will serialize options
++    //! accordingly.
++    bool remote_plearn_comm;
++
+ public:  
+ 
+     PStream();
+
+Modified: trunk/plearn/math/ObservationWindow.cc
+===================================================================
+--- trunk/plearn/math/ObservationWindow.cc	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/math/ObservationWindow.cc	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -2,7 +2,8 @@
+ // ObservationWindow.cc
+ // 
+ // Copyright (C) 2006 Christian Dorion
+-// Copyright (C) 2006,2007 ApStat Technologies Inc.
++// Copyright (C) 2006 ApStat Technologies Inc.
++// Copyright (C) 2007 Xavier Saint-Mleux, ApSTAT Technologies inc.
+ // 
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -46,7 +47,7 @@
+ 
+ 
+ ObservationWindow::ObservationWindow(int window)
+-    : m_window(window)
++    : m_window(window), unlimited_size(window == -2)
+ {
+     forget();
+ }
+@@ -103,19 +104,19 @@
+                   &quot;nb. observations&quot;);
+ 
+     declareOption(ol, &quot;cursor&quot;, &amp;ObservationWindow::m_cursor,
+-                  OptionBase::learntoption | OptionBase::nosave,
++                  OptionBase::learntoption | OptionBase::nosave | OptionBase::remotetransmit,
+                   &quot;cursor pos.&quot;);
+ 
+     declareOption(ol, &quot;observations&quot;, &amp;ObservationWindow::m_observations,
+-                  OptionBase::learntoption | OptionBase::nosave,
++                  OptionBase::learntoption | OptionBase::nosave | OptionBase::remotetransmit,
+                   &quot;the observations themselves&quot;);
+ 
+     declareOption(ol, &quot;obs_weights&quot;, &amp;ObservationWindow::m_obs_weights,
+-                  OptionBase::learntoption | OptionBase::nosave,
++                  OptionBase::learntoption | OptionBase::nosave | OptionBase::remotetransmit,
+                   &quot;observation weights&quot;);
+ 
+     declareOption(ol, &quot;last_update_rvalue&quot;, &amp;ObservationWindow::m_last_update_rvalue,
+-                  OptionBase::learntoption | OptionBase::nosave,
++                  OptionBase::learntoption | OptionBase::nosave | OptionBase::remotetransmit,
+                   &quot;last_update_rvalue&quot;);
+ 
+     // Now call the parent class' declareOptions
+@@ -147,7 +148,10 @@
+ {
+     m_nobs = 0;
+     m_cursor = 0;
+-    m_observations.resize(m_window, 0);
++    if(unlimited_size)
++        m_window= 0;
++    else if(m_window &gt;= 0)
++        m_observations.resize(m_window, 0);
+     m_observations.resize(0, 0);                
+ }
+ 
+@@ -157,7 +161,8 @@
+     Vec outdated;
+     real outdated_weight = 0.0;
+     
+-    m_nobs++;        
++    ++m_nobs;
++    if(unlimited_size) m_window= m_nobs;
+     m_observations.resize(MIN(m_nobs,m_window), obs.size());
+     m_obs_weights.resize(MIN(m_nobs,m_window));
+     if (m_nobs &gt; m_window)
+
+Modified: trunk/plearn/math/ObservationWindow.h
+===================================================================
+--- trunk/plearn/math/ObservationWindow.h	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/math/ObservationWindow.h	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -2,7 +2,8 @@
+ // ObservationWindow.h
+ // 
+ // Copyright (C) 2006 Christian Dorion
+-// Copyright (C) 2006,2007 ApStat Technologies Inc.
++// Copyright (C) 2006 ApStat Technologies Inc.
++// Copyright (C) 2007 Xavier Saint-Mleux, ApSTAT Technologies inc.
+ // 
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -59,10 +60,11 @@
+     int m_cursor;
+     Mat m_observations;
+     Vec m_obs_weights;    
++    bool unlimited_size;
+ 
+     tuple&lt;Vec, real&gt; m_last_update_rvalue;
+     
+-    ObservationWindow(int window=-1);
++    ObservationWindow(int window=-1);// -2 means unlimited size
+ 
+     //! Returns the current length (not m_window!).
+     int  length () const;
+
+Modified: trunk/plearn/math/StatsCollector.cc
+===================================================================
+--- trunk/plearn/math/StatsCollector.cc	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/math/StatsCollector.cc	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -4,6 +4,7 @@
+ //
+ // Copyright (C) 2001,2002 Pascal Vincent
+ // Copyright (C) 2005 University of Montreal
++// Copyright (C) 2007 Xavier Saint-Mleux, ApSTAT Technologies inc.
+ //
+ 
+ // Redistribution and use in source and binary forms, with or without
+
+Modified: trunk/plearn/math/StatsCollector.h
+===================================================================
+--- trunk/plearn/math/StatsCollector.h	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/math/StatsCollector.h	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -105,9 +105,9 @@
+     in &gt;&gt; other_sc;
+     int n_diffs = 0;
+     PP&lt;OptionBase&gt; opt_double = new Option&lt;ObjectType, double&gt;
+-        (&quot;&quot;, 0, 0, TypeTraits&lt;double&gt;::name(), &quot;&quot;, &quot;&quot;);
++        (&quot;&quot;, 0, 0, TypeTraits&lt;double&gt;::name(), &quot;&quot;, &quot;&quot;, opt-&gt;level());
+     PP&lt;OptionBase&gt; opt_int = new Option&lt;ObjectType, int&gt;
+-        (&quot;&quot;, 0, 0, TypeTraits&lt;int&gt;::name(), &quot;&quot;, &quot;&quot;);
++        (&quot;&quot;, 0, 0, TypeTraits&lt;int&gt;::name(), &quot;&quot;, &quot;&quot;, opt-&gt;level());
+     opt_double-&gt;setOptionName(opt-&gt;optionname() + &quot;.n&quot;);
+     n_diffs +=  opt_double-&gt;diff(tostring(refer_sc.n),
+                                  tostring(other_sc.n), diffs);
+
+Modified: trunk/plearn/math/TMat_impl.h
+===================================================================
+--- trunk/plearn/math/TMat_impl.h	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/math/TMat_impl.h	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -398,7 +398,7 @@
+ inline void TMat&lt;T&gt;::resizeBoundCheck(int new_length, int new_width)
+ {
+     if(new_length&lt;0 || new_width&lt;0)
+-        PLERROR(&quot;IN TMat::resize(int new_length, int new_width)\nInvalid arguments (&lt;0)&quot;);
++        PLERROR(&quot;IN TMat::resize(int new_length, int new_width)\nInvalid arguments (%d, %d)&quot;, new_length, new_width);
+ }
+ 
+ template &lt;class T&gt;
+
+Modified: trunk/plearn/math/VecStatsCollector.cc
+===================================================================
+--- trunk/plearn/math/VecStatsCollector.cc	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/math/VecStatsCollector.cc	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -3,6 +3,7 @@
+ // 
+ // Copyright (C) 2002 Pascal Vincent
+ // Copyright (C) 2005 University of Montreal
++// Copyright (C) 2007 Xavier Saint-Mleux, ApSTAT Technologies inc.
+ // 
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -91,10 +92,10 @@
+         ol, &quot;window&quot;, &amp;VecStatsCollector::m_window,
+         OptionBase::buildoption,
+         &quot;If positive, the window restricts the stats computed by this&quot;
+-        &quot;FinVecStatsCollector to the last 'window' observations. This uses the\n&quot;
++        &quot;VecStatsCollector to the last 'window' observations. This uses the\n&quot;
+         &quot;VecStatsCollector::remove_observation mechanism.\n&quot;
+-        &quot;\n&quot;
+-        &quot;Default: -1 (all observations are considered).&quot; );
++        &quot;Default: -1 (all observations are considered);\n&quot;
++        &quot; -2 means all observations kept in an ObservationWindow\n&quot;);
+ 
+     declareOption(
+         ol, &quot;no_removal_warnings&quot;, &amp;VecStatsCollector::no_removal_warnings,
+@@ -137,6 +138,11 @@
+     declareOption(
+         ol, &quot;sum_non_missing_square_weights&quot;, &amp;VecStatsCollector::sum_non_missing_square_weights, OptionBase::learntoption,
+         &quot;Sum of square weights for vectors with no missing value.&quot;);
++
++    declareOption(
++        ol, &quot;observation_window&quot;, &amp;VecStatsCollector::m_observation_window, 
++        OptionBase::learntoption | OptionBase::nosave | OptionBase::remotetransmit,
++        &quot;The observation window itself.&quot;);
+   
+     // Now call the parent class' declareOptions
+     inherited::declareOptions(ol);
+@@ -275,12 +281,12 @@
+     }
+     
+     // Window mechanism
+-    if (m_window &gt; 0)
++    if (m_window &gt; 0 || m_window == -2)
+     {
+         tuple&lt;Vec, real&gt; outdated = m_observation_window-&gt;update(x, weight);
+         Vec&amp; obs = get&lt;0&gt;(outdated);
+         real w = get&lt;1&gt;(outdated);
+-        if ( obs.isNotEmpty() )
++        if(obs.isNotEmpty() &amp;&amp; m_window &gt; 0)
+             remove_observation(obs, w);
+     }
+ }
+@@ -364,7 +370,7 @@
+ 
+ void VecStatsCollector::build_()
+ {
+-    if (m_window &gt; 0)
++    if(!m_observation_window &amp;&amp; (m_window &gt; 0 || m_window == -2))
+         m_observation_window = new ObservationWindow(m_window);
+ }
+ 
+@@ -385,10 +391,29 @@
+     sum_non_missing_square_weights = 0;
+ 
+     // Window mechanism
+-    if ( m_window &gt; 0 )
++    if (m_window &gt; 0 || m_window == -2)
+         m_observation_window-&gt;forget();
+ }
+ 
++void VecStatsCollector::setWindowSize(int sz)
++{
++    m_window= sz;
++    if(m_window &gt; 0 || m_window == -2)
++    {
++        if(!m_observation_window)
++            m_observation_window = new ObservationWindow(m_window);
++        else
++        {
++            if(sz == -2)
++                m_observation_window-&gt;unlimited_size= true;
++            m_observation_window-&gt;m_window= sz;
++            m_observation_window-&gt;forget();
++        }
++    }
++
++}
++
++
+ void VecStatsCollector::finalize()
+ {
+     int n = stats.size();
+@@ -621,12 +646,9 @@
+ 
+ void VecStatsCollector::merge(VecStatsCollector&amp; other)
+ {
+-    if(m_window &gt; 0 || other.m_window &gt; 0)
+-        PLERROR(&quot;VecStatsCollector::merge does not support observation windows yet!&quot;);
++    PLASSERT_MSG(fieldnames == other.fieldnames,
++                 &quot;VecStatsCollector::merge : cannot merge VecStatsCollectors with different fieldnames.&quot;);
+ 
+-    if(fieldnames != other.fieldnames)
+-        PLERROR(&quot;VecStatsCollector::merge : cannot merge VecStatsCollectors with different fieldnames.&quot;);
+-
+     if(stats.size()==0)//if this one is empty, resize stats before merging
+     {
+         int n= other.stats.size();
+@@ -654,9 +676,19 @@
+         }      
+     }
+ 
+-    if(stats.length() != other.stats.length())
+-        PLERROR(&quot;VecStatsCollector::merge : cannot merge VecStatsCollectors with different stats length.&quot;);
++    PLASSERT_MSG(stats.length() == other.stats.length(),
++                 &quot;VecStatsCollector::merge : cannot merge VecStatsCollectors with different stats length.&quot;);
+ 
++    if(m_window != 0 || other.m_window != 0)
++    {
++        PLASSERT_MSG(m_window != 0 &amp;&amp; other.m_window != 0,
++                     &quot;VecStatsCollector::merge : either none or both should have an observation window&quot;);
++        PP&lt;ObservationWindow&gt; oow= other.m_observation_window;
++        for(int i= 0; i &lt; oow-&gt;length(); ++i)
++            update(oow-&gt;getObs(i), oow-&gt;getWeight(i));
++        return; // avoid extra indentation
++    }
++
+     for(int i= 0; i &lt; stats.length(); ++i)
+         stats[i].merge(other.stats[i]);
+ 
+@@ -674,24 +706,6 @@
+         sum_non_missing_square_weights+= other.sum_non_missing_square_weights;
+     }
+ 
+-
+-    /****
+-     * TODO: proper merge of observation windows -xsm
+-    
+-    PP&lt;ObservationWindow&gt; oow= other.m_observation_window;
+-    if((oow &amp;&amp; oow-&gt;isFull()) || (m_observation_window &amp;&amp; m_observation_window-&gt;isEmpty()))
+-        m_observation_window= oow;
+-    else if(oow &amp;&amp; m_observation_window)
+-        for(int i= 0; i &lt; oow-&gt;length(); ++i)
+-        {
+-            tuple&lt;Vec, real&gt; outdated= m_observation_window-&gt;update(oow-&gt;getObs(i), oow-&gt;getWeight(i));
+-            Vec&amp; obs = get&lt;0&gt;(outdated);
+-            real w = get&lt;1&gt;(outdated);
+-            if ( obs.isNotEmpty() )
+-                remove_observation(obs, w);
+-        }
+-    */
+-
+ }
+ 
+ void VecStatsCollector::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
+
+Modified: trunk/plearn/math/VecStatsCollector.h
+===================================================================
+--- trunk/plearn/math/VecStatsCollector.h	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/math/VecStatsCollector.h	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -3,6 +3,7 @@
+ // 
+ // Copyright (C) 2002 Pascal Vincent
+ // Copyright (C) 2005 Universit&#233; de Montr&#233;al
++// Copyright (C) 2007 Xavier Saint-Mleux, ApSTAT Technologies inc.
+ // 
+ // Redistribution and use in source and binary forms, with or without
+ // modification, are permitted provided that the following conditions are met:
+@@ -230,6 +231,9 @@
+     void append(const VecStatsCollector&amp; vsc, const string fieldname_prefix=&quot;&quot;,
+                 const TVec&lt;string&gt;&amp; new_fieldnames = TVec&lt;string&gt;() );
+ 
++    //! sets the size of the observation window
++    virtual void setWindowSize(int sz);
++
+     const Mat&amp; getObservations() const;
+     const PP&lt;ObservationWindow&gt; getObservationWindow() const;
+ 
+
+Modified: trunk/plearn/misc/PLearnServer.cc
+===================================================================
+--- trunk/plearn/misc/PLearnServer.cc	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/misc/PLearnServer.cc	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -64,6 +64,7 @@
+ PLearnServer::PLearnServer(const PStream&amp; input_output)
+     :io(input_output), clear_maps(true)
+ {
++    io.remote_plearn_comm= true;
+     if(instance!=0)
+         PLERROR(&quot;An instance of PLearnServer already exists&quot;);
+     instance = this;
+@@ -71,6 +72,7 @@
+ 
+ PLearnServer::~PLearnServer()
+ {
++    io.remote_plearn_comm= false;
+     instance = 0;
+ }
+ 
+
+Modified: trunk/plearn/misc/RemotePLearnServer.cc
+===================================================================
+--- trunk/plearn/misc/RemotePLearnServer.cc	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn/misc/RemotePLearnServer.cc	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -51,7 +51,9 @@
+ 
+ RemotePLearnServer::RemotePLearnServer(const PStream&amp; serverio)
+     :io(serverio)
+-{}
++{
++    io.remote_plearn_comm= true;
++}
+   
+ void RemotePLearnServer::clearMaps()
+ {
+@@ -258,10 +260,10 @@
+ 
+ RemotePLearnServer::~RemotePLearnServer()
+ {
+-    // The PLearnService is responsible for RemotePLearnServer destruction 
+-
+-    //DBG_LOG &lt;&lt; &quot;ENTERING RemotePLearnServer destructor&quot; &lt;&lt; endl;
+-    //DBG_LOG &lt;&lt; &quot;LEAVING RemotePLearnServer destructor&quot; &lt;&lt; endl;
++    // The PLearnService is responsible for most of RemotePLearnServer destruction 
++    DBG_LOG &lt;&lt; &quot;ENTERING RemotePLearnServer destructor&quot; &lt;&lt; endl;
++    io.remote_plearn_comm= false;
++    DBG_LOG &lt;&lt; &quot;LEAVING RemotePLearnServer destructor&quot; &lt;&lt; endl;
+ }
+ 
+ 
+
+Modified: trunk/plearn_learners/generic/NNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/NNet.cc	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn_learners/generic/NNet.cc	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -288,13 +288,15 @@
+         ol, &quot;first_hidden_layer&quot;, &amp;NNet::first_hidden_layer, OptionBase::buildoption, 
+         &quot;A user-specified NAry Var that computes the output of the first hidden layer\n&quot;
+         &quot;from the network input vector and a set of parameters. Its first argument should\n&quot;
+-        &quot;be the network input and the remaining arguments the tunable parameters.\n&quot;);
++        &quot;be the network input and the remaining arguments the tunable parameters.\n&quot;,
++        &quot;&quot;, OptionBase::advanced_level);
+ 
+     declareOption(
+         ol, &quot;first_hidden_layer_is_output&quot;,
+         &amp;NNet::first_hidden_layer_is_output, OptionBase::buildoption,
+         &quot;If true and a 'first_hidden_layer' Var is provided, then this layer\n&quot;
+-        &quot;will be considered as the NNet output before transfer function.&quot;);
++        &quot;will be considered as the NNet output before transfer function.&quot;,
++        &quot;&quot;, OptionBase::advanced_level);
+ 
+     declareOption(
+         ol, &quot;n_non_params_in_first_hidden_layer&quot;,
+@@ -302,7 +304,8 @@
+         OptionBase::buildoption, 
+         &quot;Number of elements in the 'varray' option of 'first_hidden_layer'\n&quot;
+         &quot;that are not updated parameters (assumed to be the last elements in\n&quot;
+-        &quot;'varray').&quot;);
++        &quot;'varray').&quot;,
++        &quot;&quot;, OptionBase::advanced_level);
+ 
+     declareOption(
+         ol, &quot;transpose_first_hidden_layer&quot;,
+@@ -310,7 +313,7 @@
+         OptionBase::buildoption, 
+         &quot;If true and the 'first_hidden_layer' option is set, this layer will\n&quot;
+         &quot;be transposed, and the input variable given to this layer will also\n&quot;
+-        &quot;be transposed.&quot;);
++        &quot;be transposed.&quot;, &quot;&quot;, OptionBase::advanced_level);
+ 
+     declareOption(
+         ol, &quot;margin&quot;, &amp;NNet::margin, OptionBase::buildoption, 
+
+Modified: trunk/plearn_learners/generic/PLearner.cc
+===================================================================
+--- trunk/plearn_learners/generic/PLearner.cc	2007-03-09 00:52:59 UTC (rev 6724)
++++ trunk/plearn_learners/generic/PLearner.cc	2007-03-09 23:54:32 UTC (rev 6725)
+@@ -802,8 +802,7 @@
+     const int chunks_per_server= 10;//ideal nb. chunks per server
+     int nservers= min(len/(chunks_per_server*chunksize), service.availableServers());
+ 
+-    if(nservers &gt; 1 &amp;&amp; parallelize_here &amp;&amp; !isStatefulLearner()
+-       &amp;&amp; (!test_stats || test_stats-&gt;m_window == -1)) //VecStatsCollector does not support merge w/observation_window yet
++    if(nservers &gt; 1 &amp;&amp; parallelize_here &amp;&amp; !isStatefulLearner())
+     {// parallel test
+         CopiesMap copies;
+         PP&lt;VecStatsCollector&gt; template_vsc= test_stats? test_stats-&gt;deepCopy(copies) : 0;
+@@ -936,8 +935,12 @@
+     int len= testset.length();
+     if(rtestoutputs) testoutputs= new MemoryVMatrix(len, outsize);
+     if(rtestcosts) testcosts= new MemoryVMatrix(len, costsize);
+-    if(test_stats &amp;&amp; test_stats-&gt;maxnvalues &gt; 0)
+-        test_stats-&gt;maxnvalues= -1; // get all counts from a chunk
++    if(test_stats)
++    {
++        if(test_stats-&gt;maxnvalues &gt; 0) test_stats-&gt;maxnvalues= -1; // get all counts from a chunk
++        if(test_stats-&gt;m_window == -1 || test_stats-&gt;m_window &gt; 0)
++            test_stats-&gt;setWindowSize(-2); // get all observations
++    }
+     test(testset, test_stats, testoutputs, testcosts);
+     return make_tuple(test_stats, testoutputs, testcosts);
+ }
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000173.html">[Plearn-commits] r6724 - in	trunk/plearn/math/test/VecStatsCollector/.pytest/PL_constant_regressor_script/expected_results/expdir:	. Split0 Split0/test1_confidence.pmat.metadata	Split0/test1_costs.pmat.metadata	Split0/test1_outputs.pmat.metadata global_stats.pmat.metadata	split_stats.pmat.metadata
+</A></li>
+	<LI>Next message: <A HREF="000175.html">[Plearn-commits] r6726 - in trunk: plearn/base plearn/math	plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#174">[ date ]</a>
+              <a href="thread.html#174">[ thread ]</a>
+              <a href="subject.html#174">[ subject ]</a>
+              <a href="author.html#174">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

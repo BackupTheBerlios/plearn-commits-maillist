@@ -1,0 +1,149 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7431 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7431%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705301636.l4UGaKlc024988%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000879.html">
+   <LINK REL="Next"  HREF="000881.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7431 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7431%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705301636.l4UGaKlc024988%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7431 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Wed May 30 18:36:20 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000879.html">[Plearn-commits] r7430 - trunk/plearn/vmat
+</A></li>
+        <LI>Next message: <A HREF="000881.html">[Plearn-commits] r7432 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#880">[ date ]</a>
+              <a href="thread.html#880">[ thread ]</a>
+              <a href="subject.html#880">[ subject ]</a>
+              <a href="author.html#880">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-05-30 18:36:19 +0200 (Wed, 30 May 2007)
+New Revision: 7431
+
+Modified:
+   trunk/plearn_learners/online/ModuleTester.cc
+   trunk/plearn_learners/online/ModuleTester.h
+Log:
+Can now provide explicit data instead of using default uniform sampling
+
+Modified: trunk/plearn_learners/online/ModuleTester.cc
+===================================================================
+--- trunk/plearn_learners/online/ModuleTester.cc	2007-05-30 16:27:17 UTC (rev 7430)
++++ trunk/plearn_learners/online/ModuleTester.cc	2007-05-30 16:36:19 UTC (rev 7431)
+@@ -38,6 +38,7 @@
+ 
+ 
+ #include &quot;ModuleTester.h&quot;
++#include &lt;plearn/vmat/VMatrix.h&gt;
+ 
+ #define PL_LOG_MODULE_NAME &quot;ModuleTester&quot;
+ #include &lt;plearn/io/pl_log.h&gt;
+@@ -118,6 +119,14 @@
+         &quot;Maximum value used when uniformly sampling output gradient data.\n&quot;
+         &quot;If missing, then 'max_in' is used.&quot;);
+ 
++    declareOption(ol, &quot;sampling_data&quot;, &amp;ModuleTester::sampling_data,
++                  OptionBase::buildoption,
++        &quot;A map from port names to specific data to use when sampling (either\n&quot;
++        &quot;input data or output gradient data, depending on whether the port\n&quot;
++        &quot;is an input or output) for this port. This mean the port data is\n&quot;
++        &quot;actually not sampled, but filled with the provided VMatrix (which\n&quot;
++        &quot;might be a VMatrixFromDistribution if sampling is needed).&quot;);
++
+     declareOption(ol, &quot;seeds&quot;, &amp;ModuleTester::seeds,
+                   OptionBase::buildoption,
+         &quot;Seeds used for random number generation. You can try different seeds &quot;
+@@ -213,8 +222,16 @@
+                 Mat* in_k = &amp; mats.lastElement();
+                 fprop_data[module-&gt;getPortIndex(port)] = in_k;
+                 // Fill 'in_k' randomly.
+-                in_k-&gt;resize(length, width);
+-                random_gen-&gt;fill_random_uniform(*in_k, min_in, max_in);
++                map&lt;string, PP&lt;VMatrix&gt; &gt;::iterator it =
++                    sampling_data.find(port);
++                if (it == sampling_data.end()) {
++                    in_k-&gt;resize(length, width);
++                    random_gen-&gt;fill_random_uniform(*in_k, min_in, max_in);
++                } else {
++                    PP&lt;VMatrix&gt; vmat = it-&gt;second;
++                    in_k-&gt;resize(vmat-&gt;length(), vmat-&gt;width());
++                    *in_k &lt;&lt; vmat-&gt;toMat();
++                }
+             }
+             for (int k = 0; k &lt; all_out.length(); k++) {
+                 const string&amp; port = all_out[k];
+@@ -281,6 +298,9 @@
+                 out_grad_k-&gt;resize(out_k-&gt;length(), out_k-&gt;width());
+                 real min = is_missing(min_out_grad) ? min_in : min_out_grad;
+                 real max = is_missing(max_out_grad) ? max_in : max_out_grad;
++                PLCHECK_MSG( sampling_data.find(port) == sampling_data.end(),
++                        &quot;Specific sampling data not yet implemented for output&quot;
++                        &quot; gradients&quot; );
+                 if (fast_exact_is_equal(min, max))
+                     // Special cast to handle in particular the case when we
+                     // want the gradient to be exactly 1 (for instance for a
+
+Modified: trunk/plearn_learners/online/ModuleTester.h
+===================================================================
+--- trunk/plearn_learners/online/ModuleTester.h	2007-05-30 16:27:17 UTC (rev 7430)
++++ trunk/plearn_learners/online/ModuleTester.h	2007-05-30 16:36:19 UTC (rev 7431)
+@@ -40,7 +40,6 @@
+ #ifndef ModuleTester_INC
+ #define ModuleTester_INC
+ 
+-#include &lt;plearn/base/Object.h&gt;
+ #include &lt;plearn_learners/online/OnlineLearningModule.h&gt;
+ 
+ namespace PLearn {
+@@ -65,6 +64,7 @@
+     PP&lt;OnlineLearningModule&gt; module;
+ 
+     TVec&lt; map&lt;string, TVec&lt;string&gt; &gt; &gt; configurations;
++    map&lt; string, PP&lt;VMatrix&gt; &gt; sampling_data;
+ 
+     TVec&lt;long&gt; seeds;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000879.html">[Plearn-commits] r7430 - trunk/plearn/vmat
+</A></li>
+	<LI>Next message: <A HREF="000881.html">[Plearn-commits] r7432 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#880">[ date ]</a>
+              <a href="thread.html#880">[ thread ]</a>
+              <a href="subject.html#880">[ subject ]</a>
+              <a href="author.html#880">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

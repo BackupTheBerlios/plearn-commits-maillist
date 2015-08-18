@@ -1,0 +1,520 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6925 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6925%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704191910.l3JJAFGP004409%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000373.html">
+   <LINK REL="Next"  HREF="000375.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6925 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6925%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200704191910.l3JJAFGP004409%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6925 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Thu Apr 19 21:10:15 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000373.html">[Plearn-commits] r6924 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="000375.html">[Plearn-commits] r6926 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#374">[ date ]</a>
+              <a href="thread.html#374">[ thread ]</a>
+              <a href="subject.html#374">[ subject ]</a>
+              <a href="author.html#374">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2007-04-19 21:10:14 +0200 (Thu, 19 Apr 2007)
+New Revision: 6925
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+Log:
+More work towards mini-batches
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-04-19 19:01:14 UTC (rev 6924)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-04-19 19:10:14 UTC (rev 6925)
+@@ -475,8 +475,8 @@
+     deepCopyField(final_cost_gradients,     copies);
+     deepCopyField(save_layer_activation,    copies);
+     deepCopyField(save_layer_expectation,   copies);
+-    deepCopyField(pos_down_values,          copies);
+-    deepCopyField(pos_up_values,            copies);
++    deepCopyField(pos_down_val,          copies);
++    deepCopyField(pos_up_val,            copies);
+     deepCopyField(final_cost_indices,       copies);
+     deepCopyField(partial_cost_indices,     copies);
+ }
+@@ -787,13 +787,17 @@
+             if (minibatch_size &gt; 1) {
+                 train_set-&gt;getExamples(sample_start, minibatch_size, inputs,
+                         targets, weights);
+-                fineTuningStep(inputs, targets, train_costs);
++                fineTuningStep(inputs, targets, train_costs_m);
+             } else {
+                 train_set-&gt;getExample( sample_start, input, target, weight );
+                 fineTuningStep( input, target, train_costs );
+             }
+             if (update_stats)
+-                train_stats-&gt;update( train_costs );
++                if (minibatch_size &gt; 1)
++                    for (int k = 0; k &lt; minibatch_size; k++)
++                        train_stats-&gt;update(train_costs_m(k));
++                else
++                    train_stats-&gt;update( train_costs );
+ 
+             if( pb )
+                 pb-&gt;update( stage - init_stage + 1 );
+@@ -807,7 +811,6 @@
+ 
+     train_stats-&gt;finalize();
+ 
+-    // TODO Conversion to mini-batch: CONTINUE HERE
+ }
+ 
+ ////////////////
+@@ -816,6 +819,8 @@
+ void DeepBeliefNet::onlineStep( const Vec&amp; input, const Vec&amp; target,
+                                 Vec&amp; train_costs)
+ {
++    PLASSERT_MSG(batch_size == 1, &quot;Not implemented for mini-batches&quot;);
++
+     TVec&lt;Vec&gt; cost;
+     if (partial_costs)
+         cost.resize(n_layers-1);
+@@ -1048,6 +1053,9 @@
+ 
+ }
+ 
++////////////////
++// greedyStep //
++////////////////
+ void DeepBeliefNet::greedyStep( const Vec&amp; input, const Vec&amp; target, int index )
+ {
+     PLASSERT( index &lt; n_layers );
+@@ -1098,9 +1106,69 @@
+                                true );
+ }
+ 
++/////////////////
++// greedySteps //
++/////////////////
++void DeepBeliefNet::greedyStep( const Mat&amp; inputs, const Mat&amp; targets, int index )
++{
++    PLASSERT( index &lt; n_layers );
++
++    layers[0]-&gt;expectations &lt;&lt; inputs;
++    for( int i=0 ; i&lt;=index ; i++ )
++    {
++        connections[i]-&gt;setAsDownInputs( layers[i]-&gt;expectations );
++        layers[i+1]-&gt;getAllActivations( connections[i] );
++        layers[i+1]-&gt;computeExpectation(); // TODO Ensure it fills expectations
++    }
++
++    // TODO: add another learning rate?
++    if( partial_costs &amp;&amp; partial_costs[ index ] )
++    {
++        PLASSERT_MSG(batch_size == 1, &quot;Not implemented for mini-batches&quot;);
++        /*
++        // put appropriate learning rate
++        connections[ index ]-&gt;setLearningRate( grad_learning_rate );
++        layers[ index+1 ]-&gt;setLearningRate( grad_learning_rate );
++
++        // Backward pass
++        real cost;
++        partial_costs[ index ]-&gt;fprop( layers[ index+1 ]-&gt;expectation,
++                                       target, cost );
++
++        partial_costs[ index ]-&gt;bpropUpdate( layers[ index+1 ]-&gt;expectation,
++                                             target, cost,
++                                             expectation_gradients[ index+1 ]
++                                             );
++
++        layers[ index+1 ]-&gt;bpropUpdate( layers[ index+1 ]-&gt;activation,
++                                        layers[ index+1 ]-&gt;expectation,
++                                        activation_gradients[ index+1 ],
++                                        expectation_gradients[ index+1 ] );
++
++        connections[ index ]-&gt;bpropUpdate( layers[ index ]-&gt;expectation,
++                                           layers[ index+1 ]-&gt;activation,
++                                           expectation_gradients[ index ],
++                                           activation_gradients[ index+1 ] );
++
++        // put back old learning rate
++        connections[ index ]-&gt;setLearningRate( cd_learning_rate );
++        layers[ index+1 ]-&gt;setLearningRate( cd_learning_rate );
++        */
++    }
++
++    contrastiveDivergenceStep( layers[ index ],
++                               connections[ index ],
++                               layers[ index+1 ],
++                               true );
++}
++
++/////////////////////
++// jointGreedyStep //
++/////////////////////
+ void DeepBeliefNet::jointGreedyStep( const Vec&amp; input, const Vec&amp; target )
+ {
+     PLASSERT( joint_layer );
++    PLASSERT_MSG(batch_size == 1, &quot;Not implemented for mini-batches&quot;);
+ 
+     layers[0]-&gt;expectation &lt;&lt; input;
+     for( int i=0 ; i&lt;n_layers-2 ; i++ )
+@@ -1157,6 +1225,9 @@
+         layers[ n_layers-1 ] );
+ }
+ 
++////////////////////
++// fineTuningStep //
++////////////////////
+ void DeepBeliefNet::fineTuningStep( const Vec&amp; input, const Vec&amp; target,
+                                     Vec&amp; train_costs )
+ {
+@@ -1217,7 +1288,7 @@
+             activation_gradients[ n_layers-1 ] );
+     }
+     else  {
+-        expectation_gradients[ n_layers-2 ]-&gt;clear();
++        expectation_gradients[ n_layers-2 ].clear();
+     }
+ 
+     if( use_classification_cost )
+@@ -1263,53 +1334,216 @@
+     }
+ }
+ 
+-// assumes that down_layer-&gt;expectation is set
++////////////////////
++// fineTuningStep //
++////////////////////
++void DeepBeliefNet::fineTuningStep(const Mat&amp; inputs, const Mat&amp; targets,
++                                   Mat&amp; train_costs )
++{
++    final_cost_values.resize(0, 0);
++    // fprop
++    layers[0]-&gt;expectations &lt;&lt; inputs;
++    for( int i=0 ; i&lt;n_layers-2 ; i++ )
++    {
++        connections[i]-&gt;setAsDownInputs( layers[i]-&gt;expectations );
++        layers[i+1]-&gt;getAllActivations( connections[i] );
++        layers[i+1]-&gt;computeExpectation(); // TODO Ensure it fills expectations
++    }
++
++    if( final_cost )
++    {
++        connections[ n_layers-2 ]-&gt;setAsDownInputs(
++            layers[ n_layers-2 ]-&gt;expectations );
++        // TODO Also ensure getAllActivations fills everything.
++        layers[ n_layers-1 ]-&gt;getAllActivations( connections[ n_layers-2 ] );
++        layers[ n_layers-1 ]-&gt;computeExpectation();
++
++        if( final_module )
++        {
++            final_module-&gt;fprop( layers[ n_layers-1 ]-&gt;expectations,
++                                 final_cost_inputs );
++            final_cost-&gt;fprop( final_cost_inputs, targets, final_cost_values );
++
++            Mat optimized_costs = final_cost_values.column(0);
++            final_cost-&gt;bpropUpdate( final_cost_inputs, targets,
++                                     optimized_costs,
++                                     final_cost_gradients );
++            final_module-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;expectations,
++                                       final_cost_inputs,
++                                       expectations_gradients[ n_layers-1 ],
++                                       final_cost_gradients );
++        }
++        else
++        {
++            final_cost-&gt;fprop( layers[ n_layers-1 ]-&gt;expectations, targets,
++                               final_cost_values );
++
++            Mat optimized_costs = final_cost_values.column(0);
++            final_cost-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;expectations,
++                                     targets, optimized_costs,
++                                     expectations_gradients[ n_layers-1 ] );
++        }
++
++        for (int k = 0; k &lt; minibatch_size; k++)
++            for (int j=0;j&lt;final_cost_indices.length();j++)
++                train_costs(k, final_cost_indices[j]) =
++                    final_cost_values(k, j);
++
++        layers[ n_layers-1 ]-&gt;bpropUpdate( layers[ n_layers-1 ]-&gt;activations,
++                                           layers[ n_layers-1 ]-&gt;expectations,
++                                           activations_gradients[ n_layers-1 ],
++                                           expectations_gradients[ n_layers-1 ]
++                                         );
++
++        connections[ n_layers-2 ]-&gt;bpropUpdate(
++            layers[ n_layers-2 ]-&gt;expectations,
++            layers[ n_layers-1 ]-&gt;activations,
++            expectations_gradients[ n_layers-2 ],
++            activations_gradients[ n_layers-1 ] );
++    }
++    else  {
++        expectations_gradients[ n_layers-2 ].clear();
++    }
++
++    if( use_classification_cost )
++    {
++        PLASSERT_MSG(batch_size == 1, &quot;Not implemented for mini-batches&quot;);
++        /*
++        classification_module-&gt;fprop( layers[ n_layers-2 ]-&gt;expectation,
++                                      class_output );
++        real nll_cost;
++
++        // This doesn't work. gcc bug?
++        // classification_cost-&gt;fprop( class_output, target, cost );
++        classification_cost-&gt;CostModule::fprop( class_output, target,
++                                                nll_cost );
++
++        real class_error =
++            ( argmax(class_output) == (int) round(target[0]) ) ? 0
++                                                               : 1;
++
++        train_costs[nll_cost_index] = nll_cost;
++        train_costs[class_cost_index] = class_error;
++
++        classification_cost-&gt;bpropUpdate( class_output, target, nll_cost,
++                                          class_gradient );
++
++        classification_module-&gt;bpropUpdate( layers[ n_layers-2 ]-&gt;expectation,
++                                            class_output,
++                                            class_input_gradient,
++                                            class_gradient );
++
++        expectation_gradients[n_layers-2] += class_input_gradient;
++        */
++    }
++
++    for( int i=n_layers-2 ; i&gt;0 ; i-- )
++    {
++        layers[i]-&gt;bpropUpdate( layers[i]-&gt;activations,
++                                layers[i]-&gt;expectations,
++                                activations_gradients[i],
++                                expectations_gradients[i] );
++
++        connections[i-1]-&gt;bpropUpdate( layers[i-1]-&gt;expectations,
++                                       layers[i]-&gt;activations,
++                                       expectations_gradients[i-1],
++                                       activations_gradients[i] );
++    }
++}
++
++///////////////////////////////
++// contrastiveDivergenceStep //
++///////////////////////////////
+ void DeepBeliefNet::contrastiveDivergenceStep(
+     const PP&lt;RBMLayer&gt;&amp; down_layer,
+     const PP&lt;RBMConnection&gt;&amp; connection,
+     const PP&lt;RBMLayer&gt;&amp; up_layer,
+     bool nofprop)
+ {
++    bool mbatch = minibatch_size &gt; 1;
++
+     // positive phase
+     if (!nofprop)
+     {
+-        connection-&gt;setAsDownInput( down_layer-&gt;expectation );
++        if (mbatch)
++            connection-&gt;setAsDownInputs( down_layer-&gt;expectations );
++        else
++            connection-&gt;setAsDownInput( down_layer-&gt;expectation );
+         up_layer-&gt;getAllActivations( connection );
+         up_layer-&gt;computeExpectation();
+     }
+-    up_layer-&gt;generateSample();
+ 
+-    // accumulate positive stats using the expectation
+-    // we deep-copy because the value will change during negative phase
+-    pos_down_values.resize( down_layer-&gt;size );
+-    pos_up_values.resize( up_layer-&gt;size );
++    if (mbatch) {
++        up_layer-&gt;generateSamples(minibatch_size);
+ 
+-    pos_down_values &lt;&lt; down_layer-&gt;expectation;
+-    pos_up_values &lt;&lt; up_layer-&gt;expectation;
++        // accumulate positive stats using the expectation
++        // we deep-copy because the value will change during negative phase
++        pos_down_vals.resize(minibatch_size, down_layer-&gt;size);
++        pos_up_vals.resize(minibatch_size, up_layer-&gt;size);
+ 
+-    // down propagation, starting from a sample of up_layer
+-    connection-&gt;setAsUpInput( up_layer-&gt;sample );
++        pos_down_vals &lt;&lt; down_layer-&gt;expectations;
++        pos_up_vals &lt;&lt; up_layer-&gt;expectations;
++
++        // down propagation, starting from a sample of up_layer
++        connection-&gt;setAsUpInputs( up_layer-&gt;samples );
++    } else {
++        up_layer-&gt;generateSample();
++
++        // accumulate positive stats using the expectation
++        // we deep-copy because the value will change during negative phase
++        pos_down_val.resize( down_layer-&gt;size );
++        pos_up_val.resize( up_layer-&gt;size );
++
++        pos_down_val &lt;&lt; down_layer-&gt;expectation;
++        pos_up_val &lt;&lt; up_layer-&gt;expectation;
++
++        // down propagation, starting from a sample of up_layer
++        connection-&gt;setAsUpInput( up_layer-&gt;sample );
++    }
++
+     down_layer-&gt;getAllActivations( connection );
+-    down_layer-&gt;generateSample();
++    if (mbatch) {
++        down_layer-&gt;generateSamples(minibatch_size);
++        // negative phase
++        connection-&gt;setAsDownInputs( down_layer-&gt;samples );
++    } else {
++        down_layer-&gt;generateSample();
++        // negative phase
++        connection-&gt;setAsDownInput( down_layer-&gt;sample );
++    }
+ 
+-    // negative phase
+-    connection-&gt;setAsDownInput( down_layer-&gt;sample );
+     up_layer-&gt;getAllActivations( connection );
+     up_layer-&gt;computeExpectation();
+ 
+-    // accumulate negative stats
+-    // no need to deep-copy because the values won't change before update
+-    Vec neg_down_values = down_layer-&gt;sample;
+-    Vec neg_up_values = up_layer-&gt;expectation;
++    if (mbatch) {
++        // accumulate negative stats
++        // no need to deep-copy because the values won't change before update
++        Mat neg_down_vals = down_layer-&gt;samples;
++        Mat neg_up_vals = up_layer-&gt;expectations;
+ 
+-    // update
+-    down_layer-&gt;update( pos_down_values, neg_down_values );
+-    connection-&gt;update( pos_down_values, pos_up_values,
+-                        neg_down_values, neg_up_values );
+-    up_layer-&gt;update( pos_up_values, neg_up_values );
++        // update
++        down_layer-&gt;update( pos_down_vals, neg_down_vals );
++        connection-&gt;update( pos_down_vals, pos_up_vals,
++                neg_down_vals, neg_up_vals );
++        up_layer-&gt;update( pos_up_vals, neg_up_vals );
++    } else {
++        // accumulate negative stats
++        // no need to deep-copy because the values won't change before update
++        Vec neg_down_val = down_layer-&gt;sample;
++        Vec neg_up_val = up_layer-&gt;expectation;
++
++        // update
++        down_layer-&gt;update( pos_down_val, neg_down_val );
++        connection-&gt;update( pos_down_val, pos_up_val,
++                neg_down_val, neg_up_val );
++        up_layer-&gt;update( pos_up_val, neg_up_val );
++    }
+ }
+ 
+ 
++///////////////////
++// computeOutput //
++///////////////////
+ void DeepBeliefNet::computeOutput(const Vec&amp; input, Vec&amp; output) const
+ {
+     // Compute the output from the input.
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2007-04-19 19:01:14 UTC (rev 6924)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2007-04-19 19:10:14 UTC (rev 6925)
+@@ -207,22 +207,20 @@
+ 
+     void greedyStep( const Vec&amp; input, const Vec&amp; target, int index );
+ 
+-    //! TODO Document and implement.
+-    void greedyStep( const Mat&amp; inputs, const Mat&amp; targets, int index ) {
+-        PLASSERT(false);
+-    }
++    //! Greedy step with mini-batches.
++    void greedyStep(const Mat&amp; inputs, const Mat&amp; targets, int index);
+ 
+     void jointGreedyStep( const Vec&amp; input, const Vec&amp; target );
+ 
+     void fineTuningStep( const Vec&amp; input, const Vec&amp; target,
+                          Vec&amp; train_costs );
+ 
+-    //! TODO Document and implement.
++    //! Fine tuning step with mini-batches.
+     void fineTuningStep( const Mat&amp; inputs, const Mat&amp; targets,
+-                         Vec&amp; train_costs ) {
+-        PLASSERT(false);
+-    }
++                         Mat&amp; train_costs );
+ 
++    //! Perform a step of contrastive divergence, assuming that
++    //! down_layer-&gt;expectation(s) is set.
+     void contrastiveDivergenceStep( const PP&lt;RBMLayer&gt;&amp; down_layer,
+                                     const PP&lt;RBMConnection&gt;&amp; connection,
+                                     const PP&lt;RBMLayer&gt;&amp; up_layer,
+@@ -279,7 +277,7 @@
+     mutable Mat final_cost_inputs; //!&lt; For mini-batch.
+ 
+     mutable Vec final_cost_value;
+-    mutable Vec final_cost_values; //!&lt; For mini-batch.
++    mutable Mat final_cost_values; //!&lt; For mini-batch.
+ 
+     mutable Vec final_cost_output;
+ 
+@@ -306,8 +304,10 @@
+     bool final_cost_has_learning_rate;
+ 
+     //! Store a copy of the positive phase values
+-    mutable Vec pos_down_values;
+-    mutable Vec pos_up_values;
++    mutable Vec pos_down_val;
++    mutable Vec pos_up_val;
++    mutable Mat pos_down_vals;
++    mutable Mat pos_up_vals;
+ 
+     //! Keeps the index of the NLL cost in train_costs
+     int nll_cost_index;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000373.html">[Plearn-commits] r6924 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="000375.html">[Plearn-commits] r6926 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#374">[ date ]</a>
+              <a href="thread.html#374">[ thread ]</a>
+              <a href="subject.html#374">[ subject ]</a>
+              <a href="author.html#374">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

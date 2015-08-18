@@ -1,0 +1,242 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8770 - trunk/plearn/var
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8770%20-%20trunk/plearn/var&In-Reply-To=%3C200804081720.m38HKFqW022703%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002217.html">
+   <LINK REL="Next"  HREF="002219.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8770 - trunk/plearn/var</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8770%20-%20trunk/plearn/var&In-Reply-To=%3C200804081720.m38HKFqW022703%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8770 - trunk/plearn/var">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue Apr  8 19:20:15 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002217.html">[Plearn-commits] r8769 - trunk/plearn/base
+</A></li>
+        <LI>Next message: <A HREF="002219.html">[Plearn-commits] r8771 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2218">[ date ]</a>
+              <a href="thread.html#2218">[ thread ]</a>
+              <a href="subject.html#2218">[ subject ]</a>
+              <a href="author.html#2218">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-04-08 19:20:13 +0200 (Tue, 08 Apr 2008)
+New Revision: 8770
+
+Modified:
+   trunk/plearn/var/AffineTransformVariable.cc
+   trunk/plearn/var/AffineTransformVariable.h
+Log:
+- Added an option to force the resulting vector to be a row vector (this is meant in particular to remove the ambiguity between row and vector when the input is scalar)
+- build_ is now private instead of being protected
+- Fixed inconsistencies in recomputeSize()
+
+
+Modified: trunk/plearn/var/AffineTransformVariable.cc
+===================================================================
+--- trunk/plearn/var/AffineTransformVariable.cc	2008-04-08 15:06:38 UTC (rev 8769)
++++ trunk/plearn/var/AffineTransformVariable.cc	2008-04-08 17:20:13 UTC (rev 8770)
+@@ -51,7 +51,13 @@
+         &quot;Affine transformation of a vector variable.&quot;,
+         &quot;The first input is the vector variable.\n&quot;
+         &quot;The second input is the matrix of biases (on the first row) and\n&quot;
+-        &quot;weights (in other rows).&quot;);
++        &quot;weights (in other rows).\n&quot;
++        &quot;If the first input vector is a row vector, then the result is a\n&quot;
++        &quot;row vector as well. If it is a column vector, then the result is\n&quot;
++        &quot;also a column vector. If it is a scalar, then the result is a\n&quot;
++        &quot;column vector as well, unless the option 'force_row_vec' is set\n&quot;
++        &quot;to true.&quot;
++);
+ 
+ /////////////////////////////
+ // AffineTransformVariable //
+@@ -60,13 +66,12 @@
+                                                  Variable* transformation,
+                                                  bool call_build_):
+     inherited(vec, transformation, 
+-            (vec-&gt;size() == 1) ? transformation-&gt;width()
+-                               : (vec-&gt;isRowVec() ? 1
+-                                                  : transformation-&gt;width()),
+-            (vec-&gt;size() == 1) ? 1
+-                               : (vec-&gt;isRowVec() ? transformation-&gt;width()
+-                                                  : 1),
+-            call_build_)
++            vec-&gt;isScalar() || vec-&gt;isColumnVec() ? transformation-&gt;width()
++                                                  : 1,
++            vec-&gt;isScalar() || vec-&gt;isColumnVec() ? 1
++                                                  : transformation-&gt;width(),
++            call_build_),
++    force_row_vec(false)
+ {
+     if (call_build_)
+         build_();
+@@ -91,19 +96,41 @@
+         PLERROR(&quot;In AffineTransformVariable: expecting a vector Var (row or column) as first argument&quot;);
+ }
+ 
++////////////////////
++// declareOptions //
++////////////////////
++void AffineTransformVariable::declareOptions(OptionList&amp; ol)
++{
++     declareOption(ol, &quot;force_row_vec&quot;, &amp;AffineTransformVariable::force_row_vec,
++                   OptionBase::buildoption,
++        &quot;If set to true, then the resulting vector will always be a row\n&quot;
++        &quot;vector, even when the input is a column or a scalar.&quot;);
++
++    inherited::declareOptions(ol);
++}
++
+ ///////////////////
+ // recomputeSize //
+ ///////////////////
+ void AffineTransformVariable::recomputeSize(int&amp; l, int&amp; w) const
+ { 
+     if (input1 &amp;&amp; input2) {
+-        l = input1-&gt;isRowVec() ? 1 : input2-&gt;width();
+-        w = input1-&gt;isColumnVec() ? 1 : input2-&gt;width(); 
++        if (force_row_vec || (!input1-&gt;isScalar() &amp;&amp; input1-&gt;isRowVec())) {
++            // Result is a row vector.
++            l = 1;
++            w = input2-&gt;width();
++        } else {
++            // Result is a column vector.
++            l = input2-&gt;width();
++            w = 1;
++        }
+     } else
+         l = w = 0;
+ }
+ 
+-
++///////////
++// fprop //
++///////////
+ void AffineTransformVariable::fprop()
+ {
+     value &lt;&lt; input2-&gt;matValue.firstRow();
+@@ -111,7 +138,9 @@
+     transposeProductAcc(value, lintransform, input1-&gt;value);
+ }
+ 
+-
++///////////
++// bprop //
++///////////
+ void AffineTransformVariable::bprop()
+ {
+     Mat&amp;  afftr = input2-&gt;matValue;
+
+Modified: trunk/plearn/var/AffineTransformVariable.h
+===================================================================
+--- trunk/plearn/var/AffineTransformVariable.h	2008-04-08 15:06:38 UTC (rev 8769)
++++ trunk/plearn/var/AffineTransformVariable.h	2008-04-08 17:20:13 UTC (rev 8770)
+@@ -51,21 +51,22 @@
+ using namespace std;
+ 
+ 
+-//! Affine transformation of a vector variable.
+-//! Should work for both column and row vectors: result vector will be of same kind (row or col)
+-//! First row of transformation matrix contains bias b, following rows contain linear-transformation T
+-//! Will compute b + x.T (if you consider b and x to be row vectors)
+-//! which is equivalent to b + 
+ class AffineTransformVariable: public BinaryVariable
+ {
+     typedef BinaryVariable inherited;
+ 
+ public:
++
++    // Public options.
++
++    bool force_row_vec;
++
+     //!  Default constructor for persistence
+     AffineTransformVariable() {}
+     AffineTransformVariable(Variable* vec, Variable* transformation,
+                             bool call_build_ = true);
+ 
++
+     PLEARN_DECLARE_OBJECT(AffineTransformVariable);
+ 
+     virtual void build();
+@@ -75,17 +76,33 @@
+     virtual void bprop();
+     virtual void symbolicBprop();
+ 
++private:
++
++    void build_();
++
+ protected:
+-    void build_();
++
++    static void declareOptions(OptionList&amp; ol);
++
+ };
+ 
+ DECLARE_OBJECT_PTR(AffineTransformVariable);
+ 
+-//! first row of transformation is the bias.
+-inline Var affine_transform(Var vec, Var transformation)
++//! First row of transformation is the bias.
++//! The boolean 'force_row_vec' may be used when the first input is a
++//! a vector, to force the resulting variable to be a row vector, even
++//! when the input is a column vector or a scalar.
++//! If the first input is a matrix, this parameter is ignored.
++inline Var affine_transform(Var vec, Var transformation,
++                            bool force_row_vec = false)
+ { 
+-    if (vec-&gt;isVec())
+-        return new AffineTransformVariable(vec, transformation); 
++    if (vec-&gt;isVec()) {
++        PP&lt;AffineTransformVariable&gt; res =
++            new AffineTransformVariable(vec, transformation, false);
++        res-&gt;force_row_vec = force_row_vec;
++        res-&gt;build();
++        return get_pointer(res);
++    }
+     else return new MatrixAffineTransformVariable(vec, transformation);
+ }
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002217.html">[Plearn-commits] r8769 - trunk/plearn/base
+</A></li>
+	<LI>Next message: <A HREF="002219.html">[Plearn-commits] r8771 - trunk/plearn_learners/generic
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2218">[ date ]</a>
+              <a href="thread.html#2218">[ thread ]</a>
+              <a href="subject.html#2218">[ subject ]</a>
+              <a href="author.html#2218">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

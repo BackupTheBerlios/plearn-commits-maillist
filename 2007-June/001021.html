@@ -1,0 +1,297 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7572 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7572%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200706120038.l5C0cXtP023286%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001020.html">
+   <LINK REL="Next"  HREF="001022.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7572 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7572%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200706120038.l5C0cXtP023286%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7572 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Tue Jun 12 02:38:33 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001020.html">[Plearn-commits] r7571 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001022.html">[Plearn-commits] r7573 - trunk/python_modules/plearn/learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1021">[ date ]</a>
+              <a href="thread.html#1021">[ thread ]</a>
+              <a href="subject.html#1021">[ subject ]</a>
+              <a href="author.html#1021">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-06-12 02:38:32 +0200 (Tue, 12 Jun 2007)
+New Revision: 7572
+
+Modified:
+   trunk/plearn_learners/online/Convolution2DModule.cc
+   trunk/plearn_learners/online/Convolution2DModule.h
+Log:
+Implementation of new fprop() and bpropAccUpdate()
+
+
+Modified: trunk/plearn_learners/online/Convolution2DModule.cc
+===================================================================
+--- trunk/plearn_learners/online/Convolution2DModule.cc	2007-06-12 00:38:05 UTC (rev 7571)
++++ trunk/plearn_learners/online/Convolution2DModule.cc	2007-06-12 00:38:32 UTC (rev 7572)
+@@ -257,6 +257,16 @@
+     output_gradients.resize(n_output_images);
+     input_diag_hessians.resize(n_input_images);
+     output_diag_hessians.resize(n_output_images);
++
++    // port stuff
++    ports.resize(2);
++    ports[0] = &quot;input&quot;;
++    ports[1] = &quot;output&quot;;
++
++    port_sizes.resize(nPorts(), 2);
++    port_sizes.column(0).fill(-1);
++    port_sizes(0, 1) = input_size;
++    port_sizes(1, 1) = output_size;
+ }
+ 
+ void Convolution2DModule::build_kernels()
+@@ -296,6 +306,7 @@
+         forget();
+ 
+     kernel_gradient.resize(kernel_length, kernel_width);
++    kernel_gradients.resize(n_input_images, n_output_images);
+     squared_kernel.resize(kernel_length, kernel_width);
+ }
+ 
+@@ -357,6 +368,52 @@
+     }
+ }
+ 
++void Convolution2DModule::fprop(const TVec&lt;Mat*&gt;&amp; ports_value)
++{
++    PLASSERT( ports_value.length() == nPorts() );
++
++    Mat* input = ports_value[0];
++    Mat* output = ports_value[1];
++
++    if( input &amp;&amp; !input-&gt;isEmpty() &amp;&amp; output &amp;&amp; output-&gt;isEmpty() )
++    {
++        PLASSERT( input-&gt;width() == port_sizes(0,1) );
++
++        int batch_size = input-&gt;length();
++        output-&gt;resize(batch_size, port_sizes(1,1));
++
++        // TODO: optimize
++        for( int k=0; k&lt;batch_size; k++ )
++        {
++            for( int i=0; i&lt;n_input_images; i++ )
++                input_images[i] = (*input)(k)
++                    .subVec(i*input_images_size, input_images_size)
++                    .toMat(input_images_length, input_images_width);
++
++            for( int j=0; j&lt;n_output_images; j++ )
++                output_images[j] = (*output)(k)
++                    .subVec(j*output_images_size, output_images_size)
++                    .toMat(output_images_length, output_images_width);
++
++            for( int j=0; j&lt;n_output_images; j++ )
++            {
++                output_images[j].fill( bias[j] );
++                for( int i=0; i&lt;n_input_images; i++ )
++                    if( connection_matrix(i,j) != 0 )
++                        convolve2D( input_images[i], kernels(i,j),
++                                    output_images[j], kernel_step1,
++                                    kernel_step2, true );
++            }
++        }
++    }
++    else if (!input &amp;&amp; !output)
++    {
++        // Nothing to do
++    }
++    else
++        PLCHECK_MSG( false, &quot;Unknown port configuration&quot; );
++}
++
+ /* THIS METHOD IS OPTIONAL
+ //! Adapt based on the output gradient: this method should only
+ //! be called just after a corresponding fprop; it should be
+@@ -439,6 +496,102 @@
+ 
+ }
+ 
++void Convolution2DModule::bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                         const TVec&lt;Mat*&gt;&amp; ports_gradient)
++{
++    PLASSERT( ports_value.length() == nPorts()
++              &amp;&amp; ports_gradient.length() == nPorts() );
++
++    Mat* input = ports_value[0];
++    Mat* output = ports_value[1];
++    Mat* input_grad = ports_gradient[0];
++    Mat* output_grad = ports_gradient[1];
++
++    // If we want input_grad and we have output_grad
++    if( input_grad &amp;&amp; input_grad-&gt;isEmpty()
++        &amp;&amp; output_grad &amp;&amp; !output_grad-&gt;isEmpty() )
++    {
++        PLASSERT( input );
++        PLASSERT( output );
++
++        PLASSERT( input-&gt;width() == port_sizes(0,1) );
++        PLASSERT( output-&gt;width() == port_sizes(1,1) );
++        PLASSERT( input_grad-&gt;width() == port_sizes(0,1) );
++        PLASSERT( output_grad-&gt;width() == port_sizes(1,1) );
++
++        int batch_size = input-&gt;length();
++        PLASSERT( output-&gt;length() == batch_size );
++        PLASSERT( output_grad-&gt;length() == batch_size );
++
++        input_grad-&gt;resize(batch_size, port_sizes(0,1));
++        learning_rate = start_learning_rate /
++            (1.+decrease_constant*step_number);
++        real avg_lr = learning_rate / batch_size;
++
++        // clear kernel gradient
++        for( int i=0; i&lt;n_input_images; i++ )
++            for( int j=0; j&lt;n_output_images; j++ )
++                if( connection_matrix(i,j) != 0 )
++                {
++                    kernel_gradients(i,j).resize(kernel_length, kernel_width);
++                    kernel_gradients(i,j).clear();
++                }
++
++        // TODO: optimize
++        for( int k=0; k&lt;batch_size; k++ )
++        {
++            for( int i=0; i&lt;n_input_images; i++ )
++            {
++                input_images[i] = (*input)(k)
++                    .subVec(i*input_images_size, input_images_size)
++                    .toMat(input_images_length, input_images_width);
++                input_gradients[i] = (*input_grad)(k)
++                    .subVec(i*input_images_size, input_images_size)
++                    .toMat(input_images_length, input_images_width);
++            }
++
++            for( int j=0; j&lt;n_output_images; j++ )
++            {
++                output_images[j] = (*output)(k)
++                    .subVec(j*output_images_size, output_images_size)
++                    .toMat(output_images_length, output_images_width);
++                output_gradients[j] = (*output_grad)(k)
++                    .subVec(j*output_images_size, output_images_size)
++                    .toMat(output_images_length, output_images_width);
++            }
++
++            for( int j=0; j&lt;n_output_images; j++ )
++                for( int i=0; i&lt;n_input_images; i++ )
++                    if( connection_matrix(i,j) != 0 )
++                        convolve2Dbackprop( input_images[i],
++                                            kernels(i,j),
++                                            output_gradients[j],
++                                            input_gradients[i],
++                                            kernel_gradients(i,j),
++                                            kernel_step1, kernel_step2,
++                                            true );
++        }
++
++        for( int j=0; j&lt;n_output_images; j++ )
++        {
++            for( int i=0; i&lt;n_input_images; i++ )
++                if( connection_matrix(i,j) != 0 )
++                    multiplyAcc(kernels(i,j), kernel_gradients(i,j), -avg_lr);
++
++            bias[j] -= avg_lr * sum( (*output_grad)
++                .subMatColumns(j*output_images_size, output_images_size) );
++        }
++    }
++    else if( !input_grad )
++    {
++        PLASSERT( !output_grad || !output_grad-&gt;isEmpty() );
++        PLASSERT( !input || !input-&gt;isEmpty() );
++        PLASSERT( !output || !output-&gt;isEmpty() );
++    }
++    else
++        PLCHECK_MSG( false, &quot;Port configuration not implemented&quot; );
++}
++
+ //! reset the parameters to the state they would be BEFORE starting training.
+ //! Note that this method is necessarily called from build().
+ void Convolution2DModule::forget()
+
+Modified: trunk/plearn_learners/online/Convolution2DModule.h
+===================================================================
+--- trunk/plearn_learners/online/Convolution2DModule.h	2007-06-12 00:38:05 UTC (rev 7571)
++++ trunk/plearn_learners/online/Convolution2DModule.h	2007-06-12 00:38:32 UTC (rev 7572)
+@@ -134,6 +134,9 @@
+     //! given the input, compute the output (possibly resize it  appropriately)
+     virtual void fprop(const Vec&amp; input, Vec&amp; output) const;
+ 
++    //! New version
++    virtual void fprop(const TVec&lt;Mat*&gt;&amp; ports_value);
++
+     //! Adapt based on the output gradient: this method should only
+     //! be called just after a corresponding fprop; it should be
+     //! called with the same arguments as fprop for the first two arguments
+@@ -154,6 +157,10 @@
+                              const Vec&amp; output_gradient,
+                              bool accumulate=false);
+ 
++    //! New version
++    virtual void bpropAccUpdate(const TVec&lt;Mat*&gt;&amp; ports_value,
++                                const TVec&lt;Mat*&gt;&amp; ports_gradient);
++
+     //! Similar to bpropUpdate, but adapt based also on the estimation
+     //! of the diagonal of the Hessian matrix, and propagates this
+     //! back. If these methods are defined, you can use them INSTEAD of
+@@ -238,8 +245,12 @@
+ 
+     // Will store gradients wrt kernels
+     mutable Mat kernel_gradient;
++    TMat&lt;Mat&gt; kernel_gradients;
++
+     // Will store the term-to-term squared kernels (for bbprop)
+     mutable Mat squared_kernel;
++
++    TVec&lt;string&gt; ports;
+ };
+ 
+ // Declares a few other classes and functions related to this class
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001020.html">[Plearn-commits] r7571 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001022.html">[Plearn-commits] r7573 - trunk/python_modules/plearn/learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1021">[ date ]</a>
+              <a href="thread.html#1021">[ thread ]</a>
+              <a href="subject.html#1021">[ subject ]</a>
+              <a href="author.html#1021">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

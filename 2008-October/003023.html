@@ -1,0 +1,223 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9583 - in trunk: commands plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-October/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9583%20-%20in%20trunk%3A%20commands%20plearn/vmat&In-Reply-To=%3C200810201723.m9KHNbgv026101%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003022.html">
+   <LINK REL="Next"  HREF="003024.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9583 - in trunk: commands plearn/vmat</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9583%20-%20in%20trunk%3A%20commands%20plearn/vmat&In-Reply-To=%3C200810201723.m9KHNbgv026101%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9583 - in trunk: commands plearn/vmat">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Mon Oct 20 19:23:37 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003022.html">[Plearn-commits] r9582 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+        <LI>Next message: <A HREF="003024.html">[Plearn-commits] r9584 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3023">[ date ]</a>
+              <a href="thread.html#3023">[ thread ]</a>
+              <a href="subject.html#3023">[ subject ]</a>
+              <a href="author.html#3023">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-10-20 19:23:36 +0200 (Mon, 20 Oct 2008)
+New Revision: 9583
+
+Modified:
+   trunk/commands/plearn_noblas_inc.h
+   trunk/plearn/vmat/LIBSVMSparseVMatrix.cc
+   trunk/plearn/vmat/LIBSVMSparseVMatrix.h
+Log:
+- made LIBSVMSparseVMatrix usable in a &quot;coarse&quot; representation setting
+- added this VMatrix to plearn_noblas_inc.h
+
+
+
+Modified: trunk/commands/plearn_noblas_inc.h
+===================================================================
+--- trunk/commands/plearn_noblas_inc.h	2008-10-20 17:01:22 UTC (rev 9582)
++++ trunk/commands/plearn_noblas_inc.h	2008-10-20 17:23:36 UTC (rev 9583)
+@@ -326,6 +326,7 @@
+ #include &lt;plearn/vmat/KNNImputationVMatrix.h&gt;
+ // Commented out because triggers WordNet, which does not work really fine yet.
+ //#include &lt;plearn/vmat/LemmatizeVMatrix.h&gt;
++#include &lt;plearn/vmat/LIBSVMSparseVMatrix.h&gt;
+ #include &lt;plearn/vmat/LocalNeighborsDifferencesVMatrix.h&gt;
+ #include &lt;plearn/vmat/LocallyPrecomputedVMatrix.h&gt;
+ #include &lt;plearn/vmat/MeanImputationVMatrix.h&gt;
+
+Modified: trunk/plearn/vmat/LIBSVMSparseVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/LIBSVMSparseVMatrix.cc	2008-10-20 17:01:22 UTC (rev 9582)
++++ trunk/plearn/vmat/LIBSVMSparseVMatrix.cc	2008-10-20 17:23:36 UTC (rev 9583)
+@@ -48,16 +48,35 @@
+ PLEARN_IMPLEMENT_OBJECT(
+     LIBSVMSparseVMatrix,
+     &quot;VMatrix containing data from a libsvm format file&quot;,
+-    &quot;&quot;
++    &quot;The libsvm format file is particularly useful for sparse inputs.\n&quot;
++    &quot;The sparsity information (i.e. indices of non-zero inputs) is provided\n&quot;
++    &quot;via the extra fields, and the input given by getExample() only contains\n&quot;
++    &quot;the values for non-zero inputs. Since the sparsity can change from one example to\n&quot;
++    &quot;another, getExtra() (and getExample()) will adapt the size of the extra (input)\n&quot;
++    &quot;fields vector accordingly. However, since it only works for fixed length inputs,\n&quot;
++    &quot;getRow() returns an error when called in sparse mode.\n&quot;
++    &quot;This class can also be used in \&quot;coarse\&quot; mode (i.e. use_coarse_representation=true),\n&quot;
++    &quot;where getRow() and getExample() will then provide inputs in a fixed vector form, with\n&quot;
++    &quot;no-zero fields taking their given values and other fields are set explicitely to 0.\n&quot;
++    &quot;However, in coarse mode, no extra information is given (i.e. extrasize() is 0), since\n&quot;
++    &quot;it is implicitly incorporated in the input vector.&quot;
+     );
+ 
+-LIBSVMSparseVMatrix::LIBSVMSparseVMatrix()
++LIBSVMSparseVMatrix::LIBSVMSparseVMatrix(): use_coarse_representation(false)
+ {
+ }
+ 
+ void LIBSVMSparseVMatrix::getNewRow(int i, const Vec&amp; v) const
+ {
+-    PLERROR(&quot;In LIBSVMSparseVMatrix::getNewRow(): not implemented yet.&quot;); 
++    if( !use_coarse_representation )
++        PLERROR(&quot;In LIBSVMSparseVMatrix::getNewRow(): not compatible with sparse representations. Use use_coarse_representation=true.&quot;);
++    real* in = libsvm_input_data[i].data();
++    real* ex = libsvm_extra_data[i].data();
++    v.clear();
++    for( int j=0; j&lt;libsvm_input_data[i].length(); j++ )
++        v[(int)round(ex[j])] = in[j];
++
++    v[inputsize_] = libsvm_target_data[i];
+ }
+ 
+ void LIBSVMSparseVMatrix::declareOptions(OptionList&amp; ol)
+@@ -70,6 +89,11 @@
+                   OptionBase::buildoption,
+                   &quot;File name of libsvm data.\n&quot;);
+ 
++    declareOption(ol, &quot;use_coarse_representation&quot;, &amp;LIBSVMSparseVMatrix::use_coarse_representation,
++                  OptionBase::buildoption,
++                  &quot;Indication that a coarse (i.e. fixed length, filled with 0's) representation\n&quot;
++                  &quot;of the data in the .libsvm file should be used.\n&quot;);
++
+     //declareOption(ol, &quot;libsvm_input_data&quot;, 
+     //              &amp;LIBSVMSparseVMatrix::libsvm_input_data,
+     //              OptionBase::learntoption,
+@@ -146,7 +170,11 @@
+     if( inputsize_ &lt; 0 ) inputsize_ = largest_input_index+1;
+     if( targetsize_ &lt; 0 ) targetsize_ = 1;
+     if( weightsize_ &lt; 0 ) weightsize_ = 0;
+-    if( extrasize_ &lt; 0 ) extrasize_ = largest_input_index+1;
++    if( use_coarse_representation )
++        extrasize_ = 0;
++    else
++        extrasize_ = largest_input_index+1;
++    if( width_ &lt; 0 ) width_ = inputsize_ + targetsize_ + weightsize_;
+ }
+  
+ 
+@@ -170,14 +198,19 @@
+ 
+ void LIBSVMSparseVMatrix::getExample(int i, Vec&amp; input, Vec&amp; target, real&amp; weight)
+ {
+-    if( i&gt;= length_ || i &lt; 0 )
+-        PLERROR(&quot;In LIBSVMSparseVMatrix::getExample(): row index should &quot;
+-                &quot;be between 0 and length_-1&quot;);
+-    input.resize(libsvm_input_data[i].length());
+-    input &lt;&lt; libsvm_input_data[i];
+-    target.resize(targetsize_);
+-    target[0] = libsvm_target_data[i];
+-    weight = 1;
++    if( use_coarse_representation )
++        inherited::getExample(i,input,target,weight);
++    else
++    {
++        if( i&gt;= length_ || i &lt; 0 )
++            PLERROR(&quot;In LIBSVMSparseVMatrix::getExample(): row index should &quot;
++                    &quot;be between 0 and length_-1&quot;);
++        input.resize(libsvm_input_data[i].length());
++        input &lt;&lt; libsvm_input_data[i];
++        target.resize(targetsize_);
++        target[0] = libsvm_target_data[i];
++        weight = 1;
++    }
+ }
+ 
+ void LIBSVMSparseVMatrix::getExamples(int i_start, int length, Mat&amp; inputs, Mat&amp; targets,
+@@ -189,11 +222,16 @@
+ 
+ void LIBSVMSparseVMatrix::getExtra(int i, Vec&amp; extra)
+ {
+-    if( i&gt;= length_ || i &lt; 0 )
+-        PLERROR(&quot;In LIBSVMSparseVMatrix::getExample(): row index should &quot;
+-                &quot;be between 0 and length_-1&quot;);
+-    extra.resize(libsvm_extra_data[i].length());
+-    extra &lt;&lt; libsvm_extra_data[i];
++    if( use_coarse_representation )
++        extra.resize(0);
++    else
++    {
++        if( i&gt;= length_ || i &lt; 0 )
++            PLERROR(&quot;In LIBSVMSparseVMatrix::getExample(): row index should &quot;
++                    &quot;be between 0 and length_-1&quot;);
++        extra.resize(libsvm_extra_data[i].length());
++        extra &lt;&lt; libsvm_extra_data[i];
++    }
+ }
+ 
+ } // end of namespace PLearn
+
+Modified: trunk/plearn/vmat/LIBSVMSparseVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/LIBSVMSparseVMatrix.h	2008-10-20 17:01:22 UTC (rev 9582)
++++ trunk/plearn/vmat/LIBSVMSparseVMatrix.h	2008-10-20 17:23:36 UTC (rev 9583)
+@@ -60,6 +60,10 @@
+     //! File name of libsvm data
+     PPath libsvm_file;
+ 
++    //! Indication that a coarse (i.e. fixed length, filled with 0's) representation
++    //! of the data in the .libsvm file should be used.
++    bool use_coarse_representation;
++
+     //! Input data
+     TVec&lt; Vec &gt; libsvm_input_data;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003022.html">[Plearn-commits] r9582 - in trunk: python_modules/plearn/parallel	scripts
+</A></li>
+	<LI>Next message: <A HREF="003024.html">[Plearn-commits] r9584 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3023">[ date ]</a>
+              <a href="thread.html#3023">[ thread ]</a>
+              <a href="subject.html#3023">[ subject ]</a>
+              <a href="author.html#3023">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

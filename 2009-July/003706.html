@@ -1,0 +1,138 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10266 - trunk/scripts
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10266%20-%20trunk/scripts&In-Reply-To=%3C200907131506.n6DF6c44031215%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003705.html">
+   <LINK REL="Next"  HREF="003707.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10266 - trunk/scripts</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10266%20-%20trunk/scripts&In-Reply-To=%3C200907131506.n6DF6c44031215%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10266 - trunk/scripts">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Jul 13 17:06:38 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003705.html">[Plearn-commits] r10265 - trunk/plearn_learners/meta
+</A></li>
+        <LI>Next message: <A HREF="003707.html">[Plearn-commits] r10267 - trunk/commands/PLearnCommands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3706">[ date ]</a>
+              <a href="thread.html#3706">[ thread ]</a>
+              <a href="subject.html#3706">[ subject ]</a>
+              <a href="author.html#3706">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-07-13 17:06:38 +0200 (Mon, 13 Jul 2009)
+New Revision: 10266
+
+Modified:
+   trunk/scripts/dbidispatch
+Log:
+remove condor_q from the loop of the --restart options and added some verification.
+
+
+Modified: trunk/scripts/dbidispatch
+===================================================================
+--- trunk/scripts/dbidispatch	2009-07-13 14:05:08 UTC (rev 10265)
++++ trunk/scripts/dbidispatch	2009-07-13 15:06:38 UTC (rev 10266)
+@@ -510,30 +510,45 @@
+ elif dbi_param.get(&quot;restart&quot;,False):
+     assert launch_cmd==&quot;Condor&quot;
+     cmds=[]
+-#    p1_=Popen('condor_q -l -const &quot;JobStatus!=4&quot; '+args(command_argv, shell=True, stdout=PIPE)
+-#TODO put condor_history outside the loop as this take much time the we have a not too small history.
++    #We accept to start jobs in the queue only if they are completed
++    p=Popen('condor_q -l -const &quot;JobStatus!=4&quot; '+&quot; &quot;.join(command_argv),
++             shell=True, stdout=PIPE)
++    p.wait();
++    lines=p.stdout.readlines()
++    for l in lines:
++        if l.startswith(&quot;Arguments = &quot;):
++            print &quot;We don't accept to restart jobs in the queue that are not completed:&quot;, arg
++            sys.exit(1)
++
++    #get all jobs in the queue that are completed.
++    p=Popen('condor_q -l -const &quot;JobStatus==4&quot; '+&quot; &quot;.join(command_argv),
++             shell=True, stdout=PIPE)
++    p.wait()
++    for l in p.stdout.readlines():
++        if l.startswith(&quot;Arguments = &quot;):
++            cmd=l[13:-2]
++            cmds.append(cmd.replace(&quot;'&quot;,&quot;&quot;))
++
+     for arg in command_argv:
+-        #We accept to start jobs in the queue if they are completed
+-        p1=Popen('condor_q -l -const &quot;JobStatus!=4&quot; '+arg, shell=True, stdout=PIPE)
+-        p2=Popen(&quot;condor_history -l &quot;+arg, shell=True, stdout=PIPE)
+-        p3=Popen('condor_q -l -const &quot;JobStatus==4&quot; '+arg, shell=True, stdout=PIPE)
+-        p1.wait();p2.wait();p3.wait()
+-        lines=p1.stdout.readlines()
++        #condor_history don't accept multiple argument! This is the bottleneck.
++        #We need to modif condor_history to let it accept multiple parameter!
++        p=Popen(&quot;condor_history -l &quot;+arg, shell=True, stdout=PIPE)
++        p.wait()
++        lines=p.stdout.readlines()
+         for l in lines:
+             if l.startswith(&quot;Arguments = &quot;):
+-                print &quot;We don't accept to restart jobs in the queue that are not completed:&quot;, arg
+-                sys.exit(1)
+-        print
+-        lines=p2.stdout.readlines()
+-        lines+=p3.stdout.readlines()
+-        for l in lines:
+-            if l.startswith(&quot;Arguments = &quot;):
+                 cmd=l[13:-2]
+                 cmds.append(cmd.replace(&quot;'&quot;,&quot;&quot;))
+     commands=cmds
+     if len(commands)&lt;1:
+-         raise Exception(&quot;Their is no commands selected to be restarted!&quot;)
++        raise Exception(&quot;Their is no commands selected to be restarted!&quot;)
++    if len(commands)&lt;len(command_argv):
++        raise Exception(&quot;Their is a bad command number in '%s'!&quot;%command_argv)
++    if all([x.find(&quot;.&quot;)&gt;=0 for x in command_argv]) and len(commands)!=len(command_argv):
++        raise Exception(&quot;Their is a bad command number in '%s'!&quot;%command_argv)
++        
+     choise_args=[]
++    del p, lines, cmds
+ else:
+     (commands,choise_args)=generate_commands(command_argv)
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003705.html">[Plearn-commits] r10265 - trunk/plearn_learners/meta
+</A></li>
+	<LI>Next message: <A HREF="003707.html">[Plearn-commits] r10267 - trunk/commands/PLearnCommands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3706">[ date ]</a>
+              <a href="thread.html#3706">[ thread ]</a>
+              <a href="subject.html#3706">[ subject ]</a>
+              <a href="author.html#3706">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,178 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10202 - trunk/python_modules/plearn/parallel
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10202%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200905122101.n4CL1fBJ026024%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003641.html">
+   <LINK REL="Next"  HREF="003643.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10202 - trunk/python_modules/plearn/parallel</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10202%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200905122101.n4CL1fBJ026024%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10202 - trunk/python_modules/plearn/parallel">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Tue May 12 23:01:41 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003641.html">[Plearn-commits] r10201 - trunk/plearn/var
+</A></li>
+        <LI>Next message: <A HREF="003643.html">[Plearn-commits] r10203 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3642">[ date ]</a>
+              <a href="thread.html#3642">[ thread ]</a>
+              <a href="subject.html#3642">[ subject ]</a>
+              <a href="author.html#3642">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-05-12 23:01:40 +0200 (Tue, 12 May 2009)
+New Revision: 10202
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+-small bugfix with a cast to str
+-Now try to get kerberos ticket 3 times to help solve a bug that we renew a the kerb script with 0 ticket
+-Don't renew the ticket if we didn't got new ticket
+-print more debut info in we don't got new ticket
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2009-05-12 17:57:00 UTC (rev 10201)
++++ trunk/python_modules/plearn/parallel/dbi.py	2009-05-12 21:01:40 UTC (rev 10202)
+@@ -957,12 +957,13 @@
+             id+=1
+             #keeps a list of the temporary files created, so that they can be deleted at will
+ 
+-    def get_pkdilly_var(self):
++    def get_pkdilly_var(self, out):
+ 
+ #the ssh is to have a renewed and cleaned kerberos ticket
+ #the +P is to have only the KRV* var, 
+ #the +P don't need a condor_submit_file
+ #ssh HOSTNAME pkdilly +P
++
+         cmd=&quot;pkdilly -S &quot;+self.condor_submit_file
+         self.p = Popen( cmd, shell=True, stdout=PIPE, stderr=PIPE)
+         self.p.wait()
+@@ -1003,6 +1004,10 @@
+                 get.append(line.strip()[:-1])
+         get=[x for x in get if x.startswith(&quot;KRV&quot;)]
+         get=[x for x in get if not x.startswith(&quot;KRVEXECUTE=&quot;)]
++        if out and len(lines)==0:
++            out.write(&quot;We didnt found kerberos ticket!&quot;)
++        if out:
++            out.write(lines)
+         return get
+ 
+     def renew_launch_file(self, renew_out_file,
+@@ -1038,13 +1043,17 @@
+                     out.flush()
+                     launch_tmp_file=self.launch_file+&quot;.tmp&quot;
+                     fd=open(launch_tmp_file,'w')
+-                    kerb_vars=self.make_kerb_script(fd,self.second_lauch_file)
++                    kerb_vars=self.make_kerb_script(fd, self.second_lauch_file, 3, out)
+                     fd.close()
+                     os.chmod(launch_tmp_file, 0755)
+                     os.rename(launch_tmp_file, self.launch_file)
+                     s=os.stat(self.launch_file)[os.path.stat.ST_SIZE]
+-                    out.write(line_header()+
+-                              &quot;generated &quot;+str(len(kerb_vars))+&quot; kerberos variables. The file size is &quot;+str(s)+&quot;\n&quot;)
++                    if len(kerb_vars)&gt;0:
++                        out.write(line_header()+
++                                  &quot;generated &quot;+str(len(kerb_vars))+&quot; kerberos variables. The file size is &quot;+str(s)+&quot;.\n&quot;)
++                    else:
++                        out.write(&quot;We have not been able to renew kerberos ticket! Their is 0 kerberos variables!&quot;)
++                        
+                 out.flush()
+                 #we do this as in some case(with dagman) the log file can 
+                 #take a few second to be created. So we don't loop too fast
+@@ -1058,19 +1067,27 @@
+             
+             os.system(&quot;pkboost +d &quot;+str(pid))
+ 
+-    def make_kerb_script(self, fd, second_lauch_file):
++    def make_kerb_script(self, fd, second_lauch_file, nb_try=3, out=None):
++        for i in range(nb_try):
++            ##we try 3 times to get the keys as sometimes this fail.                                                    
++            vars=self.get_pkdilly_var(out)
++            if len(vars)&gt;0:
++                break
++        if len(vars)==0:
++            print &quot;We didn't got any kerberos ticket after %d try! We don't redo the kerberos script.&quot;%(nb_try)
++            return vars
++
+         fd.write(dedent('''\
+                     #!/bin/sh
+                     '''))
+-        get=self.get_pkdilly_var()
+             
+-        for g in get:
++        for g in vars:
+             fd.write(&quot;export &quot;+g+&quot;\n&quot;)
+         fd.write(dedent('''
+                 export KRVEXECUTE=%s
+                 /usr/sbin/circus &quot;$@&quot;
+                 '''%(os.path.abspath(second_lauch_file))))
+-        return get
++        return vars
+ 
+     def make_launch_script(self, bash_exec):
+             
+@@ -1107,8 +1124,9 @@
+             if self.pkdilly:
+                 self.second_lauch_file = self.launch_file+&quot;2.sh&quot;
+                 kerb_vars=self.make_kerb_script(fd, self.second_lauch_file)
+-                assert(len(kerb_vars)&gt;0)
+                 fd.close()
++                if len(kerb_vars)==0:
++                    DBIError(&quot;We didn't got kerberos ticket!&quot;)
+ 
+                 fd = open(self.second_lauch_file,'w')
+ 
+@@ -1382,7 +1400,7 @@
+         else :
+             self.req+=&quot;&amp;&amp;(Arch == \&quot;%s\&quot;)&quot;%(self.targetcondorplatform)
+         if self.cpu&gt;0:
+-            self.req+='&amp;&amp;(target.CPUS=='+self.cpu+')'
++            self.req+='&amp;&amp;(target.CPUS=='+str(self.cpu)+')'
+ 
+         if self.os:
+             self.req=reduce(lambda x,y:x+' || (OpSys == &quot;'+str(y)+'&quot;)',
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003641.html">[Plearn-commits] r10201 - trunk/plearn/var
+</A></li>
+	<LI>Next message: <A HREF="003643.html">[Plearn-commits] r10203 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3642">[ date ]</a>
+              <a href="thread.html#3642">[ thread ]</a>
+              <a href="subject.html#3642">[ subject ]</a>
+              <a href="author.html#3642">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

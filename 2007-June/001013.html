@@ -1,0 +1,579 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7564 - in trunk: commands plearn/math	plearn_learners/regressors
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7564%20-%20in%20trunk%3A%20commands%20plearn/math%0A%09plearn_learners/regressors&In-Reply-To=%3C200706111820.l5BIKDsI012302%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001012.html">
+   <LINK REL="Next"  HREF="001014.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7564 - in trunk: commands plearn/math	plearn_learners/regressors</H1>
+    <B>dorionc at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7564%20-%20in%20trunk%3A%20commands%20plearn/math%0A%09plearn_learners/regressors&In-Reply-To=%3C200706111820.l5BIKDsI012302%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7564 - in trunk: commands plearn/math	plearn_learners/regressors">dorionc at mail.berlios.de
+       </A><BR>
+    <I>Mon Jun 11 20:20:13 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001012.html">[Plearn-commits] r7563 - trunk/python_modules/plearn/parallel
+</A></li>
+        <LI>Next message: <A HREF="001014.html">[Plearn-commits] r7565 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1013">[ date ]</a>
+              <a href="thread.html#1013">[ thread ]</a>
+              <a href="subject.html#1013">[ subject ]</a>
+              <a href="author.html#1013">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: dorionc
+Date: 2007-06-11 20:20:13 +0200 (Mon, 11 Jun 2007)
+New Revision: 7564
+
+Added:
+   trunk/plearn_learners/regressors/CubicSpline.cc
+   trunk/plearn_learners/regressors/CubicSpline.h
+Modified:
+   trunk/commands/plearn_light_inc.h
+   trunk/commands/plearn_noblas_inc.h
+   trunk/plearn/math/TMat_impl.h
+   trunk/plearn/math/TVec_decl.h
+Log:
+Adding a new CubicSpline learner
+
+
+Modified: trunk/commands/plearn_light_inc.h
+===================================================================
+--- trunk/commands/plearn_light_inc.h	2007-06-11 13:00:47 UTC (rev 7563)
++++ trunk/commands/plearn_light_inc.h	2007-06-11 18:20:13 UTC (rev 7564)
+@@ -160,6 +160,7 @@
+ 
+ // Regressors
+ #include &lt;plearn_learners/regressors/ConstantRegressor.h&gt;
++#include &lt;plearn_learners/regressors/CubicSpline.h&gt;
+ #include &lt;plearn_learners/regressors/KernelRidgeRegressor.h&gt;
+ #include &lt;plearn_learners/regressors/KNNRegressor.h&gt;
+ #include &lt;plearn_learners/regressors/GaussianProcessRegressor.h&gt;
+
+Modified: trunk/commands/plearn_noblas_inc.h
+===================================================================
+--- trunk/commands/plearn_noblas_inc.h	2007-06-11 13:00:47 UTC (rev 7563)
++++ trunk/commands/plearn_noblas_inc.h	2007-06-11 18:20:13 UTC (rev 7564)
+@@ -172,6 +172,7 @@
+ 
+ // Regressors
+ #include &lt;plearn_learners/regressors/ConstantRegressor.h&gt;
++#include &lt;plearn_learners/regressors/CubicSpline.h&gt;
+ #include &lt;plearn_learners/regressors/GaussianProcessRegressor.h&gt;
+ #include &lt;plearn_learners/regressors/KernelRidgeRegressor.h&gt;
+ #include &lt;plearn_learners/regressors/KNNRegressor.h&gt;
+
+Modified: trunk/plearn/math/TMat_impl.h
+===================================================================
+--- trunk/plearn/math/TMat_impl.h	2007-06-11 13:00:47 UTC (rev 7563)
++++ trunk/plearn/math/TMat_impl.h	2007-06-11 18:20:13 UTC (rev 7564)
+@@ -53,6 +53,8 @@
+ #include &quot;TMatRowsAsArraysIterator_impl.h&quot;
+ #include &quot;TMatColRowsIterator_impl.h&quot;
+ 
++#include &quot;algo.h&quot;
++
+ namespace PLearn {
+ using namespace std;
+ 
+@@ -227,7 +229,28 @@
+                       v.subVec(elemnum+1,v.length()-(elemnum+1)));
+ }
+ 
++// Returns an index vector I so that (*this)(I) returns a sorted version
++// of this vec in ascending order.
++namespace {
++  template &lt;class T&gt;
++  struct index_cmp : public binary_function&lt;int, int, bool&gt;
++  {
++      const TVec&lt;T&gt;&amp; m_values;
++      index_cmp(const Vec&amp; values): m_values(values) { }        
++      bool operator()(int x, int y) { return m_values[x] &lt; m_values[y]; }
++  };
++}
++// Actual body of the method
++template &lt;class T&gt;
++TVec&lt;int&gt; TVec&lt;T&gt;::sortingPermutation() const
++{    
++    TVec&lt;int&gt; indices(length_);
++    for (int i=0; i &lt; length_; i++) indices[i] = i;
++    sort(indices.begin(), indices.end(), index_cmp&lt;T&gt;(*this));
++    return indices;
++}
+ 
++
+ // **************
+ // **** TMat ****
+ // **************
+
+Modified: trunk/plearn/math/TVec_decl.h
+===================================================================
+--- trunk/plearn/math/TVec_decl.h	2007-06-11 13:00:47 UTC (rev 7563)
++++ trunk/plearn/math/TVec_decl.h	2007-06-11 18:20:13 UTC (rev 7564)
+@@ -539,7 +539,11 @@
+         resize(length()-1);
+     }
+ 
+-    int findSorted(T value)
++    //! Returns an index vector I so that (*this)(I) returns a sorted version
++    //! of this vec in ascending order.
++    TVec&lt;int&gt; sortingPermutation() const;
++    
++    int findSorted(T value) const
+     {
+         if (isEmpty())
+             return 0;
+
+Added: trunk/plearn_learners/regressors/CubicSpline.cc
+===================================================================
+--- trunk/plearn_learners/regressors/CubicSpline.cc	2007-06-11 13:00:47 UTC (rev 7563)
++++ trunk/plearn_learners/regressors/CubicSpline.cc	2007-06-11 18:20:13 UTC (rev 7564)
+@@ -0,0 +1,234 @@
++// -*- C++ -*-
++
++// CubicSpline.cc
++//
++// Copyright (C) 2007 Christian Dorion
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Christian Dorion
++
++/*! \file CubicSpline.cc */
++
++
++#include &quot;CubicSpline.h&quot;
++#include &quot;algo.h&quot;
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    CubicSpline,
++    &quot;Unidimensional cubic spline learner.&quot;,
++    &quot;This learner fits a unidimensional cubic spline to a given set of\n&quot;
++    &quot;points. That is, inputsize() must be one and the inputs are considered to be\n&quot;
++    &quot;the x values, while targetsize() must also be one and the targets are\n&quot;
++    &quot;considered to be the y values. The spline is fitted to the (x,y)-pairs so\n&quot;
++    &quot;formed. X values don't need to be ordered; the ordering is ensured within\n&quot;
++    &quot;the train method.\n&quot;);
++
++CubicSpline::CubicSpline()
++    : m_low_slope(MISSING_VALUE),
++      m_high_slope(MISSING_VALUE)
++{
++    // Nothing to do here
++} 
++
++void CubicSpline::declareOptions(OptionList&amp; ol)
++{
++    declareOption(ol, &quot;low_slope&quot;, &amp;CubicSpline::m_low_slope,
++                  OptionBase::buildoption,
++                  &quot;The slope to enforce at the leftmost node -- Default: NaN [None]&quot;);
++    
++    declareOption(ol, &quot;high_slope&quot;, &amp;CubicSpline::m_high_slope,
++                  OptionBase::buildoption,
++                  &quot;The slope to enforce at the rightmost node -- Default: NaN [None]&quot;);
++    
++    // Learnt options
++    declareOption(ol, &quot;inputs&quot;, &amp;CubicSpline::m_inputs,
++                  OptionBase::learntoption,
++                  &quot;A buffer containing the last training set inputs&quot;);
++
++    declareOption(ol, &quot;targets&quot;, &amp;CubicSpline::m_targets,
++                  OptionBase::learntoption,
++                  &quot;A buffer containing the last training set targets&quot;);
++
++    declareOption(ol, &quot;coefficients&quot;, &amp;CubicSpline::m_coefficients,
++                  OptionBase::learntoption,
++                  &quot;The learnt coefficients&quot;);
++    
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++void CubicSpline::build_()
++{
++    // Nothing to do here    
++}
++
++// ### Nothing to add here, simply calls build_
++void CubicSpline::build()
++{
++    inherited::build();
++    build_();
++}
++
++
++void CubicSpline::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    deepCopyField(m_inputs, copies);
++    deepCopyField(m_targets, copies);
++    deepCopyField(m_coefficients, copies);
++}
++
++
++int CubicSpline::outputsize() const
++{
++    return inputsize();
++}
++
++void CubicSpline::forget()
++{
++    m_coefficients-&gt;resize(0);
++    inherited::forget();
++}
++
++void CubicSpline::train()
++{
++    // This learner fits unidimensional inputs/targets
++    PLASSERT( inputsize() == 1 );
++    PLASSERT( targetsize() == 1 );
++    
++    // Train set is a member of PLearner; set through setTrainingSet()
++    int n = train_set-&gt;length();
++    m_inputs = train_set.getColumn(0);
++    m_targets = train_set.getColumn(1);
++    PLASSERT( n &gt;= 2 &amp;&amp; train_set-&gt;width() == 2 );
++
++    // Sort the inputs and targets along the inputs values
++    TVec&lt;int&gt; indices = m_inputs.sortingPermutation();
++    m_inputs          = m_inputs(indices);
++    m_targets         = m_targets(indices);
++    
++    Vec u(n-1, 0.0);
++    m_coefficients.resize(n);
++    m_coefficients.fill(0.0);
++
++    // Low slope hack
++    if ( !is_missing(m_low_slope) ) {
++        u[0] = (3.0/(m_inputs[1]-m_inputs[0])) *
++            ( (m_targets[1]-m_targets[0])/
++              (m_inputs[1] - m_inputs[0]) - m_low_slope );
++        m_coefficients[0] = -0.5;
++    }
++
++    // Forward pass on coefficients
++    for (int i=1; i &lt; (n-1); i++) {
++        real sig = (m_inputs[i]-m_inputs[i-1]) / (m_inputs[i+1]-m_inputs[i-1]);        
++        real p   = sig*m_coefficients[i-1]+2.0;
++        
++        m_coefficients[i] = (sig-1.0)/p;
++        
++        u[i] = (m_targets[i+1]-m_targets[i]) / (m_inputs[i+1]-m_inputs[i])
++            - (m_targets[i]-m_targets[i-1])  / (m_inputs[i]-m_inputs[i-1]);
++        
++        u[i] = (6.0*u[i]/(m_inputs[i+1]-m_inputs[i-1]) - sig*u[i-1]) / p;
++    }
++
++    // High slope hack
++    real un=0, qn=0;
++    if ( !is_missing(m_high_slope) ) {
++        qn = 0.5;
++        un = (3.0/(m_inputs[n-1]-m_inputs[n-2])) *
++            (m_high_slope  -  (m_targets[n-1]-m_targets[n-2]) / (m_inputs[n-1]-m_inputs[n-2]));
++    }
++
++    // Compute the last coefficient
++    m_coefficients[n-1] = (un-qn*u[n-2])/(qn*m_coefficients[n-1]+1.0);
++
++    // Backsubstitution step
++    for (int k=n-2; k &gt;= 0; k--)
++        m_coefficients[k] = m_coefficients[k]*m_coefficients[k+1]+u[k];
++}
++
++
++void CubicSpline::computeOutput(const Vec&amp; input, Vec&amp; output) const
++{
++    PLASSERT( input.length() == 1 );
++    output.resize(1);
++ 
++    int n = m_inputs.length();
++    real x = input[0];
++    int pos = min( max(1, m_inputs.findSorted(x)),  n-1 );
++
++    real h = m_inputs[pos] - m_inputs[pos-1];
++    PLASSERT( h &gt; 0.0 );
++
++    real a = (m_inputs[pos] - x) / h;
++    real b = (x - m_inputs[pos-1]) / h;
++    output[0] = a*m_targets[pos-1] + b*m_targets[pos]
++        + ((a*a*a - a)*m_coefficients[pos-1]
++           + (b*b*b - b)*m_coefficients[pos]) * h*h/6.0;
++}
++
++void CubicSpline::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                           const Vec&amp; target, Vec&amp; costs) const
++{
++    // No costs...
++}
++
++TVec&lt;string&gt; CubicSpline::getTestCostNames() const
++{
++    // None for now
++    return TVec&lt;string&gt;();
++}
++
++TVec&lt;string&gt; CubicSpline::getTrainCostNames() const
++{
++    // None for now
++    return TVec&lt;string&gt;();
++}
++
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/regressors/CubicSpline.h
+===================================================================
+--- trunk/plearn_learners/regressors/CubicSpline.h	2007-06-11 13:00:47 UTC (rev 7563)
++++ trunk/plearn_learners/regressors/CubicSpline.h	2007-06-11 18:20:13 UTC (rev 7564)
+@@ -0,0 +1,169 @@
++// -*- C++ -*-
++
++// CubicSpline.h
++//
++// Copyright (C) 2007 Christian Dorion
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Christian Dorion
++//   Migrated from Johann Hibschman's &lt;<A HREF="https://lists.berlios.de/mailman/listinfo/plearn-commits">johann at physics.berkeley.edu</A>&gt; Python
++//   'spline' module.
++
++
++/*! \file CubicSpline.h */
++
++
++#ifndef CubicSpline_INC
++#define CubicSpline_INC
++
++#include &lt;plearn_learners/generic/PLearner.h&gt;
++
++namespace PLearn {
++
++/**
++ * Unidimensional cubic spline learner.
++ *
++ * This learner fits a unidimensional cubic spline to a given set of
++ * points. That is, inputsize() must be one and the inputs are considered to be
++ * the x values, while targetsize() must also be one and the targets are
++ * considered to be the y values. The spline is fitted to the (x,y)-pairs so
++ * formed. X values don't need to be ordered; the ordering is ensured within
++ * the train method.
++ */
++class CubicSpline : public PLearner
++{
++    typedef PLearner inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! The slope to enforce at the leftmost node -- Default: NaN [None]
++    bool m_low_slope;
++
++    //! The slope to enforce at the rightmost node -- Default: NaN [None]
++    bool m_high_slope;
++    
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    CubicSpline();
++
++
++    //#####  PLearner Member Functions  #######################################
++
++    //! Returns the size of this learner's output: 1 -&gt; a single interpolated value
++    virtual int outputsize() const;
++
++    //! (Re-)initializes the PLearner in its fresh state (that state may depend
++    //! on the 'seed' option) and sets 'stage' back to 0 (this is the stage of
++    //! a fresh learner!).
++    virtual void forget();
++
++    //! Fit the splines to the *last* input point
++    virtual void train();
++
++    //! Computes the output from the input.
++    virtual void computeOutput(const Vec&amp; input, Vec&amp; output) const;
++
++    //! Computes the costs from already computed output.
++    virtual void computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
++                                         const Vec&amp; target, Vec&amp; costs) const;
++
++    //! Returns the names of the costs computed by computeCostsFromOutpus (and
++    //! thus the test method). [Empty]
++    virtual TVec&lt;std::string&gt; getTestCostNames() const;
++
++    //! Returns the names of the objective costs that the train method computes
++    //! and for which it updates the VecStatsCollector train_stats. [Empty]
++    virtual TVec&lt;std::string&gt; getTrainCostNames() const;
++
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    PLEARN_DECLARE_OBJECT(CubicSpline);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++    //#####  Protected Options  ###############################################
++
++    //! A buffer containing the last training set inputs
++    Vec m_inputs;
++
++    //! A buffer containing the last training set targets
++    Vec m_targets;    
++    
++    //! The learnt coefficients
++    Vec m_coefficients;
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // ...
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(CubicSpline);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001012.html">[Plearn-commits] r7563 - trunk/python_modules/plearn/parallel
+</A></li>
+	<LI>Next message: <A HREF="001014.html">[Plearn-commits] r7565 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1013">[ date ]</a>
+              <a href="thread.html#1013">[ thread ]</a>
+              <a href="subject.html#1013">[ subject ]</a>
+              <a href="author.html#1013">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

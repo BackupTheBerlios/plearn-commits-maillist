@@ -1,0 +1,168 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r7391 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7391%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705281951.l4SJpBrD007507%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000839.html">
+   <LINK REL="Next"  HREF="000841.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r7391 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r7391%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200705281951.l4SJpBrD007507%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r7391 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Mon May 28 21:51:11 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000839.html">[Plearn-commits] r7390 - trunk/plearn_learners_experimental
+</A></li>
+        <LI>Next message: <A HREF="000841.html">[Plearn-commits] r7392 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#840">[ date ]</a>
+              <a href="thread.html#840">[ thread ]</a>
+              <a href="subject.html#840">[ subject ]</a>
+              <a href="author.html#840">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2007-05-28 21:51:11 +0200 (Mon, 28 May 2007)
+New Revision: 7391
+
+Modified:
+   trunk/plearn_learners/online/NLLCostModule.cc
+   trunk/plearn_learners/online/NLLCostModule.h
+Log:
+Add new versions of fprop
+
+
+Modified: trunk/plearn_learners/online/NLLCostModule.cc
+===================================================================
+--- trunk/plearn_learners/online/NLLCostModule.cc	2007-05-28 19:42:05 UTC (rev 7390)
++++ trunk/plearn_learners/online/NLLCostModule.cc	2007-05-28 19:51:11 UTC (rev 7391)
+@@ -97,6 +97,61 @@
+     cost[0] = -pl_log( input[ the_target ] );
+ }
+ 
++void NLLCostModule::fprop(const Mat&amp; inputs, const Mat&amp; targets, Mat&amp; costs)
++    const
++{
++    PLASSERT( inputs.width() == input_size );
++    PLASSERT( targets.width() == target_size );
++
++    int batch_size = inputs.length();
++    PLASSERT( inputs.length() == batch_size );
++    PLASSERT( targets.length() == batch_size );
++
++    costs.resize(batch_size, output_size);
++
++    for( int k=0; k&lt;batch_size; k++ )
++    {
++        int target_k = (int) round( targets(k, 0) );
++        costs(k, 0) = -pl_log( inputs(k, target_k) );
++    }
++}
++
++void NLLCostModule::fprop(const TVec&lt;Mat*&gt;&amp; ports_value)
++{
++    PLASSERT( ports_value.length() == nPorts() );
++
++    Mat* prediction = ports_value[0];
++    Mat* target = ports_value[1];
++    Mat* cost = ports_value[2];
++
++    // If we have prediction and target, and we want cost
++    if( prediction &amp;&amp; !prediction-&gt;isEmpty()
++        &amp;&amp; target &amp;&amp; !target-&gt;isEmpty()
++        &amp;&amp; cost &amp;&amp; cost-&gt;isEmpty() )
++
++    {
++        PLASSERT( prediction-&gt;width() == port_sizes(0, 1) );
++        PLASSERT( target-&gt;width() == port_sizes(1, 1) );
++
++        int batch_size = prediction-&gt;length();
++        PLASSERT( target-&gt;length() == batch_size );
++
++        cost-&gt;resize(batch_size, port_sizes(2, 1));
++
++        for( int k=0; k&lt;batch_size; k++ )
++        {
++            int target_k = (int) round( (*target)(k,0) );
++            (*cost)(k,0) = -pl_log( (*prediction)(k, target_k) );
++        }
++    }
++    else if( !prediction &amp;&amp; !target &amp;&amp; !cost )
++        return;
++    else
++        PLCHECK_MSG( false, &quot;Unknown port configuration&quot; );
++
++    checkProp(ports_value);
++}
++
+ /////////////////
+ // bpropUpdate //
+ /////////////////
+@@ -202,6 +257,9 @@
+     else
+         PLERROR(&quot;In OnlineLearningModule::bpropAccUpdate - Port configuration &quot;
+                 &quot;not implemented for class '%s'&quot;, classname().c_str());
++
++    checkProp(ports_value);
++    checkProp(ports_gradient);
+ }
+ 
+ void NLLCostModule::bbpropUpdate(const Vec&amp; input, const Vec&amp; target,
+
+Modified: trunk/plearn_learners/online/NLLCostModule.h
+===================================================================
+--- trunk/plearn_learners/online/NLLCostModule.h	2007-05-28 19:42:05 UTC (rev 7390)
++++ trunk/plearn_learners/online/NLLCostModule.h	2007-05-28 19:51:11 UTC (rev 7391)
+@@ -69,6 +69,13 @@
+     //! given the input and target, compute the cost
+     virtual void fprop(const Vec&amp; input, const Vec&amp; target, Vec&amp; cost) const;
+ 
++    //! batch version
++    virtual void fprop(const Mat&amp; inputs, const Mat&amp; targets, Mat&amp; costs)
++        const;
++
++    //! new version
++    virtual void fprop(const TVec&lt;Mat*&gt;&amp; ports_value);
++
+     //! Adapt based on the output gradient: this method should only
+     //! be called just after a corresponding fprop.
+     virtual void bpropUpdate(const Vec&amp; input, const Vec&amp; target, real cost,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000839.html">[Plearn-commits] r7390 - trunk/plearn_learners_experimental
+</A></li>
+	<LI>Next message: <A HREF="000841.html">[Plearn-commits] r7392 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#840">[ date ]</a>
+              <a href="thread.html#840">[ thread ]</a>
+              <a href="subject.html#840">[ subject ]</a>
+              <a href="author.html#840">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

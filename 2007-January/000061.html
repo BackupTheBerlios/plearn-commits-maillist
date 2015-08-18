@@ -1,0 +1,144 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r6612 - trunk/python_modules/plearn/io
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-January/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6612%20-%20trunk/python_modules/plearn/io&In-Reply-To=%3C200701242025.l0OKPXqK028211%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="000060.html">
+   <LINK REL="Next"  HREF="000062.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r6612 - trunk/python_modules/plearn/io</H1>
+    <B>ducharme at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r6612%20-%20trunk/python_modules/plearn/io&In-Reply-To=%3C200701242025.l0OKPXqK028211%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r6612 - trunk/python_modules/plearn/io">ducharme at mail.berlios.de
+       </A><BR>
+    <I>Wed Jan 24 21:25:33 CET 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="000060.html">[Plearn-commits] r6611 - trunk/python_modules/plearn/utilities
+</A></li>
+        <LI>Next message: <A HREF="000062.html">[Plearn-commits] r6613 - trunk/plearn_learners/testers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#61">[ date ]</a>
+              <a href="thread.html#61">[ thread ]</a>
+              <a href="subject.html#61">[ subject ]</a>
+              <a href="author.html#61">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: ducharme
+Date: 2007-01-24 21:25:32 +0100 (Wed, 24 Jan 2007)
+New Revision: 6612
+
+Modified:
+   trunk/python_modules/plearn/io/server.py
+Log:
+Ajout d'une methode &quot;kill&quot; pour tuer le server.
+
+
+Modified: trunk/python_modules/plearn/io/server.py
+===================================================================
+--- trunk/python_modules/plearn/io/server.py	2007-01-24 20:23:24 UTC (rev 6611)
++++ trunk/python_modules/plearn/io/server.py	2007-01-24 20:25:32 UTC (rev 6612)
+@@ -41,15 +41,23 @@
+ 
+ def launch_plearn_server(command = 'plearn server', logger=None):
+     if logger: logger.info('LAUNCHING PLEARN SERVER: command = '+command)                
+-    to_server, from_server = os.popen2(command, 'b')
+-    return RemotePLearnServer(from_server, to_server, logger)
++    ## If available, we use module &quot;subprocess&quot; instead of os.popen2 so that
++    ## we can have information on the child pid
++    try:
++        from subprocess import Popen, PIPE
++        p = Popen([command], shell=True, stdin=PIPE, stdout=PIPE, close_fds=True)
++        (to_server, from_server, child_pid) = (p.stdin, p.stdout, p.pid)
++    except:
++        to_server, from_server = os.popen2(command, 'b')
++        child_pid = -1
++    return RemotePLearnServer(from_server, to_server, pid=child_pid, logger=logger)
+ 
+ def connect_to_plearn_server(hostname, port, logger=None):
+     if logger: logger.info('CONNECTING TO PLEARN SERVER ON HOST '+hostname+', PORT '+str(port))                
+     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+     s.connect((hostname, port))
+     io = s.makefile()
+-    return RemotePLearnServer(io, io, logger)    
++    return RemotePLearnServer(io, io, logger=logger)
+         
+ class RemotePLearnServer:
+ 
+@@ -73,13 +81,14 @@
+         helpMethod(classname, methodname)
+         &quot;&quot;&quot;        
+ 
+-    def __init__(self, from_server, to_server, logger=None):
++    def __init__(self, from_server, to_server, pid=-1, logger=None):
+         &quot;&quot;&quot;from_server and to_server are expected to be two file-like objects
+         (supporting read, write, flush).
+-        If you wish to log debugging info, pass ad logger an instance of a logging.Logger
++        If you wish to log debugging info, pass at logger an instance of a logging.Logger
+         as returned for ex. by logging.getLogger()
+         &quot;&quot;&quot;
+         self.io = plearn.io.serialize.PLearnIO(from_server, to_server)
++        self.pid = pid
+         self.log = logger
+         self.reserved_ids = []
+         self.nextid = 1
+@@ -99,7 +108,7 @@
+ 
+         self.callFunction(&quot;binary&quot;)
+         self.callFunction(&quot;implicit_storage&quot;,True)        
+-        
++
+     def set_return_lists(self, ret_lists=True):
+         &quot;&quot;&quot;If this is called with True, PLearn sequences will be
+         returned as lists (rather than as arrays, which is the default
+@@ -338,7 +347,13 @@
+                 
+     def __del__(self):
+         self.close()
+-        
++
++    def kill(self):
++        &quot;&quot;&quot;Kill the process with the TERM signal.&quot;&quot;&quot;
++        if self.pid == -1:
++            raise RuntimeError, 'The &quot;kill&quot; method is only available with Python 2.4 and above.'
++        os.kill(self.pid, 15)
++
+ class RemotePObject:
+     
+     def __init__(self, serv, objid):
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="000060.html">[Plearn-commits] r6611 - trunk/python_modules/plearn/utilities
+</A></li>
+	<LI>Next message: <A HREF="000062.html">[Plearn-commits] r6613 - trunk/plearn_learners/testers
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#61">[ date ]</a>
+              <a href="thread.html#61">[ thread ]</a>
+              <a href="subject.html#61">[ subject ]</a>
+              <a href="author.html#61">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

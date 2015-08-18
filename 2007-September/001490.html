@@ -1,0 +1,147 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8042 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8042%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708312331.l7VNV0R6012981%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001489.html">
+   <LINK REL="Next"  HREF="001491.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8042 - trunk/plearn_learners/online</H1>
+    <B>louradou at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8042%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200708312331.l7VNV0R6012981%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8042 - trunk/plearn_learners/online">louradou at mail.berlios.de
+       </A><BR>
+    <I>Sat Sep  1 01:31:00 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001489.html">[Plearn-commits] r8041 - trunk/python_modules/plearn/learners
+</A></li>
+        <LI>Next message: <A HREF="001491.html">[Plearn-commits] r8043 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1490">[ date ]</a>
+              <a href="thread.html#1490">[ thread ]</a>
+              <a href="subject.html#1490">[ subject ]</a>
+              <a href="author.html#1490">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: louradou
+Date: 2007-09-01 01:31:00 +0200 (Sat, 01 Sep 2007)
+New Revision: 8042
+
+Modified:
+   trunk/plearn_learners/online/DeepBeliefNet.cc
+   trunk/plearn_learners/online/DeepBeliefNet.h
+Log:
+added an option i_output_layer (in DeepBeliefNet)
+to have access to any layer by calling computeOutput(s)
+
+
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.cc
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.cc	2007-08-31 23:30:02 UTC (rev 8041)
++++ trunk/plearn_learners/online/DeepBeliefNet.cc	2007-08-31 23:31:00 UTC (rev 8042)
+@@ -66,6 +66,7 @@
+     use_classification_cost( true ),
+     reconstruct_layerwise( false ),
+     n_layers( 0 ),
++    i_output_layer( -1 ),
+     online ( false ),
+     background_gibbs_update_ratio(0),
+     gibbs_chain_reinit_freq( INT_MAX ),
+@@ -158,6 +159,13 @@
+                   OptionBase::buildoption,
+                   &quot;The layers of units in the network (including the input layer).&quot;);
+ 
++    declareOption(ol, &quot;i_output_layer&quot;, &amp;DeepBeliefNet::i_output_layer,
++                  OptionBase::buildoption,
++                  &quot;The index of the layers from which you want to compute output&quot;
++                  &quot;when there is NO final_module NEITHER final_cost.&quot;
++                  &quot;If -1, then the outputs (with this setting) will be&quot;
++                  &quot;the expectations of the last layer.&quot;);
++
+     declareOption(ol, &quot;connections&quot;, &amp;DeepBeliefNet::connections,
+                   OptionBase::buildoption,
+                   &quot;The weights of the connections between the layers&quot;);
+@@ -294,6 +302,9 @@
+     else
+         n_layers = layers.length();
+ 
++    if( i_output_layer &lt; 0)
++        i_output_layer = n_layers - 1;
++
+     if( !online )
+     {
+         if( training_schedule.length() != n_layers )
+@@ -2080,7 +2091,18 @@
+             layers[ n_layers-2 ]-&gt;expectation );
+         layers[ n_layers-1 ]-&gt;getAllActivations( connections[ n_layers-2 ] );
+         layers[ n_layers-1 ]-&gt;computeExpectation();
+-        output &lt;&lt; layers[ n_layers-1 ]-&gt;expectation;
++        output &lt;&lt; layers[ i_output_layer ]-&gt;expectation;
++
++        //! Copy of the part above: hope it makes sense
++        if (reconstruct_layerwise)
++        {
++            layer_input.resize(layers[n_layers-2]-&gt;size);
++            layer_input &lt;&lt; layers[n_layers-2]-&gt;expectation;
++            connections[n_layers-2]-&gt;setAsUpInput(layers[n_layers-1]-&gt;expectation);
++            layers[n_layers-2]-&gt;getAllActivations(connections[n_layers-2]);
++            real rc = reconstruction_costs[n_layers-1] = layers[n_layers-2]-&gt;fpropNLL( layer_input );
++            reconstruction_costs[0] += rc;
++        }
+     }
+ }
+ 
+
+Modified: trunk/plearn_learners/online/DeepBeliefNet.h
+===================================================================
+--- trunk/plearn_learners/online/DeepBeliefNet.h	2007-08-31 23:30:02 UTC (rev 8041)
++++ trunk/plearn_learners/online/DeepBeliefNet.h	2007-08-31 23:31:00 UTC (rev 8042)
+@@ -114,6 +114,10 @@
+     //! The layers of units in the network
+     TVec&lt; PP&lt;RBMLayer&gt; &gt; layers;
+ 
++    //! The index of the output layer
++    //! (when the final module is external)
++    int i_output_layer;
++
+     //! The weights of the connections between the layers
+     TVec&lt; PP&lt;RBMConnection&gt; &gt; connections;
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001489.html">[Plearn-commits] r8041 - trunk/python_modules/plearn/learners
+</A></li>
+	<LI>Next message: <A HREF="001491.html">[Plearn-commits] r8043 - trunk/plearn_learners/online
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1490">[ date ]</a>
+              <a href="thread.html#1490">[ thread ]</a>
+              <a href="subject.html#1490">[ subject ]</a>
+              <a href="author.html#1490">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

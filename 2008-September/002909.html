@@ -1,0 +1,356 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9469 - trunk/python_modules/plearn/parallel
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-September/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9469%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200809221400.m8ME0H5e028079%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002908.html">
+   <LINK REL="Next"  HREF="002910.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9469 - trunk/python_modules/plearn/parallel</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9469%20-%20trunk/python_modules/plearn/parallel&In-Reply-To=%3C200809221400.m8ME0H5e028079%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9469 - trunk/python_modules/plearn/parallel">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Sep 22 16:00:17 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002908.html">[Plearn-commits] r9468 - trunk/python_modules/plearn/learners
+</A></li>
+        <LI>Next message: <A HREF="002910.html">[Plearn-commits] r9470 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2909">[ date ]</a>
+              <a href="thread.html#2909">[ thread ]</a>
+              <a href="subject.html#2909">[ subject ]</a>
+              <a href="author.html#2909">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-09-22 16:00:10 +0200 (Mon, 22 Sep 2008)
+New Revision: 9469
+
+Modified:
+   trunk/python_modules/plearn/parallel/dbi.py
+Log:
+code refactoring
+
+
+Modified: trunk/python_modules/plearn/parallel/dbi.py
+===================================================================
+--- trunk/python_modules/plearn/parallel/dbi.py	2008-09-19 19:50:33 UTC (rev 9468)
++++ trunk/python_modules/plearn/parallel/dbi.py	2008-09-22 14:00:10 UTC (rev 9469)
+@@ -701,7 +701,11 @@
+         self.base_tasks_log_file = []
+         self.set_special_env = True
+         self.nb_proc = 0 # 0 mean unlimited
++        self.source_file = ''
++        self.source_file = os.getenv(&quot;CONDOR_LOCAL_SOURCE&quot;)
++        self.condor_home = os.getenv('CONDOR_HOME')
+ 
++
+         DBIBase.__init__(self, commands, **args)
+         self.mem=int(self.mem)*1024
+         if not os.path.exists(self.log_dir):
+@@ -812,14 +816,88 @@
+                                    self.args))
+             id+=1
+             #keeps a list of the temporary files created, so that they can be deleted at will
++
++    def make_wrapper_script(self,launch_file, bash_exec):
++        dbi_file=get_plearndir()+'/python_modules/plearn/parallel/dbi.py'
++        overwrite_launch_file=False
++        if not os.path.exists(dbi_file):
++            print '[DBI] WARNING: Can\'t locate file &quot;dbi.py&quot;. Maybe the file &quot;'+launch_file+'&quot; is not up to date!'
++        else:
++            if os.path.exists(launch_file):
++                mtimed=os.stat(dbi_file)[8]
++                mtimel=os.stat(launch_file)[8]
++                if mtimed&gt;mtimel:
++                    print '[DBI] WARNING: We overwrite the file &quot;'+launch_file+'&quot; with a new version. Update it to your needs!'
++                    overwrite_launch_file=True
++
++        if self.copy_local_source_file:
++            source_file_dest = os.path.join(self.log_dir,
++                                            os.path.basename(self.source_file))
++            shutil.copy( self.source_file, source_file_dest)
++            self.temp_files.append(source_file_dest)
++            os.chmod(source_file_dest, 0755)
++            self.source_file=source_file_dest
++
++        if not os.path.exists(launch_file) or overwrite_launch_file:
++            self.temp_files.append(launch_file)
++            launch_dat = open(launch_file,'w')
++            if self.source_file and not self.source_file.endswith(&quot;.cshrc&quot;):
++                launch_dat.write(dedent('''\
++                    #!/bin/sh
++                    '''))
++                if self.condor_home:
++                    launch_dat.write('export HOME=%s\n' % self.condor_home)
++                if self.source_file:
++                    launch_dat.write('source ' + self.source_file + '\n')
++
++                launch_dat.write(dedent('''\
++                    echo &quot;Executing on &quot; `/bin/hostname` 1&gt;&amp;2
++                    echo &quot;HOSTNAME: ${HOSTNAME}&quot; 1&gt;&amp;2
++                    echo &quot;PATH: $PATH&quot; 1&gt;&amp;2
++                    echo &quot;PYTHONPATH: $PYTHONPATH&quot; 1&gt;&amp;2
++                    echo &quot;LD_LIBRARY_PATH: $LD_LIBRARY_PATH&quot; 1&gt;&amp;2
++                    echo &quot;OMP_NUM_THREADS: $OMP_NUM_THREADS&quot; 1&gt;&amp;2
++                    #which python 1&gt;&amp;2
++                    #echo -n python version: 1&gt;&amp;2
++                    #python -V 1&gt;&amp;2
++                    #echo -n /usr/bin/python version: 1&gt;&amp;2
++                    #/usr/bin/python -V 1&gt;&amp;2
++                    echo &quot;Running: command: \\&quot;$@\\&quot;&quot; 1&gt;&amp;2
++                    %s
++                    '''%(bash_exec)))
++            else:
++                launch_dat.write(dedent('''\
++                    #! /bin/tcsh
++                    \n'''))
++                if self.condor_home:
++                    launch_dat.write('setenv HOME %s\n' % self.condor_home)
++                if self.source_file:
++                    launch_dat.write('source ' + self.source_file + '\n')
++                launch_dat.write(dedent('''\
++                    echo &quot;Executing on &quot; `/bin/hostname`
++                    echo &quot;HOSTNAME: ${HOSTNAME}&quot;
++                    echo &quot;PATH: $PATH&quot;
++                    echo &quot;PYTHONPATH: $PYTHONPATH&quot;
++                    echo &quot;LD_LIBRARY_PATH: $LD_LIBRARY_PATH&quot;
++                    #which python
++                    #echo -n python version:
++                    #python -V
++                    #echo -n /usr/bin/python version:
++                    #/usr/bin/python -V
++                    #echo ${PROGRAM} $@
++                    #${PROGRAM} &quot;$@&quot;
++                    echo &quot;Running command: $argv&quot;
++                    $argv
++                    '''))
++            launch_dat.close()
++            os.chmod(launch_file, 0755)
++
+     def run_dag(self):
+         condor_file = os.path.join(self.log_dir, &quot;dag.condor&quot;)
+         self.temp_files.append(condor_file)
+         condor_dat = open( condor_file, 'w' )
+ 
+-        source_file=os.getenv(&quot;CONDOR_LOCAL_SOURCE&quot;)
+-        condor_home = os.getenv('CONDOR_HOME')
+-        if source_file and source_file.endswith(&quot;.cshrc&quot;):
++        if self.source_file and self.source_file.endswith(&quot;.cshrc&quot;):
+             launch_file = os.path.join(self.log_dir, 'launch.csh')
+         else:
+             launch_file = os.path.join(self.log_dir, 'launch.sh')
+@@ -902,80 +980,8 @@
+                 
+         condor_dag.close()
+ 
+-        dbi_file=get_plearndir()+'/python_modules/plearn/parallel/dbi.py'
+-        overwrite_launch_file=False
+-        if not os.path.exists(dbi_file):
+-            print '[DBI] WARNING: Can\'t locate file &quot;dbi.py&quot;. Maybe the file &quot;'+launch_file+'&quot; is not up to date!'
+-        else:
+-            if os.path.exists(launch_file):
+-                mtimed=os.stat(dbi_file)[8]
+-                mtimel=os.stat(launch_file)[8]
+-                if mtimed&gt;mtimel:
+-                    print '[DBI] WARNING: We overwrite the file &quot;'+launch_file+'&quot; with a new version. Update it to your needs!'
+-                    overwrite_launch_file=True
++        self.make_wrapper_script(launch_file, '$@')
+ 
+-        if self.copy_local_source_file:
+-            source_file_dest = os.path.join(self.log_dir,
+-                                            os.path.basename(source_file))
+-            shutil.copy( source_file, source_file_dest)
+-            self.temp_files.append(source_file_dest)
+-            os.chmod(source_file_dest, 0755)
+-            source_file=source_file_dest
+-
+-        if not os.path.exists(launch_file) or overwrite_launch_file:
+-            self.temp_files.append(launch_file)
+-            launch_dat = open(launch_file,'w')
+-            if source_file and not source_file.endswith(&quot;.cshrc&quot;):
+-                launch_dat.write(dedent('''\
+-                    #!/bin/sh
+-                    '''))
+-                if condor_home:
+-                    launch_dat.write('export HOME=%s\n' % condor_home)
+-                if source_file:
+-                    launch_dat.write('source ' + source_file + '\n')
+-
+-                launch_dat.write(dedent('''\
+-                    echo &quot;Executing on &quot; `/bin/hostname` 1&gt;&amp;2
+-                    echo &quot;HOSTNAME: ${HOSTNAME}&quot; 1&gt;&amp;2
+-                    echo &quot;PATH: $PATH&quot; 1&gt;&amp;2
+-                    echo &quot;PYTHONPATH: $PYTHONPATH&quot; 1&gt;&amp;2
+-                    echo &quot;LD_LIBRARY_PATH: $LD_LIBRARY_PATH&quot; 1&gt;&amp;2
+-                    echo &quot;OMP_NUM_THREADS: $OMP_NUM_THREADS&quot; 1&gt;&amp;2
+-                    #which python 1&gt;&amp;2
+-                    #echo -n python version: 1&gt;&amp;2
+-                    #python -V 1&gt;&amp;2
+-                    #echo -n /usr/bin/python version: 1&gt;&amp;2
+-                    #/usr/bin/python -V 1&gt;&amp;2
+-                    echo &quot;Running: command: \\&quot;$@\\&quot;&quot; 1&gt;&amp;2
+-                    $@
+-                    '''))
+-            else:
+-                launch_dat.write(dedent('''\
+-                    #! /bin/tcsh
+-                    \n'''))
+-                if condor_home:
+-                    launch_dat.write('setenv HOME %s\n' % condor_home)
+-                if source_file:
+-                    launch_dat.write('source ' + source_file + '\n')
+-                launch_dat.write(dedent('''\
+-                    echo &quot;Executing on &quot; `/bin/hostname`
+-                    echo &quot;HOSTNAME: ${HOSTNAME}&quot;
+-                    echo &quot;PATH: $PATH&quot;
+-                    echo &quot;PYTHONPATH: $PYTHONPATH&quot;
+-                    echo &quot;LD_LIBRARY_PATH: $LD_LIBRARY_PATH&quot;
+-                    #which python
+-                    #echo -n python version:
+-                    #python -V
+-                    #echo -n /usr/bin/python version:
+-                    #/usr/bin/python -V
+-                    #echo ${PROGRAM} $@
+-                    #${PROGRAM} &quot;$@&quot;
+-                    echo &quot;Running command: $argv&quot;
+-                    $argv
+-                    '''))
+-            launch_dat.close()
+-            os.chmod(launch_file, 0755)
+-
+         condor_cmd = 'condor_submit_dag -maxjobs %s %s'%(str(self.nb_proc), condor_file_dag)
+         return condor_cmd
+ 
+@@ -1002,9 +1008,7 @@
+         self.temp_files.append(condor_file)
+         condor_dat = open( condor_file, 'w' )
+ 
+-        source_file=os.getenv(&quot;CONDOR_LOCAL_SOURCE&quot;)
+-        condor_home = os.getenv('CONDOR_HOME')
+-        if source_file and source_file.endswith(&quot;.cshrc&quot;):
++        if self.source_file and self.source_file.endswith(&quot;.cshrc&quot;):
+             launch_file = os.path.join(self.log_dir, 'launch.csh')
+         else:
+             launch_file = os.path.join(self.log_dir, 'launch.sh')
+@@ -1074,81 +1078,9 @@
+                     condor_dat.write(&quot;arguments      = %s \nqueue\n&quot; %argstring)
+         condor_dat.close()
+ 
+-        dbi_file=get_plearndir()+'/python_modules/plearn/parallel/dbi.py'
+-        overwrite_launch_file=False
+-        if not os.path.exists(dbi_file):
+-            print '[DBI] WARNING: Can\'t locate file &quot;dbi.py&quot;. Maybe the file &quot;'+launch_file+'&quot; is not up to date!'
+-        else:
+-            if os.path.exists(launch_file):
+-                mtimed=os.stat(dbi_file)[8]
+-                mtimel=os.stat(launch_file)[8]
+-                if mtimed&gt;mtimel:
+-                    print '[DBI] WARNING: We overwrite the file &quot;'+launch_file+'&quot; with a new version. Update it to your needs!'
+-                    overwrite_launch_file=True
+ 
+-        if self.copy_local_source_file:
+-            source_file_dest = os.path.join(self.log_dir,
+-                                            os.path.basename(source_file))
+-            shutil.copy( source_file, source_file_dest)
+-            self.temp_files.append(source_file_dest)
+-            os.chmod(source_file_dest, 0755)
+-            source_file=source_file_dest
++        self.make_wrapper_script(launch_file,'sh -c &quot;$@&quot;')
+ 
+-        if not os.path.exists(launch_file) or overwrite_launch_file:
+-            self.temp_files.append(launch_file)
+-            launch_dat = open(launch_file,'w')
+-            if source_file and not source_file.endswith(&quot;.cshrc&quot;):
+-                launch_dat.write(dedent('''\
+-                    #!/bin/sh
+-                    '''))
+-                if condor_home:
+-                    launch_dat.write('export HOME=%s\n' % condor_home)
+-                if source_file:
+-                    launch_dat.write('source ' + source_file + '\n')
+-
+-                #the sh -c &quot;$@&quot; was done to allow running many small jobs in a macro jobs like: &quot;ls ;env&quot;
+-                launch_dat.write(dedent('''\
+-                    echo &quot;Executing on &quot; `/bin/hostname` 1&gt;&amp;2
+-                    echo &quot;HOSTNAME: ${HOSTNAME}&quot; 1&gt;&amp;2
+-                    echo &quot;PATH: $PATH&quot; 1&gt;&amp;2
+-                    echo &quot;PYTHONPATH: $PYTHONPATH&quot; 1&gt;&amp;2
+-                    echo &quot;LD_LIBRARY_PATH: $LD_LIBRARY_PATH&quot; 1&gt;&amp;2
+-                    echo &quot;OMP_NUM_THREADS: $OMP_NUM_THREADS&quot; 1&gt;&amp;2
+-                    #which python 1&gt;&amp;2
+-                    #echo -n python version: 1&gt;&amp;2
+-                    #python -V 1&gt;&amp;2
+-                    #echo -n /usr/bin/python version: 1&gt;&amp;2
+-                    #/usr/bin/python -V 1&gt;&amp;2
+-                    echo &quot;Running command: sh -c \\&quot;$@\\&quot;&quot; 1&gt;&amp;2
+-                    sh -c &quot;$@&quot;
+-                    '''))
+-            else:
+-                launch_dat.write(dedent('''\
+-                    #! /bin/tcsh
+-                    \n'''))
+-                if condor_home:
+-                    launch_dat.write('setenv HOME %s\n' % condor_home)
+-                if source_file:
+-                    launch_dat.write('source ' + source_file + '\n')
+-                launch_dat.write(dedent('''\
+-                    echo &quot;Executing on &quot; `/bin/hostname`
+-                    echo &quot;HOSTNAME: ${HOSTNAME}&quot;
+-                    echo &quot;PATH: $PATH&quot;
+-                    echo &quot;PYTHONPATH: $PYTHONPATH&quot;
+-                    echo &quot;LD_LIBRARY_PATH: $LD_LIBRARY_PATH&quot;
+-                    #which python
+-                    #echo -n python version:
+-                    #python -V
+-                    #echo -n /usr/bin/python version:
+-                    #/usr/bin/python -V
+-                    #echo ${PROGRAM} $@
+-                    #${PROGRAM} &quot;$@&quot;
+-                    echo &quot;Running command: $argv&quot;
+-                    $argv
+-                    '''))
+-            launch_dat.close()
+-            os.chmod(launch_file, 0755)
+-
+         return &quot;condor_submit &quot; + condor_file
+ 
+     def clean(self):
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002908.html">[Plearn-commits] r9468 - trunk/python_modules/plearn/learners
+</A></li>
+	<LI>Next message: <A HREF="002910.html">[Plearn-commits] r9470 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2909">[ date ]</a>
+              <a href="thread.html#2909">[ thread ]</a>
+              <a href="subject.html#2909">[ subject ]</a>
+              <a href="author.html#2909">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

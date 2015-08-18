@@ -1,0 +1,223 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8928 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-May/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8928%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200805022126.m42LQl8q014240%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002375.html">
+   <LINK REL="Next"  HREF="002377.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8928 - trunk/plearn_learners_experimental</H1>
+    <B>larocheh at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8928%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200805022126.m42LQl8q014240%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8928 - trunk/plearn_learners_experimental">larocheh at mail.berlios.de
+       </A><BR>
+    <I>Fri May  2 23:26:47 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002375.html">[Plearn-commits] r8927 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="002377.html">[Plearn-commits] r8929 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2376">[ date ]</a>
+              <a href="thread.html#2376">[ thread ]</a>
+              <a href="subject.html#2376">[ subject ]</a>
+              <a href="author.html#2376">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: larocheh
+Date: 2008-05-02 23:26:47 +0200 (Fri, 02 May 2008)
+New Revision: 8928
+
+Modified:
+   trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.cc
+   trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.h
+Log:
+Added fraction_of_masked_inputs...
+
+
+Modified: trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.cc
+===================================================================
+--- trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.cc	2008-05-02 20:52:16 UTC (rev 8927)
++++ trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.cc	2008-05-02 21:26:47 UTC (rev 8928)
+@@ -66,6 +66,7 @@
+     n_classes( -1 ),
+     output_weights_l1_penalty_factor(0),
+     output_weights_l2_penalty_factor(0),
++    fraction_of_masked_inputs( 0 ),
+     n_layers( 0 ),
+     currently_trained_layer( 0 )
+ {
+@@ -155,6 +156,23 @@
+                   OptionBase::buildoption,
+                   &quot;Number of classes.&quot;);
+ 
++    declareOption(ol, &quot;output_weights_l1_penalty_factor&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::output_weights_l1_penalty_factor,
++                  OptionBase::buildoption,
++                  &quot;Output weights l1_penalty_factor.\n&quot;);
++
++    declareOption(ol, &quot;output_weights_l2_penalty_factor&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::output_weights_l2_penalty_factor,
++                  OptionBase::buildoption,
++                  &quot;Output weights l2_penalty_factor.\n&quot;);
++
++    declareOption(ol, &quot;fraction_of_masked_inputs&quot;, 
++                  &amp;TopDownAsymetricDeepNetwork::fraction_of_masked_inputs,
++                  OptionBase::buildoption,
++                  &quot;Fraction of the autoassociators' random input components &quot;
++                  &quot;that are\n&quot;
++                  &quot;masked, i.e. unsused to reconstruct the input.\n&quot;);
++
+     declareOption(ol, &quot;greedy_stages&quot;, 
+                   &amp;TopDownAsymetricDeepNetwork::greedy_stages,
+                   OptionBase::learntoption,
+@@ -326,6 +344,10 @@
+                 &quot;top_down_layers[0] should have a size of %d.\n&quot;,
+                 inputsize_);
+     
++    if( fraction_of_masked_inputs &lt; 0 )
++        PLERROR(&quot;TopDownAsymetricDeepNetwork::build_()&quot;
++                &quot; - \n&quot;
++                &quot;fraction_of_masked_inputs should be &gt; or equal to 0.\n&quot;);
+ 
+     activations.resize( n_layers );
+     expectations.resize( n_layers );
+@@ -452,6 +474,8 @@
+     deepCopyField(reconstruction_activation_gradients, copies);
+     deepCopyField(reconstruction_expectation_gradients, copies);
+     deepCopyField(input_representation, copies);
++    deepCopyField(masked_autoassociator_input, copies);
++    deepCopyField(autoassociator_input_indices, copies);
+     deepCopyField(pos_down_val, copies);
+     deepCopyField(pos_up_val, copies);
+     deepCopyField(neg_down_val, copies);
+@@ -547,6 +571,13 @@
+         pos_up_val.resize(layers[i+1]-&gt;size);
+         neg_down_val.resize(layers[i]-&gt;size);
+         neg_up_val.resize(layers[i+1]-&gt;size);
++        if( fraction_of_masked_inputs &gt; 0 )
++        {
++            masked_autoassociator_input.resize(layers[i]-&gt;size);
++            autoassociator_input_indices.resize(layers[i]-&gt;size);
++            for( int j=0 ; j &lt; autoassociator_input_indices.length() ; j++ )
++                autoassociator_input_indices[j] = j;
++        }
+ 
+         for( ; *this_stage&lt;end_stage ; (*this_stage)++ )
+         {
+@@ -636,13 +667,24 @@
+         else
+             lr = greedy_learning_rate;
+ 
++        if( fraction_of_masked_inputs &gt; 0 )
++            random_gen-&gt;shuffleElements(autoassociator_input_indices);
++
+         top_down_layers[index]-&gt;setLearningRate( lr );
+         connections[index]-&gt;setLearningRate( lr );
+         reconstruction_connections[index]-&gt;setLearningRate( lr );
+         layers[index+1]-&gt;setLearningRate( lr );
+ 
+-        connections[index]-&gt;fprop(input_representation,
+-                              activations[index+1]);
++        if( fraction_of_masked_inputs &gt; 0 )
++        {
++            masked_autoassociator_input &lt;&lt; input_representation;
++            for( int j=0 ; j &lt; round(fraction_of_masked_inputs*layers[index]-&gt;size) ; j++)
++                masked_autoassociator_input[ autoassociator_input_indices[j] ] = 0; 
++            connections[index]-&gt;fprop( masked_autoassociator_input, activations[index+1]);
++        }
++        else
++            connections[index]-&gt;fprop(input_representation,
++                                      activations[index+1]);
+         layers[index+1]-&gt;fprop(activations[index+1], expectations[index+1]);
+ 
+         reconstruction_connections[ index ]-&gt;fprop( expectations[index+1],
+@@ -711,11 +753,18 @@
+             reconstruction_activation_gradients,
+             reconstruction_expectation_gradients);
+         
+-        connections[ index ]-&gt;bpropUpdate( 
+-            input_representation,
+-            activations[index+1],
+-            reconstruction_expectation_gradients, //reused
+-            reconstruction_activation_gradients);
++        if( fraction_of_masked_inputs &gt; 0 )
++            connections[ index ]-&gt;bpropUpdate( 
++                masked_autoassociator_input,
++                activations[index+1],
++                reconstruction_expectation_gradients, //reused
++                reconstruction_activation_gradients);
++        else
++            connections[ index ]-&gt;bpropUpdate( 
++                input_representation,
++                activations[index+1],
++                reconstruction_expectation_gradients, //reused
++                reconstruction_activation_gradients);
+     }
+      
+ 
+
+Modified: trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.h
+===================================================================
+--- trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.h	2008-05-02 20:52:16 UTC (rev 8927)
++++ trunk/plearn_learners_experimental/TopDownAsymetricDeepNetwork.h	2008-05-02 21:26:47 UTC (rev 8928)
+@@ -117,6 +117,10 @@
+     //! Output weights l2_penalty_factor
+     real output_weights_l2_penalty_factor;
+ 
++    //! Fraction of the autoassociators' random input components that are
++    //! masked, i.e. unsused to reconstruct the input.
++    real fraction_of_masked_inputs;
++
+     //#####  Public Learnt Options  ###########################################
+ 
+     //! Number of layers
+@@ -215,6 +219,12 @@
+     //! Example representation
+     mutable Vec input_representation;
+ 
++    //! Perturbed input for current layer
++    mutable Vec masked_autoassociator_input;
++
++    //! Indices of input components for current layer
++    mutable TVec&lt;int&gt; autoassociator_input_indices;
++
+     //! Positive down statistic
+     Vec pos_down_val;
+     //! Positive up statistic
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002375.html">[Plearn-commits] r8927 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="002377.html">[Plearn-commits] r8929 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2376">[ date ]</a>
+              <a href="thread.html#2376">[ thread ]</a>
+              <a href="subject.html#2376">[ subject ]</a>
+              <a href="author.html#2376">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

@@ -1,0 +1,522 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8113 - trunk/plearn_learners/generic/EXPERIMENTAL
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2007-September/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8113%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200709271423.l8RENRuX027765%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001560.html">
+   <LINK REL="Next"  HREF="001562.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8113 - trunk/plearn_learners/generic/EXPERIMENTAL</H1>
+    <B>manzagop at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8113%20-%20trunk/plearn_learners/generic/EXPERIMENTAL&In-Reply-To=%3C200709271423.l8RENRuX027765%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8113 - trunk/plearn_learners/generic/EXPERIMENTAL">manzagop at mail.berlios.de
+       </A><BR>
+    <I>Thu Sep 27 16:23:27 CEST 2007</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001560.html">[Plearn-commits] r8112 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001562.html">[Plearn-commits] r8114 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1561">[ date ]</a>
+              <a href="thread.html#1561">[ thread ]</a>
+              <a href="subject.html#1561">[ subject ]</a>
+              <a href="author.html#1561">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: manzagop
+Date: 2007-09-27 16:23:27 +0200 (Thu, 27 Sep 2007)
+New Revision: 8113
+
+Modified:
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+   trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+Log:
+Update related to work on pvgrad.
+- added (commented out) code for gathering soeme development stats.
+- renamed some pv variables related to the parameters so as to have both
+the &quot;all&quot; and the &quot;layer&quot; views on them (same grouping as for usual parameters).
+
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-09-26 17:13:54 UTC (rev 8112)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.cc	2007-09-27 14:23:27 UTC (rev 8113)
+@@ -36,7 +36,7 @@
+ 
+ /*! \file NatGradNNet.cc */
+ 
+-
++//#include &lt;sstream&gt;  // *stat* for output
+ #include &quot;NatGradNNet.h&quot;
+ #include &lt;plearn/math/pl_erf.h&gt;
+ 
+@@ -398,6 +398,7 @@
+     all_mparams.resize(n_params);
+     all_params_gradient.resize(n_params);
+     all_params_delta.resize(n_params);
++    //all_params_cum_gradient.resize(n_params); // *stat*
+ 
+     // depending on how parameters are grouped on the first layer
+     int n_groups = params_natgrad_per_input_template ? (n_neurons-layer_sizes[1]+layer_sizes[0]+1) : n_neurons;
+@@ -560,10 +561,11 @@
+     deepCopyField(layer_params_delta, copies);
+ 
+     deepCopyField(pv_gradstats, copies);
+-    deepCopyField(pv_stepsizes, copies);
+-    deepCopyField(pv_stepsigns, copies);
++    deepCopyField(pv_all_stepsizes, copies);
++    deepCopyField(pv_all_stepsigns, copies);
++    deepCopyField(pv_all_intstepsigns, copies);
++    //deepCopyField(pv_all_nsamples, copies); // *stat*
+ 
+-
+ /*
+     deepCopyField(, copies);
+ */
+@@ -599,13 +601,42 @@
+     {
+         pv_gradstats-&gt;forget();
+         int n = all_params.length();
+-        pv_stepsizes.resize(n);
+-        pv_stepsizes.fill(pv_initial_stepsize);
+-        pv_stepsigns.resize(n);
+-        pv_stepsigns.fill(true);
+-        all_ns.resize(n);
++        pv_all_stepsizes.resize(n);
++        pv_all_stepsizes.fill(pv_initial_stepsize);
++        pv_all_stepsigns.resize(n);
++        pv_all_stepsigns.fill(true);    // TODO should be init to undetermined
++        pv_all_intstepsigns.resize(n);
++        pv_all_intstepsigns.fill(0);
++        //pv_all_nsamples.resize(n);    // *stat*
++
++        // Get some structure on the previous Vecs
++        pv_layer_stepsizes.resize(n_layers-1);
++        pv_layer_stepsigns.resize(n_layers-1);
++        pv_layer_intstepsigns.resize(n_layers-1);
++        //pv_layer_nsamples.resize(n_layers-1); // *stat*
++        for (int i=0,p=0;i&lt;n_layers-1;i++)
++        {
++            int np=layer_sizes[i+1]*(1+layer_sizes[i]);
++            pv_layer_stepsizes[i]=pv_all_stepsizes.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
++            pv_layer_stepsigns[i]=pv_all_stepsigns.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
++            pv_layer_intstepsigns[i]=pv_all_intstepsigns.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);
++            //pv_layer_nsamples[i]=pv_all_nsamples.subVec(p,np).toMat(layer_sizes[i+1],layer_sizes[i]+1);   // *stat*
++            p+=np;
++        }
+     }
+ 
++    // *stat*
++    /*if( pa_gradstats.length() == 0 )    {
++        pa_gradstats.resize(noutputs);
++        for(int i=0; i&lt;noutputs; i++)   {
++            (pa_gradstats[i]).compute_covariance = true;
++        }
++    }   else    {
++        for(int i=0; i&lt;noutputs; i++)   {
++            (pa_gradstats[i]).forget();
++        }
++    }*/
++
+ }
+ 
+ void NatGradNNet::train()
+@@ -642,6 +673,10 @@
+     Vec costs = costs_plus_time.subVec(0,train_costs.width());
+     int nsamples = train_set-&gt;length();
+ 
++    // *stat* - Need some stats for pvgrad analysis
++    //sum_gradient_norms = 0.0;
++    //all_params_cum_gradient.fill(0.0);
++    
+     for( ; stage&lt;nstages; stage++)
+     {
+         int sample = stage % nsamples;
+@@ -668,6 +703,10 @@
+                               params_averaging_coeff, all_mparams);
+         if( pb )
+             pb-&gt;update( stage + 1 - start_stage);
++
++        // *stat*
++        //(pa_gradstats[(int)targets(0,0)]).update( all_params_gradient );
++
+     }
+     Profiler::end(&quot;training&quot;);
+     Profiler::pl_profile_end(&quot;Totaltraining&quot;);
+@@ -683,6 +722,7 @@
+     train_stats-&gt;update( costs_plus_time );
+     train_stats-&gt;finalize(); // finalize statistics for this epoch
+ 
++    // *stat*
+     // profiling gradient correlation
+     //if( g_corrprof )    {
+     //    PLASSERT( corr_profiling_end &lt;= nstages );
+@@ -690,6 +730,22 @@
+     //    ng_corrprof-&gt;printAndReset();
+     //}
+ 
++    // *stat* - Need some stats for pvgrad analysis
++    // The SGrad stats include the learning rate.
++    //cout &lt;&lt; &quot;sum_gradient_norms &quot; &lt;&lt; sum_gradient_norms 
++    //     &lt;&lt; &quot; norm(all_params_cum_gradient,2.0) &quot; &lt;&lt; norm(all_params_cum_gradient,2.0) &lt;&lt; endl;
++
++    // *stat*
++    //for(int i=0; i&lt;noutputs; i++)   {
++    //    ofstream fd_cov;
++    //    stringstream ss;
++    //    ss &lt;&lt; &quot;cov&quot; &lt;&lt; i+1 &lt;&lt; &quot;.txt&quot;;
++    //    fd_cov.open(ss.str().c_str());
++    //    fd_cov &lt;&lt; (pa_gradstats[i]).getCovariance();
++    //    fd_cov.close();
++    //}
++    
++
+ }
+ 
+ void NatGradNNet::onlineStep(int t, const Mat&amp; targets,
+@@ -787,6 +843,18 @@
+                             neuron_extended_outputs_per_layer[i-1],false,
+                             -layer_lrate_factor*lrate/minibatch_size,1);
+             Profiler::pl_profile_end(&quot;ProducScaleAccOnlineStep&quot;);
++
++            // Don't do the stochastic trick - remember the gradient times its
++            // learning rate
++            /*productScaleAcc(layer_params_gradient[i-1],next_neurons_gradient,true,
++                            neuron_extended_outputs_per_layer[i-1],false,
++                            -layer_lrate_factor*lrate/minibatch_size,0);
++            layer_params[i-1] += layer_params_gradient[i-1];*/
++  
++            // *stat* - compute and store the gradient
++            /*productScaleAcc(layer_params_gradient[i-1],next_neurons_gradient,true,
++                            neuron_extended_outputs_per_layer[i-1],false,
++                            1,0);*/
+         }
+     }
+     if (use_pvgrad)
+@@ -818,12 +886,6 @@
+         multiplyAcc(all_params,all_params_delta,-lrate); // update
+     }
+ 
+-    // profiling gradient correlation
+-    //if( (t&gt;=corr_profiling_start) &amp;&amp; (t&lt;=corr_profiling_end) &amp;&amp; g_corrprof )    {
+-    //    (*g_corrprof)(all_params_gradient);
+-    //    (*ng_corrprof)(all_params_delta);
+-    //}
+-
+     // Output layer L1 regularization
+     if( output_layer_L1_penalty_factor != 0. )    {
+         real L1_delta = lrate * output_layer_L1_penalty_factor;
+@@ -841,33 +903,60 @@
+         }
+     }
+ 
++    // profiling gradient correlation
++    //if( (t&gt;=corr_profiling_start) &amp;&amp; (t&lt;=corr_profiling_end) &amp;&amp; g_corrprof )    {
++    //    (*g_corrprof)(all_params_gradient);
++    //    (*ng_corrprof)(all_params_delta);
++    //}
++
++    // temporary - Need some stats for pvgrad analysis
++    // SGrad stats. This includes the learning rate.
++    /*if( ! use_pvgrad )  {
++        sum_gradient_norms += norm(all_params_gradient,2.0);
++        all_params_cum_gradient += all_params_gradient;
++    }*/
++
++
+     // Ouput for profiling: weights
+-    // horribly inefficient!
++    // horribly inefficient! Anyway the Mat output is done one number at a
++    // time...
++    // do it locally, say on /part/01/Tmp
+ /*    ofstream fd_params;
+     fd_params.open(&quot;params.txt&quot;, ios::app);
+-    fd_params &lt;&lt; all_params &lt;&lt; endl;
++    fd_params &lt;&lt; layer_params[0](0) &lt;&lt; &quot; &quot; &lt;&lt; layer_params[1](0) &lt;&lt; endl;
+     fd_params.close();
+ 
+     ofstream fd_gradients;
+     fd_gradients.open(&quot;gradients.txt&quot;, ios::app);
+-    fd_gradients &lt;&lt; all_params_gradient &lt;&lt; endl;
++    //fd_gradients &lt;&lt; all_params_gradient &lt;&lt; endl;
++    fd_gradients &lt;&lt; layer_params_gradient[0](0) &lt;&lt; &quot; &quot; &lt;&lt;layer_params_gradient[1](0) &lt;&lt; endl;
+     fd_gradients.close();
+ */
+ }
+ 
++void NatGradNNet::paGradUpdate()
++{
++
++}
++
+ void NatGradNNet::pvGradUpdate()
+ {
+     int np = all_params_gradient.length();
+-    if(pv_stepsizes.length()==0)
++    if(pv_all_stepsizes.length()==0)
+     {
+-        pv_stepsizes.resize(np);
+-        pv_stepsizes.fill(pv_initial_stepsize);
+-        pv_stepsigns.resize(np);
+-        pv_stepsigns.fill(true);
+-        // profiling
+-        all_ns.resize(np);
++        pv_all_stepsizes.resize(np);
++        pv_all_stepsizes.fill(pv_initial_stepsize);
++        pv_all_stepsigns.resize(np);
++        pv_all_stepsigns.fill(true);
++        pv_all_intstepsigns.resize(np);
++        pv_all_intstepsigns.fill(0);
++        //pv_all_nsamples.resize(np);   // *stat*
+     }
+     pv_gradstats-&gt;update(all_params_gradient);
++
++    // *stat* - Need some stats for pvgrad analysis
++    //real gradient_squared_sum = 0.0;
++
+     for(int k=0; k&lt;np; k++)
+     {
+         StatsCollector&amp; st = pv_gradstats-&gt;getStats(k);
+@@ -878,8 +967,10 @@
+             real e = st.stderror();
+ 
+             // test to see if solve numerical problems
+-            if( fabs(m) &lt; 1e-15 || e &lt; 1e-15 )
++            if( fabs(m) &lt; 1e-15 || e &lt; 1e-15 )  {
++                cout &lt;&lt; &quot;small mean and error ratio.&quot; &lt;&lt; endl;
+                 continue;
++            }
+ 
+             real prob_pos = gauss_01_cum(m/e);
+             real prob_neg = 1.-prob_pos;
+@@ -889,55 +980,76 @@
+                 // gradient is positive
+                 if(prob_pos&gt;=pv_required_confidence)
+                 {
+-                    pv_stepsizes[k] *= (pv_stepsigns[k]?pv_acceleration:pv_deceleration);
+-                    if( pv_stepsizes[k] &gt; pv_max_stepsize )
+-                        pv_stepsizes[k] = pv_max_stepsize;
+-                    else if( pv_stepsizes[k] &lt; pv_min_stepsize )
+-                        pv_stepsizes[k] = pv_min_stepsize;
+-                    all_params[k] -= pv_stepsizes[k];
+-                    pv_stepsigns[k] = true;
++                    pv_all_stepsizes[k] *= (pv_all_stepsigns[k]?pv_acceleration:pv_deceleration);
++                    if( pv_all_stepsizes[k] &gt; pv_max_stepsize )
++                        pv_all_stepsizes[k] = pv_max_stepsize;
++                    else if( pv_all_stepsizes[k] &lt; pv_min_stepsize )
++                        pv_all_stepsizes[k] = pv_min_stepsize;
++                    all_params[k] -= pv_all_stepsizes[k];
++                    pv_all_stepsigns[k] = true;
++                    pv_all_intstepsigns[k] = -1;
+                     st.forget();
++
++                    // *stat* - Need some stats for pvgrad analysis
++                    //gradient_squared_sum += pv_all_stepsizes[k]*pv_all_stepsizes[k];
++                    //all_params_cum_gradient[k] -= pv_all_stepsizes[k];
++
+                 }
+                 // gradient is negative
+                 else if(prob_neg&gt;=pv_required_confidence)
+                 {
+-                    pv_stepsizes[k] *= ((!pv_stepsigns[k])?pv_acceleration:pv_deceleration);
+-                    if( pv_stepsizes[k] &gt; pv_max_stepsize )
+-                        pv_stepsizes[k] = pv_max_stepsize;
+-                    else if( pv_stepsizes[k] &lt; pv_min_stepsize )
+-                        pv_stepsizes[k] = pv_min_stepsize;
+-                    all_params[k] += pv_stepsizes[k];
+-                    pv_stepsigns[k] = false;
++                    pv_all_stepsizes[k] *= ((!pv_all_stepsigns[k])?pv_acceleration:pv_deceleration);
++                    if( pv_all_stepsizes[k] &gt; pv_max_stepsize )
++                        pv_all_stepsizes[k] = pv_max_stepsize;
++                    else if( pv_all_stepsizes[k] &lt; pv_min_stepsize )
++                        pv_all_stepsizes[k] = pv_min_stepsize;
++                    all_params[k] += pv_all_stepsizes[k];
++                    pv_all_stepsigns[k] = false;
++                    pv_all_intstepsigns[k] = 1;
+                     st.forget();
++
++                    // *stat* - Need some stats for pvgrad analysis
++                    //gradient_squared_sum += pv_all_stepsizes[k]*pv_all_stepsizes[k];
++                    //all_params_cum_gradient[k] += pv_all_stepsizes[k];
++                
++                }   
++                // no step
++                else    {
++                    pv_all_intstepsigns[k] = 0;
+                 }
+             }
+             else  // random sample update direction (sign)
+             {
+                 bool ispos = (random_gen-&gt;binomial_sample(prob_pos)&gt;0);
+                 if(ispos) // picked positive
+-                    all_params[k] += pv_stepsizes[k];
++                    all_params[k] += pv_all_stepsizes[k];
+                 else  // picked negative
+-                    all_params[k] -= pv_stepsizes[k];
+-                pv_stepsizes[k] *= (pv_stepsigns[k]==ispos) ?pv_acceleration :pv_deceleration;
+-                pv_stepsigns[k] = ispos;
++                    all_params[k] -= pv_all_stepsizes[k];
++                pv_all_stepsizes[k] *= (pv_all_stepsigns[k]==ispos) ?pv_acceleration :pv_deceleration;
++                pv_all_stepsigns[k] = ispos;
+                 st.forget();
+             }
+         }
+-
+-        // profiling
+-        all_ns[k] = ns;
++        //pv_all_nsamples[k] = ns; // *stat*
+     }
+ 
++    // *stat* - Need some stats for pvgrad analysis
++    //sum_gradient_norms += sqrt( gradient_squared_sum );
++
+     // Ouput for profiling: step sizes and number of samples
+     // horribly inefficient!
+ /*    ofstream fd_ss;
+     fd_ss.open(&quot;step_sizes.txt&quot;, ios::app);
+-    fd_ss &lt;&lt; pv_stepsizes &lt;&lt; endl;
++    fd_ss &lt;&lt; pv_layer_stepsizes[0](0) &lt;&lt; &quot; &quot; &lt;&lt; pv_layer_stepsizes[1](0) &lt;&lt; endl;
+     fd_ss.close();
+     ofstream fd_ns;
+     fd_ns.open(&quot;nsamples.txt&quot;, ios::app);
+-    fd_ns &lt;&lt; all_ns &lt;&lt; endl;
++    fd_ns &lt;&lt; pv_layer_nsamples[0](0) &lt;&lt; &quot; &quot; &lt;&lt; pv_layer_nsamples[1](0) &lt;&lt; endl;
+     fd_ns.close();
++    ofstream fd_ssgn;
++    fd_ssgn.open(&quot;step_signs.txt&quot;, ios::app);
++    fd_ssgn &lt;&lt; pv_layer_intstepsigns[0](0) &lt;&lt; &quot; &quot; &lt;&lt; pv_layer_intstepsigns[1](0) &lt;&lt; endl;
++    fd_ssgn.close();
+ */
+ 
+ }
+
+Modified: trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h
+===================================================================
+--- trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-09-26 17:13:54 UTC (rev 8112)
++++ trunk/plearn_learners/generic/EXPERIMENTAL/NatGradNNet.h	2007-09-27 14:23:27 UTC (rev 8113)
+@@ -43,7 +43,7 @@
+ #include &lt;plearn_learners/generic/PLearner.h&gt;
+ #include &lt;plearn_learners/generic/GradientCorrector.h&gt;
+ #include &lt;plearn/sys/Profiler.h&gt;
+-//#include &quot;CorrelationProfiler.h&quot;
++//#include &quot;CorrelationProfiler.h&quot; // *stat*
+ 
+ namespace PLearn {
+ 
+@@ -140,9 +140,28 @@
+     // average with this coefficient (near 0 for very slow averaging)
+     real activation_statistics_moving_average_coefficient;
+ 
++    // *stat*
++    // Temporary stuff for getting a clue as to what's going on
++    // Look for the marker '*stat*' in the code
++
++    // -Options-
+     //! Stages for profiling the correlation between the gradients' elements
+     //int corr_profiling_start, corr_profiling_end;
+ 
++    // -Not options-
++    //PP&lt;CorrelationProfiler&gt; g_corrprof, ng_corrprof;    // for optional gradient correlation profiling
++    //real sum_gradient_norms;     // holds sum of the gradient norms - reset at each epoch
++    //Vec all_params_cum_gradient; // holds the sum of the gradients - reset at each epoch
++
++    //! To see differences between class gradient covariances
++    //TVec&lt;VecStatsCollector&gt; pa_gradstats;   // one VecStatsCollector per output class
++
++    //! Holds the number of samples gathered for each weight
++    //TVec&lt;int&gt; pv_all_nsamples;
++    //TVec&lt; TMat&lt;int&gt; &gt; pv_layer_nsamples;
++
++    // *stat* end
++
+ public:
+     //*************************************************************
+     //*** Members used for Pascal Vincent's gradient technique  ***
+@@ -169,21 +188,24 @@
+     // each parameter based on the estimated probability of it being positive or
+     // negative.
+     bool pv_random_sample_step;
+-    
+ 
+ protected:
+     //! accumulated statistics of gradients on each parameter.
+     PP&lt;VecStatsCollector&gt; pv_gradstats;
+ 
+     //! The step size (absolute value) to be taken for each parameter.
+-    Vec pv_stepsizes;
++    Vec pv_all_stepsizes;
++    TVec&lt;Mat&gt; pv_layer_stepsizes;
+ 
+     //! Indicates whether the previous step was positive (true) or negative (false)
+-    TVec&lt;bool&gt; pv_stepsigns;
++    TVec&lt;bool&gt; pv_all_stepsigns;
++    TVec&lt; TMat&lt;bool&gt; &gt; pv_layer_stepsigns;
+ 
+-    // profiling
+-    TVec&lt;int&gt; all_ns;
++    //! Temporary add-on. Allows an undetermined signed value (zero).
++    TVec&lt;int&gt; pv_all_intstepsigns;
++    TVec&lt; TMat&lt;int&gt; &gt; pv_layer_intstepsigns;
+ 
++
+ public:
+     //#####  Public Member Functions  #########################################
+ 
+@@ -304,6 +326,10 @@
+     //! gradient computation and weight update in Pascal Vincent's gradient technique
+     void pvGradUpdate();
+ 
++    //! a related idea 
++    void paGradUpdate();
++
++
+ private:
+     //#####  Private Member Functions  ########################################
+ 
+@@ -333,7 +359,8 @@
+     Vec example_weights; // one element per example in a minibatch
+     Mat train_costs; // one row per example in a minibatch
+ 
+-    //PP&lt;CorrelationProfiler&gt; g_corrprof, ng_corrprof;    // for optional gradient correlation profiling
++
++    
+ };
+ 
+ // Declares a few other classes and functions related to this class
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001560.html">[Plearn-commits] r8112 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001562.html">[Plearn-commits] r8114 - trunk/plearn_learners/generic/EXPERIMENTAL
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1561">[ date ]</a>
+              <a href="thread.html#1561">[ thread ]</a>
+              <a href="subject.html#1561">[ subject ]</a>
+              <a href="author.html#1561">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

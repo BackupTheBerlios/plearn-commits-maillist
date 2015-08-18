@@ -1,0 +1,290 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9173 - trunk/plearn_learners_experimental
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9173%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200806261555.m5QFt3a2032199%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002620.html">
+   <LINK REL="Next"  HREF="002622.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9173 - trunk/plearn_learners_experimental</H1>
+    <B>laulysta at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9173%20-%20trunk/plearn_learners_experimental&In-Reply-To=%3C200806261555.m5QFt3a2032199%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9173 - trunk/plearn_learners_experimental">laulysta at mail.berlios.de
+       </A><BR>
+    <I>Thu Jun 26 17:55:03 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002620.html">[Plearn-commits] r9172 - trunk/python_modules/plearn/learners
+</A></li>
+        <LI>Next message: <A HREF="002622.html">[Plearn-commits] r9174 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2621">[ date ]</a>
+              <a href="thread.html#2621">[ thread ]</a>
+              <a href="subject.html#2621">[ subject ]</a>
+              <a href="author.html#2621">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: laulysta
+Date: 2008-06-26 17:55:02 +0200 (Thu, 26 Jun 2008)
+New Revision: 9173
+
+Modified:
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+   trunk/plearn_learners_experimental/DenoisingRecurrentNet.h
+Log:
+train and test functions fused
+
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2008-06-26 15:30:38 UTC (rev 9172)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.cc	2008-06-26 15:55:02 UTC (rev 9173)
+@@ -458,8 +458,8 @@
+     MODULE_LOG &lt;&lt; &quot;train() called &quot; &lt;&lt; endl;
+ 
+     // reserve memory for sequences
+-    Mat seq(5000,2); // contains the current sequence
+-    Mat encoded_seq(5000, 4);
++    seq.resize(5000,2); // contains the current sequence
++    encoded_seq.resize(5000, 4);
+ 
+     Vec input( inputsize() );
+     Vec target( targetsize() );
+@@ -534,7 +534,9 @@
+                     createSupervisedSequence(encoded_seq);
+                 }
+ 
+-                fbpropupdate();
++                resize_lists();
++                fprop(train_costs, train_n_items);
++                recurrent_update();
+             }
+ 
+             if( pb )
+@@ -603,14 +605,6 @@
+ }
+ 
+ 
+-void DenoisingRecurrentNet::fbpropupdate()
+-{
+-    resize_lists();
+-    fprop();
+-    recurrent_update();
+-}
+-
+-
+ void DenoisingRecurrentNet::resize_lists()
+ {
+     int l = input_list.length();
+@@ -640,7 +634,8 @@
+ 
+ // TODO: think properly about prepended stuff
+ 
+-void DenoisingRecurrentNet::fprop()
++// fprop accumulates costs in costs and n_items in n_items
++void DenoisingRecurrentNet::fprop(Vec train_costs, Vec train_n_items)
+ {
+     int l = input_list.length();
+     int ntargets = target_layers.length();
+@@ -1287,8 +1282,8 @@
+ { 
+     int start = 0;
+     if(i&gt;0)
+-        start = boundaries[i-1]+1;
+-    int end = boundaries[i];
++        start = trainset_boundaries[i-1]+1;
++    int end = trainset_boundaries[i];
+     int w = train_set-&gt;width();
+     seq.resize(end-start, w);
+     train_set-&gt;getMat(start,0,seq);
+@@ -1298,7 +1293,7 @@
+ void DenoisingRecurrentNet::setTrainingSet(VMat training_set, bool call_forget)
+ {
+     inherited::setTrainingSet(training_set, call_forget);
+-    locateSequenceBoundaries(training_set, boundaries, end_of_sequence_symbol);
++    locateSequenceBoundaries(training_set, trainset_boundaries, end_of_sequence_symbol);
+ }
+ 
+ 
+@@ -1542,8 +1537,109 @@
+             &quot;log-likelihooh costs for a whole VMat&quot;);
+ }
+ 
++
++
+ void DenoisingRecurrentNet::test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
+                   VMat testoutputs, VMat testcosts)const
++{
++    int len = testset.length();
++    Vec input;
++    Vec target;
++    real weight;
++
++
++    Vec output(outputsize());
++    output.clear();
++    Vec costs(nTestCosts());
++    costs.clear();
++    Vec n_items(nTestCosts());
++    n_items.clear();
++
++    PP&lt;ProgressBar&gt; pb;
++    if (report_progress) 
++        pb = new ProgressBar(&quot;Testing learner&quot;, len);
++
++    if (len == 0) {
++        // Empty test set: we give -1 cost arbitrarily.
++        costs.fill(-1);
++        test_stats-&gt;update(costs);
++    }
++
++    int w = testset-&gt;width();
++    locateSequenceBoundaries(testset, testset_boundaries, end_of_sequence_symbol);
++    int nseq = testset_boundaries.length();
++
++    seq.resize(5000,2); // contains the current sequence
++    seq.resize(5000, 4);
++
++    for(int i=0; i&lt;nseq; i++)
++    {
++        int start = 0;
++        if(i&gt;0)
++            start = testset_boundaries[i-1]+1;
++        int end = testset_boundaries[i];
++        seq.resize(end-start, w);
++        testset-&gt;getMat(start,0,seq);
++
++        if(encoding==&quot;raw_masked_supervised&quot;)
++        {
++            splitMaskedSupervisedSequence(seq);
++        }
++        else
++        {
++            encodeSequence(seq, encoded_seq);
++            createSupervisedSequence(encoded_seq);
++        }
++
++        resize_lists();
++        fprop(test_costs, test_n_items);
++
++        /*
++        if (testoutputs)
++        {
++            int sum_target_layers_size = 0;
++            for( int tar=0; tar &lt; target_layers.length(); tar++ )
++            {
++                if( !fast_exact_is_equal(target_layers_weights[tar],0) )
++                {
++                    output.subVec(sum_target_layers_size,target_layers[tar]-&gt;size)
++                        &lt;&lt; target_prediction_list[tar][ ith_sample_in_sequence ];
++                }
++                sum_target_layers_size += target_layers[tar]-&gt;size;
++            }
++            testoutputs-&gt;putOrAppendRow(i, output);
++        }
++        */
++
++    }
++
++        if (report_progress)
++            pb-&gt;update(i);
++
++    }
++
++    for(int i=0; i&lt;costs.length(); i++)
++    {
++        if( !fast_exact_is_equal(target_layers_weights[i],0) )
++            costs[i] /= n_items[i];
++        else
++            costs[i] = MISSING_VALUE;
++    }
++    if (testcosts)
++        testcosts-&gt;putOrAppendRow(0, costs);
++    
++    if (test_stats)
++        test_stats-&gt;update(costs, weight);
++
++
++    if( pb )
++        pb-&gt;update( stage + 1 - init_stage);
++
++}
++
++/*
++void DenoisingRecurrentNet::oldtest(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
++                  VMat testoutputs, VMat testcosts)const
+ { 
+ 
+     int len = testset.length();
+@@ -1828,8 +1924,8 @@
+     nll_list.resize(0,0);
+     masks_list.resize(0);   
+ }
++*/
+ 
+-
+ TVec&lt;string&gt; DenoisingRecurrentNet::getTestCostNames() const
+ {
+     TVec&lt;string&gt; cost_names(0);
+
+Modified: trunk/plearn_learners_experimental/DenoisingRecurrentNet.h
+===================================================================
+--- trunk/plearn_learners_experimental/DenoisingRecurrentNet.h	2008-06-26 15:30:38 UTC (rev 9172)
++++ trunk/plearn_learners_experimental/DenoisingRecurrentNet.h	2008-06-26 15:55:02 UTC (rev 9173)
+@@ -148,7 +148,7 @@
+     //#####  Public static Functions  #########################################
+         
+     // Finding sequence end indexes
+-    static TVec&lt;int&gt; locateSequenceBoundaries(VMat dataset, real end_of_sequence_symbol);
++    static void locateSequenceBoundaries(VMat dataset, TVec&lt;int&gt;&amp; boundaries, real end_of_sequence_symbol);
+ 
+     // encodings
+ 
+@@ -333,9 +333,9 @@
+     //! Contribution of dynamic weights to hidden layer activation
+     mutable Vec dynamic_act_no_bias_contribution;
+ 
+-    TVec&lt;int&gt; boundaries;
++    TVec&lt;int&gt; trainset_boundaries;
++    TVec&lt;int&gt; testset_boundaries;
+ 
+-
+ protected:
+     //#####  Protected Member Functions  ######################################
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002620.html">[Plearn-commits] r9172 - trunk/python_modules/plearn/learners
+</A></li>
+	<LI>Next message: <A HREF="002622.html">[Plearn-commits] r9174 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2621">[ date ]</a>
+              <a href="thread.html#2621">[ thread ]</a>
+              <a href="subject.html#2621">[ subject ]</a>
+              <a href="author.html#2621">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

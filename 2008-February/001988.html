@@ -1,0 +1,201 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8540 - trunk/plearn/vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8540%20-%20trunk/plearn/vmat&In-Reply-To=%3C200802201912.m1KJChnS029365%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001987.html">
+   <LINK REL="Next"  HREF="001989.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8540 - trunk/plearn/vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8540%20-%20trunk/plearn/vmat&In-Reply-To=%3C200802201912.m1KJChnS029365%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8540 - trunk/plearn/vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Wed Feb 20 20:12:43 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001987.html">[Plearn-commits] r8539 - trunk/python_modules/plearn/pymake
+</A></li>
+        <LI>Next message: <A HREF="001989.html">[Plearn-commits] r8541 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1988">[ date ]</a>
+              <a href="thread.html#1988">[ thread ]</a>
+              <a href="subject.html#1988">[ subject ]</a>
+              <a href="author.html#1988">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-02-20 20:12:43 +0100 (Wed, 20 Feb 2008)
+New Revision: 8540
+
+Modified:
+   trunk/plearn/vmat/FileVMatrix.cc
+   trunk/plearn/vmat/FileVMatrix.h
+Log:
+code refactoring:
+-moved seek to the existing moveto function
+-added function openfile and always use it for opening file
+   -will be usefull later for changing the buffer size
+
+
+Modified: trunk/plearn/vmat/FileVMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/FileVMatrix.cc	2008-02-20 14:37:30 UTC (rev 8539)
++++ trunk/plearn/vmat/FileVMatrix.cc	2008-02-20 19:12:43 UTC (rev 8540)
+@@ -158,11 +158,8 @@
+         if (!writable)
+             PLERROR(&quot;In FileVMatrix::build_ - You asked to create a new file (%s), but 'writable' is set to 0 !&quot;, filename_.c_str());
+ 
+-#ifdef USE_NSPR_FILE
+-        f = PR_Open(filename_.c_str(), PR_RDWR | PR_CREATE_FILE | PR_TRUNCATE, 0666);
+-#else
+-        f = fopen(filename_.c_str(),&quot;w+b&quot;);
+-#endif
++        openfile(filename_.c_str(),&quot;w+b&quot;, 
++                 PR_RDWR | PR_CREATE_FILE | PR_TRUNCATE, 0666);
+         if (!f)
+             PLERROR(&quot;In FileVMatrix constructor, could not open file %s&quot;,filename_.c_str());
+ 
+@@ -206,21 +203,9 @@
+     else
+     {
+         if (writable)
+-        {
+-#ifdef USE_NSPR_FILE
+-            f = PR_Open(filename_.c_str(), PR_RDWR | PR_CREATE_FILE, 0666);
+-#else
+-            f = fopen(filename_.c_str(), &quot;r+b&quot;);
+-#endif
+-        }
++            openfile(filename_.c_str(), &quot;r+b&quot;, PR_RDWR | PR_CREATE_FILE, 0666);
+         else
+-        {
+-#ifdef USE_NSPR_FILE
+-            f = PR_Open(filename_.c_str(), PR_RDONLY, 0666);
+-#else
+-            f = fopen(filename_.c_str(), &quot;rb&quot;);
+-#endif
+-        }
++            openfile(filename_.c_str(), &quot;rb&quot;, PR_RDONLY, 0666);
+ 
+         if (! f)
+             PLERROR(&quot;FileVMatrix::build: could not open file %s&quot;, filename_.c_str());
+@@ -376,23 +361,17 @@
+         PLERROR(&quot;In FileVMatrix::getNewRow length of v (%d) differs from matrix width (%d)&quot;,v.length(),width_);
+ #endif
+ 
+-#ifdef USE_NSPR_FILE
+     moveto(i);
++#ifdef USE_NSPR_FILE
+     if(file_is_float)
+         PR_Read_float(f, v.data(), v.length(), file_is_bigendian);
+     else
+         PR_Read_double(f, v.data(), v.length(), file_is_bigendian);
+ #else
+     if(file_is_float)
+-    {
+-        fseek(f, DATAFILE_HEADERLENGTH+(i*width_)*sizeof(float), SEEK_SET);
+         fread_float(f, v.data(), v.length(), file_is_bigendian);
+-    }
+     else
+-    {
+-        fseek(f, DATAFILE_HEADERLENGTH+(i*width_)*sizeof(double), SEEK_SET);
+         fread_double(f, v.data(), v.length(), file_is_bigendian);
+-    }
+ #endif
+ }
+ 
+@@ -440,23 +419,17 @@
+ /////////
+ void FileVMatrix::put(int i, int j, real value)
+ {
+-#ifdef USE_NSPR_FILE
+     moveto(i,j);
++#ifdef USE_NSPR_FILE
+     if(file_is_float)
+         PR_Write_float(f,float(value),file_is_bigendian);
+     else
+         PR_Write_double(f,double(value),file_is_bigendian);
+ #else
+     if(file_is_float)
+-    {
+-        fseek(f, DATAFILE_HEADERLENGTH+(i*width_+j)*sizeof(float), SEEK_SET);
+         fwrite_float(f,float(value),file_is_bigendian);
+-    }
+     else
+-    {
+-        fseek(f, DATAFILE_HEADERLENGTH+(i*width_+j)*sizeof(double), SEEK_SET);
+         fwrite_double(f,double(value),file_is_bigendian);
+-    }
+ #endif
+     invalidateBuffer();
+ }
+@@ -541,6 +514,18 @@
+ #endif
+ }
+ 
++//////////////////
++// updateHeader //
++//////////////////
++void FileVMatrix::openfile(const char *path, const char *mode,
++                           PRIntn flags, PRIntn mode2) {
++#ifdef USE_NSPR_FILE
++        f = PR_Open(path, flags, mode2);
++#else
++        f = fopen(path, mode);
++#endif
++
++}
+ } // end of namespace PLearn
+ 
+ 
+
+Modified: trunk/plearn/vmat/FileVMatrix.h
+===================================================================
+--- trunk/plearn/vmat/FileVMatrix.h	2008-02-20 14:37:30 UTC (rev 8539)
++++ trunk/plearn/vmat/FileVMatrix.h	2008-02-20 19:12:43 UTC (rev 8540)
+@@ -78,6 +78,8 @@
+ private:
+ 
+     bool build_new_file;
++    void openfile(const char *path, const char *mode, PRIntn flags,
++                  PRIntn mode2);
+ 
+ public:
+ 
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001987.html">[Plearn-commits] r8539 - trunk/python_modules/plearn/pymake
+</A></li>
+	<LI>Next message: <A HREF="001989.html">[Plearn-commits] r8541 - trunk/plearn/vmat
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1988">[ date ]</a>
+              <a href="thread.html#1988">[ thread ]</a>
+              <a href="subject.html#1988">[ subject ]</a>
+              <a href="author.html#1988">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

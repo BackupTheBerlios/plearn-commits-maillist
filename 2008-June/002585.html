@@ -1,0 +1,354 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9137 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9137%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200806171821.m5HILjFL014499%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002584.html">
+   <LINK REL="Next"  HREF="002586.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9137 - trunk/plearn_learners/online</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9137%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200806171821.m5HILjFL014499%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9137 - trunk/plearn_learners/online">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Tue Jun 17 20:21:45 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002584.html">[Plearn-commits] r9136 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="002586.html">[Plearn-commits] r9138 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2585">[ date ]</a>
+              <a href="thread.html#2585">[ thread ]</a>
+              <a href="subject.html#2585">[ subject ]</a>
+              <a href="author.html#2585">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-06-17 20:21:44 +0200 (Tue, 17 Jun 2008)
+New Revision: 9137
+
+Modified:
+   trunk/plearn_learners/online/RBMModule.cc
+   trunk/plearn_learners/online/RBMModule.h
+Log:
+Added new experimental code to compare the CD update with the NLL gradient
+
+Modified: trunk/plearn_learners/online/RBMModule.cc
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.cc	2008-06-17 18:17:00 UTC (rev 9136)
++++ trunk/plearn_learners/online/RBMModule.cc	2008-06-17 18:21:44 UTC (rev 9137)
+@@ -87,7 +87,7 @@
+     &quot;     values (expectations) through the conditional expectations of hidden | visible.\n&quot;
+     &quot;  - 'reconstruction_error.state' : the auto-associator reconstruction error (NLL)\n&quot;
+     &quot;    obtained by matching the visible_reconstruction with the given visible.\n&quot;
+-    &quot;Note that the above determnistic reconstruction may be made stochastic\n&quot;
++    &quot;Note that the above deterministic reconstruction may be made stochastic\n&quot;
+     &quot;by using the advanced option 'stochastic_reconstruction'.\n&quot;
+     &quot;If compute_contrastive_divergence is true, then the RBM also has these ports\n&quot;
+     &quot;  - 'contrastive_divergence' : the quantity minimized by contrastive-divergence training.\n&quot;
+@@ -109,6 +109,8 @@
+     grad_learning_rate(0),
+     tied_connection_weights(false),
+     compute_contrastive_divergence(false),
++    compare_true_gradient_with_cd(false),
++    n_steps_compare(1),
+     n_Gibbs_steps_CD(1),
+     min_n_Gibbs_steps(1),
+     n_Gibbs_steps_per_generated_sample(-1),
+@@ -252,6 +254,21 @@
+                   &quot;i.e. take stochastic gradient steps w.r.t. the log-likelihood instead\n&quot;
+                   &quot;of w.r.t. the contrastive divergence.\n&quot;);
+ 
++    declareOption(ol, &quot;compare_true_gradient_with_cd&quot;,
++                  &amp;RBMModule::compare_true_gradient_with_cd,
++                  OptionBase::buildoption,
++        &quot;If true, then will compute the true gradient (of the NLL) as well\n&quot;
++        &quot;as the exact non-stochastic CD update, and compare them.&quot;,
++                  OptionBase::advanced_level);
++
++    declareOption(ol, &quot;n_steps_compare&quot;,
++                  &amp;RBMModule::n_steps_compare,
++                  OptionBase::buildoption,
++        &quot;Number of steps for which we want to compare CD with the true\n&quot;
++        &quot;gradient (when 'compare_true_gradient_with_cd' is true). This will\n&quot;
++        &quot;compute P(x_t|x) for t from 1 to 'n_steps_compare'.&quot;,
++                  OptionBase::advanced_level);
++
+     // Learnt options.
+ 
+     declareOption(ol, &quot;Gibbs_step&quot;,
+@@ -574,6 +591,25 @@
+     }
+ }
+ 
++///////////////////////////////////
++// computeAllHiddenProbabilities //
++///////////////////////////////////
++void RBMModule::computeAllHiddenProbabilities(const Mat&amp; visible,
++                                              const Mat&amp; p_hidden)
++{
++    Vec hidden(hidden_layer-&gt;size);
++    computeHiddenActivations(visible);
++    int n_conf = hidden_layer-&gt;getConfigurationCount();
++    for (int i = 0; i &lt; n_conf; i++) {
++        hidden_layer-&gt;getConfiguration(i, hidden);
++        for (int j = 0; j &lt; visible.length(); j++) {
++            hidden_layer-&gt;activation = hidden_layer-&gt;activations(j);
++            real neg_log_p_h_given_v = hidden_layer-&gt;fpropNLL(hidden);
++            p_hidden(i, j) = exp(-neg_log_p_h_given_v);
++        }
++    }
++}
++
+ ///////////////////////////////////////////
+ // computePositivePhaseHiddenActivations //
+ ///////////////////////////////////////////
+@@ -660,6 +696,12 @@
+ 
+     deepCopyField(ports, copies);
+     deepCopyField(energy_inputs, copies);
++
++    deepCopyField(all_p_visible,            copies);
++    deepCopyField(all_hidden_cond_prob,     copies);
++    deepCopyField(all_visible_cond_prob,    copies);
++    deepCopyField(p_ht_given_x,             copies);
++    deepCopyField(p_xt_given_x,             copies);
+ }
+ 
+ ///////////
+@@ -681,29 +723,70 @@
+                  &quot;or visible layer must be less than 2^31.&quot;);
+ 
+     // Compute partition function
+-    if (hidden_configurations &gt; visible_configurations)
++    if (hidden_configurations &gt; visible_configurations ||
++        compare_true_gradient_with_cd)
+         // do it by log-summing minus-free-energy of visible configurations
+     {
++        if (compare_true_gradient_with_cd) {
++            all_p_visible.resize(visible_configurations);
++            all_visible_cond_prob.resize(visible_configurations,
++                                         hidden_configurations);
++            all_hidden_cond_prob.resize(hidden_configurations,
++                                        visible_configurations);
++        }
+         energy_inputs.resize(1, visible_layer-&gt;size);
+         Vec input = energy_inputs(0);
+         // COULD BE DONE MORE EFFICIENTLY BY DOING MANY CONFIGURATIONS
+         // AT ONCE IN A 'MINIBATCH'
+         Mat free_energy(1, 1);
+         log_partition_function = 0;
++        PP&lt;ProgressBar&gt; pb;
++        if (verbosity &gt;= 2)
++            pb = new ProgressBar(&quot;Computing partition function&quot;,\
++                                 visible_configurations);
+         for (int c = 0; c &lt; visible_configurations; c++)
+         {
+             visible_layer-&gt;getConfiguration(c, input);
+             computeFreeEnergyOfVisible(energy_inputs, free_energy, false);
++            real fe = free_energy(0,0);
+             if (c==0)
+-                log_partition_function = -free_energy(0,0);
++                log_partition_function = -fe;
+             else
+-                log_partition_function = logadd(log_partition_function,-free_energy(0,0));
++                log_partition_function = logadd(log_partition_function, -fe);
++            if (compare_true_gradient_with_cd) {
++                all_p_visible[c] = -fe;
++                // Compute P(visible | hidden) and P(hidden | visible) for all
++                // values of hidden.
++                computeAllHiddenProbabilities(input.toMat(1, input.length()),
++                                              all_hidden_cond_prob.column(c));
++                Vec hidden(hidden_layer-&gt;size);
++                for (int d = 0; d &lt; hidden_configurations; d++) {
++                    hidden_layer-&gt;getConfiguration(d, hidden);
++                    computeVisibleActivations(hidden.toMat(1, hidden.length()),
++                                              false);
++                    visible_layer-&gt;activation = visible_layer-&gt;activations(0);
++                    real neg_log_p_v_given_h = visible_layer-&gt;fpropNLL(input);
++                    all_visible_cond_prob(c, d) = exp(-neg_log_p_v_given_h);
++                }
++            }
++            if (pb)
++                pb-&gt;update(c + 1);
+         }
++        pb = NULL;
+         hidden_activations_are_computed = false;
++        if (compare_true_gradient_with_cd) {
++            // Normalize probabilities.
++            for (int i = 0; i &lt; all_p_visible.length(); i++)
++                all_p_visible[i] =
++                    exp(all_p_visible[i] - log_partition_function);
++            pout &lt;&lt; &quot;All P(x): &quot; &lt;&lt; all_p_visible &lt;&lt; endl;
++            pout &lt;&lt; &quot;Sum_x P(x) = &quot; &lt;&lt; sum(all_p_visible) &lt;&lt; endl;
++        }
+     }
+     else
+         // do it by summing free-energy of hidden configurations
+     {
++        PLASSERT( !compare_true_gradient_with_cd );
+         energy_inputs.resize(1, hidden_layer-&gt;size);
+         Vec input = energy_inputs(0);
+         // COULD BE DONE MORE EFFICIENTLY BY DOING MANY CONFIGURATIONS
+@@ -713,13 +796,18 @@
+         for (int c = 0; c &lt; hidden_configurations; c++)
+         {
+             hidden_layer-&gt;getConfiguration(c, input);
++            //pout &lt;&lt; &quot;Input = &quot; &lt;&lt; input &lt;&lt; endl;
+             computeFreeEnergyOfHidden(energy_inputs, free_energy);
++            //pout &lt;&lt; &quot;FE = &quot; &lt;&lt; free_energy(0, 0) &lt;&lt; endl;
++            real fe = free_energy(0,0);
+             if (c==0)
+-                log_partition_function = -free_energy(0,0);
++                log_partition_function = -fe;
+             else
+-                log_partition_function = logadd(log_partition_function,-free_energy(0,0));
++                log_partition_function = logadd(log_partition_function, -fe);
+         }
+     }
++    if (false)
++        pout &lt;&lt; &quot;Log Z(&quot; &lt;&lt; name &lt;&lt; &quot;) = &quot; &lt;&lt; log_partition_function &lt;&lt; endl;
+ }
+ 
+ void RBMModule::fprop(const TVec&lt;Mat*&gt;&amp; ports_value)
+@@ -1327,6 +1415,40 @@
+         found_a_valid_configuration = true;
+     }
+ 
++    if (compare_true_gradient_with_cd) {
++        PLCHECK_MSG(!partition_function_is_stale,
++                &quot;The partition function must be computed for the comparison &quot;
++                &quot;between true gradient and contrastive divergence to work.&quot;);
++        PLCHECK_MSG(visible &amp;&amp; !visible_is_output, &quot;Visible must be as input&quot;);
++        // Compute P(x_t|x) for all t and inputs x.
++        int n_visible_conf = visible_layer-&gt;getConfigurationCount();
++        int n_hidden_conf = hidden_layer-&gt;getConfigurationCount();
++        p_xt_given_x.resize(n_visible_conf, visible-&gt;length());
++        p_ht_given_x.resize(n_hidden_conf, visible-&gt;length());
++        for (int i = 0; i &lt; visible-&gt;length(); i++) {
++            // First compute P(h|x) for inputs x.
++            computeAllHiddenProbabilities(*visible, p_ht_given_x);
++            for (int t = 0; t &lt; n_steps_compare; t++) {
++                // Compute P(x_t|x).
++                product(p_xt_given_x, all_visible_cond_prob, p_ht_given_x);
++                pout &lt;&lt; &quot;P(x_&quot; &lt;&lt; (t + 1) &lt;&lt; &quot;|x) = &quot; &lt;&lt; endl &lt;&lt; p_xt_given_x
++                     &lt;&lt; endl;
++                Vec colsum(p_xt_given_x.width());
++                columnSum(p_xt_given_x, colsum);
++                pout &lt;&lt; &quot;Sum = &quot; &lt;&lt; endl &lt;&lt; colsum &lt;&lt; endl;
++                int best_idx = argmax(p_xt_given_x.column(0).toVecCopy());
++                Vec tmp(visible_layer-&gt;size);
++                visible_layer-&gt;getConfiguration(best_idx, tmp);
++                pout &lt;&lt; &quot;Best (P = &quot; &lt;&lt; p_xt_given_x.column(0)(best_idx, 0) &lt;&lt;
++                    &quot;) for x = &quot; &lt;&lt; (*visible)(0) &lt;&lt; &quot;:&quot; &lt;&lt;
++                    endl &lt;&lt; tmp &lt;&lt; endl;
++                // If it is not the last step, update P(h_t|x).
++                if (t &lt; n_steps_compare - 1)
++                    product(p_ht_given_x, all_hidden_cond_prob, p_xt_given_x);
++            }
++        }
++    }
++
+     // UGLY HACK TO DEAL WITH THE PROBLEM THAT XXX.state MAY NOT BE NEEDED
+     // BUT IS ALWAYS EXPECTED BECAUSE IT IS A STATE (!@#$%!!!)
+     if (hidden_act &amp;&amp; hidden_act-&gt;isEmpty())
+@@ -2014,6 +2136,7 @@
+         // We avoid to call forget() twice if the connections are the same.
+         reconstruction_connection-&gt;forget();
+     Gibbs_step = 0;
++    partition_function_is_stale = true;
+ }
+ 
+ //////////////////
+
+Modified: trunk/plearn_learners/online/RBMModule.h
+===================================================================
+--- trunk/plearn_learners/online/RBMModule.h	2008-06-17 18:17:00 UTC (rev 9136)
++++ trunk/plearn_learners/online/RBMModule.h	2008-06-17 18:21:44 UTC (rev 9137)
+@@ -74,6 +74,8 @@
+     bool tied_connection_weights;
+ 
+     bool compute_contrastive_divergence;
++    bool compare_true_gradient_with_cd;
++    int n_steps_compare;
+ 
+     //! Number of Gibbs sampling steps in negative phase
+     //! of contrastive divergence.
+@@ -269,6 +271,27 @@
+     //! Used to store inputs generated to compute the free energy.
+     Mat energy_inputs;
+ 
++    //! P(x) for all possible configurations x of visible layer. Used only when
++    //! 'compare_true_gradient_with_cd' is true (computed at the same time as
++    //! the partition function).
++    Vec all_p_visible;
++
++    //! Used to store P(h|x) for all values of h and all values of x.
++    //! Element (i,j) is P(h_i | x_j).
++    Mat all_hidden_cond_prob;
++
++    //! Used to store P(x|h) for all values of h and all values of x.
++    //! Element (i,j) is P(x_i | h_j).
++    Mat all_visible_cond_prob;
++
++    //! Used to store P(h_t|x) for all values of h_t and some values of x.
++    //! Element (i,j) is P(h_ti | x_j).
++    Mat p_ht_given_x;
++
++    //! Used to store P(x_t|x) for all values of x_t and some values of x.
++    //! Element (i,j) is P(x_ti | x_j).
++    Mat p_xt_given_x;
++
+     //#####  Protected Member Functions  ######################################
+ 
+     //! Add a new port to the 'portname_to_index' map and 'ports' vector.
+@@ -332,6 +355,12 @@
+ 
+     void computePartitionFunction();
+ 
++    //! Compute probabilities of all hidden configurations given some visible
++    //! inputs. The 'p_hidden' matrix is filled such that the (i,j)-th element
++    //! is P(hidden_configuration_i | visible_j).
++    void computeAllHiddenProbabilities(const Mat&amp; visible,
++                                       const Mat&amp; p_hidden);
++
+     void computeNegLogPVisibleGivenPHidden(Mat visible, Mat hidden, Mat* neg_log_phidden, Mat&amp; neg_log_pvisible_given_phidden);
+ 
+ protected:
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002584.html">[Plearn-commits] r9136 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="002586.html">[Plearn-commits] r9138 - trunk/plearn_learners_experimental
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2585">[ date ]</a>
+              <a href="thread.html#2585">[ thread ]</a>
+              <a href="subject.html#2585">[ subject ]</a>
+              <a href="author.html#2585">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

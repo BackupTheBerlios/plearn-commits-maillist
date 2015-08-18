@@ -1,0 +1,188 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8712 - trunk/plearn_learners/meta
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-March/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8712%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200803201649.m2KGnKoG004779%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002156.html">
+   <LINK REL="Next"  HREF="002161.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8712 - trunk/plearn_learners/meta</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8712%20-%20trunk/plearn_learners/meta&In-Reply-To=%3C200803201649.m2KGnKoG004779%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8712 - trunk/plearn_learners/meta">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Thu Mar 20 17:49:20 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002156.html">[Plearn-commits] r8711 - trunk/plearn_learners/meta
+</A></li>
+        <LI>Next message: <A HREF="002161.html">[Plearn-commits] r8713 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2158">[ date ]</a>
+              <a href="thread.html#2158">[ thread ]</a>
+              <a href="subject.html#2158">[ subject ]</a>
+              <a href="author.html#2158">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2008-03-20 17:49:19 +0100 (Thu, 20 Mar 2008)
+New Revision: 8712
+
+Modified:
+   trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+   trunk/plearn_learners/meta/MultiClassAdaBoost.h
+Log:
+implemented MultiClassAdaBoost::computeOutputAndCosts for performance
+
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.cc
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-03-20 16:45:59 UTC (rev 8711)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.cc	2008-03-20 16:49:19 UTC (rev 8712)
+@@ -200,7 +200,6 @@
+     PLWARNING(&quot;In MultiClassAdaBoost::train() - not implemented, should be already trained&quot;);
+ }
+ 
+-
+ void MultiClassAdaBoost::computeOutput(const Vec&amp; input, Vec&amp; output) const
+ {
+     output.resize(outputsize());
+@@ -229,7 +228,76 @@
+     output[1]=tmp1[0];
+     output[2]=tmp2[0];
+ }
++void MultiClassAdaBoost::computeOutputAndCosts(const Vec&amp; input,
++                                               const Vec&amp; target,
++                                               Vec&amp; output, Vec&amp; costs) const
++{
++    PLASSERT(costs.size()==nTestCosts());
+ 
++    output.resize(outputsize());
++
++    Vec output1(learner1.outputsize());
++    Vec output2(learner2.outputsize());
++    Vec subcosts1(learner1.nTestCosts());
++    Vec subcosts2(learner1.nTestCosts());
++
++    learner1.computeOutputAndCosts(input, target, output1, subcosts1);
++    learner2.computeOutputAndCosts(input, target, output2, subcosts2);
++
++    int ind1=int(round(output1[0]));
++    int ind2=int(round(output2[0]));
++    int ind=-1;
++    if(ind1==0 &amp;&amp; ind2==0)
++        ind=0;
++    else if(ind1==1 &amp;&amp; ind2==0)
++        ind=1;
++    else if(ind1==1 &amp;&amp; ind2==1)
++        ind=2;
++    else
++        ind=1;//TODOself.confusion_target;
++    output[0]=ind;
++    output[1]=output1[0];
++    output[2]=output2[0];
++
++    int out = ind;
++    int pred = int(round(target[0]));
++    costs[0]=int(out != pred);//class_error
++    costs[1]=abs(out-pred);//linear_class_error
++    costs[2]=pow(real(abs(out-pred)),2);//square_class_error
++    
++    //append conflict cost
++    if(fast_is_equal(round(output[1]),0) 
++       &amp;&amp; fast_is_equal(round(output[2]),1))
++        costs[3]=1;
++    else
++        costs[3]=0;
++
++    costs[4]=costs[5]=costs[6]=0;
++    costs[out+4]=1;
++
++    if(forward_sub_learner_test_costs){
++        costs.resize(7);
++        Vec subcosts1(learner1.nTestCosts());
++        Vec subcosts2(learner1.nTestCosts());
++        Vec target1(0,1), target2(0,1);
++        if(fast_is_equal(target[0],0.)){
++            target1.append(0);
++            target2.append(0);
++        }else if(fast_is_equal(target[0],1.)){
++            target1.append(1);
++            target2.append(0);
++        }else if(fast_is_equal(target[0],2.)){
++            target1.append(1);
++            target2.append(1);
++        }
++        subcosts1+=subcosts2;
++        costs.append(subcosts1);
++    }
++
++    PLASSERT(costs.size()==nTestCosts());
++
++}
++
+ void MultiClassAdaBoost::computeCostsFromOutputs(const Vec&amp; input, const Vec&amp; output,
+                                            const Vec&amp; target, Vec&amp; costs) const
+ {
+
+Modified: trunk/plearn_learners/meta/MultiClassAdaBoost.h
+===================================================================
+--- trunk/plearn_learners/meta/MultiClassAdaBoost.h	2008-03-20 16:45:59 UTC (rev 8711)
++++ trunk/plearn_learners/meta/MultiClassAdaBoost.h	2008-03-20 16:49:19 UTC (rev 8712)
+@@ -59,6 +59,9 @@
+ {
+     typedef PLearner inherited;
+ 
++    Vec tmp_costs;
++    Vec tmp_target;
++
+ public:
+     //#####  Public Build Options  ############################################
+ 
+@@ -127,8 +130,8 @@
+     // While in general not necessary, in case of particular needs
+     // (efficiency concerns for ex) you may also want to overload
+     // some of the following methods:
+-    // virtual void computeOutputAndCosts(const Vec&amp; input, const Vec&amp; target,
+-    //                                    Vec&amp; output, Vec&amp; costs) const;
++    virtual void computeOutputAndCosts(const Vec&amp; input, const Vec&amp; target,
++                                       Vec&amp; output, Vec&amp; costs) const;
+     // virtual void computeCostsOnly(const Vec&amp; input, const Vec&amp; target,
+     //                               Vec&amp; costs) const;
+     // virtual void test(VMat testset, PP&lt;VecStatsCollector&gt; test_stats,
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002156.html">[Plearn-commits] r8711 - trunk/plearn_learners/meta
+</A></li>
+	<LI>Next message: <A HREF="002161.html">[Plearn-commits] r8713 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2158">[ date ]</a>
+              <a href="thread.html#2158">[ thread ]</a>
+              <a href="subject.html#2158">[ subject ]</a>
+              <a href="author.html#2158">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

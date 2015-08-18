@@ -1,0 +1,679 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8463 - trunk/plearn_learners/online
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-February/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8463%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200802042258.m14MwQI6003488%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="001910.html">
+   <LINK REL="Next"  HREF="001912.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8463 - trunk/plearn_learners/online</H1>
+    <B>lamblin at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8463%20-%20trunk/plearn_learners/online&In-Reply-To=%3C200802042258.m14MwQI6003488%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8463 - trunk/plearn_learners/online">lamblin at mail.berlios.de
+       </A><BR>
+    <I>Mon Feb  4 23:58:26 CET 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="001910.html">[Plearn-commits] r8462 - trunk/plearn_learners/online
+</A></li>
+        <LI>Next message: <A HREF="001912.html">[Plearn-commits] r8464 - trunk/commands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1911">[ date ]</a>
+              <a href="thread.html#1911">[ thread ]</a>
+              <a href="subject.html#1911">[ subject ]</a>
+              <a href="author.html#1911">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: lamblin
+Date: 2008-02-04 23:58:26 +0100 (Mon, 04 Feb 2008)
+New Revision: 8463
+
+Added:
+   trunk/plearn_learners/online/InferenceRBM.cc
+   trunk/plearn_learners/online/InferenceRBM.h
+Log:
+Semi-supervised RBM, that can be used to predict hidden|input, hidden|(input, target) or target|input.
+
+
+Added: trunk/plearn_learners/online/InferenceRBM.cc
+===================================================================
+--- trunk/plearn_learners/online/InferenceRBM.cc	2008-02-04 22:57:27 UTC (rev 8462)
++++ trunk/plearn_learners/online/InferenceRBM.cc	2008-02-04 22:58:26 UTC (rev 8463)
+@@ -0,0 +1,406 @@
++// -*- C++ -*-
++
++// InferenceRBM.cc
++//
++// Copyright (C) 2008 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file InferenceRBM.cc */
++
++#define PL_LOG_MODULE_NAME &quot;InferenceRBM&quot;
++
++#include &quot;InferenceRBM.h&quot;
++#include &lt;plearn/io/pl_log.h&gt;
++#include &lt;plearn/base/RemoteDeclareMethod.h&gt;
++
++
++namespace PLearn {
++using namespace std;
++
++PLEARN_IMPLEMENT_OBJECT(
++    InferenceRBM,
++    &quot;RBM to be used when doing joint supervised learning by CD.&quot;,
++    &quot;We have input, target and hidden layer. We can compute hidden given\n&quot;
++    &quot;(input, target), target given input, or hidden given input.&quot;
++    );
++
++InferenceRBM::InferenceRBM():
++    n_gibbs_steps(0),
++    input_size(0),
++    target_size(0),
++    visible_size(0),
++    hidden_size(0)
++{
++}
++
++// ### Nothing to add here, simply calls build_
++void InferenceRBM::build()
++{
++    inherited::build();
++    build_();
++}
++
++void InferenceRBM::makeDeepCopyFromShallowCopy(CopiesMap&amp; copies)
++{
++    inherited::makeDeepCopyFromShallowCopy(copies);
++
++    // deepCopyField(trainvec, copies);
++
++    deepCopyField(input_layer, copies);
++    deepCopyField(target_layer, copies);
++    deepCopyField(hidden_layer, copies);
++    deepCopyField(visible_layer, copies);
++
++    deepCopyField(input_to_hidden, copies);
++    deepCopyField(target_to_hidden, copies);
++    deepCopyField(visible_to_hidden, copies);
++}
++
++void InferenceRBM::declareOptions(OptionList&amp; ol)
++{
++    // declareOption(ol, &quot;myoption&quot;, &amp;InferenceRBM::myoption,
++    //               OptionBase::buildoption,
++    //               &quot;Help text describing this option&quot;);
++
++
++    declareOption(ol, &quot;input_layer&quot;, &amp;InferenceRBM::input_layer,
++                  OptionBase::buildoption,
++                  &quot;Input layer (part of visible)&quot;);
++
++    declareOption(ol, &quot;target_layer&quot;, &amp;InferenceRBM::target_layer,
++                  OptionBase::buildoption,
++                  &quot;Target layer (part of visible)&quot;);
++
++    declareOption(ol, &quot;hidden_layer&quot;, &amp;InferenceRBM::hidden_layer,
++                  OptionBase::buildoption,
++                  &quot;Hidden layer&quot;);
++
++    declareOption(ol, &quot;input_to_hidden&quot;, &amp;InferenceRBM::input_to_hidden,
++                  OptionBase::buildoption,
++                  &quot;Connection between input and hidden layers&quot;);
++
++    declareOption(ol, &quot;target_to_hidden&quot;, &amp;InferenceRBM::target_to_hidden,
++                  OptionBase::buildoption,
++                  &quot;Connection between target and hidden layers&quot;);
++
++    declareOption(ol, &quot;exp_method&quot;, &amp;InferenceRBM::exp_method,
++                  OptionBase::buildoption,
++                  &quot;How to compute hidden and target expectation given input.\n&quot;
++                  &quot;Possible values are:\n&quot;
++                  &quot;    - \&quot;exact\&quot;: exact inference, O(target_size), default\n&quot;
++                  &quot;    - \&quot;gibbs\&quot;: estimation by Gibbs sampling\n&quot;
++                  );
++
++    declareOption(ol, &quot;n_gibbs_steps&quot;, &amp;InferenceRBM::n_gibbs_steps,
++                  OptionBase::buildoption,
++                  &quot;Number of Gibbs steps to use if exp_method==\&quot;gibbs\&quot;&quot;);
++
++    declareOption(ol, &quot;random_gen&quot;, &amp;InferenceRBM::random_gen,
++                  OptionBase::buildoption,
++                  &quot;Random numbers generator&quot;);
++
++
++    declareOption(ol, &quot;visible_layer&quot;, &amp;InferenceRBM::visible_layer,
++                  OptionBase::learntoption,
++                  &quot;Visible layer (input+target)&quot;);
++
++    declareOption(ol, &quot;visible_to_hidden&quot;, &amp;InferenceRBM::visible_to_hidden,
++                  OptionBase::learntoption,
++                  &quot;Connection between visible and hidden layers&quot;);
++
++    declareOption(ol, &quot;input_size&quot;, &amp;InferenceRBM::input_size,
++                  OptionBase::learntoption,
++                  &quot;Size of input_layer&quot;);
++
++    declareOption(ol, &quot;target_size&quot;, &amp;InferenceRBM::target_size,
++                  OptionBase::learntoption,
++                  &quot;Size of target_layer&quot;);
++
++    declareOption(ol, &quot;visible_size&quot;, &amp;InferenceRBM::visible_size,
++                  OptionBase::learntoption,
++                  &quot;Size of visible_layer&quot;);
++
++    declareOption(ol, &quot;hidden_size&quot;, &amp;InferenceRBM::hidden_size,
++                  OptionBase::learntoption,
++                  &quot;Size of hidden_layer&quot;);
++
++
++    // Now call the parent class' declareOptions
++    inherited::declareOptions(ol);
++}
++
++
++////////////////////
++// declareMethods //
++////////////////////
++void InferenceRBM::declareMethods(RemoteMethodMap&amp; rmm)
++{
++    // Insert a backpointer to remote methods; note that this
++    // different than for declareOptions()
++    rmm.inherited(inherited::_getRemoteMethodMap_());
++
++    declareMethod(
++        rmm, &quot;hiddenExpGivenVisible&quot;,
++        &amp;InferenceRBM::hiddenExpGivenVisible,
++        (BodyDoc(&quot;Computes the hidden layer's expectation given the visible&quot;),
++         ArgDoc (&quot;visible&quot;, &quot;Visible layer's values&quot;)));
++
++    declareMethod(
++        rmm, &quot;hiddenExpGivenInput&quot;,
++        &amp;InferenceRBM::hiddenExpGivenInput,
++        (BodyDoc(&quot;Computes the hidden layer's expectation given the input&quot;),
++         ArgDoc (&quot;input&quot;, &quot;Input layer's values&quot;)));
++
++    declareMethod(
++        rmm, &quot;targetExpGivenInput&quot;,
++        &amp;InferenceRBM::targetExpGivenInput,
++        (BodyDoc(&quot;Computes the target layer's expectation given the input&quot;),
++         ArgDoc (&quot;input&quot;, &quot;Input layer's values&quot;)));
++
++    declareMethod(
++        rmm, &quot;getHiddenExpGivenVisible&quot;,
++        &amp;InferenceRBM::getHiddenExpGivenVisible,
++        (BodyDoc(&quot;Computes the hidden layer's expectation given the visible&quot;),
++         ArgDoc (&quot;visible&quot;, &quot;Visible layer's values&quot;),
++         RetDoc (&quot;Hidden layer's expectation&quot;)));
++
++    declareMethod(
++        rmm, &quot;getHiddenExpGivenInput&quot;,
++        &amp;InferenceRBM::getHiddenExpGivenInput,
++        (BodyDoc(&quot;Computes the hidden layer's expectation given the input&quot;),
++         ArgDoc (&quot;input&quot;, &quot;Input layer's values&quot;),
++         RetDoc (&quot;Hidden layer's expectation&quot;)));
++
++    declareMethod(
++        rmm, &quot;getTargetExpGivenInput&quot;,
++        &amp;InferenceRBM::getTargetExpGivenInput,
++        (BodyDoc(&quot;Computes the target layer's expectation given the input&quot;),
++         ArgDoc (&quot;input&quot;, &quot;Input layer's values&quot;),
++         RetDoc (&quot;Target layer's expectation&quot;)));
++}
++
++
++void InferenceRBM::build_()
++{
++    MODULE_LOG &lt;&lt; &quot;build_() called&quot; &lt;&lt; endl;
++
++    if( !input_layer || !target_layer || !hidden_layer
++        || !input_to_hidden || !target_to_hidden )
++    {
++        MODULE_LOG &lt;&lt; &quot;build_() aborted because layers and connections were&quot;
++            &quot; not set&quot; &lt;&lt; endl;
++        return;
++    }
++
++    //! Check (and set) sizes
++    input_size = input_layer-&gt;size;
++    target_size = target_layer-&gt;size;
++    visible_size = input_size + target_size;
++    hidden_size = hidden_layer-&gt;size;
++
++    PLASSERT(input_to_hidden-&gt;down_size == input_size);
++    PLASSERT(input_to_hidden-&gt;up_size == hidden_size);
++    PLASSERT(target_to_hidden-&gt;down_size == target_size);
++    PLASSERT(target_to_hidden-&gt;up_size == hidden_size);
++
++    //! Build visible layer
++    visible_layer = new RBMMixedLayer();
++    visible_layer-&gt;sub_layers.resize(2);
++    visible_layer-&gt;sub_layers[0] = input_layer;
++    visible_layer-&gt;sub_layers[1] = target_layer;
++    visible_layer-&gt;build();
++    PLASSERT(visible_layer-&gt;size == visible_size);
++
++    //! Build visible_to_hidden connection
++    visible_to_hidden = new RBMMixedConnection();
++    visible_to_hidden-&gt;sub_connections.resize(1,2);
++    visible_to_hidden-&gt;sub_connections(0,0) = input_to_hidden;
++    visible_to_hidden-&gt;sub_connections(0,1) = target_to_hidden;
++    visible_to_hidden-&gt;build();
++    PLASSERT(visible_to_hidden-&gt;down_size == visible_size);
++    PLASSERT(visible_to_hidden-&gt;up_size == hidden_size);
++
++    //! If we have a random_gen, share it with the ones who do not
++    if (random_gen)
++    {
++       if (input_layer-&gt;random_gen.isNull())
++       {
++           input_layer-&gt;random_gen = random_gen;
++           input_layer-&gt;forget();
++       }
++       if (target_layer-&gt;random_gen.isNull())
++       {
++           target_layer-&gt;random_gen = random_gen;
++           target_layer-&gt;forget();
++       }
++       if (visible_layer-&gt;random_gen.isNull())
++       {
++           visible_layer-&gt;random_gen = random_gen;
++           visible_layer-&gt;forget();
++       }
++       if (hidden_layer-&gt;random_gen.isNull())
++       {
++           hidden_layer-&gt;random_gen = random_gen;
++           hidden_layer-&gt;forget();
++       }
++       if (input_to_hidden-&gt;random_gen.isNull())
++       {
++           input_to_hidden-&gt;random_gen = random_gen;
++           input_to_hidden-&gt;forget();
++       }
++       if (target_to_hidden-&gt;random_gen.isNull())
++       {
++           target_to_hidden-&gt;random_gen = random_gen;
++           target_to_hidden-&gt;forget();
++       }
++       if (visible_to_hidden-&gt;random_gen.isNull())
++       {
++           visible_to_hidden-&gt;random_gen = random_gen;
++           visible_to_hidden-&gt;forget();
++       }
++    }
++
++}
++
++void InferenceRBM::hiddenExpGivenVisible(const Mat&amp; visible)
++{
++    PLASSERT(visible.width() == visible_size);
++
++    visible_to_hidden-&gt;setAsDownInputs(visible);
++    hidden_layer-&gt;getAllActivations(get_pointer(visible_to_hidden), 0, true);
++    hidden_layer-&gt;computeExpectations();
++}
++
++void InferenceRBM::targetExpGivenInput(const Mat&amp; input)
++{
++    PLASSERT(input.width() == input_size);
++    int batch_size = input.length();
++
++    // input contains samples (or expectations) from input_layer
++    input_to_hidden-&gt;setAsDownInputs(input);
++
++    // hidden_layer-&gt;activations = bias + input_to_hidden.weights * input
++    hidden_layer-&gt;getAllActivations(get_pointer(input_to_hidden), 0, true);
++
++    target_layer-&gt;setBatchSize(batch_size);
++
++    // target_layer-&gt;activations[k][i] =
++    //      bias[i] + sum_j softplus(W_ji + hidden_layer-&gt;activations[k][j])
++    Mat hidden_act = hidden_layer-&gt;activations;
++    Mat target_act = target_layer-&gt;activations;
++    Vec target_b = target_layer-&gt;bias;
++    Mat t_to_h_w = target_to_hidden-&gt;weights;
++
++    for (int k=0; k&lt;batch_size; k++)
++    {
++        target_act(k) &lt;&lt; target_b;
++
++        real* target_act_k = target_act[k];
++        real* hidden_act_kj = hidden_act[k];
++        for (int j=0; j&lt;hidden_size; j++, hidden_act_kj++)
++        {
++            real* target_act_ki = target_act_k; // copy
++            real* t_to_h_w_ji = t_to_h_w[j];
++            for (int i=0; i&lt;target_size; i++, target_act_ki++, t_to_h_w_ji++)
++            {
++                PLASSERT(*target_act_ki == target_act(k,i));
++                PLASSERT(*t_to_h_w_ji == t_to_h_w(j,i));
++                PLASSERT(*hidden_act_kj == hidden_act(k,j));
++
++                *target_act_ki += softplus(*t_to_h_w_ji + *hidden_act_kj);
++            }
++        }
++    }
++
++    target_layer-&gt;expectations_are_up_to_date = false;
++    target_layer-&gt;computeExpectations();
++}
++
++void InferenceRBM::hiddenExpGivenInput(const Mat&amp; input)
++{
++    PLASSERT(input.width() == input_size);
++    int batch_size = input.length();
++
++    targetExpGivenInput(input);
++    Mat target_exp = target_layer-&gt;getExpectations();
++
++    Mat visible(batch_size, visible_size);
++    visible.subMatColumns(0, input_size) &lt;&lt; input;
++
++    Mat hidden_exp(batch_size, hidden_size);
++
++    for (int i=0; i&lt;target_size; i++)
++    {
++        visible.subMatColumns(input_size, target_size).clear();
++        visible.column(input_size+i).fill(1.);
++
++        hiddenExpGivenVisible(visible);
++
++        for (int k=0; k&lt;batch_size; k++)
++            hidden_exp(k) += target_exp(k,i) * hidden_layer-&gt;getExpectations()(k);
++    }
++
++    hidden_layer-&gt;setExpectations(hidden_exp);
++}
++
++Mat InferenceRBM::getHiddenExpGivenVisible(const Mat&amp; visible)
++{
++    hiddenExpGivenVisible(visible);
++    return hidden_layer-&gt;getExpectations();
++}
++
++Mat InferenceRBM::getTargetExpGivenInput(const Mat&amp; input)
++{
++    targetExpGivenInput(input);
++    return target_layer-&gt;getExpectations();
++}
++
++Mat InferenceRBM::getHiddenExpGivenInput(const Mat&amp; input)
++{
++    hiddenExpGivenInput(input);
++    return hidden_layer-&gt;getExpectations();
++}
++
++} // end of namespace PLearn
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+Added: trunk/plearn_learners/online/InferenceRBM.h
+===================================================================
+--- trunk/plearn_learners/online/InferenceRBM.h	2008-02-04 22:57:27 UTC (rev 8462)
++++ trunk/plearn_learners/online/InferenceRBM.h	2008-02-04 22:58:26 UTC (rev 8463)
+@@ -0,0 +1,189 @@
++// -*- C++ -*-
++
++// InferenceRBM.h
++//
++// Copyright (C) 2008 Pascal Lamblin
++//
++// Redistribution and use in source and binary forms, with or without
++// modification, are permitted provided that the following conditions are met:
++//
++//  1. Redistributions of source code must retain the above copyright
++//     notice, this list of conditions and the following disclaimer.
++//
++//  2. Redistributions in binary form must reproduce the above copyright
++//     notice, this list of conditions and the following disclaimer in the
++//     documentation and/or other materials provided with the distribution.
++//
++//  3. The name of the authors may not be used to endorse or promote
++//     products derived from this software without specific prior written
++//     permission.
++//
++// THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR
++// IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
++// OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN
++// NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++// SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++// TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++//
++// This file is part of the PLearn library. For more information on the PLearn
++// library, go to the PLearn Web site at www.plearn.org
++
++// Authors: Pascal Lamblin
++
++/*! \file InferenceRBM.h */
++
++
++#ifndef InferenceRBM_INC
++#define InferenceRBM_INC
++
++#include &lt;plearn/base/Object.h&gt;
++#include &lt;plearn_learners/online/RBMLayer.h&gt;
++#include &lt;plearn_learners/online/RBMMultinomialLayer.h&gt;
++#include &lt;plearn_learners/online/RBMBinomialLayer.h&gt;
++#include &lt;plearn_learners/online/RBMMixedLayer.h&gt;
++#include &lt;plearn_learners/online/RBMMatrixConnection.h&gt;
++#include &lt;plearn_learners/online/RBMMixedConnection.h&gt;
++
++namespace PLearn {
++
++/**
++ * RBM to be used when doing joint supervised learning by CD.
++ * We have input, target and hidden layer. We can compute hidden given
++ * (input, target), target given input, or hidden given input.
++ *
++ * @todo Write class to-do's here if there are any.
++ */
++class InferenceRBM : public Object
++{
++    typedef Object inherited;
++
++public:
++    //#####  Public Build Options  ############################################
++
++    //! ### declare public option fields (such as build options) here
++    //! Input layer (part of visible)
++    PP&lt;RBMLayer&gt; input_layer;
++
++    //! Target layer (other part of visible)
++    PP&lt;RBMMultinomialLayer&gt; target_layer;
++
++    //! Hidden
++    PP&lt;RBMBinomialLayer&gt; hidden_layer;
++
++    //! Connection between input and hidden
++    PP&lt;RBMMatrixConnection&gt; input_to_hidden;
++
++    //! Connection between target and hidden
++    PP&lt;RBMMatrixConnection&gt; target_to_hidden;
++
++    //! How to compute hidden and target expectation given input
++    //! Possible values are:
++    //!     - &quot;exact&quot;: exact inference, O(target_size), default
++    //!     - &quot;gibbs&quot;: estimation by Gibbs sampling
++    string exp_method;
++
++    //! Number of Gibbs steps to use if exp_method==&quot;gibbs&quot;
++    int n_gibbs_steps;
++
++    //! Random numbers generator
++    PP&lt;PRandom&gt; random_gen;
++
++
++
++public:
++    //#####  Public Member Functions  #########################################
++
++    //! Default constructor
++    // ### Make sure the implementation in the .cc
++    // ### initializes all fields to reasonable default values.
++    InferenceRBM();
++
++    // Your other public member functions go here
++
++    void hiddenExpGivenVisible(const Mat&amp; visible);
++    void hiddenExpGivenInput(const Mat&amp; input);
++    void targetExpGivenInput(const Mat&amp; input);
++
++    Mat getHiddenExpGivenVisible(const Mat&amp; visible);
++    Mat getHiddenExpGivenInput(const Mat&amp; input);
++    Mat getTargetExpGivenInput(const Mat&amp; input);
++
++
++    //#####  PLearn::Object Protocol  #########################################
++
++    // Declares other standard object methods.
++    PLEARN_DECLARE_OBJECT(InferenceRBM);
++
++    // Simply calls inherited::build() then build_()
++    virtual void build();
++
++    //! Transforms a shallow copy into a deep copy
++    // (PLEASE IMPLEMENT IN .cc)
++    virtual void makeDeepCopyFromShallowCopy(CopiesMap&amp; copies);
++
++protected:
++    //#####  Protected Options  ###############################################
++
++    // ### Declare protected option fields (such as learned parameters) here
++    //! Visible layer (concatenation of input and target)
++    PP&lt;RBMMixedLayer&gt; visible_layer;
++
++    PP&lt;RBMMixedConnection&gt; visible_to_hidden;
++
++    //! Size of input layer
++    int input_size;
++
++    //! Size of target layer
++    int target_size;
++
++    //! Size of visible layer
++    int visible_size;
++
++    //! Size of hidden layer
++    int hidden_size;
++
++protected:
++    //#####  Protected Member Functions  ######################################
++
++    //! Declares the class options.
++    static void declareOptions(OptionList&amp; ol);
++
++    //! Declares the class methods.
++    static void declareMethods(RemoteMethodMap&amp; rmm);
++
++private:
++    //#####  Private Member Functions  ########################################
++
++    //! This does the actual building.
++    // (PLEASE IMPLEMENT IN .cc)
++    void build_();
++
++private:
++    //#####  Private Data Members  ############################################
++
++    // The rest of the private stuff goes here
++};
++
++// Declares a few other classes and functions related to this class
++DECLARE_OBJECT_PTR(InferenceRBM);
++
++} // end of namespace PLearn
++
++#endif
++
++
++/*
++  Local Variables:
++  mode:c++
++  c-basic-offset:4
++  c-file-style:&quot;stroustrup&quot;
++  c-file-offsets:((innamespace . 0)(inline-open . 0))
++  indent-tabs-mode:nil
++  fill-column:79
++  End:
++*/
++// vim: filetype=cpp:expandtab:shiftwidth=4:tabstop=8:softtabstop=4:encoding=utf-8:textwidth=79 :
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="001910.html">[Plearn-commits] r8462 - trunk/plearn_learners/online
+</A></li>
+	<LI>Next message: <A HREF="001912.html">[Plearn-commits] r8464 - trunk/commands
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#1911">[ date ]</a>
+              <a href="thread.html#1911">[ thread ]</a>
+              <a href="subject.html#1911">[ subject ]</a>
+              <a href="author.html#1911">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

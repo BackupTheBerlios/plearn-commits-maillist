@@ -1,0 +1,255 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r9148 - trunk/python_modules/plearn/gui_tools
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-June/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9148%20-%20trunk/python_modules/plearn/gui_tools&In-Reply-To=%3C200806182313.m5INDFcQ003806%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002595.html">
+   <LINK REL="Next"  HREF="002597.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r9148 - trunk/python_modules/plearn/gui_tools</H1>
+    <B>chapados at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r9148%20-%20trunk/python_modules/plearn/gui_tools&In-Reply-To=%3C200806182313.m5INDFcQ003806%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r9148 - trunk/python_modules/plearn/gui_tools">chapados at mail.berlios.de
+       </A><BR>
+    <I>Thu Jun 19 01:13:15 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002595.html">[Plearn-commits] r9147 - trunk/plearn_learners_experimental
+</A></li>
+        <LI>Next message: <A HREF="002597.html">[Plearn-commits] r9149 - trunk/python_modules/plearn/gui_tools
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2596">[ date ]</a>
+              <a href="thread.html#2596">[ thread ]</a>
+              <a href="subject.html#2596">[ subject ]</a>
+              <a href="author.html#2596">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: chapados
+Date: 2008-06-19 01:13:14 +0200 (Thu, 19 Jun 2008)
+New Revision: 9148
+
+Modified:
+   trunk/python_modules/plearn/gui_tools/console_logger.py
+   trunk/python_modules/plearn/gui_tools/xp_workbench.py
+Log:
+More robust logger
+
+Modified: trunk/python_modules/plearn/gui_tools/console_logger.py
+===================================================================
+--- trunk/python_modules/plearn/gui_tools/console_logger.py	2008-06-18 20:54:00 UTC (rev 9147)
++++ trunk/python_modules/plearn/gui_tools/console_logger.py	2008-06-18 23:13:14 UTC (rev 9148)
+@@ -43,7 +43,7 @@
+ from   select import select
+ 
+ from enthought.traits.api       import *
+-from enthought.traits.ui.api    import CodeEditor, Group, Item, View
++from enthought.traits.ui.api    import CodeEditor, TextEditor, Group, Handler, Item, View
+ from enthought.traits.ui.menu   import NoButtons
+ 
+ 
+@@ -51,7 +51,24 @@
+ _raw_stdout = None
+ _raw_stderr = None
+ 
++#####  Handler  #############################################################
+ 
++class LoggerHandler(Handler):
++
++    def object_data_changed(self, info):
++        &quot;&quot;&quot;The purpose of this bit of trickery is to ensure that
++        the display does not scroll back to the first line when
++        data is added to the logger...
++        &quot;&quot;&quot;
++        numlines = len(info.object.data.split(&quot;\n&quot;))
++        assert len(info.ui._editors) == 1
++        editor = info.ui._editors[0]
++        editor.selected_line = numlines # Select the last line of text
++        editor.control.Refresh()
++
++
++#####  Logger Per Se  #######################################################
++
+ class ConsoleLogger(HasTraits):
+ 
+     ## Title of logger object
+@@ -69,8 +86,20 @@
+     active_logger = None
+ 
+     ## Default view
+-    traits_view = View(Item('data~', editor=CodeEditor(foldable=False), show_label=False))
++    traits_view = View(Item('data~',
++                            editor=CodeEditor(foldable=False, search='top', auto_scroll=False,
++                                              mark_color=0xFFFFFF),
++                            #editor=TextEditor(multi_line=True),
++                            show_label=False),
++                       handler = LoggerHandler())
+ 
++    ## Unwrapped (non-autoflush) python stdout and stderr
++    orig_stdout = None
++    orig_stderr = None
++
++    def _data_changed(self):
++        editor = self.traits()['data'].get_editor()
++
+     def activate_stdouterr_redirect(self, streams_to_watch={}):
+         &quot;&quot;&quot;Redirect standard output and error to be sent to the log pane
+         instead of the console.
+@@ -81,6 +110,11 @@
+                   &quot;while it is already active for a different one&quot;
+         ConsoleLogger.active_logger = self
+ 
++        ## If redirection is already active, don't insist
++        global _raw_stdout, _raw_stderr
++        if _raw_stdout is not None or _raw_stderr is not None:
++            return
++
+         ## Ensure that any pending writes are expelled before redirection
+         ## (Python only)
+         sys.stdout.flush()
+@@ -91,7 +125,6 @@
+         ## display debugging messages.  They are called, respectively,
+         ## raw_stdout and raw_stderr (Python file objects); make them
+         ## global for ease of debugging.
+-        global _raw_stdout, _raw_stderr
+         if _raw_stdout is None:
+             old_stdout_fd = os.dup(sys.stdout.fileno())
+             _raw_stdout   = os.fdopen(old_stdout_fd, 'w')
+@@ -140,6 +173,27 @@
+         listener.setDaemon(True)        # Allow quitting Python even if thread running
+         self.is_active = True
+         listener.start()
++
++        ## Ensure that all Python-level prints are auto-flushing
++        class AutoFlush(object):
++            def __init__(self, stream):
++                self.stream = stream
++
++            def write(self, text):
++                self.stream.write(text)
++                self.stream.flush()
++
++            def writelines(self, lines):
++                self.stream.writelines(lines)
++                self.stream.flush()
++
++            def flush(self):
++                self.stream.flush()
++
++        self.orig_stdout = sys.stdout
++        self.orig_stderr = sys.stderr
++        sys.stdout = AutoFlush(sys.stdout)
++        sys.stderr = AutoFlush(sys.stderr)
+         
+ 
+     def desactivate_stdout_err_redirect(self):
+@@ -155,13 +209,17 @@
+             sys.stderr.flush()
+             time.sleep(0.1)
+             
+-            if _raw_stdout is not None:
+-                os.dup2(_raw_stdout.fileno(), sys.stdout.fileno())
+-                _raw_stdout = None
++            if _raw_stdout is not None and self.orig_stdout is not None:
++                os.dup2(_raw_stdout.fileno(), self.orig_stdout.fileno())
++                sys.stdout       = self.orig_stdout
++                _raw_stdout      = None
++                self.orig_stdout = None
+ 
+-            if _raw_stderr is not None:
+-                os.dup2(_raw_stderr.fileno(), sys.stderr.fileno())
+-                _raw_stderr = None
++            if _raw_stderr is not None and self.orig_stderr is not None:
++                os.dup2(_raw_stderr.fileno(), self.orig_stderr.fileno())
++                sys.stderr       = self.orig_stderr
++                _raw_stderr      = None
++                self.orig_stderr = None
+ 
+             ConsoleLogger.active_logger = None
+             self.is_active = False
+
+Modified: trunk/python_modules/plearn/gui_tools/xp_workbench.py
+===================================================================
+--- trunk/python_modules/plearn/gui_tools/xp_workbench.py	2008-06-18 20:54:00 UTC (rev 9147)
++++ trunk/python_modules/plearn/gui_tools/xp_workbench.py	2008-06-18 23:13:14 UTC (rev 9148)
+@@ -314,10 +314,25 @@
+ 
+     @staticmethod
+     def expdir_name(expdir_root):
++        &quot;&quot;&quot;Return an experiment directory from a root location.&quot;&quot;&quot;
+         return os.path.join(expdir_root,
+                             datetime.now().strftime(&quot;expdir_%Y%m%d_%H%m%S&quot;))
+ 
+ 
++    @staticmethod
++    def print_all_traits(root, out = sys.stdout, prefix=&quot;&quot;):
++        &quot;&quot;&quot;Recursively print out all traits in a key=value format.
++        Useful for generating metainfo files for experiments.
++        &quot;&quot;&quot;
++        for (trait_name, trait_value) in root.get():
++            if trait_name in [&quot;trait_added&quot;, &quot;trait_modified&quot;]:
++                continue
++            elif isinstance(trait_value, &quot;HasTraits&quot;):
++                print_all_traits(trait_value, out, trait_name+&quot;.&quot;)
++            else:
++                print prefix+trait_name+&quot; = &quot;+str(trait_value)
++
++
+ #####  Top-Level Options  ###################################################
+ 
+ class SingletonOptions(HasStrictTraits):
+@@ -356,19 +371,6 @@
+                    if t not in [ &quot;expdir_root&quot;, &quot;trait_added&quot;, &quot;trait_modified&quot; ] ]
+         kwargs = { &quot;show_labels&quot;:False, &quot;layout&quot;:&quot;tabbed&quot; }
+         return View(Group(*items, **kwargs))
+-
+-    @staticmethod
+-    def print_all_traits(root, out = sys.stdout, prefix=&quot;&quot;):
+-        &quot;&quot;&quot;Recursively print out all traits in a key=value format.
+-        Useful for generating metainfo files for experiments.
+-        &quot;&quot;&quot;
+-        for (trait_name, trait_value) in root.get():
+-            if trait_name in [&quot;trait_added&quot;, &quot;trait_modified&quot;]:
+-                continue
+-            elif isinstance(trait_value, &quot;HasTraits&quot;):
+-                print_all_traits(trait_value, out, trait_name+&quot;.&quot;)
+-            else:
+-                print prefix+trait_name+&quot; = &quot;+str(trait_value)
+     
+ 
+ #####  Utilities  ###########################################################
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002595.html">[Plearn-commits] r9147 - trunk/plearn_learners_experimental
+</A></li>
+	<LI>Next message: <A HREF="002597.html">[Plearn-commits] r9149 - trunk/python_modules/plearn/gui_tools
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2596">[ date ]</a>
+              <a href="thread.html#2596">[ thread ]</a>
+              <a href="subject.html#2596">[ subject ]</a>
+              <a href="author.html#2596">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

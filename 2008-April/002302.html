@@ -1,0 +1,151 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r8854 - trunk/plearn/var
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2008-April/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8854%20-%20trunk/plearn/var&In-Reply-To=%3C200804212056.m3LKuQfd018049%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="002301.html">
+   <LINK REL="Next"  HREF="002303.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r8854 - trunk/plearn/var</H1>
+    <B>tihocan at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r8854%20-%20trunk/plearn/var&In-Reply-To=%3C200804212056.m3LKuQfd018049%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r8854 - trunk/plearn/var">tihocan at mail.berlios.de
+       </A><BR>
+    <I>Mon Apr 21 22:56:26 CEST 2008</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="002301.html">[Plearn-commits] r8853 - trunk/plearn/var
+</A></li>
+        <LI>Next message: <A HREF="002303.html">[Plearn-commits] r8855 - trunk/plearn/var
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2302">[ date ]</a>
+              <a href="thread.html#2302">[ thread ]</a>
+              <a href="subject.html#2302">[ subject ]</a>
+              <a href="author.html#2302">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: tihocan
+Date: 2008-04-21 22:56:25 +0200 (Mon, 21 Apr 2008)
+New Revision: 8854
+
+Modified:
+   trunk/plearn/var/SumOverBagsVariable.cc
+   trunk/plearn/var/SumOverBagsVariable.h
+Log:
+Fixed bug when using PLearn standard object building process instead of calling the convenience constructor
+
+Modified: trunk/plearn/var/SumOverBagsVariable.cc
+===================================================================
+--- trunk/plearn/var/SumOverBagsVariable.cc	2008-04-21 20:55:06 UTC (rev 8853)
++++ trunk/plearn/var/SumOverBagsVariable.cc	2008-04-21 20:56:25 UTC (rev 8854)
+@@ -75,25 +75,29 @@
+ /////////////////////////
+ // SumOverBagsVariable //
+ /////////////////////////
+-SumOverBagsVariable::SumOverBagsVariable()
+-    : vmat(), f(),
+-      average(0),
+-      max_bag_size(-1), n_samples(1),
+-      transpose(0),
+-      curpos()
++SumOverBagsVariable::SumOverBagsVariable():
++    average(false),
++    max_bag_size(-1),
++    n_samples(1),
++    transpose(false),
++    curpos()
+ {}
+ 
+-SumOverBagsVariable::SumOverBagsVariable(VMat the_vmat, Func the_f, int max_bagsize, int nsamples, bool the_average, bool the_transpose)
+-    : inherited(nonInputParentsOfPath(the_f-&gt;inputs,the_f-&gt;outputs), 
+-                the_f-&gt;outputs[0]-&gt;length(), 
+-                the_f-&gt;outputs[0]-&gt;width()),
+-      vmat(the_vmat), f(the_f),
+-      average(the_average),
+-      max_bag_size(max_bagsize), n_samples(nsamples),
+-      transpose(the_transpose),
+-      curpos(0), bag_size(0)
++SumOverBagsVariable::SumOverBagsVariable(
++        VMat the_vmat, Func the_f, int max_bagsize, int nsamples,
++        bool the_average, bool the_transpose, bool call_build_):
++    inherited(nonInputParentsOfPath(the_f-&gt;inputs,the_f-&gt;outputs), 
++            the_f-&gt;outputs[0]-&gt;length(), 
++            the_f-&gt;outputs[0]-&gt;width(),
++            call_build_),
++    vmat(the_vmat), f(the_f),
++    average(the_average),
++    max_bag_size(max_bagsize), n_samples(nsamples),
++    transpose(the_transpose),
++    curpos(0), bag_size(0)
+ {
+-    build();
++    if (call_build_)
++        build_();
+ }
+ 
+ ///////////
+@@ -112,6 +116,12 @@
+ {
+     if (vmat)
+     {
++        PLASSERT( f );
++
++        varray = nonInputParentsOfPath(f-&gt;inputs, f-&gt;outputs);
++        // We need to rebuild the parent class since a build option changed.
++        inherited::build();
++
+         if (f-&gt;outputs.size()!=1)
+             PLERROR(&quot;SumOverBagsVariable: expected a func with a single output variable (you may use concat to form a single output Var)&quot;);
+         if (vmat-&gt;weightsize()!=0 &amp;&amp; vmat-&gt;weightsize()!=1)
+
+Modified: trunk/plearn/var/SumOverBagsVariable.h
+===================================================================
+--- trunk/plearn/var/SumOverBagsVariable.h	2008-04-21 20:55:06 UTC (rev 8853)
++++ trunk/plearn/var/SumOverBagsVariable.h	2008-04-21 20:56:25 UTC (rev 8854)
+@@ -89,7 +89,9 @@
+     //!   last_column_of_target == 1+2==3 ==&gt; single-row bag (both first and last)
+     //! the last column of the target is not given in the call to f, but a bag_size input is provided instead.
+     //! The inputs to f are: (matrix of bag inputs, the bag size, the bag target, the bag weight).
+-    SumOverBagsVariable(VMat the_vmat, Func the_f, int maxbagsize, int nsamples, bool average, bool transpose = false);
++    SumOverBagsVariable(VMat the_vmat, Func the_f, int maxbagsize,
++                        int nsamples, bool average,
++                        bool transpose = false, bool call_build_ = true);
+ 
+     //! Tags to use in the vmat given to this variable.
+     static const int TARGET_COLUMN_FIRST = 1;
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="002301.html">[Plearn-commits] r8853 - trunk/plearn/var
+</A></li>
+	<LI>Next message: <A HREF="002303.html">[Plearn-commits] r8855 - trunk/plearn/var
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#2302">[ date ]</a>
+              <a href="thread.html#2302">[ thread ]</a>
+              <a href="subject.html#2302">[ subject ]</a>
+              <a href="author.html#2302">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>

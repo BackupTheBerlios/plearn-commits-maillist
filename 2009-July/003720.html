@@ -1,0 +1,209 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<HTML>
+ <HEAD>
+   <TITLE> [Plearn-commits] r10280 - in trunk/plearn: misc vmat
+   </TITLE>
+   <LINK REL="Index" HREF="http://lists.berlios.de/pipermail/plearn-commits/2009-July/index.html" >
+   <LINK REL="made" HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10280%20-%20in%20trunk/plearn%3A%20misc%20vmat&In-Reply-To=%3C200907201501.n6KF1sHf018725%40sheep.berlios.de%3E">
+   <META NAME="robots" CONTENT="index,nofollow">
+   <style type="text/css">
+       pre {
+           white-space: pre-wrap;       /* css-2.1, curent FF, Opera, Safari */
+           }
+   </style>
+   <META http-equiv="Content-Type" content="text/html; charset=us-ascii">
+   <LINK REL="Previous"  HREF="003719.html">
+   <LINK REL="Next"  HREF="003721.html">
+ </HEAD>
+ <BODY BGCOLOR="#ffffff">
+   <H1>[Plearn-commits] r10280 - in trunk/plearn: misc vmat</H1>
+    <B>nouiz at BerliOS</B> 
+    <A HREF="mailto:plearn-commits%40lists.berlios.de?Subject=Re%3A%20%5BPlearn-commits%5D%20r10280%20-%20in%20trunk/plearn%3A%20misc%20vmat&In-Reply-To=%3C200907201501.n6KF1sHf018725%40sheep.berlios.de%3E"
+       TITLE="[Plearn-commits] r10280 - in trunk/plearn: misc vmat">nouiz at mail.berlios.de
+       </A><BR>
+    <I>Mon Jul 20 17:01:54 CEST 2009</I>
+    <P><UL>
+        <LI>Previous message: <A HREF="003719.html">[Plearn-commits] r10279 - trunk/plearn/misc
+</A></li>
+        <LI>Next message: <A HREF="003721.html">[Plearn-commits] r10281 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3720">[ date ]</a>
+              <a href="thread.html#3720">[ thread ]</a>
+              <a href="subject.html#3720">[ subject ]</a>
+              <a href="author.html#3720">[ author ]</a>
+         </LI>
+       </UL>
+    <HR>  
+<!--beginarticle-->
+<PRE>Author: nouiz
+Date: 2009-07-20 17:01:53 +0200 (Mon, 20 Jul 2009)
+New Revision: 10280
+
+Modified:
+   trunk/plearn/misc/vmatmain.cc
+   trunk/plearn/vmat/VMatrix.cc
+   trunk/plearn/vmat/VMatrix.h
+Log:
+implemented pl vmat convert src dst.cmat for some type of matrix. This is not optimal and not for all type of matrix.
+
+
+Modified: trunk/plearn/misc/vmatmain.cc
+===================================================================
+--- trunk/plearn/misc/vmatmain.cc	2009-07-20 14:58:58 UTC (rev 10279)
++++ trunk/plearn/misc/vmatmain.cc	2009-07-20 15:01:53 UTC (rev 10280)
+@@ -764,6 +764,8 @@
+         else if(ext==&quot;.amat&quot;)
+             // Save strings as strings so they are not lost.
+             vm-&gt;saveAMAT(destination, true, false, true);
++        else if(ext==&quot;.cmat&quot;)
++            vm-&gt;saveCMAT(destination);
+         else if(ext==&quot;.pmat&quot;)
+             vm-&gt;savePMAT(destination, force_float, auto_float);
+         else if(ext==&quot;.dmat&quot;)
+
+Modified: trunk/plearn/vmat/VMatrix.cc
+===================================================================
+--- trunk/plearn/vmat/VMatrix.cc	2009-07-20 14:58:58 UTC (rev 10279)
++++ trunk/plearn/vmat/VMatrix.cc	2009-07-20 15:01:53 UTC (rev 10280)
+@@ -39,6 +39,7 @@
+  ******************************************************* */
+ 
+ #include &quot;VMatrix.h&quot;
++#include &quot;CompactFileVMatrix.h&quot;
+ #include &quot;DiskVMatrix.h&quot;
+ #include &quot;FileVMatrix.h&quot;
+ #include &quot;SubVMatrix.h&quot;
+@@ -53,6 +54,7 @@
+ #include &lt;nspr/prenv.h&gt;
+ #include &lt;plearn/math/TMat_maths.h&gt; //!&lt; for dot, powdistance externalProductAcc
+ #include &lt;plearn/sys/procinfo.h&gt; //!&lt; for getPid, getUser
++#include &lt;limits&gt;
+ 
+ namespace PLearn {
+ using namespace std;
+@@ -2154,6 +2156,86 @@
+     }
+ }
+ 
++void VMatrix::saveCMAT(const PPath&amp; filename) const
++{
++    PLWARNING(&quot;VMatrix::saveCMAT() - NOT FULLY IMPLEMENTED&quot;);
++
++    //calculate the datatype needed
++    TVec&lt;StatsCollector&gt; stats = getStats(true);
++    CompactFileVMatrix n = CompactFileVMatrix();
++    int max_bits=0;
++    for(int i=0;i&lt;stats.size();i++){
++        StatsCollector stat = stats[i];
++        if(! stat.isinteger())
++            PLERROR(&quot;VMatrix::saveCMAT() currently the source need to contain only integer.&quot;);
++        if(stat.min()&gt;=0){
++            int bits=ceil(sqrt(stat.max()));
++            if(max_bits&lt;bits)max_bits=bits;
++        }else{
++            PLERROR(&quot;not implemented to store negatif number.&quot;);
++        }
++        
++    }
++    //example 12000000 u:784:1:8 u:1:1:8
++    //write the header
++     if(max_bits&gt;8) PLERROR(&quot;VMatrix::saveCMAT() currently we convert to cmat with a maximum of 8 bits by fields!&quot;);
++    if(max_bits &gt; 1 &amp;&amp; max_bits&lt;8){
++        max_bits=8;
++        PLWARNING(&quot;VMatrix::saveCMAT() currently when we need less then 8 bits(except for 1), we upgrade to 8 bits.&quot;);
++    }
++    if(max_bits==0){
++        PLERROR(&quot;VMatrix::saveCMAT() - their was only 0 in the matrix! This is not supported as we don't think this can happen in real case!&quot;);
++    }
++    //write the data
++    if(max_bits==8){
++        PStream out = openFile(filename, PStream::raw_ascii, &quot;w&quot;);
++        out&lt;&lt;length()&lt;&lt;&quot; u:&quot;&lt;&lt;width()&lt;&lt;&quot;:1:&quot;&lt;&lt;max_bits&lt;&lt;endl;
++        Vec v(width());
++        for(int i=0;i&lt;length();i++){
++            getRow(i,v);
++            for(int j=0;j&lt;width();j++){
++                out.put((char)v[j]);
++            }
++        }
++    }else if(max_bits==1){
++        PStream out = openFile(filename, PStream::raw_ascii, &quot;w&quot;);
++        int w2=width()%8;
++        int w1=width()-w2;
++        PLCHECK(w2+w1==width());
++        PLCHECK(w1%8==0);
++        PLCHECK(w1&gt;0 &amp;&amp; w2&gt;=0);
++        out&lt;&lt;length()&lt;&lt;&quot; u:&quot;&lt;&lt;w1&lt;&lt;&quot;:1:&quot;&lt;&lt;max_bits;
++        if(w2!=0)
++            out&lt;&lt;&quot; u:&quot;&lt;&lt;w2&lt;&lt;&quot;:1:8&quot;;
++        out&lt;&lt;endl;
++        Vec v(width());
++
++        for(int i=0;i&lt;length();i++){
++            getRow(i,v);
++            int j;
++            for(j=0;j&lt;w1;){
++                char c=0;
++                for(int k=0;k&lt;8;j++,k++){
++                    c=c&lt;&lt;1;
++                    c|=((bool)v[j]);
++                }
++                //revert the bits
++                char value=c;
++                value = (value &amp; 0x0f) &lt;&lt; 4 | (value &amp; 0xf0) &gt;&gt; 4;
++                value = (value &amp; 0x33) &lt;&lt; 2 | (value &amp; 0xcc) &gt;&gt; 2;
++                value = (value &amp; 0x55) &lt;&lt; 1 | (value &amp; 0xaa) &gt;&gt; 1;
++                out.put(value);
++            }
++            PLCHECK(width()-j==w2);
++            for(;j&lt;width();j++){
++                out.put((char)v[j]);
++            }
++        }
++    }
++    else
++        PLERROR(&quot;VMatrix::saveCMAT() - %d bits are not supported!&quot;,max_bits);
++    pout&lt;&lt;&quot;generated the file &quot; &lt;&lt;filename &lt;&lt;endl;
++}
+ ///////////////////
+ // accumulateXtY //
+ ///////////////////
+
+Modified: trunk/plearn/vmat/VMatrix.h
+===================================================================
+--- trunk/plearn/vmat/VMatrix.h	2009-07-20 14:58:58 UTC (rev 10279)
++++ trunk/plearn/vmat/VMatrix.h	2009-07-20 15:01:53 UTC (rev 10280)
+@@ -343,6 +343,8 @@
+     virtual void saveAMAT(const PPath&amp; amatfile, bool verbose = true,
+                           bool no_header = false, bool save_strings = false) const;
+ 
++    virtual void saveCMAT(const PPath&amp; filename) const;
++
+     /// Return true if the matrix is writable, i.e. if put()-like member
+     /// functions can succeed.
+     inline bool isWritable() const { return writable; }
+
+
+</PRE>
+
+<!--endarticle-->
+    <HR>
+    <P><UL>
+        <!--threads-->
+	<LI>Previous message: <A HREF="003719.html">[Plearn-commits] r10279 - trunk/plearn/misc
+</A></li>
+	<LI>Next message: <A HREF="003721.html">[Plearn-commits] r10281 - trunk/python_modules/plearn/parallel
+</A></li>
+         <LI> <B>Messages sorted by:</B> 
+              <a href="date.html#3720">[ date ]</a>
+              <a href="thread.html#3720">[ thread ]</a>
+              <a href="subject.html#3720">[ subject ]</a>
+              <a href="author.html#3720">[ author ]</a>
+         </LI>
+       </UL>
+
+<hr>
+<a href="https://lists.berlios.de/mailman/listinfo/plearn-commits">More information about the Plearn-commits
+mailing list</a><br>
+</body></html>
